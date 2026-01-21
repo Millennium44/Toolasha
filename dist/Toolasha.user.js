@@ -17274,12 +17274,13 @@
             const itemDetails = itemDetailMap[drink.itemHrid];
             if (!itemDetails?.consumableDetail) continue;
 
-            // Check for wisdom buff (skillingExperience)
+            // Check for wisdom buff (typeHrid === "/buff_types/wisdom")
             const buffs = itemDetails.consumableDetail.buffs || [];
             for (const buff of buffs) {
-                if (buff.flatBoost?.skillingExperience) {
+                // Check if this is a wisdom buff by typeHrid
+                if (buff.typeHrid === '/buff_types/wisdom' && buff.flatBoost) {
                     // Base wisdom (e.g., 0.12 for 12%)
-                    const baseWisdom = buff.flatBoost.skillingExperience * 100;
+                    const baseWisdom = buff.flatBoost * 100;
 
                     // Scale with drink concentration
                     const scaledWisdom = baseWisdom * (1 + drinkConcentration / 100);
