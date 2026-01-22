@@ -56,12 +56,21 @@ async function getCharacterData() {
  */
 async function getBattleData() {
     try {
-        const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
-        if (!data) {
-            return null; // No battle data (not in combat or solo)
+        // Tampermonkey: Use GM storage
+        if (hasScriptManager) {
+            const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
+            if (!data) {
+                return null; // No battle data (not in combat or solo)
+            }
+            return JSON.parse(data);
         }
 
-        return JSON.parse(data);
+        // Steam: Use dataManager (RAM only, no GM storage available)
+        const battleData = dataManager.battleData;
+        if (!battleData) {
+            return null; // No battle data (not in combat or solo)
+        }
+        return battleData;
     } catch (error) {
         console.error('[Combat Sim Export] Failed to get battle data:', error);
         return null;

@@ -1818,6 +1818,7 @@
             this.characterHouseRooms = new Map();  // House room HRID -> {houseRoomHrid, level}
             this.actionTypeDrinkSlotsMap = new Map();  // Action type HRID -> array of drink items
             this.monsterSortIndexMap = new Map();  // Monster HRID -> combat zone sortIndex
+            this.battleData = null;  // Current battle data (for Combat Sim export on Steam)
 
             // Character tracking for switch detection
             this.currentCharacterId = null;
@@ -2006,6 +2007,7 @@
                     this.characterEquipment.clear();
                     this.characterHouseRooms.clear();
                     this.actionTypeDrinkSlotsMap.clear();
+                    this.battleData = null;
 
                     // Reset switching flag (cleanup complete, ready for re-init)
                     this.isCharacterSwitching = false;
@@ -2169,6 +2171,12 @@
                 }
 
                 this.emit('skills_updated', data);
+            });
+
+            // Handle new_battle (combat start - for Combat Sim export on Steam)
+            this.webSocketHook.on('new_battle', (data) => {
+                // Store battle data (includes party consumables)
+                this.battleData = data;
             });
         }
 
@@ -21355,12 +21363,21 @@
      */
     async function getBattleData() {
         try {
-            const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
-            if (!data) {
-                return null; // No battle data (not in combat or solo)
+            // Tampermonkey: Use GM storage
+            if (hasScriptManager$1) {
+                const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
+                if (!data) {
+                    return null; // No battle data (not in combat or solo)
+                }
+                return JSON.parse(data);
             }
 
-            return JSON.parse(data);
+            // Steam: Use dataManager (RAM only, no GM storage available)
+            const battleData = dataManager.battleData;
+            if (!battleData) {
+                return null; // No battle data (not in combat or solo)
+            }
+            return battleData;
         } catch (error) {
             console.error('[Combat Sim Export] Failed to get battle data:', error);
             return null;

@@ -26,6 +26,7 @@ class DataManager {
         this.characterHouseRooms = new Map();  // House room HRID -> {houseRoomHrid, level}
         this.actionTypeDrinkSlotsMap = new Map();  // Action type HRID -> array of drink items
         this.monsterSortIndexMap = new Map();  // Monster HRID -> combat zone sortIndex
+        this.battleData = null;  // Current battle data (for Combat Sim export on Steam)
 
         // Character tracking for switch detection
         this.currentCharacterId = null;
@@ -214,6 +215,7 @@ class DataManager {
                 this.characterEquipment.clear();
                 this.characterHouseRooms.clear();
                 this.actionTypeDrinkSlotsMap.clear();
+                this.battleData = null;
 
                 // Reset switching flag (cleanup complete, ready for re-init)
                 this.isCharacterSwitching = false;
@@ -377,6 +379,12 @@ class DataManager {
             }
 
             this.emit('skills_updated', data);
+        });
+
+        // Handle new_battle (combat start - for Combat Sim export on Steam)
+        this.webSocketHook.on('new_battle', (data) => {
+            // Store battle data (includes party consumables)
+            this.battleData = data;
         });
     }
 
