@@ -23180,6 +23180,7 @@
             this.unregisterHandlers = [];
             this.processedBars = new Set();
             this.isInitialized = false;
+            this.updateInterval = null;
         }
 
         /**
@@ -23221,6 +23222,11 @@
 
             // Initial update for existing skills
             this.updateAllSkills();
+
+            // Update every second to catch XP changes (matches remaining-xp behavior)
+            this.updateInterval = setInterval(() => {
+                this.updateAllSkills();
+            }, 1000);
 
             this.isInitialized = true;
         }
@@ -23313,6 +23319,12 @@
          * Disable the feature
          */
         disable() {
+            // Clear update interval
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+                this.updateInterval = null;
+            }
+
             // Remove all percentage spans
             document.querySelectorAll('.mwi-exp-percentage').forEach(span => span.remove());
 
