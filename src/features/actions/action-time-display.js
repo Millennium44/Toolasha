@@ -1217,14 +1217,21 @@ class ActionTimeDisplay {
                 }
             });
 
-            // Update display with profit
+            // Update display with value
             if (hasProfitData) {
-                const profitColor = totalProfit >= 0 
+                // Get value mode setting to determine label and color
+                const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
+                const isEstimatedValue = valueMode === 'estimated_value';
+                
+                // Estimated value is always positive (revenue), so always use profit color
+                // Profit can be negative, so use appropriate color
+                const valueColor = (isEstimatedValue || totalProfit >= 0)
                     ? config.getSettingValue('color_profit', '#4ade80')
                     : config.getSettingValue('color_loss', '#f87171');
-                const profitSign = totalProfit >= 0 ? '+' : '';
-                const profitText = `<br>Total profit: <span style="color: ${profitColor};">${profitSign}${formatWithSeparator(Math.round(totalProfit))}</span>`;
-                totalDiv.innerHTML = baseText + profitText;
+                const valueSign = totalProfit >= 0 ? '+' : '';
+                const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
+                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatWithSeparator(Math.round(totalProfit))}</span>`;
+                totalDiv.innerHTML = baseText + valueText;
             }
         } catch (error) {
             console.warn('[Action Time Display] Error calculating total profit:', error);
@@ -1232,10 +1239,10 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Calculate profit for a single action based on time spent
+     * Calculate profit or estimated value for a single action based on time spent
      * @param {string} actionHrid - Action HRID
      * @param {number} timeSeconds - Time spent on this action in seconds
-     * @returns {Promise<number|null>} Total profit or null if unavailable
+     * @returns {Promise<number|null>} Total value (profit or revenue) or null if unavailable
      */
     async calculateProfitForAction(actionHrid, timeSeconds) {
         const actionDetails = dataManager.getActionDetails(actionHrid);
@@ -1243,25 +1250,39 @@ class ActionTimeDisplay {
             return null;
         }
 
-        // Calculate profit per hour
-        let profitPerHour = null;
+        // Get value mode setting (profit or estimated_value)
+        const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
+
+        // Calculate value per hour based on mode
+        let valuePerHour = null;
         
         // Try gathering profit first (foraging, woodcutting, milking)
         const gatheringProfit = await calculateGatheringProfit(actionHrid);
-        if (gatheringProfit && gatheringProfit.profitPerHour !== undefined) {
-            profitPerHour = gatheringProfit.profitPerHour;
+        if (gatheringProfit) {
+            if (valueMode === 'estimated_value' && gatheringProfit.revenuePerHour !== undefined) {
+                valuePerHour = gatheringProfit.revenuePerHour;
+            } else if (gatheringProfit.profitPerHour !== undefined) {
+                valuePerHour = gatheringProfit.profitPerHour;
+            }
         } else if (actionDetails.outputItems?.[0]?.itemHrid) {
             // Try production profit (crafting, cooking, etc.)
             const productionProfit = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
-            if (productionProfit && productionProfit.profitPerHour !== undefined) {
-                profitPerHour = productionProfit.profitPerHour;
+            if (productionProfit) {
+                if (valueMode === 'estimated_value') {
+                    // Calculate revenue: (items * priceAfterTax) + bonus revenue
+                    const revenuePerHour = (productionProfit.totalItemsPerHour * productionProfit.priceAfterTax) + 
+                                          ((productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier);
+                    valuePerHour = revenuePerHour;
+                } else if (productionProfit.profitPerHour !== undefined) {
+                    valuePerHour = productionProfit.profitPerHour;
+                }
             }
         }
 
-        // Calculate profit based on time spent
-        if (profitPerHour !== null) {
+        // Calculate value based on time spent
+        if (valuePerHour !== null) {
             const timeHours = timeSeconds / 3600;
-            return profitPerHour * timeHours;
+            return valuePerHour * timeHours;
         }
 
         return null;

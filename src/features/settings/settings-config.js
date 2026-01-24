@@ -53,6 +53,18 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true
             },
+            actionQueue_valueMode: {
+                id: 'actionQueue_valueMode',
+                label: 'Queued actions: Value calculation mode',
+                type: 'select',
+                default: 'profit',
+                options: [
+                    { value: 'profit', label: 'Total Profit (revenue - all costs)' },
+                    { value: 'estimated_value', label: 'Estimated Value (revenue after tax)' }
+                ],
+                dependencies: ['actionQueue'],
+                help: 'Choose how to calculate the total value for queued actions. Profit shows net earnings after materials and drinks. Estimated Value shows gross revenue after market tax (always positive).'
+            },
             actionPanel_outputTotals: {
                 id: 'actionPanel_outputTotals',
                 label: 'Action panel: Show total expected outputs below per-action outputs',
