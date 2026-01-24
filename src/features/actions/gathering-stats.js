@@ -8,6 +8,7 @@
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
+import actionPanelSort from './action-panel-sort.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
@@ -16,16 +17,18 @@ class GatheringStats {
     constructor() {
         this.actionElements = new Map(); // actionPanel → {actionHrid, displayElement}
         this.unregisterObserver = null;
-        this.sortTimeout = null; // Debounce timer for sorting
     }
 
     /**
      * Initialize the gathering stats display
      */
-    initialize() {
+    async initialize() {
         if (!config.getSetting('actionPanel_gatheringStats')) {
             return;
         }
+
+        // Initialize shared sort manager
+        await actionPanelSort.initialize();
 
         this.setupObserver();
 
@@ -89,8 +92,10 @@ class GatheringStats {
             });
             // Update with fresh data
             this.updateStats(actionPanel);
-            // Trigger debounced sort after panels are loaded
-            this.scheduleSortIfEnabled();
+            // Register with shared sort manager
+            actionPanelSort.registerPanel(actionPanel, actionHrid);
+            // Trigger sort
+            actionPanelSort.triggerSort();
             return;
         }
 
@@ -125,31 +130,14 @@ class GatheringStats {
             displayElement: display
         });
 
+        // Register with shared sort manager
+        actionPanelSort.registerPanel(actionPanel, actionHrid);
+
         // Initial update
         this.updateStats(actionPanel);
 
-        // Trigger debounced sort after panels are loaded
-        this.scheduleSortIfEnabled();
-    }
-
-    /**
-     * Schedule a sort to run after a short delay (debounced)
-     */
-    scheduleSortIfEnabled() {
-        if (!config.getSetting('actionPanel_sortByProfit')) {
-            return;
-        }
-
-        // Clear existing timeout
-        if (this.sortTimeout) {
-            clearTimeout(this.sortTimeout);
-        }
-
-        // Schedule new sort after 500ms of inactivity
-        this.sortTimeout = setTimeout(() => {
-            this.sortPanelsByProfit();
-            this.sortTimeout = null;
-        }, 500);
+        // Trigger sort
+        actionPanelSort.triggerSort();
     }
 
     /**
@@ -201,12 +189,14 @@ class GatheringStats {
         const expData = calculateExpPerHour(data.actionHrid);
         const expPerHour = expData?.expPerHour || null;
 
-        // Store profit value for sorting
+        // Store profit value for sorting and update shared sort manager
         data.profitPerHour = profitPerHour;
+        actionPanelSort.updateProfit(actionPanel, profitPerHour);
 
-        // Check if we should hide actions with negative profit
+        // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
-        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0) {
+        const isPinned = actionPanelSort.isPinned(data.actionHrid);
+        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
             // Hide the entire action panel
             actionPanel.style.display = 'none';
             return;
@@ -247,59 +237,15 @@ class GatheringStats {
             } else {
                 // Panel no longer in DOM, remove from tracking
                 this.actionElements.delete(actionPanel);
+                actionPanelSort.unregisterPanel(actionPanel);
             }
         }
 
         // Wait for all updates to complete
         await Promise.all(updatePromises);
 
-        // Sort panels if setting is enabled
-        if (config.getSetting('actionPanel_sortByProfit')) {
-            this.sortPanelsByProfit();
-        }
-    }
-
-    /**
-     * Sort action panels by profit/hr (highest first)
-     */
-    sortPanelsByProfit() {
-        // Group panels by their parent container
-        const containerMap = new Map();
-
-        for (const [actionPanel, data] of this.actionElements.entries()) {
-            if (!document.body.contains(actionPanel)) continue;
-
-            const container = actionPanel.parentElement;
-            if (!container) continue;
-
-            if (!containerMap.has(container)) {
-                containerMap.set(container, []);
-            }
-
-            // Extract profit value from the data we already have
-            const profitPerHour = data.profitPerHour ?? null;
-
-            containerMap.get(container).push({
-                panel: actionPanel,
-                profit: profitPerHour
-            });
-        }
-
-        // Sort and reorder each container
-        for (const [container, panels] of containerMap.entries()) {
-            // Sort by profit (descending), null values go to end
-            panels.sort((a, b) => {
-                if (a.profit === null && b.profit === null) return 0;
-                if (a.profit === null) return 1;
-                if (b.profit === null) return -1;
-                return b.profit - a.profit;
-            });
-
-            // Reorder DOM elements
-            panels.forEach(({panel}) => {
-                container.appendChild(panel);
-            });
-        }
+        // Trigger sort via shared manager
+        actionPanelSort.triggerSort();
     }
 
     /**

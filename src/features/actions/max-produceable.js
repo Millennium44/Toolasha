@@ -12,6 +12,7 @@
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
+import actionPanelSort from './action-panel-sort.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -20,19 +21,21 @@ import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser
 
 class MaxProduceable {
     constructor() {
-        this.actionElements = new Map(); // actionPanel → {actionHrid, displayElement}
+        this.actionElements = new Map(); // actionPanel → {actionHrid, displayElement, pinElement}
         this.unregisterObserver = null;
         this.lastCrimsonMilkCount = null; // For debugging inventory updates
-        this.sortTimeout = null; // Debounce timer for sorting
     }
 
     /**
      * Initialize the max produceable display
      */
-    initialize() {
+    async initialize() {
         if (!config.getSetting('actionPanel_maxProduceable')) {
             return;
         }
+
+        // Initialize shared sort manager
+        await actionPanelSort.initialize();
 
         this.setupObserver();
 
@@ -67,7 +70,7 @@ class MaxProduceable {
     }
 
     /**
-     * Inject max produceable display into an action panel
+     * Inject max produceable display and pin icon into an action panel
      * @param {HTMLElement} actionPanel - The action panel element
      */
     injectMaxProduceable(actionPanel) {
@@ -79,83 +82,116 @@ class MaxProduceable {
         }
 
         const actionDetails = dataManager.getActionDetails(actionHrid);
-
-        // Only show for production actions with inputs
-        if (!actionDetails || !actionDetails.inputItems || actionDetails.inputItems.length === 0) {
+        if (!actionDetails) {
             return;
         }
+
+        // Check if production action with inputs (for max produceable display)
+        const isProductionAction = actionDetails.inputItems && actionDetails.inputItems.length > 0;
 
         // Check if already injected
         const existingDisplay = actionPanel.querySelector('.mwi-max-produceable');
-        if (existingDisplay) {
-            // Re-register existing display (DOM elements may be reused across navigation)
+        const existingPin = actionPanel.querySelector('.mwi-action-pin');
+        if (existingPin) {
+            // Re-register existing elements
             this.actionElements.set(actionPanel, {
                 actionHrid: actionHrid,
-                displayElement: existingDisplay
+                displayElement: existingDisplay || null,
+                pinElement: existingPin
             });
-            // Update with fresh inventory data
+            // Update pin state
+            this.updatePinIcon(existingPin, actionHrid);
+            // Update with fresh data for all actions (calculates profit for sorting/filtering)
             this.updateCount(actionPanel);
-            // Trigger debounced sort after panels are loaded
-            this.scheduleSortIfEnabled();
+            // DON'T schedule sort here - it causes race conditions
+            // Sorting happens in updateAllCounts() which is triggered by data changes
             return;
         }
 
-        // Create display element
-        const display = document.createElement('div');
-        display.className = 'mwi-max-produceable';
-        display.style.cssText = `
-            position: absolute;
-            bottom: -65px;
-            left: 0;
-            right: 0;
-            font-size: 0.85em;
-            padding: 4px 8px;
-            text-align: center;
-            background: rgba(0, 0, 0, 0.7);
-            border-top: 1px solid var(--border-color, ${config.COLOR_BORDER});
-            z-index: 10;
-        `;
-
-        // Make sure the action panel has relative positioning and extra bottom margin
+        // Make sure the action panel has relative positioning
         if (actionPanel.style.position !== 'relative' && actionPanel.style.position !== 'absolute') {
             actionPanel.style.position = 'relative';
         }
-        actionPanel.style.marginBottom = '70px';
 
-        // Append directly to action panel with absolute positioning
-        actionPanel.appendChild(display);
+        let display = null;
+
+        // Only create max produceable display for production actions
+        if (isProductionAction) {
+            actionPanel.style.marginBottom = '70px';
+
+            // Create display element
+            display = document.createElement('div');
+            display.className = 'mwi-max-produceable';
+            display.style.cssText = `
+                position: absolute;
+                bottom: -65px;
+                left: 0;
+                right: 0;
+                font-size: 0.85em;
+                padding: 4px 8px;
+                text-align: center;
+                background: rgba(0, 0, 0, 0.7);
+                border-top: 1px solid var(--border-color, ${config.COLOR_BORDER});
+                z-index: 10;
+            `;
+
+            // Append stats display to action panel with absolute positioning
+            actionPanel.appendChild(display);
+        }
+
+        // Create pin icon (for ALL actions - gathering and production)
+        const pinIcon = document.createElement('div');
+        pinIcon.className = 'mwi-action-pin';
+        pinIcon.innerHTML = '📌'; // Pin emoji
+        pinIcon.style.cssText = `
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            font-size: 1.5em;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 11;
+            user-select: none;
+            filter: grayscale(100%) brightness(0.7);
+        `;
+        pinIcon.title = 'Pin this action to keep it visible';
+
+        // Pin hover effect
+        pinIcon.addEventListener('mouseenter', () => {
+            if (!actionPanelSort.isPinned(actionHrid)) {
+                pinIcon.style.filter = 'grayscale(50%) brightness(1)';
+            }
+        });
+        pinIcon.addEventListener('mouseleave', () => {
+            this.updatePinIcon(pinIcon, actionHrid);
+        });
+
+        // Pin click handler
+        pinIcon.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.togglePin(actionHrid, pinIcon);
+        });
+
+        // Set initial pin state
+        this.updatePinIcon(pinIcon, actionHrid);
+
+        actionPanel.appendChild(pinIcon);
 
         // Store reference
         this.actionElements.set(actionPanel, {
             actionHrid: actionHrid,
-            displayElement: display
+            displayElement: display,
+            pinElement: pinIcon
         });
 
-        // Initial update
+        // Register panel with shared sort manager
+        actionPanelSort.registerPanel(actionPanel, actionHrid);
+
+        // Initial update for all actions (calculates profit for sorting/filtering)
         this.updateCount(actionPanel);
 
         // Trigger debounced sort after panels are loaded
-        this.scheduleSortIfEnabled();
-    }
-
-    /**
-     * Schedule a sort to run after a short delay (debounced)
-     */
-    scheduleSortIfEnabled() {
-        if (!config.getSetting('actionPanel_sortByProfit')) {
-            return;
-        }
-
-        // Clear existing timeout
-        if (this.sortTimeout) {
-            clearTimeout(this.sortTimeout);
-        }
-
-        // Schedule new sort after 500ms of inactivity
-        this.sortTimeout = setTimeout(() => {
-            this.sortPanelsByProfit();
-            this.sortTimeout = null;
-        }, 500);
+        actionPanelSort.triggerSort();
     }
 
     /**
@@ -260,14 +296,18 @@ class MaxProduceable {
             return;
         }
 
-        const maxCrafts = this.calculateMaxProduceable(data.actionHrid, inventory, dataManager.getInitClientData());
+        // Only calculate max crafts for production actions with display element
+        let maxCrafts = null;
+        if (data.displayElement) {
+            maxCrafts = this.calculateMaxProduceable(data.actionHrid, inventory, dataManager.getInitClientData());
 
-        if (maxCrafts === null) {
-            data.displayElement.style.display = 'none';
-            return;
+            if (maxCrafts === null) {
+                data.displayElement.style.display = 'none';
+                return;
+            }
         }
 
-        // Calculate profit/hr (if applicable)
+        // Calculate profit/hr (for both gathering and production)
         let profitPerHour = null;
         const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
@@ -284,23 +324,30 @@ class MaxProduceable {
             }
         }
 
-        // Calculate exp/hr using shared utility
-        const expData = calculateExpPerHour(data.actionHrid);
-        const expPerHour = expData?.expPerHour || null;
-
-        // Store profit value for sorting
+        // Store profit value for sorting and update shared sort manager
         data.profitPerHour = profitPerHour;
+        actionPanelSort.updateProfit(actionPanel, profitPerHour);
 
-        // Check if we should hide actions with negative profit
+        // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
-        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0) {
-            // Hide the entire action panel
+        const isPinned = actionPanelSort.isPinned(data.actionHrid);
+        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
+            // Hide the entire action panel (unless it's pinned)
             actionPanel.style.display = 'none';
             return;
         } else {
             // Show the action panel (in case it was previously hidden)
             actionPanel.style.display = '';
         }
+
+        // Only update display element if it exists (production actions only)
+        if (!data.displayElement) {
+            return;
+        }
+
+        // Calculate exp/hr using shared utility
+        const expData = calculateExpPerHour(data.actionHrid);
+        const expPerHour = expData?.expPerHour || null;
 
         // Color coding for "Can produce"
         let canProduceColor;
@@ -350,59 +397,49 @@ class MaxProduceable {
             } else {
                 // Panel no longer in DOM, remove from tracking
                 this.actionElements.delete(actionPanel);
+                actionPanelSort.unregisterPanel(actionPanel);
             }
         }
 
         // Wait for all updates to complete
         await Promise.all(updatePromises);
 
-        // Sort panels if setting is enabled
-        if (config.getSetting('actionPanel_sortByProfit')) {
-            this.sortPanelsByProfit();
-        }
+        // Trigger sort via shared manager
+        actionPanelSort.triggerSort();
     }
 
     /**
-     * Sort action panels by profit/hr (highest first)
+     * Toggle pin state for an action
+     * @param {string} actionHrid - Action HRID to toggle
+     * @param {HTMLElement} pinIcon - Pin icon element
      */
-    sortPanelsByProfit() {
-        // Group panels by their parent container
-        const containerMap = new Map();
+    async togglePin(actionHrid, pinIcon) {
+        await actionPanelSort.togglePin(actionHrid);
 
-        for (const [actionPanel, data] of this.actionElements.entries()) {
-            if (!document.body.contains(actionPanel)) continue;
+        // Update icon appearance
+        this.updatePinIcon(pinIcon, actionHrid);
 
-            const container = actionPanel.parentElement;
-            if (!container) continue;
+        // Re-sort and re-filter panels
+        await this.updateAllCounts();
+    }
 
-            if (!containerMap.has(container)) {
-                containerMap.set(container, []);
-            }
-
-            // Extract profit value from the data we already have
-            const profitPerHour = data.profitPerHour ?? null;
-
-            containerMap.get(container).push({
-                panel: actionPanel,
-                profit: profitPerHour
-            });
+    /**
+     * Update pin icon appearance based on pinned state
+     * @param {HTMLElement} pinIcon - Pin icon element
+     * @param {string} actionHrid - Action HRID
+     */
+    updatePinIcon(pinIcon, actionHrid) {
+        const isPinned = actionPanelSort.isPinned(actionHrid);
+        if (isPinned) {
+            // Pinned: Full color, bright, larger
+            pinIcon.style.filter = 'grayscale(0%) brightness(1.2) drop-shadow(0 0 3px rgba(255, 100, 0, 0.8))';
+            pinIcon.style.transform = 'scale(1.1)';
+        } else {
+            // Unpinned: Grayscale, dimmed, normal size
+            pinIcon.style.filter = 'grayscale(100%) brightness(0.7)';
+            pinIcon.style.transform = 'scale(1)';
         }
-
-        // Sort and reorder each container
-        for (const [container, panels] of containerMap.entries()) {
-            // Sort by profit (descending), null values go to end
-            panels.sort((a, b) => {
-                if (a.profit === null && b.profit === null) return 0;
-                if (a.profit === null) return 1;
-                if (b.profit === null) return -1;
-                return b.profit - a.profit;
-            });
-
-            // Reorder DOM elements
-            panels.forEach(({panel}) => {
-                container.appendChild(panel);
-            });
-        }
+        pinIcon.title = isPinned ? 'Unpin this action' : 'Pin this action to keep it visible';
     }
 
     /**
@@ -414,8 +451,14 @@ class MaxProduceable {
             this.unregisterObserver = null;
         }
 
+        if (this.mutationObserver) {
+            this.mutationObserver.disconnect();
+            this.mutationObserver = null;
+        }
+
         // Remove all injected elements
         document.querySelectorAll('.mwi-max-produceable').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-action-pin').forEach(el => el.remove());
         this.actionElements.clear();
     }
 }
