@@ -14,6 +14,7 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import inventoryBadgeManager from './inventory-badge-manager.js';
 
 /**
  * InventoryBadgePrices class manages price badge overlays on inventory items
@@ -87,17 +88,20 @@ class InventoryBadgePrices {
         );
         this.unregisterHandlers.push(unregister);
 
-        // Watch for DOM changes to refresh badges
-        const badgeRefreshUnregister = domObserver.register(
-            'InventoryBadgePrices-Refresh',
-            () => {
-                if (this.currentInventoryElem) {
-                    this.updateBadges();
-                }
-            },
-            { debounce: true, debounceDelay: 100 }
+        // Register with badge manager for coordinated rendering
+        inventoryBadgeManager.registerProvider(
+            'inventory-badge-prices',
+            (itemElem) => this.renderBadgesForItem(itemElem),
+            100 // Priority: render after stack prices
         );
-        this.unregisterHandlers.push(badgeRefreshUnregister);
+
+
+        // Listen for inventory changes to recalculate prices
+        dataManager.on('items_updated', () => {
+            if (this.currentInventoryElem) {
+                this.updateBadges();
+            }
+        });
 
         // Listen for market data updates
         this.setupMarketDataListener();
@@ -129,243 +133,35 @@ class InventoryBadgePrices {
     }
 
     /**
-     * Update all price badges
+     * Update all price badges (delegates to badge manager)
      */
     async updateBadges() {
-        if (!this.currentInventoryElem) return;
-
-        // Prevent recursive calls
-        if (this.isCalculating) return;
-        this.isCalculating = true;
-
-        const inventoryElem = this.currentInventoryElem;
-
-        // Process each category
-        for (const categoryDiv of inventoryElem.children) {
-            const categoryButton = categoryDiv.querySelector('[class*="Inventory_categoryButton"]');
-            if (!categoryButton) continue;
-
-            const categoryName = categoryButton.textContent.trim();
-
-            // Skip categories that shouldn't show badges
-            const excludedCategories = ['Currencies'];
-            if (excludedCategories.includes(categoryName)) {
-                continue;
-            }
-
-            const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-
-            // Calculate prices for all items
-            await this.calculateItemPrices(itemElems);
-        }
-
-        // Render badges
-        this.renderBadges();
-
-        this.isCalculating = false;
+        await inventoryBadgeManager.renderAllBadges();
     }
 
     /**
-     * Calculate and store prices for all items
-     * @param {NodeList} itemElems - Item elements
+     * Render price badges for a single item (called by badge manager)
+     * @param {Element} itemElem - Item container element
      */
-    async calculateItemPrices(itemElems) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) {
-            console.warn('[InventoryBadgePrices] Game data not available yet');
-            return;
+    renderBadgesForItem(itemElem) {
+        // Get per-item prices from dataset
+        const bidPrice = parseFloat(itemElem.dataset.bidPrice) || 0;
+        const askPrice = parseFloat(itemElem.dataset.askPrice) || 0;
+
+        // Show badges if they have values and don't already exist
+        if (bidPrice > 0 && !itemElem.querySelector('.mwi-badge-price-bid')) {
+            this.renderPriceBadge(itemElem, bidPrice, 'bid');
         }
-
-        const inventory = dataManager.getInventory();
-        if (!inventory) {
-            console.warn('[InventoryBadgePrices] Inventory data not available yet');
-            return;
-        }
-
-        // Build lookup map
-        const inventoryLookup = new Map();
-        for (const item of inventory) {
-            if (item.itemLocationHrid === '/item_locations/inventory') {
-                const key = `${item.itemHrid}|${item.count}`;
-                inventoryLookup.set(key, item);
-            }
-        }
-
-        // Pre-fetch market prices
-        const itemsToPrice = [];
-        for (const item of inventory) {
-            if (item.itemLocationHrid === '/item_locations/inventory') {
-                itemsToPrice.push({
-                    itemHrid: item.itemHrid,
-                    enhancementLevel: item.enhancementLevel || 0
-                });
-            }
-        }
-        const priceCache = marketAPI.getPricesBatch(itemsToPrice);
-
-        const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
-        const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
-
-        for (const itemElem of itemElems) {
-            const svg = itemElem.querySelector('svg');
-            if (!svg) continue;
-
-            let itemName = svg.getAttribute('aria-label');
-            if (!itemName) continue;
-
-            const itemHrid = this.findItemHrid(itemName, gameData);
-            if (!itemHrid) continue;
-
-            const countElem = itemElem.querySelector('[class*="Item_count"]');
-            if (!countElem) continue;
-
-            let itemCount = this.parseItemCount(countElem.textContent);
-            const itemDetails = gameData.itemDetailMap[itemHrid];
-
-            // Handle trainee items
-            if (itemHrid.includes('trainee_')) {
-                const equipmentType = itemDetails?.equipmentDetail?.type;
-                const isCharm = equipmentType === '/equipment_types/charm';
-                const sellPrice = itemDetails?.sellPrice;
-
-                if (isCharm && sellPrice) {
-                    itemElem.dataset.askValue = sellPrice * itemCount;
-                    itemElem.dataset.bidValue = sellPrice * itemCount;
-                } else {
-                    itemElem.dataset.askValue = 0;
-                    itemElem.dataset.bidValue = 0;
-                }
-                continue;
-            }
-
-            // Handle openable containers
-            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
-                const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
-                if (evData && evData.expectedValue > 0) {
-                    itemElem.dataset.askValue = evData.expectedValue * itemCount;
-                    itemElem.dataset.bidValue = evData.expectedValue * itemCount;
-                    continue;
-                }
-            }
-
-            // Match to inventory item
-            const key = `${itemHrid}|${itemCount}`;
-            const inventoryItem = inventoryLookup.get(key);
-            const enhancementLevel = inventoryItem?.enhancementLevel || 0;
-            const isEquipment = itemDetails?.equipmentDetail ? true : false;
-
-            let askPrice = 0;
-            let bidPrice = 0;
-
-            // Determine pricing method
-            if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
-                const cachedCost = networthCache.get(itemHrid, enhancementLevel);
-
-                if (cachedCost !== null) {
-                    askPrice = cachedCost;
-                    bidPrice = cachedCost;
-                } else {
-                    const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
-
-                    if (enhancementPath && enhancementPath.optimalStrategy) {
-                        const enhancementCost = enhancementPath.optimalStrategy.totalCost;
-                        networthCache.set(itemHrid, enhancementLevel, enhancementCost);
-                        askPrice = enhancementCost;
-                        bidPrice = enhancementCost;
-                    } else {
-                        const key = `${itemHrid}:${enhancementLevel}`;
-                        const marketPrice = priceCache.get(key);
-                        if (marketPrice) {
-                            askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
-                            bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
-                        }
-                    }
-                }
-            } else {
-                // Use market price only (no fallback to crafting/enhancement costs)
-                const key = `${itemHrid}:${enhancementLevel}`;
-                const marketPrice = priceCache.get(key);
-
-                if (marketPrice) {
-                    askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
-                    bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
-                }
-            }
-
-            // Store both values (per-item price, not stack total)
-            itemElem.dataset.askValue = askPrice;
-            itemElem.dataset.bidValue = bidPrice;
+        if (askPrice > 0 && !itemElem.querySelector('.mwi-badge-price-ask')) {
+            this.renderPriceBadge(itemElem, askPrice, 'ask');
         }
     }
 
     /**
-     * Calculate crafting cost for an item
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} Total material cost or 0
-     */
-    calculateCraftingCost(itemHrid) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) return 0;
-
-        for (const action of Object.values(gameData.actionDetailMap || {})) {
-            if (action.outputItems) {
-                for (const output of action.outputItems) {
-                    if (output.itemHrid === itemHrid) {
-                        let inputCost = 0;
-
-                        if (action.inputItems && action.inputItems.length > 0) {
-                            for (const input of action.inputItems) {
-                                const inputPrice = getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
-                                inputCost += inputPrice * input.count;
-                            }
-                        }
-
-                        inputCost *= 0.9; // Artisan Tea reduction
-
-                        let upgradeCost = 0;
-                        if (action.upgradeItemHrid) {
-                            const upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
-                            upgradeCost = upgradePrice;
-                        }
-
-                        const totalCost = inputCost + upgradeCost;
-                        return totalCost / (output.count || 1);
-                    }
-                }
-            }
-        }
-
-        return 0;
-    }
-
-    /**
-     * Render price badges on all items
+     * Render all badges (legacy method - now delegates to manager)
      */
     renderBadges() {
-        if (!this.currentInventoryElem) return;
-
-        const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
-
-        for (const itemElem of itemElems) {
-            // Remove existing badges
-            const existingBidBadge = itemElem.querySelector('.mwi-badge-price-bid');
-            const existingAskBadge = itemElem.querySelector('.mwi-badge-price-ask');
-            if (existingBidBadge) existingBidBadge.remove();
-            if (existingAskBadge) existingAskBadge.remove();
-
-            // Get values
-            const bidValue = parseFloat(itemElem.dataset.bidValue) || 0;
-            const askValue = parseFloat(itemElem.dataset.askValue) || 0;
-
-            // Show both badges if they have values
-            if (bidValue > 0) {
-                this.renderPriceBadge(itemElem, bidValue, 'bid');
-            }
-            if (askValue > 0) {
-                this.renderPriceBadge(itemElem, askValue, 'ask');
-            }
-        }
+        inventoryBadgeManager.renderAllBadges();
     }
 
     /**
@@ -406,41 +202,17 @@ class InventoryBadgePrices {
     }
 
     /**
-     * Find item HRID from item name
-     * @param {string} itemName - Item display name
-     * @param {Object} gameData - Game data
-     * @returns {string|null} Item HRID
-     */
-    findItemHrid(itemName, gameData) {
-        for (const [hrid, item] of Object.entries(gameData.itemDetailMap)) {
-            if (item.name === itemName) {
-                return hrid;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Parse item count from text
-     * @param {string} text - Count text
-     * @returns {number} Numeric count
-     */
-    parseItemCount(text) {
-        text = text.toLowerCase().trim();
-
-        if (text.includes('k')) {
-            return parseFloat(text.replace('k', '')) * 1000;
-        } else if (text.includes('m')) {
-            return parseFloat(text.replace('m', '')) * 1000000;
-        } else {
-            return parseFloat(text) || 0;
-        }
-    }
-
-    /**
      * Refresh badges (called when settings change)
      */
     refresh() {
+        // Clear badge manager's processed tracking to force re-render
+        inventoryBadgeManager.clearProcessedTracking();
+
+        // Remove all existing badges so they can be recreated with new settings
+        const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
+        badges.forEach(badge => badge.remove());
+
+        // Trigger re-render
         this.updateBadges();
     }
 
@@ -448,6 +220,9 @@ class InventoryBadgePrices {
      * Disable and cleanup
      */
     disable() {
+        // Unregister from badge manager
+        inventoryBadgeManager.unregisterProvider('inventory-badge-prices');
+
         const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
         badges.forEach(badge => badge.remove());
 

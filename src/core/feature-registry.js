@@ -39,6 +39,7 @@ import taskIcons from '../features/tasks/task-icons.js';
 import remainingXP from '../features/skills/remaining-xp.js';
 import housePanelObserver from '../features/house/house-panel-observer.js';
 import networthFeature from '../features/networth/index.js';
+import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';
 import inventorySort from '../features/inventory/inventory-sort.js';
 import inventoryBadgePrices from '../features/inventory/inventory-badge-prices.js';
 import enhancementTracker from '../features/enhancement/enhancement-tracker.js';
@@ -402,6 +403,16 @@ const featureRegistry = [
         async: true,
         // Also initialize if inventorySummary is enabled
         customCheck: () => config.isFeatureEnabled('networth') || config.isFeatureEnabled('inventorySummary')
+    },
+
+    // Inventory Badge Manager (must initialize before inventory features)
+    {
+        key: 'inventoryBadgeManager',
+        name: 'Inventory Badge Manager',
+        category: 'Economy',
+        initialize: () => inventoryBadgeManager.initialize(),
+        async: false,
+        alwaysEnabled: true // Core infrastructure, always enabled
     },
     {
         key: 'inventorySort',
