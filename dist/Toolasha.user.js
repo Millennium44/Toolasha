@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.04
+// @version      0.5.05
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -36157,7 +36157,12 @@
                     this.insertAnnotation(label, color, e.msg, false);
 
                     // Add cumulative average if this is a successful run
-                    if (diff && dungeonName && dungeonName !== 'Unknown') {
+                    // Check that the NEXT key count (next) is not followed by fail/cancel
+                    const nextNext = events[i + 2];
+                    const nextRunWasCanceled = nextNext && (nextNext.type === 'fail' || nextNext.type === 'cancel');
+                    const isSuccessfulRun = diff && dungeonName && dungeonName !== 'Unknown' && !nextRunWasCanceled;
+
+                    if (isSuccessfulRun) {
                         // Initialize dungeon tracking if needed
                         if (!this.cumulativeStatsByDungeon[dungeonName]) {
                             this.cumulativeStatsByDungeon[dungeonName] = {
@@ -42074,7 +42079,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.04',
+            version: '0.5.05',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

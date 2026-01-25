@@ -181,7 +181,12 @@ class DungeonTrackerChatAnnotations {
                 this.insertAnnotation(label, color, e.msg, false);
 
                 // Add cumulative average if this is a successful run
-                if (diff && dungeonName && dungeonName !== 'Unknown') {
+                // Check that the NEXT key count (next) is not followed by fail/cancel
+                const nextNext = events[i + 2];
+                const nextRunWasCanceled = nextNext && (nextNext.type === 'fail' || nextNext.type === 'cancel');
+                const isSuccessfulRun = diff && dungeonName && dungeonName !== 'Unknown' && !nextRunWasCanceled;
+
+                if (isSuccessfulRun) {
                     // Initialize dungeon tracking if needed
                     if (!this.cumulativeStatsByDungeon[dungeonName]) {
                         this.cumulativeStatsByDungeon[dungeonName] = {
