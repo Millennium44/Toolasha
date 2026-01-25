@@ -19604,11 +19604,11 @@
                 clearTimeout(this.sortTimeout);
             }
 
-            // Schedule new sort after 500ms of inactivity
+            // Schedule new sort after 300ms of inactivity (reduced from 500ms)
             this.sortTimeout = setTimeout(() => {
                 this.sortPanelsByProfit();
                 this.sortTimeout = null;
-            }, 500);
+            }, 300);
         }
 
         /**
@@ -19622,13 +19622,13 @@
 
             // Clean up stale panels and group by container
             for (const [actionPanel, data] of this.panels.entries()) {
-                if (!document.body.contains(actionPanel)) {
+                const container = actionPanel.parentElement;
+
+                // If no parent, panel is detached - clean it up
+                if (!container) {
                     this.panels.delete(actionPanel);
                     continue;
                 }
-
-                const container = actionPanel.parentElement;
-                if (!container) continue;
 
                 if (!containerMap.has(container)) {
                     containerMap.set(container, []);
@@ -19677,10 +19677,13 @@
                     }
                 });
 
-                // Reorder DOM elements
+                // Reorder DOM elements using DocumentFragment to batch reflows
+                // This prevents 50 individual reflows (one per appendChild)
+                const fragment = document.createDocumentFragment();
                 panels.forEach(({panel}) => {
-                    container.appendChild(panel);
+                    fragment.appendChild(panel);
                 });
+                container.appendChild(fragment);
             }
         }
     }
