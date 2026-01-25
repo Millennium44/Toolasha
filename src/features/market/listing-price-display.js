@@ -29,7 +29,6 @@ class ListingPriceDisplay {
     initialize() {
         // Guard against duplicate initialization
         if (this.isInitialized) {
-            console.log('[ListingPriceDisplay] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -37,7 +36,6 @@ class ListingPriceDisplay {
             return;
         }
 
-        console.log('[ListingPriceDisplay] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Load initial listings from dataManager

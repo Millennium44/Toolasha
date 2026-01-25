@@ -50,15 +50,12 @@ class TradeHistory {
     async initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[TradeHistory] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
         if (!config.getSetting('market_tradeHistory')) {
             return;
         }
-
-        console.log('[TradeHistory] ✓ Initializing (first time)');
 
         // Get current character ID
         this.characterId = dataManager.getCurrentCharacterId();

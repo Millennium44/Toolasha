@@ -25,7 +25,6 @@ class AlchemyItemDimming {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[AlchemyItemDimming] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -34,7 +33,6 @@ class AlchemyItemDimming {
             return;
         }
 
-        console.log('[AlchemyItemDimming] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Register with centralized observer to watch for alchemy panel

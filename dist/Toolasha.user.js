@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.06
+// @version      0.5.07
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -10762,7 +10762,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[MarketFilter] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -10770,7 +10769,6 @@
                 return;
             }
 
-            console.log('[MarketFilter] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Register DOM observer for marketplace panel
@@ -11143,7 +11141,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[AutoFillPrice] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -11151,7 +11148,6 @@
                 return;
             }
 
-            console.log('[AutoFillPrice] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Register DOM observer for marketplace order modals
@@ -12061,7 +12057,6 @@
         initialize() {
             // Guard against duplicate initialization
             if (this.isInitialized) {
-                console.log('[ListingPriceDisplay] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -12069,7 +12064,6 @@
                 return;
             }
 
-            console.log('[ListingPriceDisplay] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Load initial listings from dataManager
@@ -12857,15 +12851,12 @@
         async initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[TradeHistory] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
             if (!config.getSetting('market_tradeHistory')) {
                 return;
             }
-
-            console.log('[TradeHistory] ✓ Initializing (first time)');
 
             // Get current character ID
             this.characterId = dataManager.getCurrentCharacterId();
@@ -21472,7 +21463,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[AbilityBookCalculator] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -21481,7 +21471,6 @@
                 return;
             }
 
-            console.log('[AbilityBookCalculator] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Register with centralized observer to watch for Item Dictionary modal
@@ -23672,7 +23661,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[CombatScore] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -23681,7 +23669,6 @@
                 return;
             }
 
-            console.log('[CombatScore] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Store handler reference for cleanup
@@ -24614,7 +24601,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[CharacterCardButton] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -24623,7 +24609,6 @@
                 return;
             }
 
-            console.log('[CharacterCardButton] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Store handler reference for cleanup
@@ -25142,7 +25127,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[AlchemyItemDimming] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -25151,7 +25135,6 @@
                 return;
             }
 
-            console.log('[AlchemyItemDimming] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Register with centralized observer to watch for alchemy panel
@@ -26104,15 +26087,12 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[TaskProfitDisplay] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
             if (!config.getSetting('taskProfitCalculator')) {
                 return;
             }
-
-            console.log('[TaskProfitDisplay] ✓ Initializing (first time)');
 
             // Set up retry handler for when game data loads
             if (!dataManager.getInitClientData()) {
@@ -34215,11 +34195,9 @@
         async initialize() {
             // Guard against duplicate initialization
             if (this.isInitialized) {
-                console.log('[Enhancement] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
-            console.log('[Enhancement] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Initialize tracker (async)
@@ -35032,11 +35010,9 @@
         async initialize() {
             // Guard FIRST
             if (this.isInitialized) {
-                console.log('[DungeonTracker] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
-            console.log('[DungeonTracker] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Get character ID from URL for data isolation
@@ -36682,21 +36658,47 @@
 
         /**
          * Get timestamp from message DOM element
+         * Handles both American (M/D HH:MM:SS AM/PM) and international (DD-M HH:MM:SS) formats
          * @param {HTMLElement} msg - Message element
          * @returns {Date|null} Parsed timestamp or null
          */
         getTimestampFromMessage(msg) {
             const text = msg.textContent.trim();
-            const match = text.match(/\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
-            if (!match) return null;
 
-            let [, date, hour, min, sec, period] = match;
-            const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+            // Try American format: [M/D HH:MM:SS AM/PM] or [M/D HH:MM:SS] (24-hour)
+            let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+            let isAmerican = true;
+
+            if (!match) {
+                // Try international format: [DD-M HH:MM:SS] (24-hour)
+                match = text.match(/\[(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\]/);
+                isAmerican = false;
+            }
+
+            if (!match) {
+                console.warn('[Dungeon Tracker] Found key counts but could not parse timestamp from:', text.match(/\[.*?\]/)?.[0]);
+                return null;
+            }
+
+            let month, day, hour, min, sec, period;
+
+            if (isAmerican) {
+                // American format: M/D
+                [, month, day, hour, min, sec, period] = match;
+                month = parseInt(month, 10);
+                day = parseInt(day, 10);
+            } else {
+                // International format: D-M
+                [, day, month, hour, min, sec] = match;
+                month = parseInt(month, 10);
+                day = parseInt(day, 10);
+            }
 
             hour = parseInt(hour, 10);
             min = parseInt(min, 10);
             sec = parseInt(sec, 10);
 
+            // Handle AM/PM conversion (only for American format with AM/PM)
             if (period === 'PM' && hour < 12) hour += 12;
             if (period === 'AM' && hour === 12) hour = 0;
 
@@ -36971,7 +36973,8 @@
             filteredRuns.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
             // Prepare data
-            const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
+            // Label runs in reverse chronological order to match list (newest = Run 1, oldest = Run N)
+            const labels = filteredRuns.map((_, i) => `Run ${filteredRuns.length - i}`);
             const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000); // Convert to minutes
 
             // Calculate stats
@@ -37223,7 +37226,8 @@
             filteredRuns.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
             // Prepare data (same as main chart)
-            const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
+            // Label runs in reverse chronological order to match list (newest = Run 1, oldest = Run N)
+            const labels = filteredRuns.map((_, i) => `Run ${filteredRuns.length - i}`);
             const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000);
 
             const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
@@ -38986,7 +38990,6 @@
         initialize() {
             // Guard FIRST (before feature check)
             if (this.isInitialized) {
-                console.log('[CombatSummary] ⚠️ BLOCKED duplicate initialization (fix working!)');
                 return;
             }
 
@@ -38995,7 +38998,6 @@
                 return;
             }
 
-            console.log('[CombatSummary] ✓ Initializing (first time)');
             this.isInitialized = true;
 
             // Store handler reference for cleanup
@@ -42448,7 +42450,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.06',
+            version: '0.5.07',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

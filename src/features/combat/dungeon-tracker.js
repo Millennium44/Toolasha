@@ -191,11 +191,9 @@ class DungeonTracker {
     async initialize() {
         // Guard FIRST
         if (this.isInitialized) {
-            console.log('[DungeonTracker] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
-        console.log('[DungeonTracker] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Get character ID from URL for data isolation

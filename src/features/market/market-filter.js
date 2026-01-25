@@ -29,7 +29,6 @@ class MarketFilter {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[MarketFilter] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -37,7 +36,6 @@ class MarketFilter {
             return;
         }
 
-        console.log('[MarketFilter] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Register DOM observer for marketplace panel

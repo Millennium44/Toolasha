@@ -22,7 +22,6 @@ class AutoFillPrice {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[AutoFillPrice] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -30,7 +29,6 @@ class AutoFillPrice {
             return;
         }
 
-        console.log('[AutoFillPrice] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Register DOM observer for marketplace order modals

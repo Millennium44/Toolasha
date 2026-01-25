@@ -421,21 +421,47 @@ class DungeonTrackerChatAnnotations {
 
     /**
      * Get timestamp from message DOM element
+     * Handles both American (M/D HH:MM:SS AM/PM) and international (DD-M HH:MM:SS) formats
      * @param {HTMLElement} msg - Message element
      * @returns {Date|null} Parsed timestamp or null
      */
     getTimestampFromMessage(msg) {
         const text = msg.textContent.trim();
-        const match = text.match(/\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
-        if (!match) return null;
 
-        let [, date, hour, min, sec, period] = match;
-        const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+        // Try American format: [M/D HH:MM:SS AM/PM] or [M/D HH:MM:SS] (24-hour)
+        let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+        let isAmerican = true;
+
+        if (!match) {
+            // Try international format: [DD-M HH:MM:SS] (24-hour)
+            match = text.match(/\[(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\]/);
+            isAmerican = false;
+        }
+
+        if (!match) {
+            console.warn('[Dungeon Tracker] Found key counts but could not parse timestamp from:', text.match(/\[.*?\]/)?.[0]);
+            return null;
+        }
+
+        let month, day, hour, min, sec, period;
+
+        if (isAmerican) {
+            // American format: M/D
+            [, month, day, hour, min, sec, period] = match;
+            month = parseInt(month, 10);
+            day = parseInt(day, 10);
+        } else {
+            // International format: D-M
+            [, day, month, hour, min, sec] = match;
+            month = parseInt(month, 10);
+            day = parseInt(day, 10);
+        }
 
         hour = parseInt(hour, 10);
         min = parseInt(min, 10);
         sec = parseInt(sec, 10);
 
+        // Handle AM/PM conversion (only for American format with AM/PM)
         if (period === 'PM' && hour < 12) hour += 12;
         if (period === 'AM' && hour === 12) hour = 0;
 

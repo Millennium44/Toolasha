@@ -19,11 +19,9 @@ class EnhancementFeature {
     async initialize() {
         // Guard against duplicate initialization
         if (this.isInitialized) {
-            console.log('[Enhancement] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
-        console.log('[Enhancement] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Initialize tracker (async)

@@ -46,7 +46,6 @@ class AbilityBookCalculator {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[AbilityBookCalculator] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -55,7 +54,6 @@ class AbilityBookCalculator {
             return;
         }
 
-        console.log('[AbilityBookCalculator] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Register with centralized observer to watch for Item Dictionary modal

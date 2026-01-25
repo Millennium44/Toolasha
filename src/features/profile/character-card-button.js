@@ -44,7 +44,6 @@ class CharacterCardButton {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[CharacterCardButton] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -53,7 +52,6 @@ class CharacterCardButton {
             return;
         }
 
-        console.log('[CharacterCardButton] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Store handler reference for cleanup

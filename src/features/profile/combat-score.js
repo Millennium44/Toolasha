@@ -48,7 +48,6 @@ class CombatScore {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[CombatScore] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -57,7 +56,6 @@ class CombatScore {
             return;
         }
 
-        console.log('[CombatScore] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Store handler reference for cleanup

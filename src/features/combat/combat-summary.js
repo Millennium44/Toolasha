@@ -24,7 +24,6 @@ class CombatSummary {
     initialize() {
         // Guard FIRST (before feature check)
         if (this.isInitialized) {
-            console.log('[CombatSummary] ⚠️ BLOCKED duplicate initialization (fix working!)');
             return;
         }
 
@@ -33,7 +32,6 @@ class CombatSummary {
             return;
         }
 
-        console.log('[CombatSummary] ✓ Initializing (first time)');
         this.isInitialized = true;
 
         // Store handler reference for cleanup
