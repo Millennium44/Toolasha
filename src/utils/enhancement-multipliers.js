@@ -25,10 +25,26 @@ export const ENHANCEMENT_MULTIPLIERS = {
  * Maps enhancement level to percentage bonus
  */
 export const ENHANCEMENT_BONUSES = {
-    1: 0.020,  2: 0.042,  3: 0.066,  4: 0.092,  5: 0.120,
-    6: 0.150,  7: 0.182,  8: 0.216,  9: 0.252, 10: 0.290,
-    11: 0.334, 12: 0.384, 13: 0.440, 14: 0.502, 15: 0.570,
-    16: 0.644, 17: 0.724, 18: 0.810, 19: 0.902, 20: 1.000
+    1: 0.02,
+    2: 0.042,
+    3: 0.066,
+    4: 0.092,
+    5: 0.12,
+    6: 0.15,
+    7: 0.182,
+    8: 0.216,
+    9: 0.252,
+    10: 0.29,
+    11: 0.334,
+    12: 0.384,
+    13: 0.44,
+    14: 0.502,
+    15: 0.57,
+    16: 0.644,
+    17: 0.724,
+    18: 0.81,
+    19: 0.902,
+    20: 1.0,
 };
 
 /**
@@ -46,5 +62,5 @@ export function getEnhancementMultiplier(itemDetails, enhancementLevel) {
     const slotMultiplier = ENHANCEMENT_MULTIPLIERS[equipmentType] || 1;
     const enhancementBonus = ENHANCEMENT_BONUSES[enhancementLevel] || 0;
 
-    return 1 + (enhancementBonus * slotMultiplier);
+    return 1 + enhancementBonus * slotMultiplier;
 }

@@ -82,7 +82,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
 
     for (let level = 1; level <= currentEnhancementLevel; level++) {
         const resultsForLevel = allResults[level - 1];
-        const minCost = Math.min(...resultsForLevel.map(r => r.totalCost));
+        const minCost = Math.min(...resultsForLevel.map((r) => r.totalCost));
         targetCosts[level] = minCost;
     }
 
@@ -141,7 +141,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             protectionCount: optimalTraditional.protectionCount,
             totalCost: optimalTraditional.totalCost,
             usedMirror: false,
-            mirrorStartLevel: null
+            mirrorStartLevel: null,
         };
     }
 
@@ -149,7 +149,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         targetLevel: currentEnhancementLevel,
         itemLevel,
         optimalStrategy,
-        allStrategies: [optimalStrategy] // Only return optimal
+        allStrategies: [optimalStrategy], // Only return optimal
     };
 }
 
@@ -168,7 +168,7 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
             targetLevel,
             protectFrom,
             blessedTea: config.teas.blessed,
-            guzzlingBonus: config.guzzlingBonus
+            guzzlingBonus: config.guzzlingBonus,
         };
 
         // Calculate enhancement statistics
@@ -185,7 +185,7 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
         return {
             expectedAttempts: result.attempts,
             totalTime: result.totalTime,
-            ...costs
+            ...costs,
         };
     } catch (error) {
         console.error('[Enhancement Tooltip] Strategy calculation error:', error);
@@ -197,15 +197,23 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
  * Build mirror-optimized result with Fibonacci quantities
  * @private
  */
-function buildMirrorOptimizedResult(itemHrid, targetLevel, mirrorStartLevel, targetCosts, optimalTraditional, mirrorPrice, config) {
+function buildMirrorOptimizedResult(
+    itemHrid,
+    targetLevel,
+    mirrorStartLevel,
+    targetCosts,
+    optimalTraditional,
+    mirrorPrice,
+    config
+) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
     // Calculate Fibonacci quantities for consumed items
     const n = targetLevel - mirrorStartLevel;
-    const numLowerTier = fib(n);           // Quantity of (mirrorStartLevel - 2) items
-    const numUpperTier = fib(n + 1);       // Quantity of (mirrorStartLevel - 1) items
-    const numMirrors = mirrorFib(n);       // Quantity of Philosopher's Mirrors
+    const numLowerTier = fib(n); // Quantity of (mirrorStartLevel - 2) items
+    const numUpperTier = fib(n + 1); // Quantity of (mirrorStartLevel - 1) items
+    const numMirrors = mirrorFib(n); // Quantity of Philosopher's Mirrors
 
     const lowerTierLevel = mirrorStartLevel - 2;
     const upperTierLevel = mirrorStartLevel - 1;
@@ -225,14 +233,14 @@ function buildMirrorOptimizedResult(itemHrid, targetLevel, mirrorStartLevel, tar
             level: lowerTierLevel,
             quantity: numLowerTier,
             costEach: costLowerTier,
-            totalCost: totalLowerTierCost
+            totalCost: totalLowerTierCost,
         },
         {
             level: upperTierLevel,
             quantity: numUpperTier,
             costEach: costUpperTier,
-            totalCost: totalUpperTierCost
-        }
+            totalCost: totalUpperTierCost,
+        },
     ];
 
     // For mirror phase: ONLY consumed items + mirrors
@@ -244,19 +252,19 @@ function buildMirrorOptimizedResult(itemHrid, targetLevel, mirrorStartLevel, tar
         label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
         expectedAttempts: optimalTraditional.expectedAttempts,
         totalTime: optimalTraditional.totalTime,
-        baseCost: 0,  // Not applicable for mirror phase
-        materialCost: 0,  // Not applicable for mirror phase
-        protectionCost: 0,  // Not applicable for mirror phase
+        baseCost: 0, // Not applicable for mirror phase
+        materialCost: 0, // Not applicable for mirror phase
+        protectionCost: 0, // Not applicable for mirror phase
         protectionItemHrid: null,
         protectionCount: 0,
         consumedItemsCost: totalLowerTierCost + totalUpperTierCost,
         philosopherMirrorCost: totalMirrorsCost,
-        totalCost: targetCosts[targetLevel],  // Use recursive formula result for consistency
+        totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
         mirrorStartLevel: mirrorStartLevel,
         usedMirror: true,
         traditionalCost: optimalTraditional.totalCost,
         consumedItems: consumedItems,
-        mirrorCount: numMirrors
+        mirrorCount: numMirrors,
     };
 }
 
@@ -280,7 +288,7 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
         targetLevel,
         protectFrom,
         blessedTea: config.teas.blessed,
-        guzzlingBonus: config.guzzlingBonus
+        guzzlingBonus: config.guzzlingBonus,
     });
 
     // Calculate per-action material cost (same for all enhancement levels)
@@ -346,7 +354,7 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
         protectionCost,
         protectionItemHrid,
         protectionCount,
-        totalCost: baseCost + materialCost + protectionCost
+        totalCost: baseCost + materialCost + protectionCost,
     };
 }
 
@@ -454,10 +462,7 @@ function getCheapestProtectionPrice(itemHrid) {
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
     // Build list of protection options: [item itself, mirror, ...specific items]
-    const protectionOptions = [
-        itemHrid,
-        '/items/mirror_of_protection'
-    ];
+    const protectionOptions = [itemHrid, '/items/mirror_of_protection'];
 
     // Add specific protection items if they exist
     if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
@@ -477,7 +482,7 @@ function getCheapestProtectionPrice(itemHrid) {
 
     return {
         price: cheapestPrice === Infinity ? 0 : cheapestPrice,
-        itemHrid: cheapestItemHrid
+        itemHrid: cheapestItemHrid,
     };
 }
 
@@ -519,10 +524,12 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     const { targetLevel, optimalStrategy } = enhancementData;
 
     // Validate required fields
-    if (typeof optimalStrategy.expectedAttempts !== 'number' ||
+    if (
+        typeof optimalStrategy.expectedAttempts !== 'number' ||
         typeof optimalStrategy.totalTime !== 'number' ||
         typeof optimalStrategy.materialCost !== 'number' ||
-        typeof optimalStrategy.totalCost !== 'number') {
+        typeof optimalStrategy.totalCost !== 'number'
+    ) {
         console.error('[Enhancement Tooltip] Missing required fields in optimal strategy:', optimalStrategy);
         return '';
     }
@@ -536,7 +543,10 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
     // Show Philosopher's Mirror usage if applicable
     if (optimalStrategy.usedMirror && optimalStrategy.mirrorStartLevel) {
-        html += '<div style="color: #ffd700;">Uses Philosopher\'s Mirror from +' + optimalStrategy.mirrorStartLevel + '</div>';
+        html +=
+            '<div style="color: #ffd700;">Uses Philosopher\'s Mirror from +' +
+            optimalStrategy.mirrorStartLevel +
+            '</div>';
     }
 
     html += '<div>Expected Attempts: ' + numberFormatter(optimalStrategy.expectedAttempts.toFixed(1)) + '</div>';
@@ -549,23 +559,31 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         // Mirror-optimized breakdown
         // For mirror phase, we ONLY show consumed items and mirrors (no base/materials/protection)
         // Consumed items section (Fibonacci-based quantities)
-        html += 'Consumed Items (Philosopher\'s Mirror):';
+        html += "Consumed Items (Philosopher's Mirror):";
         html += '<div style="margin-left: 12px;">';
 
         // Show consumed items in descending order (higher level first), filter out zero quantities
         const sortedConsumed = [...optimalStrategy.consumedItems]
-            .filter(item => item.quantity > 0)
+            .filter((item) => item.quantity > 0)
             .sort((a, b) => b.level - a.level);
         sortedConsumed.forEach((item, index) => {
             if (index > 0) html += '<br>'; // Add line break before items after the first
-            html += '+' + item.level + ': ' + item.quantity + ' × ' + numberFormatter(item.costEach) + ' = ' + numberFormatter(item.totalCost);
+            html +=
+                '+' +
+                item.level +
+                ': ' +
+                item.quantity +
+                ' × ' +
+                numberFormatter(item.costEach) +
+                ' = ' +
+                numberFormatter(item.totalCost);
         });
 
         html += '</div>';
         // Philosopher's Mirror cost
         if (optimalStrategy.philosopherMirrorCost > 0) {
             const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
-            html += 'Philosopher\'s Mirror: ' + numberFormatter(optimalStrategy.philosopherMirrorCost);
+            html += "Philosopher's Mirror: " + numberFormatter(optimalStrategy.philosopherMirrorCost);
             if (optimalStrategy.mirrorCount > 0 && mirrorPrice > 0) {
                 html += ' (' + optimalStrategy.mirrorCount + 'x @ ' + numberFormatter(mirrorPrice) + ' each)';
             }

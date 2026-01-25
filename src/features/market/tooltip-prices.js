@@ -68,7 +68,6 @@ class TooltipPrices {
 
         // Register with centralized DOM observer
         this.setupObserver();
-
     }
 
     /**
@@ -124,13 +123,9 @@ class TooltipPrices {
      */
     setupObserver() {
         // Register with centralized DOM observer to watch for tooltip poppers
-        this.unregisterObserver = domObserver.onClass(
-            'TooltipPrices',
-            'MuiTooltip-popper',
-            (tooltipElement) => {
-                this.handleTooltip(tooltipElement);
-            }
-        );
+        this.unregisterObserver = domObserver.onClass('TooltipPrices', 'MuiTooltip-popper', (tooltipElement) => {
+            this.handleTooltip(tooltipElement);
+        });
 
         this.isActive = true;
     }
@@ -230,11 +225,7 @@ class TooltipPrices {
             const enhancementConfig = getEnhancingParams();
             if (enhancementConfig) {
                 // Calculate optimal enhancement path
-                const enhancementData = calculateEnhancementPath(
-                    itemHrid,
-                    enhancementLevel,
-                    enhancementConfig
-                );
+                const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig);
 
                 if (enhancementData) {
                     // Inject enhancement analysis into tooltip
@@ -393,11 +384,7 @@ class TooltipPrices {
         }
 
         // Create price display
-        const priceDiv = dom.createStyledDiv(
-            { color: config.COLOR_TOOLTIP_INFO },
-            '',
-            'market-price-injected'
-        );
+        const priceDiv = dom.createStyledDiv({ color: config.COLOR_TOOLTIP_INFO }, '', 'market-price-injected');
 
         // Show message if no market data at all
         if (price.ask <= 0 && price.bid <= 0) {
@@ -513,21 +500,21 @@ class TooltipPrices {
             html += '</tr>';
 
             // Fetch market prices for all materials (profit calculator only stores one price based on mode)
-            const materialsWithPrices = profitData.materialCosts.map(material => {
+            const materialsWithPrices = profitData.materialCosts.map((material) => {
                 const itemHrid = material.itemHrid;
                 const marketPrice = marketAPI.getPrice(itemHrid, 0);
 
                 return {
                     ...material,
-                    askPrice: (marketPrice?.ask && marketPrice.ask > 0) ? marketPrice.ask : 0,
-                    bidPrice: (marketPrice?.bid && marketPrice.bid > 0) ? marketPrice.bid : 0
+                    askPrice: marketPrice?.ask && marketPrice.ask > 0 ? marketPrice.ask : 0,
+                    bidPrice: marketPrice?.bid && marketPrice.bid > 0 ? marketPrice.bid : 0,
                 };
             });
 
             // Calculate totals using actual amounts (not count - materialCosts uses 'amount' field)
             const totalCount = materialsWithPrices.reduce((sum, m) => sum + m.amount, 0);
-            const totalAsk = materialsWithPrices.reduce((sum, m) => sum + (m.askPrice * m.amount), 0);
-            const totalBid = materialsWithPrices.reduce((sum, m) => sum + (m.bidPrice * m.amount), 0);
+            const totalAsk = materialsWithPrices.reduce((sum, m) => sum + m.askPrice * m.amount, 0);
+            const totalBid = materialsWithPrices.reduce((sum, m) => sum + m.bidPrice * m.amount, 0);
 
             // Total row
             html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
@@ -562,7 +549,6 @@ class TooltipPrices {
 
         return html;
     }
-
 
     /**
      * Inject expected value display into tooltip
@@ -665,11 +651,7 @@ class TooltipPrices {
             return null;
         }
 
-        const GATHERING_TYPES = [
-            '/action_types/foraging',
-            '/action_types/woodcutting',
-            '/action_types/milking'
-        ];
+        const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
         const soloActions = [];
         const zoneActions = [];
@@ -694,7 +676,7 @@ class TooltipPrices {
                         dropRate = drop.dropRate;
                         // Solo gathering has 100% drop rate (dropRate === 1)
                         // Zone gathering has < 100% drop rate
-                        isSolo = (dropRate === 1);
+                        isSolo = dropRate === 1;
                         break;
                     }
                 }
@@ -716,7 +698,7 @@ class TooltipPrices {
                 const actionData = {
                     actionHrid,
                     actionName: action.name,
-                    dropRate
+                    dropRate,
                 };
 
                 if (isSolo) {
@@ -795,7 +777,7 @@ class TooltipPrices {
         const showRareDrops = config.getSetting('itemTooltip_gatheringRareDrops');
         let zoneActions = gatheringData.zoneActions;
         if (!showRareDrops) {
-            zoneActions = zoneActions.filter(action => !action.isRareDrop);
+            zoneActions = zoneActions.filter((action) => !action.isRareDrop);
         }
 
         // Skip if no actions to show

@@ -45,13 +45,9 @@ class InventoryBadgeManager {
         }
 
         // Watch for inventory panel
-        const unregister = domObserver.onClass(
-            'InventoryBadgeManager',
-            'Inventory_items',
-            (elem) => {
-                this.currentInventoryElem = elem;
-            }
-        );
+        const unregister = domObserver.onClass('InventoryBadgeManager', 'Inventory_items', (elem) => {
+            this.currentInventoryElem = elem;
+        });
         this.unregisterHandlers.push(unregister);
 
         // Watch for DOM changes to refresh badges
@@ -104,8 +100,7 @@ class InventoryBadgeManager {
         const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
 
         // Sort providers by priority
-        const sortedProviders = Array.from(this.providers.entries())
-            .sort((a, b) => a[1].priority - b[1].priority);
+        const sortedProviders = Array.from(this.providers.entries()).sort((a, b) => a[1].priority - b[1].priority);
 
         for (const itemElem of itemElems) {
             // Check if already processed AND badges still exist
@@ -186,7 +181,7 @@ class InventoryBadgeManager {
             if (item.itemLocationHrid === '/item_locations/inventory') {
                 itemsToPrice.push({
                     itemHrid: item.itemHrid,
-                    enhancementLevel: item.enhancementLevel || 0
+                    enhancementLevel: item.enhancementLevel || 0,
                 });
             }
         }
@@ -204,7 +199,7 @@ class InventoryBadgeManager {
             '/items/chimerical_token',
             '/items/sinister_token',
             '/items/enchanted_token',
-            '/items/pirate_token'
+            '/items/pirate_token',
         ]);
 
         for (const itemElem of itemElems) {
@@ -212,7 +207,7 @@ class InventoryBadgeManager {
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
 
-            let itemName = svg.getAttribute('aria-label');
+            const itemName = svg.getAttribute('aria-label');
             if (!itemName) continue;
 
             // Find item HRID
@@ -283,7 +278,7 @@ class InventoryBadgeManager {
             const enhancementLevel = inventoryItem?.enhancementLevel || 0;
 
             // Check if item is equipment
-            const isEquipment = itemDetails?.equipmentDetail ? true : false;
+            const isEquipment = !!itemDetails?.equipmentDetail;
 
             let askPrice = 0;
             let bidPrice = 0;
@@ -365,14 +360,22 @@ class InventoryBadgeManager {
                     } else {
                         // No crafting recipe found (likely drop-only item)
                         if (!this.warnedItems.has(itemHrid)) {
-                            console.warn('[InventoryBadgeManager] No market data or crafting recipe for equipment:', itemName, itemHrid);
+                            console.warn(
+                                '[InventoryBadgeManager] No market data or crafting recipe for equipment:',
+                                itemName,
+                                itemHrid
+                            );
                             this.warnedItems.add(itemHrid);
                         }
                     }
                 } else if (!isEquipment && askPrice === 0 && bidPrice === 0) {
                     // Non-equipment with no market data
                     if (!this.warnedItems.has(itemHrid)) {
-                        console.warn('[InventoryBadgeManager] No market data for non-equipment item:', itemName, itemHrid);
+                        console.warn(
+                            '[InventoryBadgeManager] No market data for non-equipment item:',
+                            itemName,
+                            itemHrid
+                        );
                         this.warnedItems.add(itemHrid);
                     }
                     // Leave values at 0 (no badge will be shown)
@@ -486,7 +489,7 @@ class InventoryBadgeManager {
      * Disable and cleanup
      */
     disable() {
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.providers.clear();
         this.processedItems = new WeakSet();

@@ -63,56 +63,56 @@ const featureRegistry = [
         name: 'Tooltip Prices',
         category: 'Market',
         initialize: () => tooltipPrices.initialize(),
-        async: true
+        async: true,
     },
     {
         key: 'expectedValueCalculator',
         name: 'Expected Value Calculator',
         category: 'Market',
         initialize: () => expectedValueCalculator.initialize(),
-        async: true
+        async: true,
     },
     {
         key: 'tooltipConsumables',
         name: 'Tooltip Consumables',
         category: 'Market',
         initialize: () => tooltipConsumables.initialize(),
-        async: true
+        async: true,
     },
     {
         key: 'marketFilter',
         name: 'Market Filter',
         category: 'Market',
         initialize: () => marketFilter.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'fillMarketOrderPrice',
         name: 'Auto-Fill Market Price',
         category: 'Market',
         initialize: () => autoFillPrice.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'market_visibleItemCount',
         name: 'Market Item Count Display',
         category: 'Market',
         initialize: () => itemCountDisplay.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'market_showListingPrices',
         name: 'Market Listing Price Display',
         category: 'Market',
         initialize: () => listingPriceDisplay.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'market_showEstimatedListingAge',
         name: 'Estimated Listing Age',
         category: 'Market',
         initialize: () => estimatedListingAge.initialize(),
-        async: true // Uses IndexedDB storage
+        async: true, // Uses IndexedDB storage
     },
     {
         key: 'market_tradeHistory',
@@ -122,7 +122,7 @@ const featureRegistry = [
             await tradeHistory.initialize();
             tradeHistoryDisplay.initialize();
         },
-        async: true
+        async: true,
     },
 
     // Action Features
@@ -132,7 +132,7 @@ const featureRegistry = [
         category: 'Actions',
         initialize: () => initActionPanelObserver(),
         async: false,
-        healthCheck: null // This feature has no DOM presence to check
+        healthCheck: null, // This feature has no DOM presence to check
     },
     {
         key: 'actionTimeDisplay',
@@ -152,7 +152,7 @@ const featureRegistry = [
             // Look for our injected time displays (using actual class name)
             const timeDisplays = queueMenu.querySelectorAll('.mwi-queue-action-time');
             return timeDisplays.length > 0;
-        }
+        },
     },
     {
         key: 'quickInputButtons',
@@ -165,7 +165,7 @@ const featureRegistry = [
             const actionPanels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
 
             // Find panels with number inputs (regular gathering/production actions)
-            const panelsWithInputs = Array.from(actionPanels).filter(panel => {
+            const panelsWithInputs = Array.from(actionPanels).filter((panel) => {
                 const hasInput = !!panel.querySelector('input[type="number"]');
                 const hasInputContainer = !!panel.querySelector('[class*="maxActionCountInput"]');
                 return hasInput || hasInputContainer;
@@ -180,7 +180,7 @@ const featureRegistry = [
             const buttons = panel.querySelector('.mwi-quick-input-btn');
             const sections = panel.querySelector('.mwi-collapsible-section');
             return !!(buttons || sections);
-        }
+        },
     },
     {
         key: 'actionPanel_outputTotals',
@@ -198,7 +198,7 @@ const featureRegistry = [
             // Look for our injected total elements
             const totalElements = document.querySelectorAll('.mwi-output-total');
             return totalElements.length > 0 || null; // null if panels open but no input entered yet
-        }
+        },
     },
     {
         key: 'actionPanel_maxProduceable',
@@ -216,7 +216,7 @@ const featureRegistry = [
             // Look for our injected max produceable displays
             const maxProduceElements = document.querySelectorAll('.mwi-max-produceable');
             return maxProduceElements.length > 0 || null; // null if no crafting actions visible
-        }
+        },
     },
     {
         key: 'actionPanel_gatheringStats',
@@ -234,7 +234,7 @@ const featureRegistry = [
             // Look for our injected gathering stats displays
             const gatheringElements = document.querySelectorAll('.mwi-gathering-stats');
             return gatheringElements.length > 0 || null; // null if no gathering actions visible
-        }
+        },
     },
     {
         key: 'requiredMaterials',
@@ -252,7 +252,7 @@ const featureRegistry = [
             // Look for our injected required materials displays
             const materialsElements = document.querySelectorAll('.mwi-required-materials');
             return materialsElements.length > 0 || null; // null if panels open but no input entered yet
-        }
+        },
     },
     {
         key: 'alchemy_profitDisplay',
@@ -270,7 +270,7 @@ const featureRegistry = [
             // Look for our injected profit display
             const profitDisplay = document.querySelector('.mwi-alchemy-profit');
             return profitDisplay !== null;
-        }
+        },
     },
 
     // Combat Features
@@ -279,28 +279,28 @@ const featureRegistry = [
         name: 'Ability Book Calculator',
         category: 'Combat',
         initialize: () => abilityBookCalculator.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'zoneIndices',
         name: 'Zone Indices',
         category: 'Combat',
         initialize: () => zoneIndices.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'combatScore',
         name: 'Combat Score',
         category: 'Combat',
         initialize: () => combatScore.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'characterCard',
         name: 'Character Card Button',
         category: 'Combat',
         initialize: () => characterCardButton.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'dungeonTracker',
@@ -311,14 +311,14 @@ const featureRegistry = [
             dungeonTrackerUI.initialize();
             dungeonTrackerChatAnnotations.initialize();
         },
-        async: false
+        async: false,
     },
     {
         key: 'combatSummary',
         name: 'Combat Summary',
         category: 'Combat',
         initialize: () => combatSummary.initialize(),
-        async: false
+        async: false,
     },
 
     // UI Features
@@ -327,21 +327,21 @@ const featureRegistry = [
         name: 'Equipment Level Display',
         category: 'UI',
         initialize: () => equipmentLevelDisplay.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'alchemyItemDimming',
         name: 'Alchemy Item Dimming',
         category: 'UI',
         initialize: () => alchemyItemDimming.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'skillExperiencePercentage',
         name: 'Skill Experience Percentage',
         category: 'UI',
         initialize: () => skillExperiencePercentage.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'ui_externalLinks',
@@ -349,7 +349,7 @@ const featureRegistry = [
         category: 'UI',
         initialize: () => externalLinks.initialize(),
         disable: () => externalLinks.disable(),
-        async: false
+        async: false,
     },
 
     // Task Features
@@ -358,28 +358,28 @@ const featureRegistry = [
         name: 'Task Profit Display',
         category: 'Tasks',
         initialize: () => taskProfitDisplay.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'taskRerollTracker',
         name: 'Task Reroll Tracker',
         category: 'Tasks',
         initialize: () => taskRerollTracker.initialize(),
-        async: true
+        async: true,
     },
     {
         key: 'taskSorter',
         name: 'Task Sorting',
         category: 'Tasks',
         initialize: () => taskSorter.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'taskIcons',
         name: 'Task Icons',
         category: 'Tasks',
         initialize: () => taskIcons.initialize(),
-        async: false
+        async: false,
     },
 
     // Skills Features
@@ -388,7 +388,7 @@ const featureRegistry = [
         name: 'Remaining XP Display',
         category: 'Skills',
         initialize: () => remainingXP.initialize(),
-        async: false
+        async: false,
     },
 
     // House Features
@@ -397,7 +397,7 @@ const featureRegistry = [
         name: 'House Cost Display',
         category: 'House',
         initialize: () => housePanelObserver.initialize(),
-        async: true
+        async: true,
     },
 
     // Economy Features
@@ -408,7 +408,7 @@ const featureRegistry = [
         initialize: () => networthFeature.initialize(),
         async: true,
         // Also initialize if inventorySummary is enabled
-        customCheck: () => config.isFeatureEnabled('networth') || config.isFeatureEnabled('inventorySummary')
+        customCheck: () => config.isFeatureEnabled('networth') || config.isFeatureEnabled('inventorySummary'),
     },
 
     // Inventory Badge Manager (must initialize before inventory features)
@@ -418,21 +418,21 @@ const featureRegistry = [
         category: 'Economy',
         initialize: () => inventoryBadgeManager.initialize(),
         async: false,
-        alwaysEnabled: true // Core infrastructure, always enabled
+        alwaysEnabled: true, // Core infrastructure, always enabled
     },
     {
         key: 'inventorySort',
         name: 'Inventory Sort',
         category: 'Economy',
         initialize: () => inventorySort.initialize(),
-        async: false
+        async: false,
     },
     {
         key: 'inventoryBadgePrices',
         name: 'Inventory Price Badges',
         category: 'Economy',
         initialize: () => inventoryBadgePrices.initialize(),
-        async: false
+        async: false,
     },
 
     // Enhancement Features
@@ -443,7 +443,7 @@ const featureRegistry = [
         initialize: async () => {
             await enhancementFeature.initialize();
         },
-        async: true
+        async: true,
     },
 
     // Notification Features
@@ -452,7 +452,7 @@ const featureRegistry = [
         name: 'Empty Queue Notification',
         category: 'Notifications',
         initialize: () => emptyQueueNotification.initialize(),
-        async: true
+        async: true,
     },
 
     // Dictionary Features
@@ -461,8 +461,8 @@ const featureRegistry = [
         name: 'Item Dictionary Transmute Rates',
         category: 'UI',
         initialize: () => transmuteRates.initialize(),
-        async: false
-    }
+        async: false,
+    },
 ];
 
 /**
@@ -480,9 +480,7 @@ async function initializeFeatures() {
     for (const feature of featureRegistry) {
         try {
             // Check if feature is enabled
-            const isEnabled = feature.customCheck
-                ? feature.customCheck()
-                : config.isFeatureEnabled(feature.key);
+            const isEnabled = feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
 
             if (!isEnabled) {
                 continue;
@@ -494,11 +492,10 @@ async function initializeFeatures() {
             } else {
                 feature.initialize();
             }
-
         } catch (error) {
             errors.push({
                 feature: feature.name,
-                error: error.message
+                error: error.message,
             });
             console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
         }
@@ -516,7 +513,7 @@ async function initializeFeatures() {
  * @returns {Object|null} Feature definition or null
  */
 function getFeature(key) {
-    return featureRegistry.find(f => f.key === key) || null;
+    return featureRegistry.find((f) => f.key === key) || null;
 }
 
 /**
@@ -533,7 +530,7 @@ function getAllFeatures() {
  * @returns {Array} Features in category
  */
 function getFeaturesByCategory(category) {
-    return featureRegistry.filter(f => f.category === category);
+    return featureRegistry.filter((f) => f.category === category);
 }
 
 /**
@@ -548,9 +545,7 @@ function checkFeatureHealth() {
         if (!feature.healthCheck) continue;
 
         // Skip if feature is not enabled
-        const isEnabled = feature.customCheck
-            ? feature.customCheck()
-            : config.isFeatureEnabled(feature.key);
+        const isEnabled = feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
 
         if (!isEnabled) continue;
 
@@ -562,14 +557,14 @@ function checkFeatureHealth() {
                 failed.push({
                     key: feature.key,
                     name: feature.name,
-                    reason: 'Health check returned false'
+                    reason: 'Health check returned false',
                 });
             }
         } catch (error) {
             failed.push({
                 key: feature.key,
                 name: feature.name,
-                reason: `Health check error: ${error.message}`
+                reason: `Health check error: ${error.message}`,
             });
         }
     }
@@ -689,43 +684,43 @@ function setupCharacterSwitchHandler() {
 function getFeatureInstance(key) {
     // Map feature keys to their imported instances
     const instanceMap = {
-        'tooltipPrices': tooltipPrices,
-        'expectedValueCalculator': expectedValueCalculator,
-        'tooltipConsumables': tooltipConsumables,
-        'marketFilter': marketFilter,
-        'fillMarketOrderPrice': autoFillPrice,
-        'market_visibleItemCount': itemCountDisplay,
-        'market_showListingPrices': listingPriceDisplay,
-        'market_showEstimatedListingAge': estimatedListingAge,
-        'market_tradeHistory': tradeHistory,
-        'actionTimeDisplay': actionTimeDisplay,
-        'quickInputButtons': quickInputButtons,
-        'actionPanel_outputTotals': outputTotals,
-        'actionPanel_maxProduceable': maxProduceable,
-        'actionPanel_gatheringStats': gatheringStats,
-        'requiredMaterials': requiredMaterials,
-        'alchemy_profitDisplay': alchemyProfitDisplay,
-        'abilityBookCalculator': abilityBookCalculator,
-        'zoneIndices': zoneIndices,
-        'combatScore': combatScore,
-        'characterCard': characterCardButton,
-        'dungeonTracker': dungeonTracker,
-        'combatSummary': combatSummary,
-        'equipmentLevelDisplay': equipmentLevelDisplay,
-        'alchemyItemDimming': alchemyItemDimming,
-        'skillExperiencePercentage': skillExperiencePercentage,
-        'ui_externalLinks': externalLinks,
-        'taskProfitDisplay': taskProfitDisplay,
-        'taskRerollTracker': taskRerollTracker,
-        'taskSorter': taskSorter,
-        'taskIcons': taskIcons,
-        'skillRemainingXP': remainingXP,
-        'houseCostDisplay': housePanelObserver,
-        'networth': networthFeature,
-        'inventorySort': inventorySort,
-        'inventoryBadgePrices': inventoryBadgePrices,
-        'enhancementTracker': enhancementFeature,
-        'notifiEmptyAction': emptyQueueNotification
+        tooltipPrices: tooltipPrices,
+        expectedValueCalculator: expectedValueCalculator,
+        tooltipConsumables: tooltipConsumables,
+        marketFilter: marketFilter,
+        fillMarketOrderPrice: autoFillPrice,
+        market_visibleItemCount: itemCountDisplay,
+        market_showListingPrices: listingPriceDisplay,
+        market_showEstimatedListingAge: estimatedListingAge,
+        market_tradeHistory: tradeHistory,
+        actionTimeDisplay: actionTimeDisplay,
+        quickInputButtons: quickInputButtons,
+        actionPanel_outputTotals: outputTotals,
+        actionPanel_maxProduceable: maxProduceable,
+        actionPanel_gatheringStats: gatheringStats,
+        requiredMaterials: requiredMaterials,
+        alchemy_profitDisplay: alchemyProfitDisplay,
+        abilityBookCalculator: abilityBookCalculator,
+        zoneIndices: zoneIndices,
+        combatScore: combatScore,
+        characterCard: characterCardButton,
+        dungeonTracker: dungeonTracker,
+        combatSummary: combatSummary,
+        equipmentLevelDisplay: equipmentLevelDisplay,
+        alchemyItemDimming: alchemyItemDimming,
+        skillExperiencePercentage: skillExperiencePercentage,
+        ui_externalLinks: externalLinks,
+        taskProfitDisplay: taskProfitDisplay,
+        taskRerollTracker: taskRerollTracker,
+        taskSorter: taskSorter,
+        taskIcons: taskIcons,
+        skillRemainingXP: remainingXP,
+        houseCostDisplay: housePanelObserver,
+        networth: networthFeature,
+        inventorySort: inventorySort,
+        inventoryBadgePrices: inventoryBadgePrices,
+        enhancementTracker: enhancementFeature,
+        notifiEmptyAction: emptyQueueNotification,
     };
 
     return instanceMap[key] || null;
@@ -768,5 +763,5 @@ export default {
     retryFailedFeatures,
     getFeature,
     getAllFeatures,
-    getFeaturesByCategory
+    getFeaturesByCategory,
 };

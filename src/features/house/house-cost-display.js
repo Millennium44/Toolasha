@@ -80,7 +80,6 @@ class HouseCostDisplay {
 
             // Mark this modal as processed
             this.currentModalContent = modalContent;
-
         } catch (error) {
             // Silently fail - augmentation is optional
         }
@@ -92,7 +91,9 @@ class HouseCostDisplay {
      */
     removeExistingColumn(modalContent) {
         // Remove all MWI-added elements
-        modalContent.querySelectorAll('.mwi-house-pricing, .mwi-house-pricing-empty, .mwi-house-total, .mwi-house-to-level').forEach(el => el.remove());
+        modalContent
+            .querySelectorAll('.mwi-house-pricing, .mwi-house-pricing-empty, .mwi-house-total, .mwi-house-to-level')
+            .forEach((el) => el.remove());
 
         // Restore original grid columns
         const itemRequirementsGrid = modalContent.querySelector('[class*="HousePanel_itemRequirements"]');
@@ -148,10 +149,10 @@ class HouseCostDisplay {
                     itemHrid: '/items/coin',
                     count: costData.coins,
                     marketPrice: 1,
-                    totalValue: costData.coins
+                    totalValue: costData.coins,
                 };
             } else {
-                materialData = costData.materials.find(m => m.itemHrid === itemHrid);
+                materialData = costData.materials.find((m) => m.itemHrid === itemHrid);
             }
 
             if (!materialData) continue;
@@ -320,7 +321,12 @@ class HouseCostDisplay {
 
         // Update on change
         dropdown.addEventListener('change', async () => {
-            await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, currentLevel, parseInt(dropdown.value));
+            await this.updateCompactCumulativeDisplay(
+                costContainer,
+                houseRoomHrid,
+                currentLevel,
+                parseInt(dropdown.value)
+            );
         });
 
         costsSection.parentElement.appendChild(section);
@@ -353,7 +359,7 @@ class HouseCostDisplay {
             this.appendMaterialCells(materialsList, {
                 itemHrid: '/items/coin',
                 count: costData.coins,
-                totalValue: costData.coins
+                totalValue: costData.coins,
             });
         }
 
@@ -458,7 +464,7 @@ class HouseCostDisplay {
      */
     refresh() {
         // Update pricing cell colors
-        document.querySelectorAll('.mwi-house-pricing').forEach(cell => {
+        document.querySelectorAll('.mwi-house-pricing').forEach((cell) => {
             cell.style.color = config.COLOR_ACCENT;
             const boldSpan = cell.querySelector('span[style*="font-weight: bold"]');
             if (boldSpan) {
@@ -467,18 +473,18 @@ class HouseCostDisplay {
         });
 
         // Update total cost colors
-        document.querySelectorAll('.mwi-house-total').forEach(total => {
+        document.querySelectorAll('.mwi-house-total').forEach((total) => {
             total.style.borderTopColor = config.COLOR_ACCENT;
             total.style.color = config.COLOR_ACCENT;
         });
 
         // Update "To Level" label colors
-        document.querySelectorAll('.mwi-house-to-level span[style*="font-weight: bold"]').forEach(label => {
+        document.querySelectorAll('.mwi-house-to-level span[style*="font-weight: bold"]').forEach((label) => {
             label.style.color = config.COLOR_ACCENT;
         });
 
         // Update cumulative total colors
-        document.querySelectorAll('.mwi-cumulative-cost-container span[style*="font-weight: bold"]').forEach(span => {
+        document.querySelectorAll('.mwi-cumulative-cost-container span[style*="font-weight: bold"]').forEach((span) => {
             span.style.color = config.COLOR_ACCENT;
         });
     }
@@ -488,10 +494,12 @@ class HouseCostDisplay {
      */
     disable() {
         // Remove all MWI-added elements
-        document.querySelectorAll('.mwi-house-pricing, .mwi-house-pricing-empty, .mwi-house-total, .mwi-house-to-level').forEach(el => el.remove());
+        document
+            .querySelectorAll('.mwi-house-pricing, .mwi-house-pricing-empty, .mwi-house-total, .mwi-house-to-level')
+            .forEach((el) => el.remove());
 
         // Restore all grid columns
-        document.querySelectorAll('[class*="HousePanel_itemRequirements"]').forEach(grid => {
+        document.querySelectorAll('[class*="HousePanel_itemRequirements"]').forEach((grid) => {
             grid.style.gridTemplateColumns = '';
         });
 

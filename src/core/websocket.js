@@ -64,7 +64,7 @@ class WebSocketHook {
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         // Hook MessageEvent.prototype.data (same as MWI Tools)
-        const dataProperty = Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data");
+        const dataProperty = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data');
         const originalGet = dataProperty.get;
 
         dataProperty.get = function hookedGet() {
@@ -76,15 +76,17 @@ class WebSocketHook {
             }
 
             // Only hook MWI game server
-            if (socket.url.indexOf("api.milkywayidle.com/ws") === -1 &&
-                socket.url.indexOf("api-test.milkywayidle.com/ws") === -1) {
+            if (
+                socket.url.indexOf('api.milkywayidle.com/ws') === -1 &&
+                socket.url.indexOf('api-test.milkywayidle.com/ws') === -1
+            ) {
                 return originalGet.call(this);
             }
 
             const message = originalGet.call(this);
 
             // Anti-loop: define data property so we don't hook our own access
-            Object.defineProperty(this, "data", { value: message });
+            Object.defineProperty(this, 'data', { value: message });
 
             // Process message in our hook
             hookInstance.processMessage(message);
@@ -92,7 +94,7 @@ class WebSocketHook {
             return message;
         };
 
-        Object.defineProperty(MessageEvent.prototype, "data", dataProperty);
+        Object.defineProperty(MessageEvent.prototype, 'data', dataProperty);
 
         this.isHooked = true;
     }
@@ -160,9 +162,10 @@ class WebSocketHook {
                 const parsed = JSON.parse(message);
 
                 // Extract character info - try multiple sources for ID
-                parsed.characterID = parsed.profile.sharableCharacter?.id ||
-                                    parsed.profile.characterSkills?.[0]?.characterID ||
-                                    parsed.profile.character?.id;
+                parsed.characterID =
+                    parsed.profile.sharableCharacter?.id ||
+                    parsed.profile.characterSkills?.[0]?.characterID ||
+                    parsed.profile.character?.id;
                 parsed.characterName = parsed.profile.sharableCharacter?.name || 'Unknown';
                 parsed.timestamp = Date.now();
 
@@ -180,7 +183,7 @@ class WebSocketHook {
                 let profileList = JSON.parse(profileListJson);
 
                 // Remove old entry for same character
-                profileList = profileList.filter(p => p.characterID !== parsed.characterID);
+                profileList = profileList.filter((p) => p.characterID !== parsed.characterID);
 
                 // Add to front of list
                 profileList.unshift(parsed);
@@ -206,8 +209,7 @@ class WebSocketHook {
     async captureClientDataFromLocalStorage() {
         try {
             // Use official game API instead of manual localStorage access
-            if (typeof localStorageUtil === 'undefined' ||
-                typeof localStorageUtil.getInitClientData !== 'function') {
+            if (typeof localStorageUtil === 'undefined' || typeof localStorageUtil.getInitClientData !== 'function') {
                 // API not ready yet, retry
                 setTimeout(() => this.captureClientDataFromLocalStorage(), 2000);
                 return;

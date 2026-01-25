@@ -115,7 +115,7 @@ class TradeHistory {
         let hasChanges = false;
 
         // Process each completed order
-        data.endMarketListings.forEach(order => {
+        data.endMarketListings.forEach((order) => {
             // Only track orders that actually filled
             if (order.filledQuantity === 0) return;
 

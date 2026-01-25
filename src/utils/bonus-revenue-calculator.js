@@ -65,7 +65,7 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 dropsPerHour,
                 priceEach: itemPrice,
                 revenuePerHour,
-                type: 'essence'
+                type: 'essence',
             });
 
             totalBonusRevenue += revenuePerHour;
@@ -108,7 +108,7 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 dropsPerHour,
                 priceEach: itemPrice,
                 revenuePerHour,
-                type: 'rare_find'
+                type: 'rare_find',
             });
 
             totalBonusRevenue += revenuePerHour;
@@ -116,9 +116,9 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
     }
 
     return {
-        essenceFindBonus,       // Essence Find % from equipment
-        rareFindBonus,          // Rare Find % from equipment + house rooms (combined)
-        bonusDrops,             // Array of all bonus drops with details
-        totalBonusRevenue       // Total revenue/hour from all bonus drops
+        essenceFindBonus, // Essence Find % from equipment
+        rareFindBonus, // Rare Find % from equipment + house rooms (combined)
+        bonusDrops, // Array of all bonus drops with details
+        totalBonusRevenue, // Total revenue/hour from all bonus drops
     };
 }

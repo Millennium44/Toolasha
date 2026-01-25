@@ -7,7 +7,12 @@
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
-import { detectEnhancingGear, detectEnhancingTeas, getEnhancingTeaLevelBonus, getEnhancingTeaSpeedBonus } from './enhancement-gear-detector.js';
+import {
+    detectEnhancingGear,
+    detectEnhancingTeas,
+    getEnhancingTeaLevelBonus,
+    getEnhancingTeaSpeedBonus,
+} from './enhancement-gear-detector.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
 
 /**
@@ -41,7 +46,7 @@ function getAutoDetectedParams() {
     // Detect drink concentration from equipment (Guzzling Pouch)
     // IMPORTANT: Only scan equipped items, not entire inventory
     let drinkConcentration = 0;
-    const itemsToScan = equipment ? Array.from(equipment.values()).filter(item => item && item.itemHrid) : [];
+    const itemsToScan = equipment ? Array.from(equipment.values()).filter((item) => item && item.itemHrid) : [];
 
     for (const item of itemsToScan) {
         const itemDetails = itemDetailMap[item.itemHrid];
@@ -79,7 +84,7 @@ function getAutoDetectedParams() {
             if (!drinkDetails?.consumableDetail?.buffs) continue;
 
             const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
-                buff => buff.typeHrid === '/buff_types/wisdom'
+                (buff) => buff.typeHrid === '/buff_types/wisdom'
             );
 
             if (wisdomBuff && wisdomBuff.flatBoost) {
@@ -90,7 +95,7 @@ function getAutoDetectedParams() {
     const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
 
     // Get Enhancing skill level
-    const enhancingSkill = skills.find(s => s.skillHrid === '/skills/enhancing');
+    const enhancingSkill = skills.find((s) => s.skillHrid === '/skills/enhancing');
     const enhancingLevel = enhancingSkill?.level || 1;
 
     // Get Observatory house room level (enhancing uses observatory, NOT laboratory!)
@@ -125,13 +130,13 @@ function getAutoDetectedParams() {
 
     // Calculate total success rate bonus
     // Equipment + house + (check for other sources)
-    const houseSuccessBonus = houseLevel * 0.05;  // 0.05% per level for success
+    const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level for success
     const equipmentSuccessBonus = gear.toolBonus;
     const totalSuccessBonus = equipmentSuccessBonus + houseSuccessBonus;
 
     // Calculate total speed bonus
     // Speed bonus (from equipment) + house bonus (1% per level) + community buff + tea speed
-    const houseSpeedBonus = houseLevel * 1.0;  // 1% per level for action speed
+    const houseSpeedBonus = houseLevel * 1.0; // 1% per level for action speed
     const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus;
 
     // Calculate total experience bonus
@@ -143,13 +148,13 @@ function getAutoDetectedParams() {
 
     return {
         // Core values for calculations
-        enhancingLevel: enhancingLevel + teaLevelBonus,  // Base level + tea bonus
+        enhancingLevel: enhancingLevel + teaLevelBonus, // Base level + tea bonus
         houseLevel: houseLevel,
-        toolBonus: totalSuccessBonus,                     // Tool + house combined
-        speedBonus: totalSpeedBonus,                      // Speed + house + community + tea combined
-        rareFindBonus: gear.rareFindBonus + houseRareFindBonus,  // Rare find (equipment + all house rooms)
-        experienceBonus: totalExperienceBonus,            // Experience (equipment + house + tea + community wisdom)
-        guzzlingBonus: guzzlingBonus,                     // Drink concentration multiplier for blessed tea
+        toolBonus: totalSuccessBonus, // Tool + house combined
+        speedBonus: totalSpeedBonus, // Speed + house + community + tea combined
+        rareFindBonus: gear.rareFindBonus + houseRareFindBonus, // Rare find (equipment + all house rooms)
+        experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
+        guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
         teas: teas,
 
         // Display info (for UI) - show best item per slot
@@ -158,21 +163,21 @@ function getAutoDetectedParams() {
         legsSlot: gear.legsSlot,
         handsSlot: gear.handsSlot,
         detectedTeaBonus: teaLevelBonus,
-        communityBuffLevel: communityBuffLevel,           // For display (speed)
-        communitySpeedBonus: communitySpeedBonus,         // For display
-        communityWisdomLevel: communityWisdomLevel,       // For display
-        communityWisdomBonus: communityWisdomBonus,       // For display
-        teaSpeedBonus: teaSpeedBonus,                     // For display
-        teaWisdomBonus: teaWisdomBonus,                   // For display
-        drinkConcentration: drinkConcentration,           // For display
-        houseRareFindBonus: houseRareFindBonus,           // For display
-        houseWisdomBonus: houseWisdomBonus,               // For display
-        equipmentRareFind: gear.rareFindBonus,            // For display
-        equipmentExperience: gear.experienceBonus,        // For display
-        equipmentSuccessBonus: equipmentSuccessBonus,     // For display
-        houseSuccessBonus: houseSuccessBonus,             // For display
-        equipmentSpeedBonus: gear.speedBonus,             // For display
-        houseSpeedBonus: houseSpeedBonus,                 // For display
+        communityBuffLevel: communityBuffLevel, // For display (speed)
+        communitySpeedBonus: communitySpeedBonus, // For display
+        communityWisdomLevel: communityWisdomLevel, // For display
+        communityWisdomBonus: communityWisdomBonus, // For display
+        teaSpeedBonus: teaSpeedBonus, // For display
+        teaWisdomBonus: teaWisdomBonus, // For display
+        drinkConcentration: drinkConcentration, // For display
+        houseRareFindBonus: houseRareFindBonus, // For display
+        houseWisdomBonus: houseWisdomBonus, // For display
+        equipmentRareFind: gear.rareFindBonus, // For display
+        equipmentExperience: gear.experienceBonus, // For display
+        equipmentSuccessBonus: equipmentSuccessBonus, // For display
+        houseSuccessBonus: houseSuccessBonus, // For display
+        equipmentSpeedBonus: gear.speedBonus, // For display
+        houseSpeedBonus: houseSpeedBonus, // For display
     };
 }
 
@@ -199,8 +204,8 @@ function getManualParams() {
     const teaSpeedBonus = teas.ultraEnhancing ? 6 : teas.superEnhancing ? 4 : teas.enhancing ? 2 : 0;
 
     // Calculate house bonuses
-    const houseSpeedBonus = houseLevel * 1.0;  // 1% per level
-    const houseSuccessBonus = houseLevel * 0.05;  // 0.05% per level
+    const houseSpeedBonus = houseLevel * 1.0; // 1% per level
+    const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level
 
     // Get community buffs
     const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/enhancing_speed');
@@ -216,7 +221,7 @@ function getManualParams() {
     return {
         enhancingLevel: getValue('enhanceSim_enhancingLevel', 140) + teaLevelBonus,
         houseLevel: houseLevel,
-        toolBonus: totalToolBonus,  // Total = equipment + house
+        toolBonus: totalToolBonus, // Total = equipment + house
         speedBonus: totalSpeed,
         rareFindBonus: getValue('enhanceSim_rareFindBonus', 0),
         experienceBonus: getValue('enhanceSim_experienceBonus', 0),
@@ -234,7 +239,7 @@ function getManualParams() {
         teaSpeedBonus: teaSpeedBonus,
         equipmentSpeedBonus: equipmentSpeedBonus,
         houseSpeedBonus: houseSpeedBonus,
-        equipmentSuccessBonus: toolBonusEquipment,  // Just equipment
+        equipmentSuccessBonus: toolBonusEquipment, // Just equipment
         houseSuccessBonus: houseSuccessBonus,
     };
 }

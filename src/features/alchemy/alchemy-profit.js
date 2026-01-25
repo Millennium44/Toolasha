@@ -73,7 +73,7 @@ class AlchemyProfit {
                 drops,
                 catalyst,
                 consumables,
-                teaDuration
+                teaDuration,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract action data:', error);
@@ -87,7 +87,9 @@ class AlchemyProfit {
      */
     extractSuccessRate() {
         try {
-            const element = document.querySelector('[class*="SkillActionDetail_successRate"] [class*="SkillActionDetail_value"]');
+            const element = document.querySelector(
+                '[class*="SkillActionDetail_successRate"] [class*="SkillActionDetail_value"]'
+            );
             if (!element) return null;
 
             const text = element.textContent.trim();
@@ -102,7 +104,7 @@ class AlchemyProfit {
                 return {
                     total: totalSuccessRate,
                     base: totalSuccessRate,
-                    tea: 0
+                    tea: 0,
                 };
             }
 
@@ -145,7 +147,7 @@ class AlchemyProfit {
             return {
                 total: totalSuccessRate,
                 base: baseSuccessRate,
-                tea: teaBonus
+                tea: teaBonus,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract success rate:', error);
@@ -168,11 +170,7 @@ class AlchemyProfit {
             const actionTypeHrid = '/action_types/alchemy';
 
             // Parse equipment speed bonuses using utility
-            const equipmentSpeed = parseEquipmentSpeedBonuses(
-                equipment,
-                actionTypeHrid,
-                gameData.itemDetailMap
-            );
+            const equipmentSpeed = parseEquipmentSpeedBonuses(equipment, actionTypeHrid, gameData.itemDetailMap);
 
             // TODO: Add tea speed bonuses when tea-parser supports it
             const teaSpeed = 0;
@@ -182,7 +180,7 @@ class AlchemyProfit {
             return {
                 total,
                 equipment: equipmentSpeed,
-                tea: teaSpeed
+                tea: teaSpeed,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract action speed:', error);
@@ -268,7 +266,7 @@ class AlchemyProfit {
                 // Formula: 0.14 + ((level - 1) × 0.003) = 14% base, +0.3% per level
                 const flatBoost = 0.14;
                 const flatBoostLevelBonus = 0.003;
-                const communityBonus = flatBoost + ((communityBuffLevel - 1) * flatBoostLevelBonus);
+                const communityBonus = flatBoost + (communityBuffLevel - 1) * flatBoostLevelBonus;
                 communityEfficiency = communityBonus * 100; // Convert to percentage
             }
 
@@ -293,7 +291,7 @@ class AlchemyProfit {
                 tea: teaEfficiency,
                 equipment: equipmentEfficiency,
                 community: communityEfficiency,
-                achievement: achievementEfficiency
+                achievement: achievementEfficiency,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract efficiency:', error);
@@ -339,7 +337,7 @@ class AlchemyProfit {
             return {
                 total: total / 100, // Convert to decimal
                 equipment: equipmentRareFind,
-                achievement: achievementRareFind
+                achievement: achievementRareFind,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract rare find:', error);
@@ -377,7 +375,7 @@ class AlchemyProfit {
 
             return {
                 total: equipmentEssenceFind / 100, // Convert to decimal
-                equipment: equipmentEssenceFind
+                equipment: equipmentEssenceFind,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract essence find:', error);
@@ -392,10 +390,27 @@ class AlchemyProfit {
      */
     getEnhancementBonus(enhancementLevel) {
         const bonuses = {
-            0: 0, 1: 0.02, 2: 0.042, 3: 0.066, 4: 0.092, 5: 0.12,
-            6: 0.15, 7: 0.182, 8: 0.216, 9: 0.252, 10: 0.29,
-            11: 0.334, 12: 0.384, 13: 0.44, 14: 0.502, 15: 0.57,
-            16: 0.644, 17: 0.724, 18: 0.81, 19: 0.902, 20: 1.0
+            0: 0,
+            1: 0.02,
+            2: 0.042,
+            3: 0.066,
+            4: 0.092,
+            5: 0.12,
+            6: 0.15,
+            7: 0.182,
+            8: 0.216,
+            9: 0.252,
+            10: 0.29,
+            11: 0.334,
+            12: 0.384,
+            13: 0.44,
+            14: 0.502,
+            15: 0.57,
+            16: 0.644,
+            17: 0.724,
+            18: 0.81,
+            19: 0.902,
+            20: 1.0,
         };
         return bonuses[enhancementLevel] || 0;
     }
@@ -414,7 +429,7 @@ class AlchemyProfit {
             '/equipment_types/back',
             '/equipment_types/trinket',
             '/equipment_types/charm',
-            '/equipment_types/pouch'
+            '/equipment_types/pouch',
         ];
         return fiveXSlots.includes(equipmentType) ? 5 : 1;
     }
@@ -449,7 +464,7 @@ class AlchemyProfit {
             }
 
             let fiber = container._reactProps;
-            for (let key in fiber) {
+            for (const key in fiber) {
                 if (key.startsWith('__reactFiber') || key.startsWith('__reactInternalInstance')) {
                     fiber = fiber[key];
                     break;
@@ -489,7 +504,9 @@ class AlchemyProfit {
      */
     async extractRequirements() {
         try {
-            const elements = document.querySelectorAll('[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]');
+            const elements = document.querySelectorAll(
+                '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
+            );
             const requirements = [];
 
             for (let i = 0; i < elements.length; i++) {
@@ -513,7 +530,9 @@ class AlchemyProfit {
      */
     async extractDrops() {
         try {
-            const elements = document.querySelectorAll('[class*="SkillActionDetail_dropTable"] [class*="Item_itemContainer"]');
+            const elements = document.querySelectorAll(
+                '[class*="SkillActionDetail_dropTable"] [class*="Item_itemContainer"]'
+            );
             const drops = [];
 
             for (let i = 0; i < elements.length; i++) {
@@ -537,8 +556,13 @@ class AlchemyProfit {
      */
     async extractCatalyst() {
         try {
-            const element = document.querySelector('[class*="SkillActionDetail_catalystItemInputContainer"] [class*="ItemSelector_itemContainer"]') ||
-                           document.querySelector('[class*="SkillActionDetail_catalystItemInputContainer"] [class*="SkillActionDetail_itemContainer"]');
+            const element =
+                document.querySelector(
+                    '[class*="SkillActionDetail_catalystItemInputContainer"] [class*="ItemSelector_itemContainer"]'
+                ) ||
+                document.querySelector(
+                    '[class*="SkillActionDetail_catalystItemInputContainer"] [class*="SkillActionDetail_itemContainer"]'
+                );
 
             if (!element) {
                 return { ask: 0, bid: 0 };
@@ -558,7 +582,9 @@ class AlchemyProfit {
      */
     async extractConsumables() {
         try {
-            const elements = document.querySelectorAll('[class*="ActionTypeConsumableSlots_consumableSlots"] [class*="Item_itemContainer"]');
+            const elements = document.querySelectorAll(
+                '[class*="ActionTypeConsumableSlots_consumableSlots"] [class*="Item_itemContainer"]'
+            );
             const consumables = [];
 
             for (const el of elements) {
@@ -585,7 +611,7 @@ class AlchemyProfit {
     calculateEnhancementCost(itemHrid, targetLevel, priceType) {
         if (targetLevel === 0) {
             const priceData = marketAPI.getPrice(itemHrid, 0);
-            return priceType === 'ask' ? (priceData?.ask || 0) : (priceData?.bid || 0);
+            return priceType === 'ask' ? priceData?.ask || 0 : priceData?.bid || 0;
         }
 
         const gameData = dataManager.getInitClientData();
@@ -596,7 +622,7 @@ class AlchemyProfit {
 
         // Start with base item cost
         const basePriceData = marketAPI.getPrice(itemHrid, 0);
-        let totalCost = priceType === 'ask' ? (basePriceData?.ask || 0) : (basePriceData?.bid || 0);
+        let totalCost = priceType === 'ask' ? basePriceData?.ask || 0 : basePriceData?.bid || 0;
 
         // Add enhancement material costs for each level
         const enhancementMaterials = itemData.enhancementCosts;
@@ -614,7 +640,7 @@ class AlchemyProfit {
                     totalCost += materialCount; // Coins are 1:1
                 } else {
                     const materialPrice = marketAPI.getPrice(materialHrid, 0);
-                    const price = priceType === 'ask' ? (materialPrice?.ask || 0) : (materialPrice?.bid || 0);
+                    const price = priceType === 'ask' ? materialPrice?.ask || 0 : materialPrice?.bid || 0;
                     totalCost += price * materialCount;
                 }
             }
@@ -698,7 +724,8 @@ class AlchemyProfit {
             }
 
             // Get market prices
-            let ask = 0, bid = 0;
+            let ask = 0,
+                bid = 0;
             if (itemHrid === '/items/coin') {
                 ask = bid = 1;
             } else {
@@ -735,7 +762,9 @@ class AlchemyProfit {
             // Get count or drop rate
             if (isRequirement && index >= 0) {
                 // Extract count from requirement
-                const countElements = document.querySelectorAll('[class*="SkillActionDetail_itemRequirements"] [class*="SkillActionDetail_inputCount"]');
+                const countElements = document.querySelectorAll(
+                    '[class*="SkillActionDetail_itemRequirements"] [class*="SkillActionDetail_inputCount"]'
+                );
                 if (countElements[index]) {
                     const text = countElements[index].textContent.trim();
                     const cleaned = text.replace(/,/g, '');
@@ -812,13 +841,14 @@ class AlchemyProfit {
             // Determine buy/sell price types
             let buyType, sellType;
             if (pricingMode === 'conservative') {
-                buyType = 'ask';  // Instant buy (Ask)
+                buyType = 'ask'; // Instant buy (Ask)
                 sellType = 'bid'; // Instant sell (Bid)
             } else if (pricingMode === 'hybrid') {
-                buyType = 'ask';  // Instant buy (Ask)
+                buyType = 'ask'; // Instant buy (Ask)
                 sellType = 'ask'; // Patient sell (Ask)
-            } else { // optimistic
-                buyType = 'bid';  // Patient buy (Bid)
+            } else {
+                // optimistic
+                buyType = 'bid'; // Patient buy (Bid)
                 sellType = 'ask'; // Patient sell (Ask)
             }
 
@@ -836,8 +866,8 @@ class AlchemyProfit {
 
             // Calculate cost per attempt (materials consumed on failure, materials + catalyst on success)
             const catalystPrice = buyType === 'ask' ? data.catalyst.ask : data.catalyst.bid;
-            const costPerAttempt = (materialCost * (1 - data.successRate)) +
-                                   ((materialCost + catalystPrice) * data.successRate);
+            const costPerAttempt =
+                materialCost * (1 - data.successRate) + (materialCost + catalystPrice) * data.successRate;
 
             // Calculate income per attempt
             const incomePerAttempt = data.drops.reduce((sum, drop, index) => {
@@ -850,8 +880,8 @@ class AlchemyProfit {
                 }
 
                 // Identify drop type
-                const isEssence = (index === data.drops.length - 2); // Second-to-last
-                const isRare = (index === data.drops.length - 1);     // Last
+                const isEssence = index === data.drops.length - 2; // Second-to-last
+                const isRare = index === data.drops.length - 1; // Last
 
                 // Get base drop rate
                 let effectiveDropRate = drop.dropRate || 1;
@@ -903,13 +933,17 @@ class AlchemyProfit {
             const actionsPerHour = (3600 / data.actionTime) * (1 + data.efficiency);
 
             // Build detailed requirement costs breakdown
-            const requirementCosts = data.requirements.map(req => {
+            const requirementCosts = data.requirements.map((req) => {
                 const price = buyType === 'ask' ? req.ask : req.bid;
                 const costPerAction = price * (req.count || 1);
                 const costPerHour = costPerAction * actionsPerHour;
 
                 // Calculate decomposition value
-                const decompositionValue = this.calculateDecompositionValue(req.itemHrid, req.enhancementLevel || 0, buyType);
+                const decompositionValue = this.calculateDecompositionValue(
+                    req.itemHrid,
+                    req.enhancementLevel || 0,
+                    buyType
+                );
                 const decompositionValuePerHour = decompositionValue * actionsPerHour;
 
                 return {
@@ -920,7 +954,7 @@ class AlchemyProfit {
                     costPerHour: costPerHour,
                     enhancementLevel: req.enhancementLevel || 0,
                     decompositionValue: decompositionValue,
-                    decompositionValuePerHour: decompositionValuePerHour
+                    decompositionValuePerHour: decompositionValuePerHour,
                 };
             });
 
@@ -933,8 +967,8 @@ class AlchemyProfit {
                 } else {
                     price = sellType === 'ask' ? drop.ask : drop.bid;
                 }
-                const isEssence = (index === data.drops.length - 2);
-                const isRare = (index === data.drops.length - 1);
+                const isEssence = index === data.drops.length - 2;
+                const isRare = index === data.drops.length - 1;
 
                 // Get base drop rate
                 const baseDropRate = drop.dropRate || 1;
@@ -955,20 +989,21 @@ class AlchemyProfit {
                 }
 
                 // Apply market tax for non-coin items
-                const revenueAfterTax = (drop.itemHrid !== '/items/coin') ? revenuePerAttempt * 0.98 : revenuePerAttempt;
+                const revenueAfterTax = drop.itemHrid !== '/items/coin' ? revenuePerAttempt * 0.98 : revenuePerAttempt;
                 const revenuePerHour = revenueAfterTax * actionsPerHour;
 
                 return {
                     itemHrid: drop.itemHrid,
                     count: drop.count || 1,
-                    dropRate: baseDropRate,              // Base drop rate (before Rare Find)
+                    dropRate: baseDropRate, // Base drop rate (before Rare Find)
                     effectiveDropRate: effectiveDropRate, // Effective drop rate (after Rare Find)
                     price: price,
                     isEssence: isEssence,
                     isRare: isRare,
                     revenuePerAttempt: revenueAfterTax,
                     revenuePerHour: revenuePerHour,
-                    dropsPerHour: effectiveDropRate * (drop.count || 1) * actionsPerHour * (isEssence ? 1 : data.successRate)
+                    dropsPerHour:
+                        effectiveDropRate * (drop.count || 1) * actionsPerHour * (isEssence ? 1 : data.successRate),
                 };
             });
 
@@ -978,11 +1013,11 @@ class AlchemyProfit {
                 price: catalystPrice,
                 costPerSuccess: catalystPrice,
                 costPerAttempt: catalystPrice * data.successRate,
-                costPerHour: catalystPrice * data.successRate * actionsPerHour
+                costPerHour: catalystPrice * data.successRate * actionsPerHour,
             };
 
             // Build consumable costs breakdown
-            const consumableCosts = data.consumables.map(c => {
+            const consumableCosts = data.consumables.map((c) => {
                 const price = buyType === 'ask' ? c.ask : c.bid;
                 const drinksPerHour = data.teaDuration > 0 ? 3600 / data.teaDuration : 0;
                 const costPerHour = price * drinksPerHour;
@@ -991,7 +1026,7 @@ class AlchemyProfit {
                     itemHrid: c.itemHrid,
                     price: price,
                     drinksPerHour: drinksPerHour,
-                    costPerHour: costPerHour
+                    costPerHour: costPerHour,
                 };
             });
 
@@ -1025,10 +1060,10 @@ class AlchemyProfit {
                 totalTeaCostPerHour,
 
                 // Detailed breakdowns
-                requirementCosts,      // Array of material cost details
-                dropRevenues,          // Array of drop revenue details
-                catalystCost,          // Single catalyst cost detail
-                consumableCosts,       // Array of tea/drink details
+                requirementCosts, // Array of material cost details
+                dropRevenues, // Array of drop revenue details
+                catalystCost, // Single catalyst cost detail
+                consumableCosts, // Array of tea/drink details
 
                 // Core stats
                 successRate: data.successRate,
@@ -1046,7 +1081,7 @@ class AlchemyProfit {
                 // Pricing info
                 pricingMode,
                 buyType,
-                sellType
+                sellType,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to calculate profit:', error);
@@ -1060,17 +1095,28 @@ class AlchemyProfit {
      */
     getStateFingerprint() {
         try {
-            const successRate = document.querySelector('[class*="SkillActionDetail_successRate"] [class*="SkillActionDetail_value"]')?.textContent || '';
-            const consumables = Array.from(document.querySelectorAll('[class*="ActionTypeConsumableSlots_consumableSlots"] [class*="Item_itemContainer"]'))
-                .map(el => el.querySelector('svg use')?.getAttribute('href') || 'empty')
+            const successRate =
+                document.querySelector('[class*="SkillActionDetail_successRate"] [class*="SkillActionDetail_value"]')
+                    ?.textContent || '';
+            const consumables = Array.from(
+                document.querySelectorAll(
+                    '[class*="ActionTypeConsumableSlots_consumableSlots"] [class*="Item_itemContainer"]'
+                )
+            )
+                .map((el) => el.querySelector('svg use')?.getAttribute('href') || 'empty')
                 .join('|');
 
             // Get catalyst (from the catalyst input container)
-            const catalyst = document.querySelector('[class*="SkillActionDetail_catalystItemInputContainer"] svg use')?.getAttribute('href') || 'none';
+            const catalyst =
+                document
+                    .querySelector('[class*="SkillActionDetail_catalystItemInputContainer"] svg use')
+                    ?.getAttribute('href') || 'none';
 
             // Get requirements (input materials)
-            const requirements = Array.from(document.querySelectorAll('[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'))
-                .map(el => {
+            const requirements = Array.from(
+                document.querySelectorAll('[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]')
+            )
+                .map((el) => {
                     const href = el.querySelector('svg use')?.getAttribute('href') || 'empty';
                     const enh = el.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '0';
                     return `${href}${enh}`;

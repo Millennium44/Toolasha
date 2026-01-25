@@ -26,16 +26,16 @@ class DungeonTrackerUIHistory {
                 groups[key] = {
                     key: key,
                     label: key === 'Solo' ? 'Solo Runs' : key,
-                    runs: []
+                    runs: [],
                 };
             }
             groups[key].runs.push(run);
         }
 
         // Convert to array and calculate stats
-        return Object.values(groups).map(group => ({
+        return Object.values(groups).map((group) => ({
             ...group,
-            stats: this.calculateStatsForRuns(group.runs)
+            stats: this.calculateStatsForRuns(group.runs),
         }));
     }
 
@@ -53,16 +53,16 @@ class DungeonTrackerUIHistory {
                 groups[key] = {
                     key: key,
                     label: key,
-                    runs: []
+                    runs: [],
                 };
             }
             groups[key].runs.push(run);
         }
 
         // Convert to array and calculate stats
-        return Object.values(groups).map(group => ({
+        return Object.values(groups).map((group) => ({
             ...group,
-            stats: this.calculateStatsForRuns(group.runs)
+            stats: this.calculateStatsForRuns(group.runs),
         }));
     }
 
@@ -77,18 +77,18 @@ class DungeonTrackerUIHistory {
                 totalRuns: 0,
                 avgTime: 0,
                 fastestTime: 0,
-                slowestTime: 0
+                slowestTime: 0,
             };
         }
 
-        const durations = runs.map(r => r.duration);
+        const durations = runs.map((r) => r.duration);
         const total = durations.reduce((sum, d) => sum + d, 0);
 
         return {
             totalRuns: runs.length,
             avgTime: Math.floor(total / runs.length),
             fastestTime: Math.min(...durations),
-            slowestTime: Math.max(...durations)
+            slowestTime: Math.max(...durations),
         };
     }
 
@@ -105,7 +105,8 @@ class DungeonTrackerUIHistory {
             const allRuns = await dungeonTrackerStorage.getAllRuns();
 
             if (allRuns.length === 0) {
-                runList.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs yet</div>';
+                runList.innerHTML =
+                    '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs yet</div>';
                 // Update filter dropdowns with empty options
                 this.updateFilterDropdowns(container, [], []);
                 return;
@@ -114,33 +115,33 @@ class DungeonTrackerUIHistory {
             // Apply filters
             let filteredRuns = allRuns;
             if (this.state.filterDungeon !== 'all') {
-                filteredRuns = filteredRuns.filter(r => r.dungeonName === this.state.filterDungeon);
+                filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
             }
             if (this.state.filterTeam !== 'all') {
-                filteredRuns = filteredRuns.filter(r => r.teamKey === this.state.filterTeam);
+                filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
             }
 
             if (filteredRuns.length === 0) {
-                runList.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs match filters</div>';
+                runList.innerHTML =
+                    '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs match filters</div>';
                 return;
             }
 
             // Group runs
-            const groups = this.state.groupBy === 'team'
-                ? this.groupByTeam(filteredRuns)
-                : this.groupByDungeon(filteredRuns);
+            const groups =
+                this.state.groupBy === 'team' ? this.groupByTeam(filteredRuns) : this.groupByDungeon(filteredRuns);
 
             // Render grouped runs
             this.renderGroupedRuns(runList, groups);
 
             // Update filter dropdowns
-            const dungeons = [...new Set(allRuns.map(r => r.dungeonName).filter(Boolean))].sort();
-            const teams = [...new Set(allRuns.map(r => r.teamKey).filter(Boolean))].sort();
+            const dungeons = [...new Set(allRuns.map((r) => r.dungeonName).filter(Boolean))].sort();
+            const teams = [...new Set(allRuns.map((r) => r.teamKey).filter(Boolean))].sort();
             this.updateFilterDropdowns(container, dungeons, teams);
-
         } catch (error) {
             console.error('[Dungeon Tracker UI History] Update error:', error);
-            runList.innerHTML = '<div style="color: #ff6b6b; text-align: center; padding: 8px;">Error loading run history</div>';
+            runList.innerHTML =
+                '<div style="color: #ff6b6b; text-align: center; padding: 8px;">Error loading run history</div>';
         }
     }
 
@@ -266,7 +267,7 @@ class DungeonTrackerUIHistory {
 
                 // Find and delete the run from unified storage
                 const allRuns = await dungeonTrackerStorage.getAllRuns();
-                const filteredRuns = allRuns.filter(r => r.timestamp !== runTimestamp);
+                const filteredRuns = allRuns.filter((r) => r.timestamp !== runTimestamp);
                 await storage.setJSON('allRuns', filteredRuns, 'unifiedRuns', true);
 
                 // Trigger refresh via callback

@@ -111,7 +111,7 @@ export function calculateEnhancement(params) {
         targetLevel,
         protectFrom = 0,
         blessedTea = false,
-        guzzlingBonus = 1.0
+        guzzlingBonus = 1.0,
     } = params;
 
     // Validate inputs
@@ -126,7 +126,7 @@ export function calculateEnhancement(params) {
     const successMultiplier = calculateSuccessMultiplier({
         enhancingLevel,
         toolBonus,
-        itemLevel
+        itemLevel,
     });
 
     // Build Markov Chain transition matrix (20×20)
@@ -138,7 +138,7 @@ export function calculateEnhancement(params) {
 
         // Where do we go on failure?
         // Protection only applies when protectFrom > 0 AND we're at or above that level
-        const failureDestination = (protectFrom > 0 && i >= protectFrom) ? i - 1 : 0;
+        const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
 
         if (blessedTea) {
             // Blessed Tea: 1% base chance to jump +2, scaled by guzzling bonus
@@ -160,9 +160,7 @@ export function calculateEnhancement(params) {
     markov.set([targetLevel, targetLevel], 1.0);
 
     // Extract transient matrix Q (all states before target)
-    const Q = markov.subset(
-        math.index(math.range(0, targetLevel), math.range(0, targetLevel))
-    );
+    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
 
     // Fundamental matrix: M = (I - Q)^-1
     const I = math.identity(targetLevel);
@@ -203,9 +201,9 @@ export function calculateEnhancement(params) {
     const totalTime = perActionTime * attempts;
 
     return {
-        attempts: attempts,  // Keep exact decimal value for calculations
-        attemptsRounded: Math.round(attempts),  // Rounded for display
-        protectionCount: protects,  // Keep decimal precision
+        attempts: attempts, // Keep exact decimal value for calculations
+        attemptsRounded: Math.round(attempts), // Rounded for display
+        protectionCount: protects, // Keep decimal precision
         perActionTime: perActionTime,
         totalTime: totalTime,
         successMultiplier: successMultiplier,

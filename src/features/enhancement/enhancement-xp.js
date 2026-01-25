@@ -49,7 +49,7 @@ function getWisdomBuff() {
         // 1. Community Buffs
         const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(communityEnhancingBuffs)) {
-            communityEnhancingBuffs.forEach(buff => {
+            communityEnhancingBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/wisdom') {
                     totalFlatBoost += buff.flatBoost || 0;
                 }
@@ -59,7 +59,7 @@ function getWisdomBuff() {
         // 2. Equipment Buffs
         const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(equipmentEnhancingBuffs)) {
-            equipmentEnhancingBuffs.forEach(buff => {
+            equipmentEnhancingBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/wisdom') {
                     totalFlatBoost += buff.flatBoost || 0;
                 }
@@ -69,7 +69,7 @@ function getWisdomBuff() {
         // 3. House Buffs
         const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(houseEnhancingBuffs)) {
-            houseEnhancingBuffs.forEach(buff => {
+            houseEnhancingBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/wisdom') {
                     totalFlatBoost += buff.flatBoost || 0;
                 }
@@ -79,7 +79,7 @@ function getWisdomBuff() {
         // 4. Consumable Buffs (from wisdom tea, etc.)
         const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(consumableEnhancingBuffs)) {
-            consumableEnhancingBuffs.forEach(buff => {
+            consumableEnhancingBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/wisdom') {
                     totalFlatBoost += buff.flatBoost || 0;
                 }
@@ -88,7 +88,6 @@ function getWisdomBuff() {
 
         // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
         return totalFlatBoost;
-
     } catch (error) {
         return 0;
     }
@@ -106,16 +105,12 @@ export function calculateSuccessXP(previousLevel, itemHrid) {
     const wisdomBuff = getWisdomBuff();
 
     // Special handling for enhancement level 0 (base items)
-    const enhancementMultiplier = previousLevel === 0
-        ? 1.0  // Base value for unenhanced items
-        : (previousLevel + 1);  // Normal progression
+    const enhancementMultiplier =
+        previousLevel === 0
+            ? 1.0 // Base value for unenhanced items
+            : previousLevel + 1; // Normal progression
 
-    return Math.floor(
-        1.4 *
-        (1 + wisdomBuff) *
-        enhancementMultiplier *
-        (10 + baseLevel)
-    );
+    return Math.floor(1.4 * (1 + wisdomBuff) * enhancementMultiplier * (10 + baseLevel));
 }
 
 /**
@@ -201,7 +196,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         let speedBonus = 0;
         const equipmentBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(equipmentBuffs)) {
-            equipmentBuffs.forEach(buff => {
+            equipmentBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/enhancing_success') {
                     toolBonus += (buff.flatBoost || 0) * 100; // Convert to percentage
                 }
@@ -214,7 +209,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         // Add house buffs
         const houseBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(houseBuffs)) {
-            houseBuffs.forEach(buff => {
+            houseBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/enhancing_success') {
                     toolBonus += (buff.flatBoost || 0) * 100;
                 }
@@ -228,9 +223,9 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         let hasBlessed = false;
         let guzzlingBonus = 1.0;
         const enhancingTeas = charData.actionTypeDrinkSlotsMap?.['/action_types/enhancing'] || [];
-        const activeTeas = enhancingTeas.filter(tea => tea?.isActive);
+        const activeTeas = enhancingTeas.filter((tea) => tea?.isActive);
 
-        activeTeas.forEach(tea => {
+        activeTeas.forEach((tea) => {
             if (tea.itemHrid === '/items/blessed_tea') {
                 hasBlessed = true;
             }
@@ -239,7 +234,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         // Get guzzling pouch bonus (drink concentration)
         const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
         if (Array.isArray(consumableBuffs)) {
-            consumableBuffs.forEach(buff => {
+            consumableBuffs.forEach((buff) => {
                 if (buff.typeHrid === '/buff_types/drink_concentration') {
                     guzzlingBonus = 1.0 + (buff.flatBoost || 0);
                 }
@@ -256,7 +251,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             targetLevel,
             protectFrom,
             blessedTea: hasBlessed,
-            guzzlingBonus
+            guzzlingBonus,
         });
 
         if (!result) {
@@ -267,9 +262,8 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             expectedAttempts: Math.round(result.attemptsRounded),
             expectedProtections: Math.round(result.protectionCount),
             expectedTime: result.totalTime,
-            successMultiplier: result.successMultiplier
+            successMultiplier: result.successMultiplier,
         };
-
     } catch (error) {
         return null;
     }

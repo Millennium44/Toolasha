@@ -35,7 +35,7 @@ class DOMObserver {
                         if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
                         // Dispatch to all registered handlers
-                        this.handlers.forEach(handler => {
+                        this.handlers.forEach((handler) => {
                             try {
                                 if (handler.debounce) {
                                     this.debouncedCallback(handler, node, mutation);
@@ -52,7 +52,7 @@ class DOMObserver {
 
             this.observer.observe(document.body, {
                 childList: true,
-                subtree: true
+                subtree: true,
             });
 
             this.isObserving = true;
@@ -109,7 +109,7 @@ class DOMObserver {
         }
 
         // Clear all debounce timers
-        this.debounceTimers.forEach(timer => clearTimeout(timer));
+        this.debounceTimers.forEach((timer) => clearTimeout(timer));
         this.debounceTimers.clear();
         this.debouncedElements.clear();
 
@@ -130,7 +130,7 @@ class DOMObserver {
             name,
             callback,
             debounce: options.debounce || false,
-            debounceDelay: options.debounceDelay
+            debounceDelay: options.debounceDelay,
         };
         this.handlers.push(handler);
 
@@ -163,26 +163,30 @@ class DOMObserver {
     onClass(name, classNames, callback, options = {}) {
         const classArray = Array.isArray(classNames) ? classNames : [classNames];
 
-        return this.register(name, (node) => {
-            // Safely get className as string (handles SVG elements)
-            const className = typeof node.className === 'string' ? node.className : '';
+        return this.register(
+            name,
+            (node) => {
+                // Safely get className as string (handles SVG elements)
+                const className = typeof node.className === 'string' ? node.className : '';
 
-            // Check if node matches any of the target classes
-            for (const targetClass of classArray) {
-                if (className.includes(targetClass)) {
-                    callback(node);
-                    return; // Only call once per node
-                }
-            }
-
-            // Also check if node contains matching elements
-            if (node.querySelector) {
+                // Check if node matches any of the target classes
                 for (const targetClass of classArray) {
-                    const matches = node.querySelectorAll(`[class*="${targetClass}"]`);
-                    matches.forEach(match => callback(match));
+                    if (className.includes(targetClass)) {
+                        callback(node);
+                        return; // Only call once per node
+                    }
                 }
-            }
-        }, options);
+
+                // Also check if node contains matching elements
+                if (node.querySelector) {
+                    for (const targetClass of classArray) {
+                        const matches = node.querySelectorAll(`[class*="${targetClass}"]`);
+                        matches.forEach((match) => callback(match));
+                    }
+                }
+            },
+            options
+        );
     }
 
     /**
@@ -192,11 +196,11 @@ class DOMObserver {
         return {
             isObserving: this.isObserving,
             handlerCount: this.handlers.length,
-            handlers: this.handlers.map(h => ({
+            handlers: this.handlers.map((h) => ({
                 name: h.name,
-                debounced: h.debounce || false
+                debounced: h.debounce || false,
             })),
-            pendingCallbacks: this.debounceTimers.size
+            pendingCallbacks: this.debounceTimers.size,
         };
     }
 

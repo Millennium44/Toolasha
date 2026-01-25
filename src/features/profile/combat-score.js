@@ -77,9 +77,10 @@ class CombatScore {
      */
     async handleProfileShared(profileData) {
         // Extract character ID from profile data
-        const characterId = profileData.profile.sharableCharacter?.id ||
-                           profileData.profile.characterSkills?.[0]?.characterID ||
-                           profileData.profile.character?.id;
+        const characterId =
+            profileData.profile.sharableCharacter?.id ||
+            profileData.profile.characterSkills?.[0]?.characterID ||
+            profileData.profile.character?.id;
 
         // Store the profile ID so export button can find it
         await storage.set('currentProfileId', characterId, 'combatExport', true);
@@ -94,9 +95,10 @@ class CombatScore {
         }
 
         // Find the modal container
-        const modalContainer = profilePanel.closest('.Modal_modalContent__Iw0Yv') ||
-                              profilePanel.closest('[class*="Modal"]') ||
-                              profilePanel.parentElement;
+        const modalContainer =
+            profilePanel.closest('.Modal_modalContent__Iw0Yv') ||
+            profilePanel.closest('[class*="Modal"]') ||
+            profilePanel.parentElement;
 
         if (modalContainer) {
             await this.handleProfileOpen(profileData, modalContainer);
@@ -113,7 +115,7 @@ class CombatScore {
             if (panel) {
                 return panel;
             }
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
         }
         return null;
     }
@@ -168,19 +170,28 @@ class CombatScore {
         `;
 
         // Build house breakdown HTML
-        const houseBreakdownHTML = scoreData.breakdown.houses.map(item =>
-            `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
-        ).join('');
+        const houseBreakdownHTML = scoreData.breakdown.houses
+            .map(
+                (item) =>
+                    `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
+            )
+            .join('');
 
         // Build ability breakdown HTML
-        const abilityBreakdownHTML = scoreData.breakdown.abilities.map(item =>
-            `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
-        ).join('');
+        const abilityBreakdownHTML = scoreData.breakdown.abilities
+            .map(
+                (item) =>
+                    `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
+            )
+            .join('');
 
         // Build equipment breakdown HTML
-        const equipmentBreakdownHTML = scoreData.breakdown.equipment.map(item =>
-            `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
-        ).join('');
+        const equipmentBreakdownHTML = scoreData.breakdown.equipment
+            .map(
+                (item) =>
+                    `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${numberFormatter(item.value)}</div>`
+            )
+            .join('');
 
         // Create panel HTML
         panel.innerHTML = `
@@ -270,7 +281,7 @@ class CombatScore {
 
         // Try right side first
         if (modalRect.right + gap + panelWidth < window.innerWidth) {
-            panel.style.left = (modalRect.right + gap) + 'px';
+            panel.style.left = modalRect.right + gap + 'px';
         } else {
             // Fall back to left side
             panel.style.left = Math.max(10, modalRect.left - panelWidth - gap) + 'px';
@@ -323,8 +334,7 @@ class CombatScore {
                 const isCollapsed = houseBreakdown.style.display === 'none';
                 houseBreakdown.style.display = isCollapsed ? 'block' : 'none';
                 houseToggle.textContent =
-                    (isCollapsed ? '- ' : '+ ') +
-                    `House: ${numberFormatter(scoreData.house.toFixed(1))}`;
+                    (isCollapsed ? '- ' : '+ ') + `House: ${numberFormatter(scoreData.house.toFixed(1))}`;
             });
         }
 
@@ -336,8 +346,7 @@ class CombatScore {
                 const isCollapsed = abilityBreakdown.style.display === 'none';
                 abilityBreakdown.style.display = isCollapsed ? 'block' : 'none';
                 abilityToggle.textContent =
-                    (isCollapsed ? '- ' : '+ ') +
-                    `Ability: ${numberFormatter(scoreData.ability.toFixed(1))}`;
+                    (isCollapsed ? '- ' : '+ ') + `Ability: ${numberFormatter(scoreData.ability.toFixed(1))}`;
             });
         }
 
@@ -349,8 +358,7 @@ class CombatScore {
                 const isCollapsed = equipmentBreakdown.style.display === 'none';
                 equipmentBreakdown.style.display = isCollapsed ? 'block' : 'none';
                 equipmentToggle.textContent =
-                    (isCollapsed ? '- ' : '+ ') +
-                    `Equipment: ${numberFormatter(scoreData.equipment.toFixed(1))}`;
+                    (isCollapsed ? '- ' : '+ ') + `Equipment: ${numberFormatter(scoreData.equipment.toFixed(1))}`;
             });
         }
 
@@ -405,7 +413,7 @@ class CombatScore {
 
         cleanupObserver.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
         });
     }
 
@@ -442,7 +450,6 @@ class CombatScore {
                 button.textContent = originalText;
                 button.style.background = originalBg;
             }, 3000);
-
         } catch (error) {
             console.error('[Combat Score] Combat Sim export failed:', error);
             button.textContent = '✗ Failed';
@@ -492,7 +499,6 @@ class CombatScore {
                 button.textContent = originalText;
                 button.style.background = originalBg;
             }, 3000);
-
         } catch (error) {
             console.error('[Combat Score] Milkonomy export failed:', error);
             button.textContent = '✗ Failed';
@@ -518,7 +524,7 @@ class CombatScore {
 
         // Update both export buttons
         const buttons = this.currentPanel.querySelectorAll('button[id*="export-btn"]');
-        buttons.forEach(button => {
+        buttons.forEach((button) => {
             button.style.background = config.COLOR_ACCENT;
         });
     }

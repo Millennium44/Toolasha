@@ -91,7 +91,7 @@ class DungeonTrackerChatAnnotations {
         // Observe entire document body (matches working DRT script)
         this.observer.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
         });
     }
 
@@ -143,8 +143,8 @@ class DungeonTrackerChatAnnotations {
                     const stats = storageStats.totalRuns > 0 ? storageStats : inMemoryStats[dungeonName];
 
                     if (stats && stats.fastestTime > 0 && stats.slowestTime > 0) {
-                        const fastestThreshold = stats.fastestTime * 1.10;
-                        const slowestThreshold = stats.slowestTime * 0.90;
+                        const fastestThreshold = stats.fastestTime * 1.1;
+                        const slowestThreshold = stats.slowestTime * 0.9;
 
                         if (diff <= fastestThreshold) {
                             color = config.COLOR_PROFIT || '#5fda5f'; // Green
@@ -164,7 +164,7 @@ class DungeonTrackerChatAnnotations {
                 runDurations.push({
                     msg: e.msg,
                     diff,
-                    dungeonName
+                    dungeonName,
                 });
             } else if (next?.type === 'fail') {
                 label = 'FAILED';
@@ -186,7 +186,7 @@ class DungeonTrackerChatAnnotations {
                     if (!this.cumulativeStatsByDungeon[dungeonName]) {
                         this.cumulativeStatsByDungeon[dungeonName] = {
                             runCount: 0,
-                            totalTime: 0
+                            totalTime: 0,
                         };
                     }
 
@@ -233,7 +233,7 @@ class DungeonTrackerChatAnnotations {
             const run = {
                 timestamp: event.timestamp.toISOString(),
                 duration: duration,
-                dungeonName: dungeonName
+                dungeonName: dungeonName,
             };
 
             // Save team run (includes dungeon name from Phase 2)
@@ -269,7 +269,7 @@ class DungeonTrackerChatAnnotations {
             // Initialize dungeon stats if needed
             if (!statsByDungeon[dungeonName]) {
                 statsByDungeon[dungeonName] = {
-                    durations: []
+                    durations: [],
                 };
             }
 
@@ -288,7 +288,7 @@ class DungeonTrackerChatAnnotations {
                 totalRuns: durations.length,
                 avgTime: Math.floor(total / durations.length),
                 fastestTime: Math.min(...durations),
-                slowestTime: Math.max(...durations)
+                slowestTime: Math.max(...durations),
             };
         }
 
@@ -323,7 +323,7 @@ class DungeonTrackerChatAnnotations {
                         type: 'battle_start',
                         timestamp,
                         dungeonName,
-                        msg: node
+                        msg: node,
                     });
                 }
                 node.dataset.processed = '1';
@@ -337,7 +337,7 @@ class DungeonTrackerChatAnnotations {
                     type: 'key',
                     timestamp,
                     team,
-                    msg: node
+                    msg: node,
                 });
             }
             // Party failed message
@@ -345,7 +345,7 @@ class DungeonTrackerChatAnnotations {
                 events.push({
                     type: 'fail',
                     timestamp,
-                    msg: node
+                    msg: node,
                 });
                 node.dataset.processed = '1';
             }
@@ -354,7 +354,7 @@ class DungeonTrackerChatAnnotations {
                 events.push({
                     type: 'cancel',
                     timestamp,
-                    msg: node
+                    msg: node,
                 });
                 node.dataset.processed = '1';
             }
@@ -372,8 +372,10 @@ class DungeonTrackerChatAnnotations {
      */
     getDungeonNameWithFallback(events, currentIndex) {
         // 1st priority: Visible "Battle started:" message in chat
-        const battleStart = events.slice(0, currentIndex).reverse()
-            .find(ev => ev.type === 'battle_start');
+        const battleStart = events
+            .slice(0, currentIndex)
+            .reverse()
+            .find((ev) => ev.type === 'battle_start');
         if (battleStart?.dungeonName) {
             return battleStart.dungeonName;
         }
@@ -398,9 +400,18 @@ class DungeonTrackerChatAnnotations {
      * @returns {boolean} True if party chat is visible
      */
     isPartySelected() {
-        const selectedTabEl = document.querySelector(`.Chat_tabsComponentContainer__3ZoKe .MuiButtonBase-root[aria-selected="true"]`);
-        const tabsEl = document.querySelector('.Chat_tabsComponentContainer__3ZoKe .TabsComponent_tabPanelsContainer__26mzo');
-        return selectedTabEl && tabsEl && selectedTabEl.textContent.includes('Party') && !tabsEl.classList.contains('TabsComponent_hidden__255ag');
+        const selectedTabEl = document.querySelector(
+            `.Chat_tabsComponentContainer__3ZoKe .MuiButtonBase-root[aria-selected="true"]`
+        );
+        const tabsEl = document.querySelector(
+            '.Chat_tabsComponentContainer__3ZoKe .TabsComponent_tabPanelsContainer__26mzo'
+        );
+        return (
+            selectedTabEl &&
+            tabsEl &&
+            selectedTabEl.textContent.includes('Party') &&
+            !tabsEl.classList.contains('TabsComponent_hidden__255ag')
+        );
     }
 
     /**
@@ -414,7 +425,7 @@ class DungeonTrackerChatAnnotations {
         if (!match) return null;
 
         let [, date, hour, min, sec, period] = match;
-        const [month, day] = date.split('/').map(x => parseInt(x, 10));
+        const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
         hour = parseInt(hour, 10);
         min = parseInt(min, 10);
@@ -436,7 +447,7 @@ class DungeonTrackerChatAnnotations {
     getTeamFromMessage(msg) {
         const text = msg.textContent.trim();
         const matches = [...text.matchAll(/\[([^\[\]-]+?)\s*-\s*[\d,]+\]/g)];
-        return matches.map(m => m[1].trim()).sort();
+        return matches.map((m) => m[1].trim()).sort();
     }
 
     /**
@@ -514,11 +525,11 @@ class DungeonTrackerChatAnnotations {
 
         // Remove all annotations from DOM
         const annotations = document.querySelectorAll('.dungeon-timer-annotation, .dungeon-timer-average');
-        annotations.forEach(annotation => annotation.remove());
+        annotations.forEach((annotation) => annotation.remove());
 
         // Clear processed markers from chat messages
         const processedMessages = document.querySelectorAll('[class^="ChatMessage_chatMessage"][data-processed="1"]');
-        processedMessages.forEach(msg => {
+        processedMessages.forEach((msg) => {
             delete msg.dataset.processed;
             delete msg.dataset.timerAppended;
             delete msg.dataset.avgAppended;

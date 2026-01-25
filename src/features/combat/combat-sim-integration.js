@@ -110,11 +110,14 @@ async function importDataToSimulator(button) {
                 button.style.backgroundColor = config.COLOR_ACCENT;
             }, 3000);
             console.error('[Toolasha Combat Sim] No export data available');
-            alert('No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again');
+            alert(
+                'No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again'
+            );
             return;
         }
 
-        const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, isParty } = exportData;
+        const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, isParty } =
+            exportData;
 
         // Step 1: Switch to Group Combat tab
         const groupTab = document.querySelector('a#group-combat-tab');
@@ -159,9 +162,10 @@ async function importDataToSimulator(button) {
             // Step 5.5: Set difficulty tier
             setTimeout(() => {
                 // Try both input and select elements
-                let difficultyElement = document.querySelector('input#inputDifficulty') ||
-                                       document.querySelector('select#inputDifficulty') ||
-                                       document.querySelector('[id*="ifficulty"]');
+                const difficultyElement =
+                    document.querySelector('input#inputDifficulty') ||
+                    document.querySelector('select#inputDifficulty') ||
+                    document.querySelector('[id*="ifficulty"]');
 
                 if (difficultyElement) {
                     const tierValue = 'T' + difficultyTier;
@@ -171,8 +175,12 @@ async function importDataToSimulator(button) {
                         // Try to find option by value or text
                         for (let i = 0; i < difficultyElement.options.length; i++) {
                             const option = difficultyElement.options[i];
-                            if (option.value === tierValue || option.value === String(difficultyTier) ||
-                                option.text === tierValue || option.text.includes('T' + difficultyTier)) {
+                            if (
+                                option.value === tierValue ||
+                                option.value === String(difficultyTier) ||
+                                option.text === tierValue ||
+                                option.text.includes('T' + difficultyTier)
+                            ) {
                                 difficultyElement.selectedIndex = i;
                                 break;
                             }
@@ -218,7 +226,6 @@ async function importDataToSimulator(button) {
                 button.style.backgroundColor = config.COLOR_ACCENT;
             }, 3000);
         }, 100);
-
     } catch (error) {
         console.error('[Toolasha Combat Sim] Import failed:', error);
         button.textContent = 'Import Failed';

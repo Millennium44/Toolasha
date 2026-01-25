@@ -32,7 +32,7 @@ class ExpectedValueCalculator {
             '/items/chimerical_token',
             '/items/sinister_token',
             '/items/enchanted_token',
-            '/items/pirate_token'
+            '/items/pirate_token',
         ];
 
         // Flag to track if initialized
@@ -155,7 +155,7 @@ class ExpectedValueCalculator {
             // Check if item is tradeable (for tax calculation)
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const canBeSold = itemDetails?.tradeable !== false;
-            const taxFactor = canBeSold ? (1 - this.MARKET_TAX) : 1.0;
+            const taxFactor = canBeSold ? 1 - this.MARKET_TAX : 1.0;
 
             // Calculate expected value: avgCount × dropRate × price × taxFactor
             const dropValue = avgCount * dropRate * price * taxFactor;
@@ -236,7 +236,7 @@ class ExpectedValueCalculator {
             itemName: itemDetails.name,
             itemHrid,
             expectedValue: expectedReturn,
-            drops
+            drops,
         };
     }
 
@@ -291,8 +291,8 @@ class ExpectedValueCalculator {
 
             // Calculate expected value for this drop
             const itemCanBeSold = itemDetails.tradeable !== false;
-            const taxFactor = itemCanBeSold ? (1 - this.MARKET_TAX) : 1.0;
-            const dropValue = price !== null ? (avgCount * dropRate * price * taxFactor) : 0;
+            const taxFactor = itemCanBeSold ? 1 - this.MARKET_TAX : 1.0;
+            const dropValue = price !== null ? avgCount * dropRate * price * taxFactor : 0;
 
             drops.push({
                 itemHrid,
@@ -301,7 +301,7 @@ class ExpectedValueCalculator {
                 avgCount,
                 priceEach: price || 0,
                 expectedValue: dropValue,
-                hasPriceData: price !== null
+                hasPriceData: price !== null,
             });
         }
 

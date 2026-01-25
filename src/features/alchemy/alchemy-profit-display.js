@@ -167,7 +167,7 @@ class AlchemyProfitDisplay {
 
         // Find all collapsible sections and save their state
         const sections = this.displayElement.querySelectorAll('.mwi-collapsible-section');
-        sections.forEach(section => {
+        sections.forEach((section) => {
             const header = section.querySelector('.mwi-section-header');
             const content = section.querySelector('.mwi-section-content');
             const label = header?.querySelector('span:last-child');
@@ -193,7 +193,7 @@ class AlchemyProfitDisplay {
 
         // Find all collapsible sections and restore their state
         const sections = this.displayElement.querySelectorAll('.mwi-collapsible-section');
-        sections.forEach(section => {
+        sections.forEach((section) => {
             const header = section.querySelector('.mwi-section-header');
             const content = section.querySelector('.mwi-section-content');
             const summary = section.querySelector('div[style*="margin-left: 16px"]');
@@ -226,8 +226,13 @@ class AlchemyProfitDisplay {
         this.removeDisplay();
 
         // Validate required data
-        if (!profitData || !profitData.dropRevenues || !profitData.requirementCosts ||
-            !profitData.catalystCost || !profitData.consumableCosts) {
+        if (
+            !profitData ||
+            !profitData.dropRevenues ||
+            !profitData.requirementCosts ||
+            !profitData.catalystCost ||
+            !profitData.consumableCosts
+        ) {
             console.error('[AlchemyProfitDisplay] Missing required profit data fields:', profitData);
             return;
         }
@@ -236,7 +241,9 @@ class AlchemyProfitDisplay {
         const profit = Math.round(profitData.profitPerHour);
         const profitPerDay = Math.round(profitData.profitPerDay);
         const revenue = Math.round(profitData.revenuePerHour);
-        const costs = Math.round(profitData.materialCostPerHour + profitData.catalystCostPerHour + profitData.totalTeaCostPerHour);
+        const costs = Math.round(
+            profitData.materialCostPerHour + profitData.catalystCostPerHour + profitData.totalTeaCostPerHour
+        );
         const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
 
         // ===== Build Detailed Breakdown Content =====
@@ -247,9 +254,9 @@ class AlchemyProfitDisplay {
         revenueDiv.innerHTML = `<div style="font-weight: 500; color: var(--text-color-primary, #fff); margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
 
         // Split drops into normal, essence, and rare
-        const normalDrops = profitData.dropRevenues.filter(drop => !drop.isEssence && !drop.isRare);
-        const essenceDrops = profitData.dropRevenues.filter(drop => drop.isEssence);
-        const rareDrops = profitData.dropRevenues.filter(drop => drop.isRare);
+        const normalDrops = profitData.dropRevenues.filter((drop) => !drop.isEssence && !drop.isRare);
+        const essenceDrops = profitData.dropRevenues.filter((drop) => drop.isEssence);
+        const rareDrops = profitData.dropRevenues.filter((drop) => drop.isRare);
 
         // Normal Drops subsection
         if (normalDrops.length > 0) {
@@ -321,7 +328,10 @@ class AlchemyProfitDisplay {
                 const itemName = itemDetails?.name || drop.itemHrid;
                 const decimals = drop.dropsPerHour < 1 ? 2 : 1;
                 const baseDropRatePct = formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
-                const effectiveDropRatePct = formatPercentage(drop.effectiveDropRate, drop.effectiveDropRate < 0.01 ? 3 : 2);
+                const effectiveDropRatePct = formatPercentage(
+                    drop.effectiveDropRate,
+                    drop.effectiveDropRate < 0.01 ? 3 : 2
+                );
 
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
@@ -550,7 +560,7 @@ class AlchemyProfitDisplay {
         if (profitData.actionSpeedBreakdown) {
             const speedBreakdown = profitData.actionSpeedBreakdown;
             const baseActionTime = 20; // Alchemy base time is 20 seconds
-            const actionSpeed = (baseActionTime / profitData.actionTime) - 1;
+            const actionSpeed = baseActionTime / profitData.actionTime - 1;
 
             if (actionSpeed > 0) {
                 const speedContent = document.createElement('div');
@@ -652,7 +662,7 @@ class AlchemyProfitDisplay {
         `;
 
         // Add Net Profit line at top level (always visible when Profitability is expanded)
-        const profitColor = profit >= 0 ? '#4ade80' : (config.getSetting('color_loss') || '#f87171');
+        const profitColor = profit >= 0 ? '#4ade80' : config.getSetting('color_loss') || '#f87171';
         const netProfitLine = document.createElement('div');
         netProfitLine.style.cssText = `
             font-weight: 500;
@@ -664,11 +674,12 @@ class AlchemyProfitDisplay {
 
         // Add pricing mode label
         const pricingMode = profitData.pricingMode || 'hybrid';
-        const modeLabel = {
-            'conservative': 'Conservative',
-            'hybrid': 'Hybrid',
-            'optimistic': 'Optimistic'
-        }[pricingMode] || 'Hybrid';
+        const modeLabel =
+            {
+                conservative: 'Conservative',
+                hybrid: 'Hybrid',
+                optimistic: 'Optimistic',
+            }[pricingMode] || 'Hybrid';
 
         const modeDiv = document.createElement('div');
         modeDiv.style.cssText = `
@@ -691,14 +702,7 @@ class AlchemyProfitDisplay {
         topLevelContent.appendChild(detailedBreakdownSection);
 
         // Create main profit section
-        const profitSection = createCollapsibleSection(
-            '💰',
-            'Profitability',
-            summary,
-            topLevelContent,
-            false,
-            0
-        );
+        const profitSection = createCollapsibleSection('💰', 'Profitability', summary, topLevelContent, false, 0);
         profitSection.id = 'mwi-alchemy-profit';
         profitSection.classList.add('mwi-alchemy-profit');
 

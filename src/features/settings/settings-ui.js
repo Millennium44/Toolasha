@@ -130,14 +130,14 @@ class SettingsUI {
             if (gamePanel) {
                 observer.observe(gamePanel, {
                     childList: true,
-                    subtree: true
+                    subtree: true,
                 });
             } else {
                 // Fallback: observe entire body if game panel not found (Firefox timing issue)
                 console.warn('[Toolasha Settings] Could not find game panel, observing body instead');
                 observer.observe(document.body, {
                     childList: true,
-                    subtree: true
+                    subtree: true,
                 });
             }
 
@@ -175,7 +175,9 @@ class SettingsUI {
 
             // Find the MUI tabs flexContainer
             const tabsContainer = tabsComponentContainer.querySelector('[class*="MuiTabs-flexContainer"]');
-            const tabPanelsContainer = tabsComponentContainer.querySelector('[class*="TabsComponent_tabPanelsContainer"]');
+            const tabPanelsContainer = tabsComponentContainer.querySelector(
+                '[class*="TabsComponent_tabPanelsContainer"]'
+            );
 
             if (!tabsContainer || !tabPanelsContainer) {
                 console.warn('[Toolasha Settings] Could not find tabs or panels container');
@@ -322,12 +324,12 @@ class SettingsUI {
     setupParentCollapseIcons(container) {
         const allSettings = container.querySelectorAll('.toolasha-setting');
 
-        allSettings.forEach(setting => {
+        allSettings.forEach((setting) => {
             const settingId = setting.dataset.settingId;
 
             // Find all dependents of this setting
-            const dependents = Array.from(allSettings).filter(s =>
-                s.dataset.dependencies && s.dataset.dependencies.split(',').includes(settingId)
+            const dependents = Array.from(allSettings).filter(
+                (s) => s.dataset.dependencies && s.dataset.dependencies.split(',').includes(settingId)
             );
 
             if (dependents.length > 0) {
@@ -376,12 +378,12 @@ class SettingsUI {
             // Expand
             parentSetting.classList.remove('dependents-collapsed');
             collapseIcon.style.transform = 'rotate(0deg)';
-            dependents.forEach(dep => dep.style.display = 'flex');
+            dependents.forEach((dep) => (dep.style.display = 'flex'));
         } else {
             // Collapse
             parentSetting.classList.add('dependents-collapsed');
             collapseIcon.style.transform = 'rotate(-90deg)';
-            dependents.forEach(dep => dep.style.display = 'none');
+            dependents.forEach((dep) => (dep.style.display = 'none'));
         }
 
         // Save collapse state to localStorage
@@ -460,10 +462,10 @@ class SettingsUI {
 
                     // Hide dependents
                     const allSettings = container.querySelectorAll('.toolasha-setting');
-                    const dependents = Array.from(allSettings).filter(s =>
-                        s.dataset.dependencies && s.dataset.dependencies.split(',').includes(settingId)
+                    const dependents = Array.from(allSettings).filter(
+                        (s) => s.dataset.dependencies && s.dataset.dependencies.split(',').includes(settingId)
                     );
-                    dependents.forEach(dep => dep.style.display = 'none');
+                    dependents.forEach((dep) => (dep.style.display = 'none'));
                 }
             }
         } catch (e) {
@@ -587,12 +589,14 @@ class SettingsUI {
             case 'select': {
                 const value = currentSetting?.value ?? settingDef.default ?? '';
                 const options = settingDef.options || [];
-                const optionsHTML = options.map(option => {
-                    const optValue = typeof option === 'object' ? option.value : option;
-                    const optLabel = typeof option === 'object' ? option.label : option;
-                    const selected = optValue === value ? 'selected' : '';
-                    return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
-                }).join('');
+                const optionsHTML = options
+                    .map((option) => {
+                        const optValue = typeof option === 'object' ? option.value : option;
+                        const optLabel = typeof option === 'object' ? option.label : option;
+                        const selected = optValue === value ? 'selected' : '';
+                        return `<option value="${optValue}" ${selected}>${optLabel}</option>`;
+                    })
+                    .join('');
 
                 return `
                     <select id="${settingId}" class="toolasha-select-input">
@@ -703,14 +707,14 @@ class SettingsUI {
         const switchToTab = (targetButton, targetPanel) => {
             // Hide all panels
             const allPanels = tabPanelsContainer.querySelectorAll('[class*="TabPanel_tabPanel"]');
-            allPanels.forEach(panel => {
+            allPanels.forEach((panel) => {
                 panel.style.display = 'none';
                 panel.classList.add('TabPanel_hidden__26UM3');
             });
 
             // Deactivate all buttons
             const allButtons = document.querySelectorAll('button[role="tab"]');
-            allButtons.forEach(btn => {
+            allButtons.forEach((btn) => {
                 btn.setAttribute('aria-selected', 'false');
                 btn.setAttribute('tabindex', '-1');
                 btn.classList.remove('Mui-selected');
@@ -821,7 +825,7 @@ class SettingsUI {
     updateDependencies() {
         const settings = document.querySelectorAll('.toolasha-setting[data-dependencies]');
 
-        settings.forEach(settingEl => {
+        settings.forEach((settingEl) => {
             const dependencies = settingEl.dataset.dependencies.split(',');
             let enabled = true;
 

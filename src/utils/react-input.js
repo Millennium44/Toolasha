@@ -19,11 +19,7 @@
  * @param {boolean} options.dispatchChange - Whether to dispatch change event (default: false)
  */
 export function setReactInputValue(input, value, options = {}) {
-    const {
-        focus = true,
-        dispatchInput = true,
-        dispatchChange = false
-    } = options;
+    const { focus = true, dispatchInput = true, dispatchChange = false } = options;
 
     if (!input) {
         console.warn('[React Input] No input element provided');

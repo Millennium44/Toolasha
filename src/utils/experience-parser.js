@@ -42,25 +42,25 @@ export function parseEquipmentWisdom(equipment, itemDetailMap) {
             '/equipment_types/earrings',
             '/equipment_types/back',
             '/equipment_types/trinket',
-            '/equipment_types/charm'
+            '/equipment_types/charm',
         ];
         const multiplier = accessorySlots.includes(itemDetails.equipmentDetail.type) ? 5 : 1;
 
         // Calculate total wisdom from this item
-        const itemWisdom = (baseWisdom + (enhancementBonus * enhancementLevel * multiplier)) * 100;
+        const itemWisdom = (baseWisdom + enhancementBonus * enhancementLevel * multiplier) * 100;
         totalWisdom += itemWisdom;
 
         // Add to breakdown
         breakdown.push({
             name: itemDetails.name,
             value: itemWisdom,
-            enhancementLevel: enhancementLevel
+            enhancementLevel: enhancementLevel,
         });
     }
 
     return {
         total: totalWisdom,
-        breakdown: breakdown
+        breakdown: breakdown,
     };
 }
 
@@ -101,25 +101,25 @@ export function parseCharmExperience(equipment, skillHrid, itemDetailMap) {
             '/equipment_types/earrings',
             '/equipment_types/back',
             '/equipment_types/trinket',
-            '/equipment_types/charm'
+            '/equipment_types/charm',
         ];
         const multiplier = accessorySlots.includes(itemDetails.equipmentDetail.type) ? 5 : 1;
 
         // Calculate total charm XP from this item
-        const itemCharmXP = (baseCharmXP + (enhancementBonus * enhancementLevel * multiplier)) * 100;
+        const itemCharmXP = (baseCharmXP + enhancementBonus * enhancementLevel * multiplier) * 100;
         totalCharmXP += itemCharmXP;
 
         // Add to breakdown
         breakdown.push({
             name: itemDetails.name,
             value: itemCharmXP,
-            enhancementLevel: enhancementLevel
+            enhancementLevel: enhancementLevel,
         });
     }
 
     return {
         total: totalCharmXP,
-        breakdown: breakdown
+        breakdown: breakdown,
     };
 }
 
@@ -156,7 +156,7 @@ export function parseCommunityBuffWisdom() {
     }
 
     // Formula: 20% base + 0.5% per level above 1
-    return 20 + ((buffLevel - 1) * 0.5);
+    return 20 + (buffLevel - 1) * 0.5;
 }
 
 /**
@@ -229,7 +229,7 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
     const charmExperience = charmData.total;
 
     // Total multiplier (additive)
-    const totalMultiplier = 1 + (totalWisdom / 100) + (charmExperience / 100);
+    const totalMultiplier = 1 + totalWisdom / 100 + charmExperience / 100;
 
     return {
         totalMultiplier,
@@ -242,8 +242,8 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
             houseWisdom,
             communityWisdom,
             consumableWisdom,
-            charmExperience
-        }
+            charmExperience,
+        },
     };
 }
 
@@ -279,7 +279,7 @@ function calculateDrinkConcentration(equipment, itemDetailMap) {
     const enhancementLevel = pouchItem.enhancementLevel || 0;
 
     // Calculate total (1× multiplier for pouch)
-    return (baseDrinkConcentration + (enhancementBonus * enhancementLevel)) * 100;
+    return (baseDrinkConcentration + enhancementBonus * enhancementLevel) * 100;
 }
 
 export default {
@@ -288,5 +288,5 @@ export default {
     parseHouseRoomWisdom,
     parseCommunityBuffWisdom,
     parseConsumableWisdom,
-    calculateExperienceMultiplier
+    calculateExperienceMultiplier,
 };

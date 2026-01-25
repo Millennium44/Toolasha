@@ -12,7 +12,7 @@ import {
     getDrinkConcentration,
     parseActionLevelBonus,
     parseActionLevelBonusBreakdown,
-    parseTeaSkillLevelBonus
+    parseTeaSkillLevelBonus,
 } from './tea-parser.js';
 import { calculateHouseEfficiency } from './house-efficiency.js';
 import { stackAdditive } from './efficiency.js';
@@ -38,7 +38,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         actionHrid,
         includeCommunityBuff = false,
         includeBreakdown = false,
-        floorActionLevel = true
+        floorActionLevel = true,
     } = options;
 
     try {
@@ -46,11 +46,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         const baseTime = actionDetails.baseTimeCost / 1e9; // nanoseconds to seconds
 
         // Get equipment speed bonus
-        let speedBonus = parseEquipmentSpeedBonuses(
-            equipment,
-            actionDetails.type,
-            itemDetailMap
-        );
+        const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
 
         // Calculate action time with equipment speed
         let actionTime = baseTime / (1 + speedBonus);
@@ -72,27 +68,20 @@ export function calculateActionStats(actionDetails, options = {}) {
         const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
 
         // Calculate Action Level bonus from teas
-        const actionLevelBonus = parseActionLevelBonus(
-            activeDrinks,
-            itemDetailMap,
-            drinkConcentration
-        );
+        const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
         // Get Action Level bonus breakdown (if requested)
         let actionLevelBreakdown = null;
         if (includeBreakdown) {
-            actionLevelBreakdown = parseActionLevelBonusBreakdown(
-                activeDrinks,
-                itemDetailMap,
-                drinkConcentration
-            );
+            actionLevelBreakdown = parseActionLevelBonusBreakdown(activeDrinks, itemDetailMap, drinkConcentration);
         }
 
         // Calculate effective requirement
         // Note: floorActionLevel flag for compatibility
         // - quick-input-buttons uses Math.floor (can't have fractional level requirements)
         // - action-time-display historically didn't floor (preserving for compatibility)
-        const effectiveRequirement = baseRequirement + (floorActionLevel ? Math.floor(actionLevelBonus) : actionLevelBonus);
+        const effectiveRequirement =
+            baseRequirement + (floorActionLevel ? Math.floor(actionLevelBonus) : actionLevelBonus);
 
         // Calculate tea skill level bonus (e.g., +8 Cheesesmithing from Ultra Cheesesmithing Tea)
         const teaSkillLevelBonus = parseTeaSkillLevelBonus(
@@ -107,11 +96,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         const effectiveLevel = skillLevel + teaSkillLevelBonus;
         const levelEfficiency = Math.max(0, effectiveLevel - effectiveRequirement);
         const houseEfficiency = calculateHouseEfficiency(actionDetails.type);
-        const equipmentEfficiency = parseEquipmentEfficiencyBonuses(
-            equipment,
-            actionDetails.type,
-            itemDetailMap
-        );
+        const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap);
 
         // Calculate tea efficiency
         let teaEfficiency;
@@ -127,12 +112,7 @@ export function calculateActionStats(actionDetails, options = {}) {
             teaEfficiency = teaBreakdown.reduce((sum, tea) => sum + tea.efficiency, 0);
         } else {
             // Simple total
-            teaEfficiency = parseTeaEfficiency(
-                actionDetails.type,
-                activeDrinks,
-                itemDetailMap,
-                drinkConcentration
-            );
+            teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
         }
 
         // Get community buff efficiency (if requested)
@@ -144,12 +124,14 @@ export function calculateActionStats(actionDetails, options = {}) {
                 '/action_types/cheesesmithing',
                 '/action_types/cooking',
                 '/action_types/crafting',
-                '/action_types/tailoring'
+                '/action_types/tailoring',
             ];
 
             if (productionSkills.includes(actionDetails.type)) {
-                const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/production_efficiency');
-                communityEfficiency = communityBuffLevel ? (0.14 + ((communityBuffLevel - 1) * 0.003)) * 100 : 0;
+                const communityBuffLevel = dataManager.getCommunityBuffLevel(
+                    '/community_buff_types/production_efficiency'
+                );
+                communityEfficiency = communityBuffLevel ? (0.14 + (communityBuffLevel - 1) * 0.003) * 100 : 0;
             }
         }
 
@@ -165,7 +147,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         // Build result object
         const result = {
             actionTime,
-            totalEfficiency
+            totalEfficiency,
         };
 
         // Add breakdown if requested
@@ -181,7 +163,7 @@ export function calculateActionStats(actionDetails, options = {}) {
                 baseRequirement,
                 actionLevelBonus,
                 actionLevelBreakdown,
-                effectiveRequirement
+                effectiveRequirement,
             };
         }
 
@@ -201,6 +183,6 @@ export function calculateActionStats(actionDetails, options = {}) {
 function getSkillLevel(skills, skillType) {
     // Map action type to skill HRID
     const skillHrid = skillType.replace('/action_types/', '/skills/');
-    const skill = skills.find(s => s.skillHrid === skillHrid);
+    const skill = skills.find((s) => s.skillHrid === skillHrid);
     return skill?.level || 1;
 }

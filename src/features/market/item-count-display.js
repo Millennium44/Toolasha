@@ -166,8 +166,8 @@ class ItemCountDisplay {
         }
 
         // Remove all injected count displays and reset opacity
-        document.querySelectorAll('.mwi-item-count').forEach(el => el.remove());
-        document.querySelectorAll('[class*="Item_clickable"]').forEach(tile => {
+        document.querySelectorAll('.mwi-item-count').forEach((el) => el.remove());
+        document.querySelectorAll('[class*="Item_clickable"]').forEach((tile) => {
             tile.style.opacity = '1.0';
         });
 

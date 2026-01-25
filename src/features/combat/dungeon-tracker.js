@@ -21,7 +21,7 @@ class DungeonTracker {
 
         // Party message tracking for server-validated duration
         this.firstKeyCountTimestamp = null; // Timestamp from first "Key counts" message
-        this.lastKeyCountTimestamp = null;  // Timestamp from last "Key counts" message
+        this.lastKeyCountTimestamp = null; // Timestamp from last "Key counts" message
         this.keyCountMessages = []; // Store all key count messages for this run
         this.battleStartedTimestamp = null; // Timestamp from "Battle started" message
 
@@ -39,7 +39,7 @@ class DungeonTracker {
             newBattle: null,
             actionCompleted: null,
             actionsUpdated: null,
-            chatMessage: null
+            chatMessage: null,
         };
     }
 
@@ -104,7 +104,7 @@ class DungeonTracker {
             lastKeyCountTimestamp: this.lastKeyCountTimestamp,
             battleStartedTimestamp: this.battleStartedTimestamp,
             keyCountMessages: this.keyCountMessages,
-            hibernationDetected: this.hibernationDetected
+            hibernationDetected: this.hibernationDetected,
         };
 
         return storage.setJSON('dungeonTracker_inProgressRun', stateToSave, 'settings', true);
@@ -131,9 +131,7 @@ class DungeonTracker {
 
         // Verify dungeon action is still active
         const currentActions = dataManager.getCurrentActions();
-        const dungeonAction = currentActions.find(a =>
-            this.isDungeonAction(a.actionHrid) && !a.isDone
-        );
+        const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
 
         if (!dungeonAction || dungeonAction.actionHrid !== saved.dungeonHrid) {
             console.log('[Dungeon Tracker] Dungeon no longer active - discarding old run state');
@@ -172,7 +170,7 @@ class DungeonTracker {
             maxWaves: saved.maxWaves,
             wavesCompleted: saved.wavesCompleted,
             keyCountsMap: saved.keyCountsMap || {},
-            hibernationDetected: saved.hibernationDetected || false
+            hibernationDetected: saved.hibernationDetected || false,
         };
 
         this.notifyUpdate();
@@ -271,9 +269,7 @@ class DungeonTracker {
         const currentActions = dataManager.getCurrentActions();
 
         // Find active dungeon action
-        const dungeonAction = currentActions.find(a =>
-            this.isDungeonAction(a.actionHrid) && !a.isDone
-        );
+        const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
 
         if (!dungeonAction) {
             return;
@@ -302,7 +298,7 @@ class DungeonTracker {
                 currentWave: saved.currentWave,
                 maxWaves: saved.maxWaves,
                 wavesCompleted: saved.wavesCompleted,
-                keyCountsMap: saved.keyCountsMap || {}
+                keyCountsMap: saved.keyCountsMap || {},
             };
 
             // Trigger UI update to show immediately
@@ -311,7 +307,7 @@ class DungeonTracker {
             // Store pending dungeon info for when new_battle fires
             this.pendingDungeonInfo = {
                 dungeonHrid: dungeonAction.actionHrid,
-                tier: dungeonAction.difficultyTier
+                tier: dungeonAction.difficultyTier,
             };
         }
     }
@@ -383,11 +379,13 @@ class DungeonTracker {
                     // Look for "Battle started:" messages
                     if (text.includes('Battle started:')) {
                         // Try to extract timestamp
-                        const timestampMatch = text.match(/\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+                        const timestampMatch = text.match(
+                            /\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/
+                        );
 
                         if (timestampMatch) {
                             let [, date, hour, min, sec, period] = timestampMatch;
-                            const [month, day] = date.split('/').map(x => parseInt(x, 10));
+                            const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                             hour = parseInt(hour, 10);
                             min = parseInt(min, 10);
@@ -413,11 +411,13 @@ class DungeonTracker {
 
                         if (Object.keys(keyCountsMap).length > 0) {
                             // Try to extract timestamp from message display format: [MM/DD HH:MM:SS AM/PM]
-                            const timestampMatch = text.match(/\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+                            const timestampMatch = text.match(
+                                /\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/
+                            );
 
                             if (timestampMatch) {
                                 let [, date, hour, min, sec, period] = timestampMatch;
-                                const [month, day] = date.split('/').map(x => parseInt(x, 10));
+                                const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                                 hour = parseInt(hour, 10);
                                 min = parseInt(min, 10);
@@ -435,7 +435,10 @@ class DungeonTracker {
                                 latestKeyCountsMap = keyCountsMap;
                                 latestTimestamp = timestamp.getTime();
                             } else {
-                                console.warn('[Dungeon Tracker] Found Key counts but could not parse timestamp from:', text.substring(0, 50));
+                                console.warn(
+                                    '[Dungeon Tracker] Found Key counts but could not parse timestamp from:',
+                                    text.substring(0, 50)
+                                );
                                 latestKeyCountsMap = keyCountsMap;
                             }
                         }
@@ -464,7 +467,11 @@ class DungeonTracker {
                         this.keyCountMessages.push({
                             timestamp: this.firstKeyCountTimestamp,
                             keyCountsMap: latestKeyCountsMap,
-                            text: 'Key counts: ' + Object.entries(latestKeyCountsMap).map(([name, count]) => `[${name} - ${count}]`).join(', ')
+                            text:
+                                'Key counts: ' +
+                                Object.entries(latestKeyCountsMap)
+                                    .map(([name, count]) => `[${name} - ${count}]`)
+                                    .join(', '),
                         });
                     }
                 }
@@ -489,12 +496,11 @@ class DungeonTracker {
             for (const action of data.endCharacterActions) {
                 // Check if this is a dungeon action using explicit verification
                 if (this.isDungeonAction(action.actionHrid)) {
-
                     if (action.isDone === false) {
                         // Dungeon action added to queue - store info for when new_battle fires
                         this.pendingDungeonInfo = {
                             dungeonHrid: action.actionHrid,
-                            tier: action.difficultyTier
+                            tier: action.difficultyTier,
                         };
 
                         // If already tracking (somehow), update immediately
@@ -525,8 +531,8 @@ class DungeonTracker {
                         }
 
                         // Check if this was a successful completion or early exit
-                        const allWavesCompleted = this.currentRun.maxWaves &&
-                                                  this.currentRun.wavesCompleted >= this.currentRun.maxWaves;
+                        const allWavesCompleted =
+                            this.currentRun.maxWaves && this.currentRun.wavesCompleted >= this.currentRun.maxWaves;
 
                         if (!allWavesCompleted) {
                             // Early exit (fled, died, or failed)
@@ -585,7 +591,6 @@ class DungeonTracker {
         // Handle "Key counts" messages
         if (message.m === 'systemChatMessage.partyKeyCount') {
             this.onKeyCountsMessage(timestamp, message);
-            return;
         }
     }
 
@@ -606,7 +611,8 @@ class DungeonTracker {
                 const battleName = metadata.name || '';
 
                 // Extract dungeon HRID from battle name (this is a heuristic)
-                const currentDungeonName = dungeonTrackerStorage.getDungeonInfo(this.currentRun.dungeonHrid)?.name || '';
+                const currentDungeonName =
+                    dungeonTrackerStorage.getDungeonInfo(this.currentRun.dungeonHrid)?.name || '';
 
                 if (battleName && currentDungeonName && !battleName.includes(currentDungeonName)) {
                     this.resetTracking();
@@ -676,7 +682,7 @@ class DungeonTracker {
             this.keyCountMessages.push({
                 timestamp,
                 keyCountsMap,
-                text: keyCountString
+                text: keyCountString,
             });
 
             // Complete the dungeon
@@ -690,7 +696,9 @@ class DungeonTracker {
             // this is probably the COMPLETION message, not the start!
             // This happens when state was restored but first message wasn't captured.
             if (this.currentRun && this.currentRun.startTime) {
-                console.log('[Dungeon Tracker] WARNING: Received Key counts with null timestamps but already tracking! Using startTime as fallback.');
+                console.log(
+                    '[Dungeon Tracker] WARNING: Received Key counts with null timestamps but already tracking! Using startTime as fallback.'
+                );
 
                 // Use the currentRun.startTime as the first timestamp (best estimate)
                 this.firstKeyCountTimestamp = this.currentRun.startTime;
@@ -711,7 +719,7 @@ class DungeonTracker {
                 this.keyCountMessages.push({
                     timestamp,
                     keyCountsMap,
-                    text: keyCountString
+                    text: keyCountString,
                 });
 
                 // Complete the dungeon
@@ -735,7 +743,7 @@ class DungeonTracker {
         this.keyCountMessages.push({
             timestamp,
             keyCountsMap,
-            text: keyCountString
+            text: keyCountString,
         });
     }
 
@@ -822,7 +830,10 @@ class DungeonTracker {
         if (this.pendingDungeonInfo) {
             // Verify this is actually a dungeon action before starting tracking
             if (!this.isDungeonAction(this.pendingDungeonInfo.dungeonHrid)) {
-                console.warn('[Dungeon Tracker] Attempted to track non-dungeon action:', this.pendingDungeonInfo.dungeonHrid);
+                console.warn(
+                    '[Dungeon Tracker] Attempted to track non-dungeon action:',
+                    this.pendingDungeonInfo.dungeonHrid
+                );
                 this.pendingDungeonInfo = null;
                 return; // Don't start tracking
             }
@@ -841,9 +852,7 @@ class DungeonTracker {
         } else {
             // FALLBACK: Check current actions from dataManager
             const currentActions = dataManager.getCurrentActions();
-            const dungeonAction = currentActions.find(a =>
-                this.isDungeonAction(a.actionHrid) && !a.isDone
-            );
+            const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
 
             if (dungeonAction) {
                 dungeonHrid = dungeonAction.actionHrid;
@@ -881,7 +890,7 @@ class DungeonTracker {
             currentWave: data.wave, // Use actual wave number (1-indexed)
             maxWaves: maxWaves,
             wavesCompleted: 0, // No waves completed yet (will update as waves complete)
-            hibernationDetected: false // Track if computer sleep detected during this run
+            hibernationDetected: false, // Track if computer sleep detected during this run
         };
 
         this.notifyUpdate();
@@ -963,8 +972,8 @@ class DungeonTracker {
         // Check if dungeon is complete
         if (action.isDone) {
             // Check if this was a successful completion (all waves done) or early exit
-            const allWavesCompleted = this.currentRun.maxWaves &&
-                                      this.currentRun.wavesCompleted >= this.currentRun.maxWaves;
+            const allWavesCompleted =
+                this.currentRun.maxWaves && this.currentRun.wavesCompleted >= this.currentRun.maxWaves;
 
             if (allWavesCompleted) {
                 // Successful completion
@@ -1013,9 +1022,7 @@ class DungeonTracker {
         const trackedTotalTime = endTime - completedRunData.startTime;
 
         // Get server-validated duration from party messages
-        const partyMessageDuration = (firstTimestamp && lastTimestamp)
-            ? lastTimestamp - firstTimestamp
-            : null;
+        const partyMessageDuration = firstTimestamp && lastTimestamp ? lastTimestamp - firstTimestamp : null;
         const validated = partyMessageDuration !== null;
 
         // Use party message duration if available (authoritative), otherwise use tracked duration
@@ -1032,17 +1039,17 @@ class DungeonTracker {
             tier: completedRunData.tier,
             startTime: completedRunData.startTime,
             endTime,
-            totalTime,  // Authoritative duration (party message or tracked)
-            trackedDuration: trackedTotalTime,  // Wall-clock tracked duration
-            partyMessageDuration,  // Server-validated duration (null if solo)
-            validated,  // true if party messages available
+            totalTime, // Authoritative duration (party message or tracked)
+            trackedDuration: trackedTotalTime, // Wall-clock tracked duration
+            partyMessageDuration, // Server-validated duration (null if solo)
+            validated, // true if party messages available
             avgWaveTime,
             fastestWave,
             slowestWave,
             wavesCompleted: completedRunData.wavesCompleted,
             waveTimes: completedWaveTimes,
-            keyCountMessages: completedKeyCountMessages,  // Store key data for history
-            keyCountsMap: completedRunData.keyCountsMap  // Include for backward compatibility
+            keyCountMessages: completedKeyCountMessages, // Store key data for history
+            keyCountsMap: completedRunData.keyCountsMap, // Include for backward compatibility
         };
 
         // Auto-save completed run to history if we have complete data
@@ -1059,10 +1066,10 @@ class DungeonTracker {
 
                 // Build run object in unified format
                 const runToSave = {
-                    timestamp: new Date(firstTimestamp).toISOString(),  // Use party message timestamp
-                    duration: partyMessageDuration,  // Server-validated duration
+                    timestamp: new Date(firstTimestamp).toISOString(), // Use party message timestamp
+                    duration: partyMessageDuration, // Server-validated duration
                     dungeonName: dungeonName,
-                    keyCountsMap: completedRunData.keyCountsMap  // Include key counts
+                    keyCountsMap: completedRunData.keyCountsMap, // Include key counts
                 };
 
                 // Save to database (with duplicate detection)
@@ -1130,9 +1137,8 @@ class DungeonTracker {
         const currentWaveElapsed = now - this.waveStartTime.getTime();
 
         // Calculate average wave time so far
-        const avgWaveTime = this.waveTimes.length > 0
-            ? this.waveTimes.reduce((sum, time) => sum + time, 0) / this.waveTimes.length
-            : 0;
+        const avgWaveTime =
+            this.waveTimes.length > 0 ? this.waveTimes.reduce((sum, time) => sum + time, 0) / this.waveTimes.length : 0;
 
         // Calculate ETA
         const remainingWaves = this.currentRun.maxWaves - this.currentRun.wavesCompleted;
@@ -1157,7 +1163,7 @@ class DungeonTracker {
             fastestWave,
             slowestWave,
             estimatedTimeRemaining,
-            keyCountsMap: this.currentRun.keyCountsMap || {} // Party member key counts
+            keyCountsMap: this.currentRun.keyCountsMap || {}, // Party member key counts
         };
     }
 
@@ -1301,7 +1307,7 @@ class DungeonTracker {
                 if (!timestampMatch) continue;
 
                 let [, date, hour, min, sec, period] = timestampMatch;
-                const [month, day] = date.split('/').map(x => parseInt(x, 10));
+                const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                 hour = parseInt(hour, 10);
                 min = parseInt(min, 10);
@@ -1322,7 +1328,7 @@ class DungeonTracker {
                         events.push({
                             type: 'battle_start',
                             timestamp,
-                            dungeonName
+                            dungeonName,
                         });
                     }
                 }
@@ -1337,7 +1343,7 @@ class DungeonTracker {
                             type: 'key',
                             timestamp,
                             team: playerNames,
-                            keyCountsMap
+                            keyCountsMap,
                         });
                     }
                 }
@@ -1345,14 +1351,14 @@ class DungeonTracker {
                 else if (text.match(/Party failed on wave \d+/)) {
                     events.push({
                         type: 'fail',
-                        timestamp
+                        timestamp,
                     });
                 }
                 // Extract "Battle ended:" messages (fled/canceled)
                 else if (text.includes('Battle ended:')) {
                     events.push({
                         type: 'cancel',
-                        timestamp
+                        timestamp,
                     });
                 }
             }
@@ -1380,7 +1386,10 @@ class DungeonTracker {
                     }
 
                     // Find nearest battle_start before this run
-                    const battleStart = events.slice(0, i).reverse().find(e => e.type === 'battle_start');
+                    const battleStart = events
+                        .slice(0, i)
+                        .reverse()
+                        .find((e) => e.type === 'battle_start');
                     const dungeonName = battleStart?.dungeonName || 'Unknown';
 
                     // Get team key
@@ -1391,7 +1400,7 @@ class DungeonTracker {
                     const run = {
                         timestamp: event.timestamp.toISOString(),
                         duration: duration,
-                        dungeonName: dungeonName
+                        dungeonName: dungeonName,
                     };
 
                     const saved = await dungeonTrackerStorage.saveTeamRun(teamKey, run);
@@ -1404,13 +1413,13 @@ class DungeonTracker {
 
             return {
                 runsAdded,
-                teams: Array.from(teamsSet)
+                teams: Array.from(teamsSet),
             };
         } catch (error) {
             console.error('[Dungeon Tracker] Backfill error:', error);
             return {
                 runsAdded: 0,
-                teams: []
+                teams: [],
             };
         }
     }

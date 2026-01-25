@@ -49,7 +49,7 @@ function observeProfileClosure() {
     // Watch document body for changes
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
     });
 }
 
@@ -114,7 +114,9 @@ async function handleExport(button) {
             button.style.backgroundColor = '#dc3545'; // Red
             setTimeout(() => resetButton(button), 3000);
             console.error('[Profile Export] No export data available');
-            alert('No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again\n\nIf viewing another player\'s profile, make sure you opened it in-game first.');
+            alert(
+                "No character data found. Please:\n1. Refresh the game page\n2. Wait for it to fully load\n3. Try again\n\nIf viewing another player's profile, make sure you opened it in-game first."
+            );
             return;
         }
 
@@ -126,7 +128,6 @@ async function handleExport(button) {
         button.textContent = '✓ Copied';
         button.style.backgroundColor = '#28a745'; // Green
         setTimeout(() => resetButton(button), 3000);
-
     } catch (error) {
         console.error('[Profile Export] Export failed:', error);
 
@@ -155,5 +156,5 @@ function resetButton(button) {
 
 // Export module
 export default {
-    initialize
+    initialize,
 };

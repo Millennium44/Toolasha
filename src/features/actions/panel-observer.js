@@ -21,11 +21,7 @@ import { getOriginalText } from '../../utils/dom.js';
 /**
  * Action types for gathering skills (3 skills)
  */
-const GATHERING_TYPES = [
-    '/action_types/foraging',
-    '/action_types/woodcutting',
-    '/action_types/milking'
-];
+const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
 /**
  * Action types for production skills (5 skills)
@@ -35,7 +31,7 @@ const PRODUCTION_TYPES = [
     '/action_types/cooking',
     '/action_types/cheesesmithing',
     '/action_types/crafting',
-    '/action_types/tailoring'
+    '/action_types/tailoring',
 ];
 
 /**
@@ -85,7 +81,7 @@ const SELECTORS = {
     ACTION_NAME: 'div.SkillActionDetail_name__3erHV',
     DROP_TABLE: 'div.SkillActionDetail_dropTable__3ViVp',
     ENHANCING_OUTPUT: 'div.SkillActionDetail_enhancingOutput__VPHbY', // Outputs container
-    ITEM_NAME: 'div.Item_name__2C42x' // Item name (without +1)
+    ITEM_NAME: 'div.Item_name__2C42x', // Item name (without +1)
 };
 
 /**
@@ -162,7 +158,7 @@ function setupMutationObserver() {
                     (addedNode.querySelector && addedNode.querySelector(SELECTORS.ENHANCING_OUTPUT))
                 ) {
                     // Find the parent enhancing panel
-                    let panel = addedNode.closest(SELECTORS.ENHANCING_PANEL);
+                    const panel = addedNode.closest(SELECTORS.ENHANCING_PANEL);
                     if (panel) {
                         await handleEnhancingPanel(panel);
                     }
@@ -174,7 +170,7 @@ function setupMutationObserver() {
                     addedNode.classList?.contains('Item_name__2C42x')
                 ) {
                     // Find the parent enhancing panel
-                    let panel = addedNode.closest(SELECTORS.ENHANCING_PANEL);
+                    const panel = addedNode.closest(SELECTORS.ENHANCING_PANEL);
                     if (panel) {
                         await handleEnhancingPanel(panel);
                     }
@@ -204,9 +200,9 @@ function setupMutationObserver() {
 
         panelObserver.observe(document.body, {
             childList: true,
-            subtree: true,  // Watch entire tree, not just direct children
-            attributes: true,  // Watch for attribute changes (all attributes)
-            attributeOldValue: true  // Track old values
+            subtree: true, // Watch entire tree, not just direct children
+            attributes: true, // Watch for attribute changes (all attributes)
+            attributeOldValue: true, // Track old values
         });
     };
 
@@ -234,10 +230,10 @@ function setupEnhancementRefreshListeners() {
  */
 function refreshEnhancementCalculator() {
     const panel = document.querySelector(SELECTORS.ENHANCING_PANEL);
-    if (!panel) return;  // Not on enhancing panel, skip
+    if (!panel) return; // Not on enhancing panel, skip
 
     const itemHrid = panel.dataset.mwiItemHrid;
-    if (!itemHrid) return;  // No item detected yet, skip
+    if (!itemHrid) return; // No item detected yet, skip
 
     // Trigger debounced update
     triggerEnhancementUpdate(panel, itemHrid);
@@ -316,7 +312,7 @@ function getCurrentActionTabButton(panel) {
 
     while (current && depth < maxDepth) {
         const buttons = Array.from(current.querySelectorAll('button[role="tab"]'));
-        const currentActionTab = buttons.find(btn => btn.textContent.trim() === 'Current Action');
+        const currentActionTab = buttons.find((btn) => btn.textContent.trim() === 'Current Action');
 
         if (currentActionTab) {
             // Cache it on the panel for future lookups
@@ -458,7 +454,7 @@ function setupTabClickListeners(panel) {
 
     while (current && depth < maxDepth) {
         const buttons = Array.from(current.querySelectorAll('button[role="tab"]'));
-        const foundTabs = buttons.filter(btn => {
+        const foundTabs = buttons.filter((btn) => {
             const text = btn.textContent.trim();
             return text === 'Enhance' || text === 'Current Action';
         });
@@ -477,7 +473,7 @@ function setupTabClickListeners(panel) {
     }
 
     // Add click listeners to both tabs
-    tabButtons.forEach(button => {
+    tabButtons.forEach((button) => {
         button.addEventListener('click', async () => {
             // Small delay to let the tab change take effect
             setTimeout(async () => {
@@ -530,7 +526,7 @@ function setupInputObservers(panel, itemHrid) {
     const inputs = panel.querySelectorAll('input[type="number"], input[type="text"]');
 
     // Add listeners to all existing inputs
-    inputs.forEach(input => {
+    inputs.forEach((input) => {
         addInputListener(input, panel, itemHrid);
     });
 }

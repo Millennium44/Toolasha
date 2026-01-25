@@ -117,7 +117,7 @@ class NetworthCache {
         return {
             size: this.cache.size,
             maxSize: this.maxSize,
-            marketDataHash: this.marketDataHash
+            marketDataHash: this.marketDataHash,
         };
     }
 }

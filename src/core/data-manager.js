@@ -21,12 +21,12 @@ class DataManager {
         this.characterSkills = null;
         this.characterItems = null;
         this.characterActions = [];
-        this.characterQuests = [];  // Active quests including tasks
+        this.characterQuests = []; // Active quests including tasks
         this.characterEquipment = new Map();
-        this.characterHouseRooms = new Map();  // House room HRID -> {houseRoomHrid, level}
-        this.actionTypeDrinkSlotsMap = new Map();  // Action type HRID -> array of drink items
-        this.monsterSortIndexMap = new Map();  // Monster HRID -> combat zone sortIndex
-        this.battleData = null;  // Current battle data (for Combat Sim export on Steam)
+        this.characterHouseRooms = new Map(); // House room HRID -> {houseRoomHrid, level}
+        this.actionTypeDrinkSlotsMap = new Map(); // Action type HRID -> array of drink items
+        this.monsterSortIndexMap = new Map(); // Monster HRID -> combat zone sortIndex
+        this.battleData = null; // Current battle data (for Combat Sim export on Steam)
 
         // Character tracking for switch detection
         this.currentCharacterId = null;
@@ -100,7 +100,9 @@ class DataManager {
                             this.characterData = characterData;
                             this.characterSkills = characterData.characterSkills;
                             this.characterItems = characterData.characterItems;
-                            this.characterActions = characterData.characterActions ? [...characterData.characterActions] : [];
+                            this.characterActions = characterData.characterActions
+                                ? [...characterData.characterActions]
+                                : [];
 
                             // Build equipment map
                             this.updateEquipmentMap(characterData.characterItems);
@@ -132,8 +134,7 @@ class DataManager {
      */
     tryLoadStaticData() {
         try {
-            if (typeof localStorageUtil !== 'undefined' &&
-                typeof localStorageUtil.getInitClientData === 'function') {
+            if (typeof localStorageUtil !== 'undefined' && typeof localStorageUtil.getInitClientData === 'function') {
                 const data = localStorageUtil.getInitClientData();
                 if (data && Object.keys(data).length > 0) {
                     this.initClientData = data;
@@ -167,7 +168,7 @@ class DataManager {
                 console.error('[DataManager] Invalid character data received:', {
                     hasCharacter: !!data.character,
                     hasId: !!newCharacterId,
-                    hasName: !!newCharacterName
+                    hasName: !!newCharacterName,
                 });
                 return; // Don't process invalid character data
             }
@@ -176,7 +177,7 @@ class DataManager {
             if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
                 // Prevent rapid-fire character switches (loop protection)
                 const now = Date.now();
-                if (this.lastCharacterSwitchTime && (now - this.lastCharacterSwitchTime) < 1000) {
+                if (this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < 1000) {
                     console.warn('[Toolasha] Ignoring rapid character switch (<1s since last), possible loop detected');
                     return;
                 }
@@ -199,7 +200,7 @@ class DataManager {
                     oldId: this.currentCharacterId,
                     newId: newCharacterId,
                     oldName: this.currentCharacterName,
-                    newName: newCharacterName
+                    newName: newCharacterName,
                 });
 
                 // Update character tracking
@@ -223,7 +224,7 @@ class DataManager {
                 // Emit character_switched event (ready for re-init)
                 this.emit('character_switched', {
                     newId: newCharacterId,
-                    newName: newCharacterName
+                    newName: newCharacterName,
                 });
             } else if (!this.currentCharacterId) {
                 // First load - set character tracking
@@ -261,7 +262,7 @@ class DataManager {
                 if (action.isDone === false) {
                     this.characterActions.push(action);
                 } else {
-                    this.characterActions = this.characterActions.filter(a => a.id !== action.id);
+                    this.characterActions = this.characterActions.filter((a) => a.id !== action.id);
                 }
             }
 
@@ -300,7 +301,7 @@ class DataManager {
             // CRITICAL: Update skill experience from action_completed (this is how XP updates in real-time!)
             if (data.endCharacterSkills && Array.isArray(data.endCharacterSkills) && this.characterSkills) {
                 for (const updatedSkill of data.endCharacterSkills) {
-                    const skill = this.characterSkills.find(s => s.skillHrid === updatedSkill.skillHrid);
+                    const skill = this.characterSkills.find((s) => s.skillHrid === updatedSkill.skillHrid);
                     if (skill) {
                         // Update experience (and level if it changed)
                         skill.experience = updatedSkill.experience;
@@ -319,7 +320,7 @@ class DataManager {
             if (data.endCharacterItems) {
                 // Update inventory items in-place (endCharacterItems contains only changed items, not full inventory)
                 for (const item of data.endCharacterItems) {
-                    if (item.itemLocationHrid !== "/item_locations/inventory") {
+                    if (item.itemLocationHrid !== '/item_locations/inventory') {
                         // Equipment items handled by updateEquipmentMap
                         continue;
                     }
@@ -343,7 +344,6 @@ class DataManager {
 
         // Handle action_type_consumable_slots_updated (when user changes tea assignments)
         this.webSocketHook.on('action_type_consumable_slots_updated', (data) => {
-
             // Update drink slots map with new consumables
             if (data.actionTypeDrinkSlotsMap) {
                 this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
@@ -354,14 +354,12 @@ class DataManager {
 
         // Handle consumable_buffs_updated (when buffs expire/refresh)
         this.webSocketHook.on('consumable_buffs_updated', (data) => {
-
             // Buffs updated - next hover will show updated values
             this.emit('buffs_updated', data);
         });
 
         // Handle house_rooms_updated (when user upgrades house rooms)
         this.webSocketHook.on('house_rooms_updated', (data) => {
-
             // Update house room map with new levels
             if (data.characterHouseRoomMap) {
                 this.updateHouseRoomMap(data.characterHouseRoomMap);
@@ -372,7 +370,6 @@ class DataManager {
 
         // Handle skills_updated (when user gains skill levels)
         this.webSocketHook.on('skills_updated', (data) => {
-
             // Update character skills with new levels
             if (data.characterSkills) {
                 this.characterSkills = data.characterSkills;
@@ -394,7 +391,7 @@ class DataManager {
      */
     updateEquipmentMap(items) {
         for (const item of items) {
-            if (item.itemLocationHrid !== "/item_locations/inventory") {
+            if (item.itemLocationHrid !== '/item_locations/inventory') {
                 if (item.count === 0) {
                     this.characterEquipment.delete(item.itemLocationHrid);
                 } else {
@@ -417,7 +414,6 @@ class DataManager {
         for (const [hrid, room] of Object.entries(houseRoomMap)) {
             this.characterHouseRooms.set(room.houseRoomHrid, room);
         }
-
     }
 
     /**
@@ -433,7 +429,6 @@ class DataManager {
         for (const [actionTypeHrid, drinks] of Object.entries(drinkSlotsMap)) {
             this.actionTypeDrinkSlotsMap.set(actionTypeHrid, drinks || []);
         }
-
     }
 
     /**
@@ -461,7 +456,7 @@ class DataManager {
             myMarketListings: this.characterData?.myMarketListings || [],
             characterHouseRoomMap: Object.fromEntries(this.characterHouseRooms),
             characterAbilities: this.characterData?.characterAbilities || [],
-            abilityCombatTriggersMap: this.characterData?.abilityCombatTriggersMap || {}
+            abilityCombatTriggersMap: this.characterData?.abilityCombatTriggersMap || {},
         };
     }
 
@@ -560,7 +555,7 @@ class DataManager {
             return 0;
         }
 
-        const buff = this.characterData.communityBuffs.find(b => b.hrid === buffTypeHrid);
+        const buff = this.characterData.communityBuffs.find((b) => b.hrid === buffTypeHrid);
         return buff?.level || 0;
     }
 
@@ -612,12 +607,13 @@ class DataManager {
         }
 
         return this.characterQuests
-            .filter(quest =>
-                quest.category === '/quest_category/random_task' &&
-                quest.status === '/quest_status/in_progress' &&
-                quest.actionHrid
+            .filter(
+                (quest) =>
+                    quest.category === '/quest_category/random_task' &&
+                    quest.status === '/quest_status/in_progress' &&
+                    quest.actionHrid
             )
-            .map(quest => quest.actionHrid);
+            .map((quest) => quest.actionHrid);
     }
 
     /**
@@ -707,7 +703,10 @@ class DataManager {
                 if (!monsterHrid) continue;
 
                 // If monster appears in multiple zones, use earliest zone (lowest sortIndex)
-                if (!this.monsterSortIndexMap.has(monsterHrid) || sortIndex < this.monsterSortIndexMap.get(monsterHrid)) {
+                if (
+                    !this.monsterSortIndexMap.has(monsterHrid) ||
+                    sortIndex < this.monsterSortIndexMap.get(monsterHrid)
+                ) {
                     this.monsterSortIndexMap.set(monsterHrid, sortIndex);
                 }
             }

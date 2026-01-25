@@ -38,13 +38,9 @@ class AlchemyItemDimming {
         this.isInitialized = true;
 
         // Register with centralized observer to watch for alchemy panel
-        this.unregisterObserver = domObserver.onClass(
-            'AlchemyItemDimming',
-            'ItemSelector_menu__12sEM',
-            () => {
-                this.processAlchemyItems();
-            }
-        );
+        this.unregisterObserver = domObserver.onClass('AlchemyItemDimming', 'ItemSelector_menu__12sEM', () => {
+            this.processAlchemyItems();
+        });
 
         // Process any existing items on page
         this.processAlchemyItems();
@@ -68,11 +64,13 @@ class AlchemyItemDimming {
             return;
         }
 
-        const alchemySkill = skills.find(s => s.skillHrid === '/skills/alchemy');
+        const alchemySkill = skills.find((s) => s.skillHrid === '/skills/alchemy');
         const playerAlchemyLevel = alchemySkill?.level || 1;
 
         // Find all item icon divs within the alchemy panel
-        const iconDivs = alchemyPanel.querySelectorAll('div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6');
+        const iconDivs = alchemyPanel.querySelectorAll(
+            'div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6'
+        );
 
         for (const div of iconDivs) {
             // Skip if already processed

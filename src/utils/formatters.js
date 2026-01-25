@@ -41,11 +41,12 @@ export function numberFormatter(num, digits = 0) {
  */
 export function timeReadable(sec) {
     // For times >= 1 year, show in years/months/days
-    if (sec >= 31536000) { // 365 days
+    if (sec >= 31536000) {
+        // 365 days
         const years = Math.floor(sec / 31536000);
-        const remainingAfterYears = sec - (years * 31536000);
+        const remainingAfterYears = sec - years * 31536000;
         const months = Math.floor(remainingAfterYears / 2592000); // 30 days
-        const remainingAfterMonths = remainingAfterYears - (months * 2592000);
+        const remainingAfterMonths = remainingAfterYears - months * 2592000;
         const days = Math.floor(remainingAfterMonths / 86400);
 
         const parts = [];
@@ -59,9 +60,9 @@ export function timeReadable(sec) {
     // For times >= 1 day, show in days/hours/minutes
     if (sec >= 86400) {
         const days = Math.floor(sec / 86400);
-        const remainingAfterDays = sec - (days * 86400);
+        const remainingAfterDays = sec - days * 86400;
         const hours = Math.floor(remainingAfterDays / 3600);
-        const remainingAfterHours = remainingAfterDays - (hours * 3600);
+        const remainingAfterHours = remainingAfterDays - hours * 3600;
         const minutes = Math.floor(remainingAfterHours / 60);
 
         const parts = [];
@@ -75,7 +76,7 @@ export function timeReadable(sec) {
     // For times < 1 day, show as HH:MM:SS
     const d = new Date(Math.round(sec * 1000));
     function pad(i) {
-        return ("0" + i).slice(-2);
+        return ('0' + i).slice(-2);
     }
 
     const hours = d.getUTCHours();
@@ -84,10 +85,10 @@ export function timeReadable(sec) {
 
     // For times < 1 minute, just show seconds
     if (hours === 0 && minutes === 0) {
-        return seconds + "s";
+        return seconds + 's';
     }
 
-    let str = hours + "h " + pad(minutes) + "m " + pad(seconds) + "s";
+    const str = hours + 'h ' + pad(minutes) + 'm ' + pad(seconds) + 's';
     return str;
 }
 

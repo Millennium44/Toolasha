@@ -171,7 +171,7 @@ export function insertAfter(newElement, referenceElement) {
  */
 export function removeElements(selector) {
     const elements = document.querySelectorAll(selector);
-    elements.forEach(el => el.parentNode?.removeChild(el));
+    elements.forEach((el) => el.parentNode?.removeChild(el));
     return elements.length;
 }
 
@@ -187,7 +187,7 @@ export function getOriginalText(element) {
     const clone = element.cloneNode(true);
 
     // Remove inserted spans/divs (our injected content)
-    clone.querySelectorAll('.insertedSpan, .script-injected').forEach(el => el.remove());
+    clone.querySelectorAll('.insertedSpan, .script-injected').forEach((el) => el.remove());
 
     return clone.textContent.trim();
 }
@@ -300,5 +300,5 @@ export default {
     getOriginalText,
     addStyles,
     removeStyles,
-    fixTooltipOverflow
+    fixTooltipOverflow,
 };
