@@ -34238,9 +34238,9 @@
                             if (timestampMatch) {
                                 const date = timestampMatch[1];
                                 let hour = parseInt(timestampMatch[2], 10);
-                                let min = parseInt(timestampMatch[3], 10);
-                                let sec = parseInt(timestampMatch[4], 10);
-                                let period = timestampMatch[5];
+                                const min = parseInt(timestampMatch[3], 10);
+                                const sec = parseInt(timestampMatch[4], 10);
+                                const period = timestampMatch[5];
 
                                 const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
@@ -34269,12 +34269,13 @@
                                 );
 
                                 if (timestampMatch) {
-                                    let [, date, hour, min, sec, period] = timestampMatch;
-                                    const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+                                    const date = timestampMatch[1];
+                                    let hour = parseInt(timestampMatch[2], 10);
+                                    let min = parseInt(timestampMatch[3], 10);
+                                    let sec = parseInt(timestampMatch[4], 10);
+                                    const period = timestampMatch[5];
 
-                                    hour = parseInt(hour, 10);
-                                    min = parseInt(min, 10);
-                                    sec = parseInt(sec, 10);
+                                    const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                                     // Handle AM/PM if present
                                     if (period === 'PM' && hour < 12) hour += 12;
@@ -34478,10 +34479,10 @@
 
         /**
          * Handle "Party failed" message
-         * @param {number} timestamp - Message timestamp in milliseconds
-         * @param {Object} message - Message object
+         * @param {number} _timestamp - Message timestamp in milliseconds
+         * @param {Object} _message - Message object
          */
-        onPartyFailed(timestamp, message) {
+        onPartyFailed(_timestamp, _message) {
             if (!this.isTracking || !this.currentRun) {
                 return;
             }
@@ -34603,7 +34604,7 @@
             const keyCountsMap = {};
 
             // Regex to match [PlayerName - KeyCount] pattern (with optional comma separators)
-            const regex = /\[([^\[\]-]+?)\s*-\s*([\d,]+)\]/g;
+            const regex = /\[([^[\]-]+?)\s*-\s*([\d,]+)\]/g;
             let match;
 
             while ((match = regex.exec(messageText)) !== null) {
@@ -35145,7 +35146,7 @@
                     }
 
                     // FALLBACK: Check if text starts with non-timestamp text followed by colon
-                    if (/^[^\[]+:/.test(text)) {
+                    if (/^[^[]+:/.test(text)) {
                         continue; // Skip player messages
                     }
 
@@ -35153,12 +35154,13 @@
                     const timestampMatch = text.match(/\[(\d{1,2}\/\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
                     if (!timestampMatch) continue;
 
-                    let [, date, hour, min, sec, period] = timestampMatch;
-                    const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+                    const date = timestampMatch[1];
+                    let hour = parseInt(timestampMatch[2], 10);
+                    let min = parseInt(timestampMatch[3], 10);
+                    let sec = parseInt(timestampMatch[4], 10);
+                    const period = timestampMatch[5];
 
-                    hour = parseInt(hour, 10);
-                    min = parseInt(min, 10);
-                    sec = parseInt(sec, 10);
+                    const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                     // Handle AM/PM if present
                     if (period === 'PM' && hour < 12) hour += 12;
@@ -39383,7 +39385,7 @@
 
                 // Don't include infoText - it contains our profit display which causes update loops
                 return `${successRate}:${consumables}:${catalyst}:${requirements}`;
-            } catch (_error) {
+            } catch {
                 return '';
             }
         }

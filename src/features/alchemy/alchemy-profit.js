@@ -1125,7 +1125,7 @@ class AlchemyProfit {
 
             // Don't include infoText - it contains our profit display which causes update loops
             return `${successRate}:${consumables}:${catalyst}:${requirements}`;
-        } catch (_error) {
+        } catch {
             return '';
         }
     }
