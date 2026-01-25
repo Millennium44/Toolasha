@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.0
+// @version      0.5.01
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
-// @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Special thanks to Zaeter for the name.
+// @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tim for his generous contribution of the Character Cards. Special thanks to Zaeter for the name.
 // @license      CC-BY-NC-SA-4.0
 // @run-at       document-start
 // @match        https://www.milkywayidle.com/*
@@ -854,6 +854,13 @@
                     label: 'Profile panel: Show gear score',
                     type: 'checkbox',
                     default: true
+                },
+                characterCard: {
+                    id: 'characterCard',
+                    label: 'Profile panel: Show View Card button',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Adds button to open character sheet in external viewer'
                 },
                 dungeonTracker: {
                     id: 'dungeonTracker',
@@ -23679,6 +23686,413 @@
     combatScore.setupSettingListener();
 
     /**
+     * Utilities to parse the MWI character share modal into a urpt string
+     * for https://tib-san.github.io/mwi-character-sheet/. Food is not present in the modal, so it is
+     * emitted as empty entries.
+     *
+     * Usage:
+     *   import { buildCharacterSheetLink } from './character-sheet.js';
+     *   const url = buildCharacterSheetLink(); // assumes modal is open in DOM
+     */
+
+    const CLASS_COLORS_BLOCKLIST = [
+      '_name__',
+      '_characterName__',
+      '_xlarge__',
+      '_large__',
+      '_medium__',
+      '_small__',
+    ];
+    const EQUIPMENT_ORDER = [
+      'back',
+      'head',
+      'trinket',
+      'main_hand',
+      'body',
+      'off_hand',
+      'hands',
+      'legs',
+      'pouch',
+      'shoes',
+      'necklace',
+      'earrings',
+      'ring',
+      'charm',
+    ];
+    const HOUSING_ORDER = ['dining_room', 'library', 'dojo', 'armory', 'gym', 'archery_range', 'mystical_study'];
+    const ACH_ORDER = ['Beginner', 'Novice', 'Adept', 'Veteran', 'Elite', 'Champion'];
+
+    const SLOT_POS_TO_KEY = {
+      '1,1': 'back',
+      '1,2': 'head',
+      '1,3': 'trinket',
+      '2,1': 'main_hand',
+      '2,2': 'body',
+      '2,3': 'off_hand',
+      '3,1': 'hands',
+      '3,2': 'legs',
+      '3,3': 'pouch',
+      '4,2': 'shoes',
+      '1,5': 'necklace',
+      '2,5': 'earrings',
+      '3,5': 'ring',
+      '4,5': 'charm',
+    };
+
+    const HOUSE_KEY_BY_NAME = {
+      'Dining Room': 'dining_room',
+      Library: 'library',
+      Dojo: 'dojo',
+      Armory: 'armory',
+      Gym: 'gym',
+      'Archery Range': 'archery_range',
+      'Mystical Study': 'mystical_study',
+    };
+
+    const getId = (useEl) => {
+      const href = useEl?.getAttribute('href') || useEl?.getAttribute('xlink:href') || '';
+      return href.split('#')[1] || '';
+    };
+
+    const getColor = (el) => {
+      if (!el) return '';
+      const classes = Array.from(el.classList || []);
+      const match = classes.find(
+        (c) =>
+          /^CharacterName_[a-z]+__/.test(c) &&
+          !CLASS_COLORS_BLOCKLIST.some((block) => c.includes(block))
+      );
+      if (!match) return '';
+      const colorMatch = match.match(/^CharacterName_([a-z]+)__/);
+      return colorMatch ? colorMatch[1] : '';
+    };
+
+    const getNum = (txt) => {
+      const m = (txt || '').match(/\d+/);
+      return m ? m[0] : '';
+    };
+
+    const extractGeneral = (modal) => {
+      const name =
+        modal.querySelector('.CharacterName_name__1amXp')?.dataset?.name?.trim() ||
+        modal.querySelector('.CharacterName_name__1amXp span')?.textContent?.trim() ||
+        '';
+      const iconUse = modal.querySelector('.CharacterName_chatIcon__22lxV use');
+      const nameColor = getColor(modal.querySelector('.CharacterName_name__1amXp'));
+      const [avatarUse, outfitUse] = modal.querySelectorAll('.SharableProfile_avatar__1hHtL use');
+      return [name, getId(avatarUse), getId(outfitUse), getId(iconUse), nameColor].join(',');
+    };
+
+    const extractSkills = (modal) => {
+      const statRows = [...modal.querySelectorAll('.SharableProfile_statRow__2bT8_')];
+      const combat = getNum(
+        statRows.find((r) => r.textContent?.toLowerCase().includes('combat level'))?.textContent
+      );
+      const skillMap = {};
+      modal.querySelectorAll('.SharableProfile_skillGrid__3vIqO .Skill_skill__3MrMc').forEach((el) => {
+        const id = getId(el.querySelector('use'));
+        const lvl = getNum(el.querySelector('.Skill_level__39kts')?.textContent);
+        if (id) skillMap[id] = lvl;
+      });
+
+      return [
+        combat,
+        skillMap.stamina || '',
+        skillMap.intelligence || '',
+        skillMap.attack || '',
+        skillMap.defense || '',
+        skillMap.melee || '',
+        skillMap.ranged || '',
+        skillMap.magic || '',
+      ].join(',');
+    };
+
+    const extractEquipment = (modal) => {
+      const equipment = {};
+      modal.querySelectorAll('.SharableProfile_playerModel__o34sV .SharableProfile_equipmentSlot__kOrug').forEach((slot) => {
+        const style = slot.getAttribute('style') || '';
+        const rowMatch = style.match(/grid-row-start:\s*(\d+)/);
+        const colMatch = style.match(/grid-column-start:\s*(\d+)/);
+        const row = rowMatch ? rowMatch[1] : '';
+        const col = colMatch ? colMatch[1] : '';
+        const key = row && col ? SLOT_POS_TO_KEY[`${row},${col}`] : null;
+        if (!key) return;
+        const itemId = getId(slot.querySelector('use'));
+        const enh = getNum(slot.querySelector('.Item_enhancementLevel__19g-e')?.textContent);
+        equipment[key] = itemId ? `${itemId}.${enh || ''}` : '';
+      });
+      return EQUIPMENT_ORDER.map((k) => equipment[k] || '').join(',');
+    };
+
+    const extractAbilities = (modal) => {
+      const abilitiesRaw = [];
+      modal.querySelectorAll('.SharableProfile_equippedAbilities__1NNpC > div').forEach((wrap) => {
+        const id = getId(wrap.querySelector('use'));
+        const lvl = getNum(wrap.querySelector('.Ability_level__1L-do')?.textContent);
+        abilitiesRaw.push(id ? `${id}.${lvl || ''}` : '');
+      });
+      // Profiles only carry 5 abilities; move the first to the end so order is 2-3-4-5-1.
+      const abilities = (() => {
+        if (!abilitiesRaw.length) return abilitiesRaw;
+        const [first, ...rest] = abilitiesRaw;
+        return [...rest, first];
+      })().slice(0, 5);
+      while (abilities.length < 8) abilities.push('');
+      return abilities.slice(0, 8).join(',');
+    };
+
+    const extractHousing = (modal) => {
+      const housing = {};
+      modal.querySelectorAll('.SharableProfile_houseRooms__3QGPc .SharableProfile_houseRoom__2FW_d').forEach((room) => {
+        const nameText = room.querySelector('.SharableProfile_name__1RDS1')?.textContent?.trim();
+        const key = HOUSE_KEY_BY_NAME[nameText];
+        if (!key) return;
+        housing[key] = getNum(room.querySelector('.SharableProfile_level__1vQoc')?.textContent);
+      });
+      return HOUSING_ORDER.map((k) => housing[k] || '').join(',');
+    };
+
+    const extractAchievements = (modal) => {
+      const achievements = {};
+      modal.querySelectorAll('.SharableProfile_achievementTier__2izCL').forEach((tier) => {
+        const header = tier.querySelector('.SharableProfile_tierHeader__1iNyx');
+        if (!header) return;
+        const name = header.querySelector('.SharableProfile_tierName__3pBrY')?.textContent?.trim();
+        const counts = header.querySelector('.SharableProfile_tierCount__3mJd2')?.textContent || '';
+        const match = counts.match(/(\d+)\s*\/\s*(\d+)/);
+        const have = match ? parseInt(match[1], 10) : 0;
+        const total = match ? parseInt(match[2], 10) : 0;
+        achievements[name] = have && total && have === total ? '1' : '0';
+      });
+      return ACH_ORDER.map((n) => achievements[n] || '0').join('');
+    };
+
+    function parseModalToSegments(modal = document.querySelector('.SharableProfile_modal__2OmCQ')) {
+      if (!modal) throw new Error('Profile modal not found');
+
+      return {
+        general: extractGeneral(modal),
+        skills: extractSkills(modal),
+        equipment: extractEquipment(modal),
+        abilities: extractAbilities(modal),
+        food: new Array(6).fill('').join(','),
+        housing: extractHousing(modal),
+        achievements: extractAchievements(modal),
+      };
+    }
+
+    function buildUrptString(segments) {
+      if (!segments) throw new Error('Segments are required to build urpt');
+      const { general, skills, equipment, abilities, food, housing, achievements } = segments;
+      return [general, skills, equipment, abilities, food, housing, achievements].join(';');
+    }
+
+    /**
+     * Extracts character data from the share modal and builds a render URL.
+     */
+    function buildCharacterSheetLink(
+      modal = document.querySelector('.SharableProfile_modal__2OmCQ'),
+      baseUrl = 'https://tib-san.github.io/mwi-character-sheet/'
+    ) {
+      const segments = parseModalToSegments(modal);
+      const urpt = buildUrptString(segments);
+      const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+      return `${base}?urpt=${encodeURIComponent(urpt)}`;
+    }
+
+    /**
+     * Character Card Button
+     * Adds a "View Card" button to profile view that opens character sheet in new tab
+     */
+
+
+    /**
+     * CharacterCardButton class manages character card export button on profiles
+     */
+    class CharacterCardButton {
+        constructor() {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
+
+        /**
+         * Setup settings listeners for feature toggle and color changes
+         */
+        setupSettingListener() {
+            config.onSettingChange('characterCard', (value) => {
+                if (value) {
+                    this.initialize();
+                } else {
+                    this.disable();
+                }
+            });
+
+            config.onSettingChange('color_accent', () => {
+                if (this.isInitialized) {
+                    this.refresh();
+                }
+            });
+        }
+
+        /**
+         * Initialize character card button feature
+         */
+        initialize() {
+            // Check if feature is enabled
+            if (!config.getSetting('characterCard')) {
+                return;
+            }
+
+            // Listen for profile_shared WebSocket messages
+            webSocketHook.on('profile_shared', (data) => {
+                this.handleProfileShared(data);
+            });
+
+            this.isActive = true;
+            this.isInitialized = true;
+        }
+
+        /**
+         * Handle profile_shared WebSocket message
+         * @param {Object} profileData - Profile data from WebSocket
+         */
+        async handleProfileShared(profileData) {
+            // Wait for profile panel to appear in DOM
+            const profilePanel = await this.waitForProfilePanel();
+            if (!profilePanel) {
+                console.error('[CharacterCardButton] Could not find profile panel');
+                return;
+            }
+
+            // Inject the character card button
+            this.injectButton(profilePanel);
+        }
+
+        /**
+         * Wait for profile panel to appear in DOM
+         * @returns {Promise<Element|null>} Profile panel element or null if timeout
+         */
+        async waitForProfilePanel() {
+            for (let i = 0; i < 20; i++) {
+                const panel = document.querySelector('div.SharableProfile_overviewTab__W4dCV');
+                if (panel) {
+                    return panel;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return null;
+        }
+
+        /**
+         * Inject character card button into profile panel
+         * @param {Element} profilePanel - Profile panel element
+         */
+        injectButton(profilePanel) {
+            // Check if button already exists
+            const existingButton = document.getElementById('mwi-character-card-btn');
+            if (existingButton) {
+                return;
+            }
+
+            // Find the combat score panel to inject button into
+            const combatScorePanel = document.getElementById('mwi-combat-score-panel');
+            if (!combatScorePanel) {
+                console.warn('[CharacterCardButton] Combat score panel not found - button not injected');
+                return;
+            }
+
+            // Find the button container (should be the div with both export buttons)
+            const buttonContainer = combatScorePanel.querySelector('div[style*="margin-top: 12px"]');
+            if (!buttonContainer) {
+                console.warn('[CharacterCardButton] Button container not found in combat score panel');
+                return;
+            }
+
+            // Create button element
+            const button = document.createElement('button');
+            button.id = 'mwi-character-card-btn';
+            button.textContent = 'View Card';
+            button.style.cssText = `
+            padding: 8px 12px;
+            background: ${config.COLOR_ACCENT};
+            color: black;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+            width: 100%;
+        `;
+
+            // Add click handler
+            button.addEventListener('click', () => {
+                this.handleButtonClick();
+            });
+
+            // Add hover effects
+            button.addEventListener('mouseenter', () => {
+                button.style.opacity = '0.8';
+            });
+            button.addEventListener('mouseleave', () => {
+                button.style.opacity = '1';
+            });
+
+            // Append button to container
+            buttonContainer.appendChild(button);
+        }
+
+        /**
+         * Handle character card button click
+         */
+        handleButtonClick() {
+            try {
+                // Find the profile modal
+                const modal = document.querySelector('.SharableProfile_modal__2OmCQ');
+                if (!modal) {
+                    console.error('[CharacterCardButton] Profile modal not found');
+                    return;
+                }
+
+                // Build character sheet link
+                const url = buildCharacterSheetLink(modal);
+
+                // Open in new tab
+                window.open(url, '_blank');
+
+            } catch (error) {
+                console.error('[CharacterCardButton] Failed to open character card:', error);
+            }
+        }
+
+        /**
+         * Refresh colors on existing button
+         */
+        refresh() {
+            const button = document.getElementById('mwi-character-card-btn');
+            if (button) {
+                button.style.background = config.COLOR_ACCENT;
+            }
+        }
+
+        /**
+         * Disable the feature
+         */
+        disable() {
+            const button = document.getElementById('mwi-character-card-btn');
+            if (button) {
+                button.remove();
+            }
+
+            this.isActive = false;
+            this.isInitialized = false;
+        }
+    }
+
+    // Create and export singleton instance
+    const characterCardButton = new CharacterCardButton();
+    characterCardButton.setupSettingListener();
+
+    /**
      * Equipment Level Display
      * Shows item level in top right corner of equipment icons
      * Based on original MWI Tools implementation
@@ -40099,6 +40513,13 @@
             async: false
         },
         {
+            key: 'characterCard',
+            name: 'Character Card Button',
+            category: 'Combat',
+            initialize: () => characterCardButton.initialize(),
+            async: false
+        },
+        {
             key: 'dungeonTracker',
             name: 'Dungeon Tracker',
             category: 'Combat',
@@ -40506,6 +40927,7 @@
             'abilityBookCalculator': abilityBookCalculator,
             'zoneIndices': zoneIndices,
             'combatScore': combatScore,
+            'characterCard': characterCardButton,
             'dungeonTracker': dungeonTracker,
             'combatSummary': combatSummary,
             'equipmentLevelDisplay': equipmentLevelDisplay,
@@ -40957,7 +41379,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.0',
+            version: '0.5.01',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

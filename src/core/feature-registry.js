@@ -28,6 +28,7 @@ import requiredMaterials from '../features/actions/required-materials.js';
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
 import zoneIndices from '../features/combat/zone-indices.js';
 import combatScore from '../features/profile/combat-score.js';
+import characterCardButton from '../features/profile/character-card-button.js';
 import equipmentLevelDisplay from '../features/ui/equipment-level-display.js';
 import alchemyItemDimming from '../features/ui/alchemy-item-dimming.js';
 import skillExperiencePercentage from '../features/ui/skill-experience-percentage.js';
@@ -294,6 +295,13 @@ const featureRegistry = [
         name: 'Combat Score',
         category: 'Combat',
         initialize: () => combatScore.initialize(),
+        async: false
+    },
+    {
+        key: 'characterCard',
+        name: 'Character Card Button',
+        category: 'Combat',
+        initialize: () => characterCardButton.initialize(),
         async: false
     },
     {
@@ -704,6 +712,7 @@ function getFeatureInstance(key) {
         'abilityBookCalculator': abilityBookCalculator,
         'zoneIndices': zoneIndices,
         'combatScore': combatScore,
+        'characterCard': characterCardButton,
         'dungeonTracker': dungeonTracker,
         'combatSummary': combatSummary,
         'equipmentLevelDisplay': equipmentLevelDisplay,

@@ -469,6 +469,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true
             },
+            characterCard: {
+                id: 'characterCard',
+                label: 'Profile panel: Show View Card button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds button to open character sheet in external viewer'
+            },
             dungeonTracker: {
                 id: 'dungeonTracker',
                 label: 'Dungeon Tracker: Real-time progress tracking',
