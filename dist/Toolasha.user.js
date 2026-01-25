@@ -20119,7 +20119,16 @@
                 if (document.body.contains(actionPanel)) {
                     updatePromises.push(this.updateCount(actionPanel, inventoryIndex));
                 } else {
-                    // Panel no longer in DOM, remove from tracking
+                    // Panel no longer in DOM - remove injected elements BEFORE deleting from Map
+                    const data = this.actionElements.get(actionPanel);
+                    if (data) {
+                        if (data.displayElement) {
+                            data.displayElement.remove();
+                        }
+                        if (data.pinElement) {
+                            data.pinElement.remove();
+                        }
+                    }
                     this.actionElements.delete(actionPanel);
                     actionPanelSort.unregisterPanel(actionPanel);
                 }
@@ -20484,7 +20493,11 @@
                 if (document.body.contains(actionPanel)) {
                     updatePromises.push(this.updateStats(actionPanel));
                 } else {
-                    // Panel no longer in DOM, remove from tracking
+                    // Panel no longer in DOM - remove injected elements BEFORE deleting from Map
+                    const data = this.actionElements.get(actionPanel);
+                    if (data && data.displayElement) {
+                        data.displayElement.remove();
+                    }
                     this.actionElements.delete(actionPanel);
                     actionPanelSort.unregisterPanel(actionPanel);
                 }
