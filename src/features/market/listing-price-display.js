@@ -482,27 +482,41 @@ class ListingPriceDisplay {
             const orderQuantity = Number(dataset.orderQuantity);
             const filledQuantity = Number(dataset.filledQuantity);
 
-            // Track insertion index
-            let insertIndex = 4;
+            // Find insertion point: BEFORE the first button cell (Collect/Link/Cancel)
+            // These buttons contain specific text and are styled as buttons
+            let insertBeforeCell = null;
+            for (const cell of row.children) {
+                const text = cell.textContent.trim();
+                // Look for button cells containing Link, Cancel, or Collect
+                if (text === 'Link' || text === 'Cancel' || text === 'Collect') {
+                    insertBeforeCell = cell;
+                    break;
+                }
+            }
+
+            // Fallback to index 4 if no button found (shouldn't happen)
+            if (!insertBeforeCell) {
+                insertBeforeCell = row.children[4] || null;
+            }
 
             // Create Top Order Price cell
             const topOrderCell = this.createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache);
-            row.insertBefore(topOrderCell, row.children[insertIndex++]);
+            row.insertBefore(topOrderCell, insertBeforeCell);
 
             // Create Top Order Age cell (if setting enabled)
             if (config.getSetting('market_showTopOrderAge')) {
                 const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
-                row.insertBefore(topOrderAgeCell, row.children[insertIndex++]);
+                row.insertBefore(topOrderAgeCell, insertBeforeCell);
             }
 
             // Create Total Price cell
             const totalPriceCell = this.createTotalPriceCell(itemHrid, isSell, price, orderQuantity, filledQuantity);
-            row.insertBefore(totalPriceCell, row.children[insertIndex++]);
+            row.insertBefore(totalPriceCell, insertBeforeCell);
 
             // Create Listed Age cell (if setting enabled)
             if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
                 const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
-                row.insertBefore(listedAgeCell, row.children[insertIndex++]);
+                row.insertBefore(listedAgeCell, insertBeforeCell);
             }
         }
     }

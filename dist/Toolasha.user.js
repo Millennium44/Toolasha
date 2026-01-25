@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.01
+// @version      0.5.02
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
-// @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tim for his generous contribution of the Character Cards. Special thanks to Zaeter for the name.
+// @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tib for his generous contribution of the Character Cards. Special thanks to Zaeter for the name.
 // @license      CC-BY-NC-SA-4.0
 // @run-at       document-start
 // @match        https://www.milkywayidle.com/*
@@ -12459,27 +12459,41 @@
                 const orderQuantity = Number(dataset.orderQuantity);
                 const filledQuantity = Number(dataset.filledQuantity);
 
-                // Track insertion index
-                let insertIndex = 4;
+                // Find insertion point: BEFORE the first button cell (Collect/Link/Cancel)
+                // These buttons contain specific text and are styled as buttons
+                let insertBeforeCell = null;
+                for (const cell of row.children) {
+                    const text = cell.textContent.trim();
+                    // Look for button cells containing Link, Cancel, or Collect
+                    if (text === 'Link' || text === 'Cancel' || text === 'Collect') {
+                        insertBeforeCell = cell;
+                        break;
+                    }
+                }
+
+                // Fallback to index 4 if no button found (shouldn't happen)
+                if (!insertBeforeCell) {
+                    insertBeforeCell = row.children[4] || null;
+                }
 
                 // Create Top Order Price cell
                 const topOrderCell = this.createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache);
-                row.insertBefore(topOrderCell, row.children[insertIndex++]);
+                row.insertBefore(topOrderCell, insertBeforeCell);
 
                 // Create Top Order Age cell (if setting enabled)
                 if (config.getSetting('market_showTopOrderAge')) {
                     const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
-                    row.insertBefore(topOrderAgeCell, row.children[insertIndex++]);
+                    row.insertBefore(topOrderAgeCell, insertBeforeCell);
                 }
 
                 // Create Total Price cell
                 const totalPriceCell = this.createTotalPriceCell(itemHrid, isSell, price, orderQuantity, filledQuantity);
-                row.insertBefore(totalPriceCell, row.children[insertIndex++]);
+                row.insertBefore(totalPriceCell, insertBeforeCell);
 
                 // Create Listed Age cell (if setting enabled)
                 if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
                     const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
-                    row.insertBefore(listedAgeCell, row.children[insertIndex++]);
+                    row.insertBefore(listedAgeCell, insertBeforeCell);
                 }
             }
         }
@@ -23695,189 +23709,264 @@
      *   const url = buildCharacterSheetLink(); // assumes modal is open in DOM
      */
 
-    const CLASS_COLORS_BLOCKLIST = [
-      '_name__',
-      '_characterName__',
-      '_xlarge__',
-      '_large__',
-      '_medium__',
-      '_small__',
-    ];
-    const EQUIPMENT_ORDER = [
-      'back',
-      'head',
-      'trinket',
-      'main_hand',
-      'body',
-      'off_hand',
-      'hands',
-      'legs',
-      'pouch',
-      'shoes',
-      'necklace',
-      'earrings',
-      'ring',
-      'charm',
-    ];
-    const HOUSING_ORDER = ['dining_room', 'library', 'dojo', 'armory', 'gym', 'archery_range', 'mystical_study'];
-    const ACH_ORDER = ['Beginner', 'Novice', 'Adept', 'Veteran', 'Elite', 'Champion'];
 
-    const SLOT_POS_TO_KEY = {
-      '1,1': 'back',
-      '1,2': 'head',
-      '1,3': 'trinket',
-      '2,1': 'main_hand',
-      '2,2': 'body',
-      '2,3': 'off_hand',
-      '3,1': 'hands',
-      '3,2': 'legs',
-      '3,3': 'pouch',
-      '4,2': 'shoes',
-      '1,5': 'necklace',
-      '2,5': 'earrings',
-      '3,5': 'ring',
-      '4,5': 'charm',
-    };
+    /**
+     * Build character sheet segments from cached character data
+     * @param {Object} characterData - Character data from dataManager or profile cache
+     * @param {Object} clientData - Init client data for lookups
+     * @param {Object} consumablesData - Optional character data containing consumables (for profile_shared data)
+     * @returns {Object} Character sheet segments
+     */
+    function buildSegmentsFromCharacterData(characterData, clientData, consumablesData = null) {
+      if (!characterData) {
+        throw new Error('Character data is required');
+      }
 
-    const HOUSE_KEY_BY_NAME = {
-      'Dining Room': 'dining_room',
-      Library: 'library',
-      Dojo: 'dojo',
-      Armory: 'armory',
-      Gym: 'gym',
-      'Archery Range': 'archery_range',
-      'Mystical Study': 'mystical_study',
-    };
+      // Use consumablesData if provided, otherwise try characterData
+      const dataForConsumables = consumablesData || characterData;
 
-    const getId = (useEl) => {
-      const href = useEl?.getAttribute('href') || useEl?.getAttribute('xlink:href') || '';
-      return href.split('#')[1] || '';
-    };
+      // Extract general info
+      const character = characterData.sharableCharacter || characterData;
+      const name = character.name || 'Player';
 
-    const getColor = (el) => {
-      if (!el) return '';
-      const classes = Array.from(el.classList || []);
-      const match = classes.find(
-        (c) =>
-          /^CharacterName_[a-z]+__/.test(c) &&
-          !CLASS_COLORS_BLOCKLIST.some((block) => c.includes(block))
-      );
-      if (!match) return '';
-      const colorMatch = match.match(/^CharacterName_([a-z]+)__/);
-      return colorMatch ? colorMatch[1] : '';
-    };
+      // Avatar/outfit/icon - need to extract from equipment or use defaults
+      let avatar = 'person_default';
+      let outfit = 'tshirt_default';
+      let nameIcon = '';
+      let nameColor = '';
 
-    const getNum = (txt) => {
-      const m = (txt || '').match(/\d+/);
-      return m ? m[0] : '';
-    };
+      // Try to get avatar/outfit from character items
+      if (characterData.characterItems) {
+        for (const item of characterData.characterItems) {
+          if (item.itemLocationHrid === '/item_locations/avatar') {
+            avatar = item.itemHrid.replace('/items/', '');
+          } else if (item.itemLocationHrid === '/item_locations/outfit') {
+            outfit = item.itemHrid.replace('/items/', '');
+          } else if (item.itemLocationHrid === '/item_locations/chat_icon') {
+            nameIcon = item.itemHrid.replace('/items/', '');
+          }
+        }
+      }
 
-    const extractGeneral = (modal) => {
-      const name =
-        modal.querySelector('.CharacterName_name__1amXp')?.dataset?.name?.trim() ||
-        modal.querySelector('.CharacterName_name__1amXp span')?.textContent?.trim() ||
-        '';
-      const iconUse = modal.querySelector('.CharacterName_chatIcon__22lxV use');
-      const nameColor = getColor(modal.querySelector('.CharacterName_name__1amXp'));
-      const [avatarUse, outfitUse] = modal.querySelectorAll('.SharableProfile_avatar__1hHtL use');
-      return [name, getId(avatarUse), getId(outfitUse), getId(iconUse), nameColor].join(',');
-    };
+      // Name color - try to extract from character data
+      if (character.chatBorderColorHrid) {
+        nameColor = character.chatBorderColorHrid.replace('/chat_border_colors/', '');
+      }
 
-    const extractSkills = (modal) => {
-      const statRows = [...modal.querySelectorAll('.SharableProfile_statRow__2bT8_')];
-      const combat = getNum(
-        statRows.find((r) => r.textContent?.toLowerCase().includes('combat level'))?.textContent
-      );
+      const general = [name, avatar, outfit, nameIcon, nameColor].join(',');
+
+      // Extract skills
       const skillMap = {};
-      modal.querySelectorAll('.SharableProfile_skillGrid__3vIqO .Skill_skill__3MrMc').forEach((el) => {
-        const id = getId(el.querySelector('use'));
-        const lvl = getNum(el.querySelector('.Skill_level__39kts')?.textContent);
-        if (id) skillMap[id] = lvl;
-      });
+      if (characterData.characterSkills) {
+        for (const skill of characterData.characterSkills) {
+          const skillName = skill.skillHrid.replace('/skills/', '');
+          skillMap[skillName] = skill.level || 0;
+        }
+      }
 
-      return [
-        combat,
+      const skills = [
+        skillMap.combat || '',
         skillMap.stamina || '',
         skillMap.intelligence || '',
         skillMap.attack || '',
         skillMap.defense || '',
         skillMap.melee || '',
         skillMap.ranged || '',
-        skillMap.magic || '',
+        skillMap.magic || ''
       ].join(',');
-    };
 
-    const extractEquipment = (modal) => {
-      const equipment = {};
-      modal.querySelectorAll('.SharableProfile_playerModel__o34sV .SharableProfile_equipmentSlot__kOrug').forEach((slot) => {
-        const style = slot.getAttribute('style') || '';
-        const rowMatch = style.match(/grid-row-start:\s*(\d+)/);
-        const colMatch = style.match(/grid-column-start:\s*(\d+)/);
-        const row = rowMatch ? rowMatch[1] : '';
-        const col = colMatch ? colMatch[1] : '';
-        const key = row && col ? SLOT_POS_TO_KEY[`${row},${col}`] : null;
-        if (!key) return;
-        const itemId = getId(slot.querySelector('use'));
-        const enh = getNum(slot.querySelector('.Item_enhancementLevel__19g-e')?.textContent);
-        equipment[key] = itemId ? `${itemId}.${enh || ''}` : '';
-      });
-      return EQUIPMENT_ORDER.map((k) => equipment[k] || '').join(',');
-    };
+      // Extract equipment
+      const equipmentSlots = {
+        back: '', head: '', trinket: '', main_hand: '', body: '', off_hand: '',
+        hands: '', legs: '', pouch: '', shoes: '', necklace: '', earrings: '', ring: '', charm: ''
+      };
 
-    const extractAbilities = (modal) => {
-      const abilitiesRaw = [];
-      modal.querySelectorAll('.SharableProfile_equippedAbilities__1NNpC > div').forEach((wrap) => {
-        const id = getId(wrap.querySelector('use'));
-        const lvl = getNum(wrap.querySelector('.Ability_level__1L-do')?.textContent);
-        abilitiesRaw.push(id ? `${id}.${lvl || ''}` : '');
-      });
-      // Profiles only carry 5 abilities; move the first to the end so order is 2-3-4-5-1.
-      const abilities = (() => {
-        if (!abilitiesRaw.length) return abilitiesRaw;
-        const [first, ...rest] = abilitiesRaw;
-        return [...rest, first];
-      })().slice(0, 5);
-      while (abilities.length < 8) abilities.push('');
-      return abilities.slice(0, 8).join(',');
-    };
+      const slotMapping = {
+        // For characterItems (own character data)
+        '/equipment_types/back': 'back',
+        '/equipment_types/head': 'head',
+        '/equipment_types/trinket': 'trinket',
+        '/equipment_types/main_hand': 'main_hand',
+        '/equipment_types/two_hand': 'main_hand',
+        '/equipment_types/body': 'body',
+        '/equipment_types/off_hand': 'off_hand',
+        '/equipment_types/hands': 'hands',
+        '/equipment_types/legs': 'legs',
+        '/equipment_types/pouch': 'pouch',
+        '/equipment_types/feet': 'shoes',
+        '/equipment_types/neck': 'necklace',
+        '/equipment_types/earrings': 'earrings',
+        '/equipment_types/ring': 'ring',
+        '/equipment_types/charm': 'charm',
+        // For wearableItemMap (profile_shared data)
+        '/item_locations/back': 'back',
+        '/item_locations/head': 'head',
+        '/item_locations/trinket': 'trinket',
+        '/item_locations/main_hand': 'main_hand',
+        '/item_locations/two_hand': 'main_hand',
+        '/item_locations/body': 'body',
+        '/item_locations/off_hand': 'off_hand',
+        '/item_locations/hands': 'hands',
+        '/item_locations/legs': 'legs',
+        '/item_locations/pouch': 'pouch',
+        '/item_locations/feet': 'shoes',
+        '/item_locations/neck': 'necklace',
+        '/item_locations/earrings': 'earrings',
+        '/item_locations/ring': 'ring',
+        '/item_locations/charm': 'charm'
+      };
 
-    const extractHousing = (modal) => {
-      const housing = {};
-      modal.querySelectorAll('.SharableProfile_houseRooms__3QGPc .SharableProfile_houseRoom__2FW_d').forEach((room) => {
-        const nameText = room.querySelector('.SharableProfile_name__1RDS1')?.textContent?.trim();
-        const key = HOUSE_KEY_BY_NAME[nameText];
-        if (!key) return;
-        housing[key] = getNum(room.querySelector('.SharableProfile_level__1vQoc')?.textContent);
-      });
-      return HOUSING_ORDER.map((k) => housing[k] || '').join(',');
-    };
+      if (characterData.characterItems) {
+        for (const item of characterData.characterItems) {
+          if (item.itemLocationHrid && item.itemLocationHrid.startsWith('/equipment_types/')) {
+            const slot = slotMapping[item.itemLocationHrid];
+            if (slot) {
+              const itemId = item.itemHrid.replace('/items/', '');
+              const enhancement = item.enhancementLevel || 0;
+              equipmentSlots[slot] = enhancement > 0 ? `${itemId}.${enhancement}` : `${itemId}.`;
+            }
+          }
+        }
+      }
+      // Check for wearableItemMap (profile data from other players)
+      else if (characterData.wearableItemMap) {
+        for (const key in characterData.wearableItemMap) {
+          const item = characterData.wearableItemMap[key];
+          const slot = slotMapping[item.itemLocationHrid];
+          if (slot) {
+            const itemId = item.itemHrid.replace('/items/', '');
+            const enhancement = item.enhancementLevel || 0;
+            equipmentSlots[slot] = enhancement > 0 ? `${itemId}.${enhancement}` : `${itemId}.`;
+          }
+        }
+      }
 
-    const extractAchievements = (modal) => {
-      const achievements = {};
-      modal.querySelectorAll('.SharableProfile_achievementTier__2izCL').forEach((tier) => {
-        const header = tier.querySelector('.SharableProfile_tierHeader__1iNyx');
-        if (!header) return;
-        const name = header.querySelector('.SharableProfile_tierName__3pBrY')?.textContent?.trim();
-        const counts = header.querySelector('.SharableProfile_tierCount__3mJd2')?.textContent || '';
-        const match = counts.match(/(\d+)\s*\/\s*(\d+)/);
-        const have = match ? parseInt(match[1], 10) : 0;
-        const total = match ? parseInt(match[2], 10) : 0;
-        achievements[name] = have && total && have === total ? '1' : '0';
-      });
-      return ACH_ORDER.map((n) => achievements[n] || '0').join('');
-    };
+      const equipment = [
+        equipmentSlots.back, equipmentSlots.head, equipmentSlots.trinket,
+        equipmentSlots.main_hand, equipmentSlots.body, equipmentSlots.off_hand,
+        equipmentSlots.hands, equipmentSlots.legs, equipmentSlots.pouch,
+        equipmentSlots.shoes, equipmentSlots.necklace, equipmentSlots.earrings,
+        equipmentSlots.ring, equipmentSlots.charm
+      ].join(',');
 
-    function parseModalToSegments(modal = document.querySelector('.SharableProfile_modal__2OmCQ')) {
-      if (!modal) throw new Error('Profile modal not found');
+      // Extract abilities
+      const abilitySlots = new Array(8).fill('');
+
+      if (characterData.combatUnit?.combatAbilities || characterData.equippedAbilities) {
+        // equippedAbilities (profile data) or combatUnit.combatAbilities (own character)
+        const abilities = characterData.equippedAbilities || characterData.combatUnit?.combatAbilities || [];
+
+        // Separate special and normal abilities
+        let specialAbility = null;
+        const normalAbilities = [];
+
+        for (const ability of abilities) {
+          if (!ability || !ability.abilityHrid) continue;
+
+          const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+
+          if (isSpecial) {
+            specialAbility = ability;
+          } else {
+            normalAbilities.push(ability);
+          }
+        }
+
+        // Format abilities: slots 2-5 are normal abilities, slot 1 is special
+        // But render-map expects them in order 1-8, so we need to rotate
+        const orderedAbilities = [...normalAbilities.slice(0, 4)];
+        if (specialAbility) {
+          orderedAbilities.push(specialAbility);
+        }
+
+        orderedAbilities.forEach((ability, i) => {
+          const abilityId = ability.abilityHrid.replace('/abilities/', '');
+          const level = ability.level || 1;
+          abilitySlots[i] = `${abilityId}.${level}`;
+        });
+      }
+
+      const abilitiesStr = abilitySlots.join(',');
+
+      // Extract food and drinks (consumables)
+      // Use dataForConsumables (from parameter) instead of characterData
+      const foodSlots = dataForConsumables.actionTypeFoodSlotsMap?.['/action_types/combat'];
+      const drinkSlots = dataForConsumables.actionTypeDrinkSlotsMap?.['/action_types/combat'];
+      const food = formatFoodData(foodSlots, drinkSlots);
+
+      // Extract housing
+      const housingLevels = {
+        dining_room: '', library: '', dojo: '', armory: '',
+        gym: '', archery_range: '', mystical_study: ''
+      };
+
+      const houseMapping = {
+        '/house_rooms/dining_room': 'dining_room',
+        '/house_rooms/library': 'library',
+        '/house_rooms/dojo': 'dojo',
+        '/house_rooms/armory': 'armory',
+        '/house_rooms/gym': 'gym',
+        '/house_rooms/archery_range': 'archery_range',
+        '/house_rooms/mystical_study': 'mystical_study'
+      };
+
+      if (characterData.characterHouseRoomMap) {
+        for (const [hrid, room] of Object.entries(characterData.characterHouseRoomMap)) {
+          const key = houseMapping[hrid];
+          if (key) {
+            housingLevels[key] = room.level || '';
+          }
+        }
+      }
+
+      const housing = [
+        housingLevels.dining_room, housingLevels.library, housingLevels.dojo,
+        housingLevels.armory, housingLevels.gym, housingLevels.archery_range,
+        housingLevels.mystical_study
+      ].join(',');
+
+      // Extract achievements (6 tiers: Beginner, Novice, Adept, Veteran, Elite, Champion)
+      const achievementTiers = ['Beginner', 'Novice', 'Adept', 'Veteran', 'Elite', 'Champion'];
+      const achievementFlags = new Array(6).fill('0');
+
+      if (characterData.characterAchievements) {
+        const tierCounts = {};
+
+        // Count achievements by tier
+        for (const achievement of characterData.characterAchievements) {
+          if (achievement.achievementTier) {
+            tierCounts[achievement.achievementTier] = (tierCounts[achievement.achievementTier] || 0) + 1;
+          }
+        }
+
+        // Check if each tier is complete (need to get total count from clientData)
+        if (clientData?.achievementDetailMap) {
+          const tierTotals = {};
+
+          for (const achData of Object.values(clientData.achievementDetailMap)) {
+            if (achData.achievementTier) {
+              tierTotals[achData.achievementTier] = (tierTotals[achData.achievementTier] || 0) + 1;
+            }
+          }
+
+          achievementTiers.forEach((tier, i) => {
+            const have = tierCounts[tier] || 0;
+            const total = tierTotals[tier] || 0;
+            achievementFlags[i] = (have > 0 && have === total) ? '1' : '0';
+          });
+        }
+      }
+
+      const achievements = achievementFlags.join('');
 
       return {
-        general: extractGeneral(modal),
-        skills: extractSkills(modal),
-        equipment: extractEquipment(modal),
-        abilities: extractAbilities(modal),
-        food: new Array(6).fill('').join(','),
-        housing: extractHousing(modal),
-        achievements: extractAchievements(modal),
+        general,
+        skills,
+        equipment,
+        abilities: abilitiesStr,
+        food,
+        housing,
+        achievements
       };
     }
 
@@ -23888,13 +23977,65 @@
     }
 
     /**
+     * Format food and drink data for character sheet
+     * @param {Array} foodSlots - Array of food items from actionTypeFoodSlotsMap
+     * @param {Array} drinkSlots - Array of drink items from actionTypeDrinkSlotsMap
+     * @returns {string} Comma-separated list of 6 item IDs (food 1-3, drink 1-3)
+     */
+    function formatFoodData(foodSlots, drinkSlots) {
+      const slots = new Array(6).fill('');
+
+      // Fill food slots (1-3)
+      if (Array.isArray(foodSlots)) {
+        foodSlots.slice(0, 3).forEach((item, i) => {
+          if (item && item.itemHrid) {
+            // Strip '/items/' prefix
+            slots[i] = item.itemHrid.replace('/items/', '');
+          }
+        });
+      }
+
+      // Fill drink slots (4-6)
+      if (Array.isArray(drinkSlots)) {
+        drinkSlots.slice(0, 3).forEach((item, i) => {
+          if (item && item.itemHrid) {
+            // Strip '/items/' prefix
+            slots[i + 3] = item.itemHrid.replace('/items/', '');
+          }
+        });
+      }
+
+      return slots.join(',');
+    }
+
+    /**
      * Extracts character data from the share modal and builds a render URL.
+     * @param {Element} modal - Profile modal element (optional, for DOM fallback)
+     * @param {string} baseUrl - Base URL for character sheet
+     * @param {Object} characterData - Character data from cache (preferred)
+     * @param {Object} clientData - Init client data for lookups
+     * @param {Object} consumablesData - Optional character data containing consumables (for profile_shared data)
+     * @returns {string} Character sheet URL
      */
     function buildCharacterSheetLink(
       modal = document.querySelector('.SharableProfile_modal__2OmCQ'),
-      baseUrl = 'https://tib-san.github.io/mwi-character-sheet/'
+      baseUrl = 'https://tib-san.github.io/mwi-character-sheet/',
+      characterData = null,
+      clientData = null,
+      consumablesData = null
     ) {
-      const segments = parseModalToSegments(modal);
+      let segments;
+
+      // Prefer cached character data over DOM parsing
+      if (characterData && clientData) {
+        segments = buildSegmentsFromCharacterData(characterData, clientData, consumablesData);
+      } else if (modal) {
+        // Fallback to DOM parsing (for viewing other players without full cache)
+        segments = parseModalToSegments(modal);
+      } else {
+        throw new Error('Either character data or modal is required');
+      }
+
       const urpt = buildUrptString(segments);
       const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
       return `${base}?urpt=${encodeURIComponent(urpt)}`;
@@ -23913,6 +24054,7 @@
         constructor() {
             this.isActive = false;
             this.isInitialized = false;
+            this.currentProfileData = null; // Store profile data for food/drinks
         }
 
         /**
@@ -23957,6 +24099,9 @@
          * @param {Object} profileData - Profile data from WebSocket
          */
         async handleProfileShared(profileData) {
+            // Store profile data for food/drinks extraction
+            this.currentProfileData = profileData;
+
             // Wait for profile panel to appear in DOM
             const profilePanel = await this.waitForProfilePanel();
             if (!profilePanel) {
@@ -24046,15 +24191,83 @@
          */
         handleButtonClick() {
             try {
-                // Find the profile modal
-                const modal = document.querySelector('.SharableProfile_modal__2OmCQ');
-                if (!modal) {
-                    console.error('[CharacterCardButton] Profile modal not found');
+                const clientData = dataManager.getInitClientData();
+
+                // Determine if viewing own profile or someone else's
+                let characterData = null;
+
+                // If we have profile data from profile_shared event, use it (other player)
+                if (this.currentProfileData?.profile) {
+                    characterData = this.currentProfileData.profile;
+                    console.log('[CharacterCard] Using profile data (other player):', characterData);
+                }
+                // Otherwise use own character data from dataManager
+                else {
+                    characterData = dataManager.characterData;
+                    console.log('[CharacterCard] Using own character data:', characterData);
+                }
+
+                if (!characterData) {
+                    console.error('[CharacterCardButton] No character data available');
                     return;
                 }
 
-                // Build character sheet link
-                const url = buildCharacterSheetLink(modal);
+                // === COMPREHENSIVE LOGGING FOR DEBUG ===
+
+                // Log ALL wearableItemMap items to see equipment structure
+                if (characterData?.wearableItemMap) {
+                    const items = Object.values(characterData.wearableItemMap);
+                    console.log('[CharacterCard] All wearableItemMap items:', items.map(item => ({
+                        location: item.itemLocationHrid,
+                        item: item.itemHrid,
+                        enhancement: item.enhancementLevel
+                    })));
+                }
+
+                // Log actual consumables structure from own character data
+                const ownCharacterData = dataManager.characterData;
+                if (ownCharacterData?.actionTypeFoodSlotsMap) {
+                    console.log('[CharacterCard] Food slots structure:', ownCharacterData.actionTypeFoodSlotsMap['/action_types/combat']);
+                }
+                if (ownCharacterData?.actionTypeDrinkSlotsMap) {
+                    console.log('[CharacterCard] Drink slots structure:', ownCharacterData.actionTypeDrinkSlotsMap['/action_types/combat']);
+                }
+
+                // Log abilities structure
+                console.log('[CharacterCard] Abilities check:', {
+                    hasEquippedAbilities: !!characterData?.equippedAbilities,
+                    equippedAbilities: characterData?.equippedAbilities,
+                    hasCombatUnit: !!characterData?.combatUnit,
+                    hasCombatAbilities: !!characterData?.combatUnit?.combatAbilities
+                });
+
+                // Find the profile modal for fallback
+                const modal = document.querySelector('.SharableProfile_modal__2OmCQ');
+
+                // Build character sheet link using cached data (preferred) or DOM fallback
+                // Pass ownCharacterData for consumables (profile_shared doesn't have consumables)
+                const url = buildCharacterSheetLink(
+                    modal,
+                    'https://tib-san.github.io/mwi-character-sheet/',
+                    characterData,
+                    clientData,
+                    ownCharacterData  // Always use own character data for consumables
+                );
+
+                // Log the ACTUAL segments being built (for debugging)
+                const segments = buildSegmentsFromCharacterData(characterData, clientData, ownCharacterData);
+                console.log('[CharacterCard] Built segments:', segments);
+                console.log('[CharacterCard] URL components:', {
+                    general: segments.general,
+                    skills: segments.skills,
+                    equipment: segments.equipment,
+                    abilities: segments.abilities,
+                    food: segments.food,
+                    housing: segments.housing,
+                    achievements: segments.achievements
+                });
+
+                console.log('[CharacterCard] Generated URL:', url);
 
                 // Open in new tab
                 window.open(url, '_blank');
@@ -24083,6 +24296,7 @@
                 button.remove();
             }
 
+            this.currentProfileData = null;
             this.isActive = false;
             this.isInitialized = false;
         }
@@ -41379,7 +41593,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.01',
+            version: '0.5.02',
 
             // Feature toggle API (for users to manage settings via console)
             features: {
