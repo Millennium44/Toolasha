@@ -26,6 +26,7 @@ class MaxProduceable {
         this.lastCrimsonMilkCount = null; // For debugging inventory updates
         this.itemsUpdatedHandler = null;
         this.actionCompletedHandler = null;
+        this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
     }
 
     /**
@@ -64,6 +65,13 @@ class MaxProduceable {
             'SkillAction_skillAction',
             (actionPanel) => {
                 this.injectMaxProduceable(actionPanel);
+
+                // Schedule profit calculation after panels settle
+                // This prevents 20-50 simultaneous API calls during character switch
+                clearTimeout(this.profitCalcTimeout);
+                this.profitCalcTimeout = setTimeout(() => {
+                    this.updateAllCounts();
+                }, 1000); // Wait 1 second after last panel appears
             }
         );
 
@@ -72,6 +80,14 @@ class MaxProduceable {
         existingPanels.forEach(panel => {
             this.injectMaxProduceable(panel);
         });
+
+        // Calculate profits for existing panels after initial load
+        if (existingPanels.length > 0) {
+            clearTimeout(this.profitCalcTimeout);
+            this.profitCalcTimeout = setTimeout(() => {
+                this.updateAllCounts();
+            }, 1000);
+        }
     }
 
     /**
@@ -106,10 +122,7 @@ class MaxProduceable {
             });
             // Update pin state
             this.updatePinIcon(existingPin, actionHrid);
-            // Update with fresh data for all actions (calculates profit for sorting/filtering)
-            this.updateCount(actionPanel);
-            // DON'T schedule sort here - it causes race conditions
-            // Sorting happens in updateAllCounts() which is triggered by data changes
+            // Note: Profit update is deferred to updateAllCounts() in setupObserver()
             return;
         }
 
@@ -192,8 +205,8 @@ class MaxProduceable {
         // Register panel with shared sort manager
         actionPanelSort.registerPanel(actionPanel, actionHrid);
 
-        // Initial update for all actions (calculates profit for sorting/filtering)
-        this.updateCount(actionPanel);
+        // Note: Profit calculation is deferred to updateAllCounts() in setupObserver()
+        // This prevents 20-50 simultaneous API calls during character switch
 
         // Trigger debounced sort after panels are loaded
         actionPanelSort.triggerSort();
@@ -459,6 +472,12 @@ class MaxProduceable {
         if (this.actionCompletedHandler) {
             dataManager.off('action_completed', this.actionCompletedHandler);
             this.actionCompletedHandler = null;
+        }
+
+        // Clear profit calculation timeout
+        if (this.profitCalcTimeout) {
+            clearTimeout(this.profitCalcTimeout);
+            this.profitCalcTimeout = null;
         }
 
         // Remove DOM observer
