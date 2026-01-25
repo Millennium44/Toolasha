@@ -17541,7 +17541,7 @@
                 const profitPromises = actionsToCalculate.map(action =>
                     Promise.race([
                         this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 100))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
                     ]).catch(() => null) // Convert rejections to null
                 );
 
