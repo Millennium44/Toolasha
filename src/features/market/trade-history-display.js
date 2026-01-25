@@ -93,9 +93,7 @@ class TradeHistoryDisplay {
     extractItemInfo(panel) {
         // Get enhancement level from badge
         const levelBadge = panel.querySelector('[class*="Item_enhancementLevel"]');
-        const enhancementLevel = levelBadge
-            ? parseInt(levelBadge.textContent.replace('+', '')) || 0
-            : 0;
+        const enhancementLevel = levelBadge ? parseInt(levelBadge.textContent.replace('+', '')) || 0 : 0;
 
         // Get item HRID from icon aria-label
         const icon = panel.querySelector('[class*="Icon_icon"]');
@@ -187,8 +185,17 @@ class TradeHistoryDisplay {
 
         if (history.buy) {
             const buyColor = this.getBuyColor(history.buy, currentPrices?.ask);
-            console.log('[TradeHistoryDisplay] Buy color:', buyColor, 'lastBuy:', history.buy, 'currentAsk:', currentPrices?.ask);
-            parts.push(`<span style="color: ${buyColor}; font-weight: 600;" title="Your last buy price">Buy ${formatKMB3Digits(history.buy)}</span>`);
+            console.log(
+                '[TradeHistoryDisplay] Buy color:',
+                buyColor,
+                'lastBuy:',
+                history.buy,
+                'currentAsk:',
+                currentPrices?.ask
+            );
+            parts.push(
+                `<span style="color: ${buyColor}; font-weight: 600;" title="Your last buy price">Buy ${formatKMB3Digits(history.buy)}</span>`
+            );
         }
 
         if (history.buy && history.sell) {
@@ -197,8 +204,17 @@ class TradeHistoryDisplay {
 
         if (history.sell) {
             const sellColor = this.getSellColor(history.sell, currentPrices?.bid);
-            console.log('[TradeHistoryDisplay] Sell color:', sellColor, 'lastSell:', history.sell, 'currentBid:', currentPrices?.bid);
-            parts.push(`<span style="color: ${sellColor}; font-weight: 600;" title="Your last sell price">Sell ${formatKMB3Digits(history.sell)}</span>`);
+            console.log(
+                '[TradeHistoryDisplay] Sell color:',
+                sellColor,
+                'lastSell:',
+                history.sell,
+                'currentBid:',
+                currentPrices?.bid
+            );
+            parts.push(
+                `<span style="color: ${sellColor}; font-weight: 600;" title="Your last sell price">Sell ${formatKMB3Digits(history.sell)}</span>`
+            );
         }
 
         historyDiv.innerHTML = parts.join('');
@@ -230,7 +246,7 @@ class TradeHistoryDisplay {
 
                 return {
                     ask: this.parsePrice(askText),
-                    bid: this.parsePrice(bidText)
+                    bid: this.parsePrice(bidText),
                 };
             }
 
@@ -318,7 +334,7 @@ class TradeHistoryDisplay {
         }
 
         // Remove all displays
-        document.querySelectorAll('.mwi-trade-history').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-trade-history').forEach((el) => el.remove());
 
         this.isActive = false;
         this.currentItemHrid = null;

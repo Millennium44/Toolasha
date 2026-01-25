@@ -55,7 +55,7 @@ class EmptyQueueNotification {
         if (Notification.permission !== 'denied') {
             try {
                 const permission = await Notification.requestPermission();
-                this.permissionGranted = (permission === 'granted');
+                this.permissionGranted = permission === 'granted';
             } catch (error) {
                 console.warn('[Empty Queue Notification] Permission request failed:', error);
             }
@@ -93,7 +93,7 @@ class EmptyQueueNotification {
         // Check if queue is empty
         // endCharacterActions contains actions, filter for those not done (isDone === false)
         const actions = data.endCharacterActions || [];
-        const activeActions = actions.filter(action => action.isDone === false);
+        const activeActions = actions.filter((action) => action.isDone === false);
         const isEmpty = activeActions.length === 0;
 
         // Only notify on transition from not-empty to empty
@@ -124,7 +124,7 @@ class EmptyQueueNotification {
                 body: 'Your action queue is empty!',
                 icon: 'https://www.milkywayidle.com/favicon.ico',
                 tag: 'empty-queue',
-                requireInteraction: false
+                requireInteraction: false,
             });
 
             notification.onclick = () => {
@@ -153,7 +153,7 @@ class EmptyQueueNotification {
             this.characterSwitchingHandler = null;
         }
 
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.wasEmpty = false;
     }

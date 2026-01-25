@@ -23,7 +23,13 @@ import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser
  * Action type constants for classification
  */
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
-const PRODUCTION_TYPES = ['/action_types/brewing', '/action_types/cooking', '/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
+const PRODUCTION_TYPES = [
+    '/action_types/brewing',
+    '/action_types/cooking',
+    '/action_types/cheesesmithing',
+    '/action_types/crafting',
+    '/action_types/tailoring',
+];
 
 /**
  * Build inventory index map for O(1) lookups
@@ -95,24 +101,20 @@ class MaxProduceable {
      */
     setupObserver() {
         // Watch for skill action panels (in skill screen, not detail modal)
-        this.unregisterObserver = domObserver.onClass(
-            'MaxProduceable',
-            'SkillAction_skillAction',
-            (actionPanel) => {
-                this.injectMaxProduceable(actionPanel);
+        this.unregisterObserver = domObserver.onClass('MaxProduceable', 'SkillAction_skillAction', (actionPanel) => {
+            this.injectMaxProduceable(actionPanel);
 
-                // Schedule profit calculation after panels settle
-                // This prevents 20-50 simultaneous API calls during character switch
-                clearTimeout(this.profitCalcTimeout);
-                this.profitCalcTimeout = setTimeout(() => {
-                    this.updateAllCounts();
-                }, 300); // Wait 300ms after last panel appears (reduced from 1000ms for better responsiveness)
-            }
-        );
+            // Schedule profit calculation after panels settle
+            // This prevents 20-50 simultaneous API calls during character switch
+            clearTimeout(this.profitCalcTimeout);
+            this.profitCalcTimeout = setTimeout(() => {
+                this.updateAllCounts();
+            }, 300); // Wait 300ms after last panel appears (reduced from 1000ms for better responsiveness)
+        });
 
         // Check for existing action panels that may already be open
         const existingPanels = document.querySelectorAll('[class*="SkillAction_skillAction"]');
-        existingPanels.forEach(panel => {
+        existingPanels.forEach((panel) => {
             this.injectMaxProduceable(panel);
         });
 
@@ -153,7 +155,7 @@ class MaxProduceable {
             this.actionElements.set(actionPanel, {
                 actionHrid: actionHrid,
                 displayElement: existingDisplay || null,
-                pinElement: existingPin
+                pinElement: existingPin,
             });
             // Update pin state
             this.updatePinIcon(existingPin, actionHrid);
@@ -234,7 +236,7 @@ class MaxProduceable {
         this.actionElements.set(actionPanel, {
             actionHrid: actionHrid,
             displayElement: display,
-            pinElement: pinIcon
+            pinElement: pinIcon,
         });
 
         // Register panel with shared sort manager
@@ -307,7 +309,7 @@ class MaxProduceable {
         const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
         // Calculate max crafts per input (using O(1) Map lookup instead of O(n) array find)
-        const maxCraftsPerInput = actionDetails.inputItems.map(input => {
+        const maxCraftsPerInput = actionDetails.inputItems.map((input) => {
             const invItem = inventoryIndex.get(input.itemHrid);
             const invCount = invItem?.count || 0;
 
@@ -447,14 +449,14 @@ class MaxProduceable {
                 const data = this.actionElements.get(actionPanel);
                 if (data) {
                     if (data.displayElement) {
-                        data.displayElement.innerHTML = '';  // Clear innerHTML to break references
+                        data.displayElement.innerHTML = ''; // Clear innerHTML to break references
                         data.displayElement.remove();
-                        data.displayElement = null;  // Null out reference for GC
+                        data.displayElement = null; // Null out reference for GC
                     }
                     if (data.pinElement) {
-                        data.pinElement.innerHTML = '';  // Clear innerHTML to break references
+                        data.pinElement.innerHTML = ''; // Clear innerHTML to break references
                         data.pinElement.remove();
-                        data.pinElement = null;  // Null out reference for GC
+                        data.pinElement = null; // Null out reference for GC
                     }
                 }
                 this.actionElements.delete(actionPanel);
@@ -518,14 +520,14 @@ class MaxProduceable {
         // Note: .remove() is safe to call even if element is already detached
         for (const [actionPanel, data] of this.actionElements.entries()) {
             if (data.displayElement) {
-                data.displayElement.innerHTML = '';  // Clear innerHTML to break event listener references
+                data.displayElement.innerHTML = ''; // Clear innerHTML to break event listener references
                 data.displayElement.remove();
-                data.displayElement = null;  // Null out reference for GC
+                data.displayElement = null; // Null out reference for GC
             }
             if (data.pinElement) {
-                data.pinElement.innerHTML = '';  // Clear innerHTML to break event listener references
+                data.pinElement.innerHTML = ''; // Clear innerHTML to break event listener references
                 data.pinElement.remove();
-                data.pinElement = null;  // Null out reference for GC
+                data.pinElement = null; // Null out reference for GC
             }
         }
 
@@ -575,8 +577,8 @@ class MaxProduceable {
         }
 
         // Remove all injected elements
-        document.querySelectorAll('.mwi-max-produceable').forEach(el => el.remove());
-        document.querySelectorAll('.mwi-action-pin').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-max-produceable').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-action-pin').forEach((el) => el.remove());
         this.actionElements.clear();
 
         this.isInitialized = false;

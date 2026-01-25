@@ -44,13 +44,16 @@ class EstimatedListingAge {
             const use12Hour = timeFormat === '12hour';
 
             const date = new Date(timestamp);
-            const formatted = date.toLocaleString('en-US', {
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: use12Hour
-            }).replace(/\//g, '-').replace(',', '');
+            const formatted = date
+                .toLocaleString('en-US', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: use12Hour,
+                })
+                .replace(/\//g, '-')
+                .replace(',', '');
 
             return formatted;
         }
@@ -106,7 +109,7 @@ class EstimatedListingAge {
 
             // Filter out old entries (> 30 days)
             const now = Date.now();
-            const filtered = stored.filter(entry => (now - entry.timestamp) < this.maxAge);
+            const filtered = stored.filter((entry) => now - entry.timestamp < this.maxAge);
 
             this.knownListings = filtered.sort((a, b) => a.id - b.id);
 
@@ -161,12 +164,12 @@ class EstimatedListingAge {
                 this.currentItemHrid = itemHrid; // Track current item
 
                 // Clear processed flags to re-render with new data
-                document.querySelectorAll('.mwi-estimated-age-set').forEach(container => {
+                document.querySelectorAll('.mwi-estimated-age-set').forEach((container) => {
                     container.classList.remove('mwi-estimated-age-set');
                 });
 
                 // Also clear listing price display flags so Top Order Age updates
-                document.querySelectorAll('.mwi-listing-prices-set').forEach(table => {
+                document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
                     table.classList.remove('mwi-listing-prices-set');
                 });
             }
@@ -196,7 +199,7 @@ class EstimatedListingAge {
         const timestamp = new Date(listing.createdTimestamp).getTime();
 
         // Check if we already have this listing
-        const existingIndex = this.knownListings.findIndex(entry => entry.id === listing.id);
+        const existingIndex = this.knownListings.findIndex((entry) => entry.id === listing.id);
 
         // Add new entry with full data
         const entry = {
@@ -206,7 +209,7 @@ class EstimatedListingAge {
             price: listing.price,
             orderQuantity: listing.orderQuantity,
             filledQuantity: listing.filledQuantity,
-            isSell: listing.isSell
+            isSell: listing.isSell,
         };
 
         if (existingIndex !== -1) {
@@ -258,7 +261,7 @@ class EstimatedListingAge {
         container.classList.add('mwi-estimated-age-set');
 
         // Process both tables
-        tables.forEach(table => this.addAgeColumn(table));
+        tables.forEach((table) => this.addAgeColumn(table));
     }
 
     /**
@@ -283,12 +286,13 @@ class EstimatedListingAge {
         const orderBookData = this.orderBooksCache[currentItemHrid];
 
         // Determine if this is buy or sell table (asks = sell, bids = buy)
-        const isSellTable = table.closest('[class*="orderBookTableContainer"]') ===
-                           table.closest('[class*="orderBooksContainer"]')?.children[0];
+        const isSellTable =
+            table.closest('[class*="orderBookTableContainer"]') ===
+            table.closest('[class*="orderBooksContainer"]')?.children[0];
 
-        const listings = isSellTable ?
-                         orderBookData.orderBooks[0]?.asks || [] :
-                         orderBookData.orderBooks[0]?.bids || [];
+        const listings = isSellTable
+            ? orderBookData.orderBooks[0]?.asks || []
+            : orderBookData.orderBooks[0]?.bids || [];
 
         // Add header
         const header = document.createElement('th');
@@ -310,7 +314,7 @@ class EstimatedListingAge {
                 const listingId = listing.listingId;
 
                 // Check if this is YOUR listing
-                const yourListing = this.knownListings.find(known => known.id === listingId);
+                const yourListing = this.knownListings.find((known) => known.id === listingId);
 
                 if (yourListing) {
                     // Exact timestamp for your listing
@@ -338,10 +342,10 @@ class EstimatedListingAge {
                     const price = this.parsePrice(priceText);
                     const quantity = this.parseQuantity(quantityText);
 
-                    const matchedListing = this.knownListings.find(listing => {
+                    const matchedListing = this.knownListings.find((listing) => {
                         const itemMatch = listing.itemHrid === currentItemHrid;
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
-                        const qtyMatch = (listing.orderQuantity - listing.filledQuantity) === quantity;
+                        const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
                         return itemMatch && priceMatch && qtyMatch;
                     });
 
@@ -408,7 +412,7 @@ class EstimatedListingAge {
                     // Match against stored listings
                     for (const listing of this.knownListings) {
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
-                        const qtyMatch = (listing.orderQuantity - listing.filledQuantity) === quantity;
+                        const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
 
                         if (priceMatch && qtyMatch) {
                             return listing.itemHrid;
@@ -458,7 +462,7 @@ class EstimatedListingAge {
     estimateTimestamp(listingId) {
         if (this.knownListings.length === 0) {
             // No data, assume recent (1 hour ago)
-            return Date.now() - (60 * 60 * 1000);
+            return Date.now() - 60 * 60 * 1000;
         }
 
         if (this.knownListings.length === 1) {
@@ -501,7 +505,7 @@ class EstimatedListingAge {
      */
     linearInterpolation(listingId) {
         // Check for exact match
-        const exact = this.knownListings.find(entry => entry.id === listingId);
+        const exact = this.knownListings.find((entry) => entry.id === listingId);
         if (exact) {
             return exact.timestamp;
         }
@@ -536,7 +540,8 @@ class EstimatedListingAge {
      */
     linearRegression(listingId) {
         // Calculate linear regression coefficients
-        let sumX = 0, sumY = 0;
+        let sumX = 0,
+            sumY = 0;
         for (const entry of this.knownListings) {
             sumX += entry.id;
             sumY += entry.timestamp;
@@ -564,11 +569,11 @@ class EstimatedListingAge {
      * Clear all injected displays
      */
     clearDisplays() {
-        document.querySelectorAll('.mwi-estimated-age-set').forEach(container => {
+        document.querySelectorAll('.mwi-estimated-age-set').forEach((container) => {
             container.classList.remove('mwi-estimated-age-set');
         });
-        document.querySelectorAll('.mwi-estimated-age-header').forEach(el => el.remove());
-        document.querySelectorAll('.mwi-estimated-age-cell').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-estimated-age-header').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-estimated-age-cell').forEach((el) => el.remove());
     }
 
     /**

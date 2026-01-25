@@ -31,13 +31,9 @@ class NetworthHeaderDisplay {
         }
 
         // 2. Watch for future additions (handles SPA navigation, page reloads)
-        const unregister = domObserver.onClass(
-            'NetworthHeader',
-            'Header_totalLevel',
-            (elem) => {
-                this.renderHeader(elem);
-            }
-        );
+        const unregister = domObserver.onClass('NetworthHeader', 'Header_totalLevel', (elem) => {
+            this.renderHeader(elem);
+        });
         this.unregisterHandlers.push(unregister);
 
         this.isInitialized = true;
@@ -108,7 +104,7 @@ class NetworthHeaderDisplay {
             this.container = null;
         }
 
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.isInitialized = false;
     }
@@ -137,13 +133,9 @@ class NetworthInventoryDisplay {
         }
 
         // 2. Watch for future additions (handles SPA navigation, inventory panel reloads)
-        const unregister = domObserver.onClass(
-            'NetworthInv',
-            'Inventory_items',
-            (elem) => {
-                this.renderPanel(elem);
-            }
-        );
+        const unregister = domObserver.onClass('NetworthInv', 'Inventory_items', (elem) => {
+            this.renderPanel(elem);
+        });
         this.unregisterHandlers.push(unregister);
 
         this.isInitialized = true;
@@ -212,17 +204,17 @@ class NetworthInventoryDisplay {
             'mwi-abilities-details',
             'mwi-equipped-abilities-breakdown',
             'mwi-other-abilities-breakdown',
-            'mwi-ability-books-breakdown'
+            'mwi-ability-books-breakdown',
         ];
 
         // Also preserve inventory category states
         const inventoryCategories = Object.keys(networthData.currentAssets.inventory.byCategory || {});
-        inventoryCategories.forEach(categoryName => {
+        inventoryCategories.forEach((categoryName) => {
             const categoryId = `mwi-inventory-${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
             sectionsToPreserve.push(categoryId);
         });
 
-        sectionsToPreserve.forEach(id => {
+        sectionsToPreserve.forEach((id) => {
             const elem = this.container.querySelector(`#${id}`);
             if (elem) {
                 expandedStates[id] = elem.style.display !== 'none';
@@ -281,34 +273,41 @@ class NetworthInventoryDisplay {
                         <div id="mwi-equipped-abilities-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderAbilitiesBreakdown(networthData.fixedAssets.abilities.equippedBreakdown)}</div>
 
                         <!-- Other Abilities -->
-                        ${networthData.fixedAssets.abilities.otherBreakdown.length > 0 ? `
+                        ${
+                            networthData.fixedAssets.abilities.otherBreakdown.length > 0
+                                ? `
                             <div style="cursor: pointer; margin-top: 4px;" id="mwi-other-abilities-toggle">
                                 + Other (${networthData.fixedAssets.abilities.otherBreakdown.length}): ${networthFormatter(Math.round(networthData.fixedAssets.abilities.totalCost - networthData.fixedAssets.abilities.equippedCost))}
                             </div>
                             <div id="mwi-other-abilities-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderAbilitiesBreakdown(networthData.fixedAssets.abilities.otherBreakdown)}</div>
-                        ` : ''}
+                        `
+                                : ''
+                        }
                     </div>
 
                     <!-- Ability Books -->
-                    ${networthData.fixedAssets.abilityBooks.breakdown.length > 0 ? `
+                    ${
+                        networthData.fixedAssets.abilityBooks.breakdown.length > 0
+                            ? `
                         <div style="cursor: pointer; margin-top: 4px;" id="mwi-ability-books-toggle">
                             + Ability Books (${networthData.fixedAssets.abilityBooks.breakdown.length}): ${networthFormatter(Math.round(networthData.fixedAssets.abilityBooks.totalCost))}
                         </div>
                         <div id="mwi-ability-books-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderAbilityBooksBreakdown(networthData.fixedAssets.abilityBooks.breakdown)}</div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
             </div>
         `;
 
         // Restore expand/collapse states after updating
-        sectionsToPreserve.forEach(id => {
+        sectionsToPreserve.forEach((id) => {
             const elem = this.container.querySelector(`#${id}`);
             if (elem && expandedStates[id]) {
                 elem.style.display = 'block';
 
                 // Update the corresponding toggle button text (+ to -)
-                const toggleId = id.replace('-details', '-toggle')
-                                   .replace('-breakdown', '-toggle');
+                const toggleId = id.replace('-details', '-toggle').replace('-breakdown', '-toggle');
                 const toggleBtn = this.container.querySelector(`#${toggleId}`);
                 if (toggleBtn) {
                     const currentText = toggleBtn.textContent;
@@ -331,9 +330,11 @@ class NetworthInventoryDisplay {
             return '<div>No houses built</div>';
         }
 
-        return breakdown.map((house) => {
-            return `${house.name} ${house.level}: ${networthFormatter(Math.round(house.cost))}`;
-        }).join('\n');
+        return breakdown
+            .map((house) => {
+                return `${house.name} ${house.level}: ${networthFormatter(Math.round(house.cost))}`;
+            })
+            .join('\n');
     }
 
     /**
@@ -346,9 +347,11 @@ class NetworthInventoryDisplay {
             return '<div>No abilities</div>';
         }
 
-        return breakdown.map((ability) => {
-            return `${ability.name}: ${networthFormatter(Math.round(ability.cost))}`;
-        }).join('\n');
+        return breakdown
+            .map((ability) => {
+                return `${ability.name}: ${networthFormatter(Math.round(ability.cost))}`;
+            })
+            .join('\n');
     }
 
     /**
@@ -361,9 +364,11 @@ class NetworthInventoryDisplay {
             return '<div>No ability books</div>';
         }
 
-        return breakdown.map((book) => {
-            return `${book.name} (${formatKMB(book.count)}): ${networthFormatter(Math.round(book.value))}`;
-        }).join('\n');
+        return breakdown
+            .map((book) => {
+                return `${book.name} (${formatKMB(book.count)}): ${networthFormatter(Math.round(book.value))}`;
+            })
+            .join('\n');
     }
 
     /**
@@ -376,9 +381,11 @@ class NetworthInventoryDisplay {
             return '<div>No equipment</div>';
         }
 
-        return breakdown.map((item) => {
-            return `${item.name}: ${networthFormatter(Math.round(item.value))}`;
-        }).join('\n');
+        return breakdown
+            .map((item) => {
+                return `${item.name}: ${networthFormatter(Math.round(item.value))}`;
+            })
+            .join('\n');
     }
 
     /**
@@ -392,19 +399,21 @@ class NetworthInventoryDisplay {
         }
 
         // Sort categories by total value descending
-        const sortedCategories = Object.entries(byCategory)
-            .sort((a, b) => b[1].totalValue - a[1].totalValue);
+        const sortedCategories = Object.entries(byCategory).sort((a, b) => b[1].totalValue - a[1].totalValue);
 
-        return sortedCategories.map(([categoryName, categoryData]) => {
-            const categoryId = `mwi-inventory-${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
-            const categoryToggleId = `${categoryId}-toggle`;
+        return sortedCategories
+            .map(([categoryName, categoryData]) => {
+                const categoryId = `mwi-inventory-${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
+                const categoryToggleId = `${categoryId}-toggle`;
 
-            // Build items HTML with newlines
-            const itemsHTML = categoryData.items.map((item) => {
-                return `${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}`;
-            }).join('\n');
+                // Build items HTML with newlines
+                const itemsHTML = categoryData.items
+                    .map((item) => {
+                        return `${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}`;
+                    })
+                    .join('\n');
 
-            return `
+                return `
                 <div style="cursor: pointer; margin-top: 4px; font-size: 0.85rem;" id="${categoryToggleId}">
                     + ${categoryName}: ${networthFormatter(Math.round(categoryData.totalValue))}
                 </div>
@@ -412,7 +421,8 @@ class NetworthInventoryDisplay {
                     ${itemsHTML}
                 </div>
             `;
-        }).join('');
+            })
+            .join('');
     }
 
     /**
@@ -547,7 +557,7 @@ class NetworthInventoryDisplay {
             this.container = null;
         }
 
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.currentData = null;
         this.isInitialized = false;

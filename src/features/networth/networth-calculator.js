@@ -78,7 +78,11 @@ export async function calculateItemValue(item, priceCache = null) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
                         networthCache.set(itemHrid, enhancementLevel, itemValue);
                     } else {
-                        console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
+                        console.warn(
+                            '[Networth] Enhancement calculation failed for:',
+                            itemHrid,
+                            '+' + enhancementLevel
+                        );
                         itemValue = getMarketPrice(itemHrid, 0, priceCache);
                     }
                 }
@@ -164,7 +168,7 @@ function getShopCost(itemHrid) {
         if (shopItem.itemHrid === itemHrid) {
             // Check if purchaseable with coins
             if (shopItem.costs && shopItem.costs.length > 0) {
-                const coinCost = shopItem.costs.find(cost => cost.itemHrid === '/items/coin');
+                const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
                 if (coinCost) {
                     return coinCost.count;
                 }
@@ -308,7 +312,7 @@ export function calculateAllHousesCost(characterHouseRooms) {
         breakdown.push({
             name: houseName,
             level: level,
-            cost: cost
+            cost: cost,
         });
     }
 
@@ -331,7 +335,7 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
             equippedCost: 0,
             breakdown: [],
             equippedBreakdown: [],
-            otherBreakdown: []
+            otherBreakdown: [],
         };
     }
 
@@ -342,9 +346,7 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
     const otherBreakdown = [];
 
     // Create set of equipped ability HRIDs from abilityCombatTriggersMap keys
-    const equippedHrids = new Set(
-        Object.keys(abilityCombatTriggersMap || {})
-    );
+    const equippedHrids = new Set(Object.keys(abilityCombatTriggersMap || {}));
 
     for (const ability of characterAbilities) {
         if (!ability.abilityHrid || ability.level === 0) continue;
@@ -356,12 +358,12 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
         const abilityName = ability.abilityHrid
             .replace('/abilities/', '')
             .split('_')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
 
         const abilityData = {
             name: `${abilityName} ${ability.level}`,
-            cost: cost
+            cost: cost,
         };
 
         breakdown.push(abilityData);
@@ -385,7 +387,7 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
         equippedCost,
         breakdown,
         equippedBreakdown,
-        otherBreakdown
+        otherBreakdown,
     };
 }
 
@@ -447,13 +449,11 @@ export async function calculateNetworth() {
         // Add to breakdown
         const itemDetails = gameData.itemDetailMap[item.itemHrid];
         const itemName = itemDetails?.name || item.itemHrid.replace('/items/', '');
-        const displayName = item.enhancementLevel > 0
-            ? `${itemName} +${item.enhancementLevel}`
-            : itemName;
+        const displayName = item.enhancementLevel > 0 ? `${itemName} +${item.enhancementLevel}` : itemName;
 
         equippedBreakdown.push({
             name: displayName,
-            value
+            value,
         });
     }
 
@@ -474,14 +474,12 @@ export async function calculateNetworth() {
         // Add to breakdown
         const itemDetails = gameData.itemDetailMap[item.itemHrid];
         const itemName = itemDetails?.name || item.itemHrid.replace('/items/', '');
-        const displayName = item.enhancementLevel > 0
-            ? `${itemName} +${item.enhancementLevel}`
-            : itemName;
+        const displayName = item.enhancementLevel > 0 ? `${itemName} +${item.enhancementLevel}` : itemName;
 
         const itemData = {
             name: displayName,
             value,
-            count: item.count
+            count: item.count,
         };
 
         // Check if this is an ability book
@@ -503,7 +501,7 @@ export async function calculateNetworth() {
             if (!inventoryByCategory[categoryName]) {
                 inventoryByCategory[categoryName] = {
                     items: [],
-                    totalValue: 0
+                    totalValue: 0,
                 };
             }
 
@@ -573,9 +571,9 @@ export async function calculateNetworth() {
             inventory: {
                 value: inventoryValue,
                 breakdown: inventoryBreakdown,
-                byCategory: inventoryByCategory
+                byCategory: inventoryByCategory,
             },
-            listings: { value: listingsValue, breakdown: listingsBreakdown }
+            listings: { value: listingsValue, breakdown: listingsBreakdown },
         },
         fixedAssets: {
             total: fixedAssetsTotal,
@@ -583,9 +581,9 @@ export async function calculateNetworth() {
             abilities: abilitiesData,
             abilityBooks: {
                 totalCost: abilityBooksValue,
-                breakdown: abilityBooksBreakdown
-            }
-        }
+                breakdown: abilityBooksBreakdown,
+            },
+        },
     };
 }
 
@@ -600,7 +598,7 @@ function createEmptyNetworthData() {
             total: 0,
             equipped: { value: 0, breakdown: [] },
             inventory: { value: 0, breakdown: [], byCategory: {} },
-            listings: { value: 0, breakdown: [] }
+            listings: { value: 0, breakdown: [] },
         },
         fixedAssets: {
             total: 0,
@@ -610,12 +608,12 @@ function createEmptyNetworthData() {
                 equippedCost: 0,
                 breakdown: [],
                 equippedBreakdown: [],
-                otherBreakdown: []
+                otherBreakdown: [],
             },
             abilityBooks: {
                 totalCost: 0,
-                breakdown: []
-            }
-        }
+                breakdown: [],
+            },
+        },
     };
 }

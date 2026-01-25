@@ -62,20 +62,20 @@ class ExternalLinks {
         const links = [
             {
                 label: 'Combat Sim',
-                url: 'https://shykai.github.io/MWICombatSimulatorTest/dist/'
+                url: 'https://shykai.github.io/MWICombatSimulatorTest/dist/',
             },
             {
                 label: 'Milkyway Market',
-                url: 'https://milkyway.market/'
+                url: 'https://milkyway.market/',
             },
             {
                 label: 'Enhancelator',
-                url: 'https://doh-nuts.github.io/Enhancelator/'
+                url: 'https://doh-nuts.github.io/Enhancelator/',
             },
             {
                 label: 'Milkonomy',
-                url: 'https://milkonomy.pages.dev/#/dashboard'
-            }
+                url: 'https://milkonomy.pages.dev/#/dashboard',
+            },
         ];
 
         // Add each link (in reverse order so they appear in correct order when prepended)
@@ -118,7 +118,7 @@ class ExternalLinks {
         // Remove added links
         const container = document.querySelector('[class*="NavigationBar_minorNavigationLinks"]');
         if (container) {
-            container.querySelectorAll('[style*="cursor: pointer"]').forEach(link => {
+            container.querySelectorAll('[style*="cursor: pointer"]').forEach((link) => {
                 // Only remove links we added (check if they have our color)
                 if (link.style.color === config.COLOR_ACCENT) {
                     link.remove();

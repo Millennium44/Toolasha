@@ -31,7 +31,6 @@ class MarketAPI {
      * @returns {Promise<Object|null>} Market data object or null if failed
      */
     async fetch(forceFetch = false) {
-
         // Check cache first (unless force fetch)
         if (!forceFetch) {
             const cached = await this.getCachedData();
@@ -126,7 +125,7 @@ class MarketAPI {
 
         return {
             data: cachedData.marketData,
-            timestamp: cachedData.timestamp
+            timestamp: cachedData.timestamp,
         };
     }
 
@@ -168,8 +167,8 @@ class MarketAPI {
         }
 
         return {
-            ask: price.a || 0,  // Sell price
-            bid: price.b || 0   // Buy price
+            ask: price.a || 0, // Sell price
+            bid: price.b || 0, // Buy price
         };
     }
 
@@ -199,7 +198,7 @@ class MarketAPI {
     getPricesBatch(items) {
         const priceMap = new Map();
 
-        for (const {itemHrid, enhancementLevel = 0} of items) {
+        for (const { itemHrid, enhancementLevel = 0 } of items) {
             const key = `${itemHrid}:${enhancementLevel}`;
             if (!priceMap.has(key)) {
                 const price = this.getPrice(itemHrid, enhancementLevel);
@@ -241,7 +240,7 @@ class MarketAPI {
         const errorEntry = {
             timestamp: new Date().toISOString(),
             message,
-            error: error?.message || String(error)
+            error: error?.message || String(error),
         };
 
         this.errorLog.push(errorEntry);

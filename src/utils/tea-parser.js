@@ -172,7 +172,7 @@ export function parseTeaEfficiencyBreakdown(actionTypeHrid, activeDrinks, itemDe
                 name: itemDetails.name,
                 efficiency: totalEfficiency,
                 baseEfficiency: baseEfficiency,
-                dcContribution: totalEfficiency - baseEfficiency
+                dcContribution: totalEfficiency - baseEfficiency,
             });
         }
     }
@@ -248,7 +248,7 @@ export function getDrinkConcentration(characterEquipment, itemDetailMap) {
  */
 export function parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration = 0) {
     return parseTeaBuff(activeDrinks, itemDetailMap, drinkConcentration, {
-        buffTypeHrids: ['/buff_types/artisan']
+        buffTypeHrids: ['/buff_types/artisan'],
     });
 }
 
@@ -266,7 +266,7 @@ export function parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentratio
  */
 export function parseGourmetBonus(activeDrinks, itemDetailMap, drinkConcentration = 0) {
     return parseTeaBuff(activeDrinks, itemDetailMap, drinkConcentration, {
-        buffTypeHrids: ['/buff_types/gourmet']
+        buffTypeHrids: ['/buff_types/gourmet'],
     });
 }
 
@@ -284,7 +284,7 @@ export function parseGourmetBonus(activeDrinks, itemDetailMap, drinkConcentratio
  */
 export function parseProcessingBonus(activeDrinks, itemDetailMap, drinkConcentration = 0) {
     return parseTeaBuff(activeDrinks, itemDetailMap, drinkConcentration, {
-        buffTypeHrids: ['/buff_types/processing']
+        buffTypeHrids: ['/buff_types/processing'],
     });
 }
 
@@ -304,7 +304,7 @@ export function parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentr
     // Action Level DOES scale with DC (like all other buffs)
     // However, the game floors the result when calculating effective requirement
     return parseTeaBuff(activeDrinks, itemDetailMap, drinkConcentration, {
-        buffTypeHrids: ['/buff_types/action_level']
+        buffTypeHrids: ['/buff_types/action_level'],
     });
 }
 
@@ -364,7 +364,7 @@ export function parseActionLevelBonusBreakdown(activeDrinks, itemDetailMap, drin
                 name: itemDetails.name,
                 actionLevel: totalActionLevel,
                 baseActionLevel: baseActionLevel,
-                dcContribution: totalActionLevel - baseActionLevel
+                dcContribution: totalActionLevel - baseActionLevel,
             });
         }
     }
@@ -386,7 +386,7 @@ export function parseActionLevelBonusBreakdown(activeDrinks, itemDetailMap, drin
  */
 export function parseGatheringBonus(activeDrinks, itemDetailMap, drinkConcentration = 0) {
     return parseTeaBuff(activeDrinks, itemDetailMap, drinkConcentration, {
-        buffTypeHrids: ['/buff_types/gathering']
+        buffTypeHrids: ['/buff_types/gathering'],
     });
 }
 
@@ -452,5 +452,5 @@ export default {
     parseProcessingBonus,
     parseActionLevelBonus,
     parseGatheringBonus,
-    parseTeaSkillLevelBonus
+    parseTeaSkillLevelBonus,
 };

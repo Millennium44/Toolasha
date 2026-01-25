@@ -15,13 +15,17 @@ import dataManager from '../core/data-manager.js';
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag (default: 'expectedValue_respectPricingMode')
  * @returns {number|null} Value per token, or null if no data
  */
-export function calculateDungeonTokenValue(tokenHrid, pricingModeSetting = 'profitCalc_pricingMode', respectModeSetting = 'expectedValue_respectPricingMode') {
+export function calculateDungeonTokenValue(
+    tokenHrid,
+    pricingModeSetting = 'profitCalc_pricingMode',
+    respectModeSetting = 'expectedValue_respectPricingMode'
+) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) return null;
 
     // Get all shop items for this token type
     const shopItems = Object.values(gameData.shopItemDetailMap || {}).filter(
-        item => item.costs && item.costs[0]?.itemHrid === tokenHrid
+        (item) => item.costs && item.costs[0]?.itemHrid === tokenHrid
     );
 
     if (shopItems.length === 0) return null;
@@ -67,7 +71,7 @@ export function calculateDungeonTokenValue(tokenHrid, pricingModeSetting = 'prof
             '/items/chimerical_token': '/items/chimerical_essence',
             '/items/sinister_token': '/items/sinister_essence',
             '/items/enchanted_token': '/items/enchanted_essence',
-            '/items/pirate_token': '/items/pirate_essence'
+            '/items/pirate_token': '/items/pirate_essence',
         };
 
         const essenceHrid = essenceMap[tokenHrid];
@@ -101,13 +105,9 @@ export function calculateTaskTokenValue() {
     if (!gameData) return 0;
 
     // Get all chest items (Large Artisan's Crate, Large Meteorite Cache, Large Treasure Chest)
-    const chestHrids = [
-        '/items/large_artisans_crate',
-        '/items/large_meteorite_cache',
-        '/items/large_treasure_chest'
-    ];
+    const chestHrids = ['/items/large_artisans_crate', '/items/large_meteorite_cache', '/items/large_treasure_chest'];
 
-    let bestChestValue = 0;
+    const bestChestValue = 0;
 
     for (const chestHrid of chestHrids) {
         const itemDetails = dataManager.getItemDetails(chestHrid);

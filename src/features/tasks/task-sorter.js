@@ -17,17 +17,17 @@ class TaskSorter {
 
         // Task type ordering (combat tasks go to bottom)
         this.TASK_ORDER = {
-            'Milking': 1,
-            'Foraging': 2,
-            'Woodcutting': 3,
-            'Cheesesmithing': 4,
-            'Crafting': 5,
-            'Tailoring': 6,
-            'Cooking': 7,
-            'Brewing': 8,
-            'Alchemy': 9,
-            'Enhancing': 10,
-            'Defeat': 99  // Combat tasks at bottom
+            Milking: 1,
+            Foraging: 2,
+            Woodcutting: 3,
+            Cheesesmithing: 4,
+            Crafting: 5,
+            Tailoring: 6,
+            Cooking: 7,
+            Brewing: 8,
+            Alchemy: 9,
+            Enhancing: 10,
+            Defeat: 99, // Combat tasks at bottom
         };
     }
 
@@ -50,7 +50,7 @@ class TaskSorter {
         // Register observer for task panel header (watch for the class name, not the selector)
         this.unregisterObserver = domObserver.onClass(
             'TaskSorter',
-            'TasksPanel_taskSlotCount',  // Just the class name, not [class*="..."]
+            'TasksPanel_taskSlotCount', // Just the class name, not [class*="..."]
             (headerElement) => {
                 this.addSortButton(headerElement);
             }
@@ -94,7 +94,7 @@ class TaskSorter {
         return {
             skillType: skillType.trim(),
             taskName: taskName.trim(),
-            fullText
+            fullText,
         };
     }
 
@@ -126,7 +126,7 @@ class TaskSorter {
             taskName: parsed.taskName,
             skillType: parsed.skillType,
             isCombat,
-            monsterSortIndex
+            monsterSortIndex,
         };
     }
 
@@ -189,7 +189,7 @@ class TaskSorter {
         taskCards.sort((a, b) => this.compareTaskCards(a, b));
 
         // Re-append in sorted order
-        taskCards.forEach(card => taskList.appendChild(card));
+        taskCards.forEach((card) => taskList.appendChild(card));
 
         // After sorting, React may re-render task cards and remove our icons
         // Clear the processed markers and force icon re-processing

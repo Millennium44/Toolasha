@@ -13,52 +13,52 @@ const userscriptHeader = readFileSync(join(__dirname, 'userscript-header.txt'), 
 
 // Custom plugin to import CSS as raw strings
 function cssRawPlugin() {
-  const suffix = '?raw';
-  return {
-    name: 'css-raw',
-    resolveId(source, importer) {
-      if (source.endsWith(suffix)) {
-        // Resolve relative to importer
-        if (importer) {
-          const basePath = dirname(importer);
-          const cssPath = join(basePath, source.replace(suffix, ''));
-          return cssPath + suffix; // Keep marker for load phase
-        }
-      }
-      return null;
-    },
-    load(id) {
-      if (id.endsWith(suffix)) {
-        const cssPath = id.replace(suffix, '');
-        const css = readFileSync(cssPath, 'utf-8');
-        return `export default ${JSON.stringify(css)};`;
-      }
-      return null;
-    }
-  };
+    const suffix = '?raw';
+    return {
+        name: 'css-raw',
+        resolveId(source, importer) {
+            if (source.endsWith(suffix)) {
+                // Resolve relative to importer
+                if (importer) {
+                    const basePath = dirname(importer);
+                    const cssPath = join(basePath, source.replace(suffix, ''));
+                    return cssPath + suffix; // Keep marker for load phase
+                }
+            }
+            return null;
+        },
+        load(id) {
+            if (id.endsWith(suffix)) {
+                const cssPath = id.replace(suffix, '');
+                const css = readFileSync(cssPath, 'utf-8');
+                return `export default ${JSON.stringify(css)};`;
+            }
+            return null;
+        },
+    };
 }
 
 export default {
-  input: 'src/main.js',
-  output: {
-    file: 'dist/Toolasha.user.js',
-    format: 'iife',
-    name: 'Toolasha',
-    banner: userscriptHeader
-    // Removed intro/outro - format: 'iife' already wraps in IIFE
-  },
-  plugins: [
-    cssRawPlugin(),
-    resolve({
-      browser: true,
-      preferBuiltins: false
-    }),
-    commonjs(),
-    // Optional: Minify the code (comment out for debugging)
-    // terser({
-    //   format: {
-    //     comments: false
-    //   }
-    // })
-  ]
+    input: 'src/main.js',
+    output: {
+        file: 'dist/Toolasha.user.js',
+        format: 'iife',
+        name: 'Toolasha',
+        banner: userscriptHeader,
+        // Removed intro/outro - format: 'iife' already wraps in IIFE
+    },
+    plugins: [
+        cssRawPlugin(),
+        resolve({
+            browser: true,
+            preferBuiltins: false,
+        }),
+        commonjs(),
+        // Optional: Minify the code (comment out for debugging)
+        // terser({
+        //   format: {
+        //     comments: false
+        //   }
+        // })
+    ],
 };

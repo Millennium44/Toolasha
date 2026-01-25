@@ -160,7 +160,7 @@ export function createMutationWatcher(element, callback, options = null) {
     // Default options
     const observerOptions = options || {
         childList: true,
-        subtree: true
+        subtree: true,
     };
 
     const observer = new MutationObserver((mutations) => {
@@ -200,11 +200,16 @@ export function createMutationWatcher(element, callback, options = null) {
  * );
  */
 export function createPersistentDisplay(name, classNames, createFn, options = {}) {
-    return createSingletonObserver(name, classNames, (container) => {
-        try {
-            createFn(container);
-        } catch (error) {
-            console.error(`[DOM Observer Helpers] createPersistentDisplay error for ${name}:`, error);
-        }
-    }, options);
+    return createSingletonObserver(
+        name,
+        classNames,
+        (container) => {
+            try {
+                createFn(container);
+            } catch (error) {
+                console.error(`[DOM Observer Helpers] createPersistentDisplay error for ${name}:`, error);
+            }
+        },
+        options
+    );
 }

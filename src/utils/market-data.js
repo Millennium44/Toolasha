@@ -35,12 +35,7 @@ export function getItemPrice(itemHrid, options = {}) {
         options = {};
     }
 
-    const {
-        enhancementLevel = 0,
-        mode,
-        context,
-        side = 'sell'
-    } = options;
+    const { enhancementLevel = 0, mode, context, side = 'sell' } = options;
 
     // Get raw price data from API
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
@@ -92,7 +87,7 @@ export function getItemPrices(itemHrid, enhancementLevel = 0) {
     return {
         ask: priceData.ask,
         bid: priceData.bid,
-        average: (priceData.ask + priceData.bid) / 2
+        average: (priceData.ask + priceData.bid) / 2,
     };
 }
 
@@ -105,10 +100,7 @@ export function getItemPrices(itemHrid, enhancementLevel = 0) {
  * @returns {string} Formatted price string
  */
 export function formatPrice(amount, options = {}) {
-    const {
-        decimals = 1,
-        showZero = true
-    } = options;
+    const { decimals = 1, showZero = true } = options;
 
     if (amount === null || amount === undefined) {
         return '--';
@@ -198,7 +190,7 @@ export function getItemPricesBatch(items, options = {}) {
             enhancementLevel: item.enhancementLevel || 0,
             mode: options.mode,
             context: options.context,
-            side: options.side
+            side: options.side,
         });
 
         if (price !== null) {
@@ -214,5 +206,5 @@ export default {
     getItemPrices,
     formatPrice,
     getPricingMode,
-    getItemPricesBatch
+    getItemPricesBatch,
 };

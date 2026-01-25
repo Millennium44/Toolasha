@@ -46,7 +46,6 @@ class TooltipConsumables {
 
         // Register with centralized DOM observer
         this.setupObserver();
-
     }
 
     /**
@@ -102,13 +101,9 @@ class TooltipConsumables {
      */
     setupObserver() {
         // Register with centralized DOM observer to watch for tooltip poppers
-        this.unregisterObserver = domObserver.onClass(
-            'TooltipConsumables',
-            'MuiTooltip-popper',
-            (tooltipElement) => {
-                this.handleTooltip(tooltipElement);
-            }
-        );
+        this.unregisterObserver = domObserver.onClass('TooltipConsumables', 'MuiTooltip-popper', (tooltipElement) => {
+            this.handleTooltip(tooltipElement);
+        });
 
         this.isActive = true;
     }
@@ -236,12 +231,12 @@ class TooltipConsumables {
             restoreType,
             restoreAmount,
             restorePerSecond,
-            recoveryDuration,  // How long healing takes
-            cooldownDuration,  // How often you can use it
+            recoveryDuration, // How long healing takes
+            cooldownDuration, // How often you can use it
             askPrice,
             costPerPoint,
             dailyMax,
-            usesPerDay
+            usesPerDay,
         };
     }
 

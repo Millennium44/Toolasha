@@ -79,14 +79,10 @@ class InventoryBadgePrices {
         }
 
         // Watch for inventory panel
-        const unregister = domObserver.onClass(
-            'InventoryBadgePrices',
-            'Inventory_items',
-            (elem) => {
-                this.currentInventoryElem = elem;
-                this.updateBadges();
-            }
-        );
+        const unregister = domObserver.onClass('InventoryBadgePrices', 'Inventory_items', (elem) => {
+            this.currentInventoryElem = elem;
+            this.updateBadges();
+        });
         this.unregisterHandlers.push(unregister);
 
         // Register with badge manager for coordinated rendering
@@ -95,7 +91,6 @@ class InventoryBadgePrices {
             (itemElem) => this.renderBadgesForItem(itemElem),
             100 // Priority: render after stack prices
         );
-
 
         // Store handler reference for cleanup
         this.itemsUpdatedHandler = () => {
@@ -214,7 +209,7 @@ class InventoryBadgePrices {
 
         // Remove all existing badges so they can be recreated with new settings
         const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
-        badges.forEach(badge => badge.remove());
+        badges.forEach((badge) => badge.remove());
 
         // Trigger re-render
         this.updateBadges();
@@ -234,9 +229,9 @@ class InventoryBadgePrices {
         inventoryBadgeManager.unregisterProvider('inventory-badge-prices');
 
         const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
-        badges.forEach(badge => badge.remove());
+        badges.forEach((badge) => badge.remove());
 
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         this.currentInventoryElem = null;

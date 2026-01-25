@@ -96,7 +96,7 @@ class CharacterCardButton {
             if (panel) {
                 return panel;
             }
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
         }
         return null;
     }
@@ -211,7 +211,6 @@ class CharacterCardButton {
 
             // Open in new tab
             window.open(url, '_blank');
-
         } catch (error) {
             console.error('[CharacterCardButton] Failed to open character card:', error);
         }
@@ -228,11 +227,12 @@ class CharacterCardButton {
         const drinkSlots = [];
 
         // Separate food and drinks (matching combat sim logic)
-        combatConsumables.forEach(consumable => {
+        combatConsumables.forEach((consumable) => {
             const itemHrid = consumable.itemHrid;
 
             // Check if it's a drink
-            const isDrink = itemHrid.includes('coffee') ||
+            const isDrink =
+                itemHrid.includes('coffee') ||
                 itemHrid.includes('tea') ||
                 clientData?.itemDetailMap?.[itemHrid]?.tags?.includes('drink');
 
@@ -249,11 +249,11 @@ class CharacterCardButton {
 
         return {
             actionTypeFoodSlotsMap: {
-                '/action_types/combat': foodSlots
+                '/action_types/combat': foodSlots,
             },
             actionTypeDrinkSlotsMap: {
-                '/action_types/combat': drinkSlots
-            }
+                '/action_types/combat': drinkSlots,
+            },
         };
     }
 

@@ -26,7 +26,7 @@ function getHouseRoomForActionType(actionTypeHrid) {
         '/action_types/milking': '/house_rooms/dairy_barn',
         '/action_types/tailoring': '/house_rooms/sewing_parlor',
         '/action_types/woodcutting': '/house_rooms/log_shed',
-        '/action_types/alchemy': '/house_rooms/laboratory'
+        '/action_types/alchemy': '/house_rooms/laboratory',
     };
 
     return actionTypeToHouseRoomMap[actionTypeHrid] || null;
@@ -72,7 +72,7 @@ export function getHouseRoomName(houseRoomHrid) {
         '/house_rooms/dairy_barn': 'Dairy Barn',
         '/house_rooms/sewing_parlor': 'Sewing Parlor',
         '/house_rooms/log_shed': 'Log Shed',
-        '/house_rooms/laboratory': 'Laboratory'
+        '/house_rooms/laboratory': 'Laboratory',
     };
 
     return names[houseRoomHrid] || 'Unknown';
@@ -115,5 +115,5 @@ export function calculateHouseRareFind() {
 export default {
     calculateHouseEfficiency,
     getHouseRoomName,
-    calculateHouseRareFind
+    calculateHouseRareFind,
 };

@@ -54,7 +54,7 @@ if (isCombatSimulatorPage()) {
             await config.initialize();
 
             // Initialize Settings UI (injects tab into game settings panel)
-            await settingsUI.initialize().catch(error => {
+            await settingsUI.initialize().catch((error) => {
                 console.error('[Toolasha] Settings UI initialization failed:', error);
             });
 
@@ -93,7 +93,10 @@ if (isCombatSimulatorPage()) {
                     // Note: Settings tab health check removed - tab only appears when user opens settings panel
 
                     if (failedFeatures.length > 0) {
-                        console.warn('[Toolasha] Health check found failed features:', failedFeatures.map(f => f.name));
+                        console.warn(
+                            '[Toolasha] Health check found failed features:',
+                            failedFeatures.map((f) => f.name)
+                        );
 
                         setTimeout(async () => {
                             await featureRegistry.retryFailedFeatures(failedFeatures);
@@ -101,13 +104,17 @@ if (isCombatSimulatorPage()) {
                             // Final health check
                             const stillFailed = featureRegistry.checkFeatureHealth();
                             if (stillFailed.length > 0) {
-                                console.warn('[Toolasha] These features could not initialize:', stillFailed.map(f => f.name));
-                                console.warn('[Toolasha] Try refreshing the page or reopening the relevant game panels');
+                                console.warn(
+                                    '[Toolasha] These features could not initialize:',
+                                    stillFailed.map((f) => f.name)
+                                );
+                                console.warn(
+                                    '[Toolasha] Try refreshing the page or reopening the relevant game panels'
+                                );
                             }
                         }, 3000);
                     }
                 }, 2000); // Wait 2s after initialization to check health
-
             } catch (error) {
                 console.error('[Toolasha] Feature initialization failed:', error);
             }
@@ -127,7 +134,7 @@ if (isCombatSimulatorPage()) {
             disable: (key) => config.setFeatureEnabled(key, false),
             toggle: (key) => config.toggleFeature(key),
             status: (key) => config.isFeatureEnabled(key),
-            info: (key) => config.getFeatureInfo(key)
+            info: (key) => config.getFeatureInfo(key),
         },
 
         // Debug API (TEMPORARY: for testing handler accumulation fix)
@@ -142,7 +149,7 @@ if (isCombatSimulatorPage()) {
                 console.log('\n📊 WebSocket:');
                 webSocketHook.debugHandlers();
                 console.log('\n👉 Switch characters 3 times, then run: Toolasha.debug.runTest()');
-            }
-        }
+            },
+        },
     };
 }

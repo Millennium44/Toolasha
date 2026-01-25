@@ -66,17 +66,13 @@ class GatheringStats {
      */
     setupObserver() {
         // Watch for skill action panels (in skill screen, not detail modal)
-        this.unregisterObserver = domObserver.onClass(
-            'GatheringStats',
-            'SkillAction_skillAction',
-            (actionPanel) => {
-                this.injectGatheringStats(actionPanel);
-            }
-        );
+        this.unregisterObserver = domObserver.onClass('GatheringStats', 'SkillAction_skillAction', (actionPanel) => {
+            this.injectGatheringStats(actionPanel);
+        });
 
         // Check for existing action panels that may already be open
         const existingPanels = document.querySelectorAll('[class*="SkillAction_skillAction"]');
-        existingPanels.forEach(panel => {
+        existingPanels.forEach((panel) => {
             this.injectGatheringStats(panel);
         });
     }
@@ -107,7 +103,7 @@ class GatheringStats {
             // Re-register existing display (DOM elements may be reused across navigation)
             this.actionElements.set(actionPanel, {
                 actionHrid: actionHrid,
-                displayElement: existingDisplay
+                displayElement: existingDisplay,
             });
             // Update with fresh data
             this.updateStats(actionPanel);
@@ -146,7 +142,7 @@ class GatheringStats {
         // Store reference
         this.actionElements.set(actionPanel, {
             actionHrid: actionHrid,
-            displayElement: display
+            displayElement: display,
         });
 
         // Register with shared sort manager
@@ -257,9 +253,9 @@ class GatheringStats {
                 // Panel no longer in DOM - remove injected elements BEFORE deleting from Map
                 const data = this.actionElements.get(actionPanel);
                 if (data && data.displayElement) {
-                    data.displayElement.innerHTML = '';  // Clear innerHTML to break references
+                    data.displayElement.innerHTML = ''; // Clear innerHTML to break references
                     data.displayElement.remove();
-                    data.displayElement = null;  // Null out reference for GC
+                    data.displayElement = null; // Null out reference for GC
                 }
                 this.actionElements.delete(actionPanel);
                 actionPanelSort.unregisterPanel(actionPanel);
@@ -282,9 +278,9 @@ class GatheringStats {
         // Note: .remove() is safe to call even if element is already detached
         for (const [actionPanel, data] of this.actionElements.entries()) {
             if (data.displayElement) {
-                data.displayElement.innerHTML = '';  // Clear innerHTML to break event listener references
+                data.displayElement.innerHTML = ''; // Clear innerHTML to break event listener references
                 data.displayElement.remove();
-                data.displayElement = null;  // Null out reference for GC
+                data.displayElement = null; // Null out reference for GC
             }
         }
 
@@ -323,7 +319,7 @@ class GatheringStats {
         }
 
         // Remove all injected elements
-        document.querySelectorAll('.mwi-gathering-stats').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-gathering-stats').forEach((el) => el.remove());
         this.actionElements.clear();
 
         this.isInitialized = false;

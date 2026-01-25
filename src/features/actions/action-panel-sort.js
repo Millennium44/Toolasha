@@ -37,7 +37,7 @@ class ActionPanelSort {
     registerPanel(actionPanel, actionHrid, profitPerHour = null) {
         this.panels.set(actionPanel, {
             actionHrid: actionHrid,
-            profitPerHour: profitPerHour
+            profitPerHour: profitPerHour,
         });
     }
 
@@ -172,7 +172,7 @@ class ActionPanelSort {
                 profit: profitPerHour,
                 pinned: isPinned,
                 originalIndex: containerMap.get(container).length,
-                actionHrid: data.actionHrid
+                actionHrid: data.actionHrid,
             });
         }
 
@@ -210,7 +210,7 @@ class ActionPanelSort {
             // Reorder DOM elements using DocumentFragment to batch reflows
             // This prevents 50 individual reflows (one per appendChild)
             const fragment = document.createDocumentFragment();
-            panels.forEach(({panel}) => {
+            panels.forEach(({ panel }) => {
                 fragment.appendChild(panel);
             });
             container.appendChild(fragment);

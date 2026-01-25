@@ -27,8 +27,8 @@ const CAPE_ITEM_TOKEN_DATA = {
             { hrid: '/items/manticore_sting', cost: 1000 },
             { hrid: '/items/jackalope_antler', cost: 1200 },
             { hrid: '/items/dodocamel_plume', cost: 3000 },
-            { hrid: '/items/griffin_talon', cost: 3000 }
-        ]
+            { hrid: '/items/griffin_talon', cost: 3000 },
+        ],
     },
     '/items/sinister_cape': {
         tokenCost: 27000,
@@ -36,8 +36,8 @@ const CAPE_ITEM_TOKEN_DATA = {
             { hrid: '/items/acrobats_ribbon', cost: 2000 },
             { hrid: '/items/magicians_cloth', cost: 2000 },
             { hrid: '/items/chaotic_chain', cost: 3000 },
-            { hrid: '/items/cursed_ball', cost: 3000 }
-        ]
+            { hrid: '/items/cursed_ball', cost: 3000 },
+        ],
     },
     '/items/enchanted_cloak': {
         tokenCost: 27000,
@@ -46,9 +46,9 @@ const CAPE_ITEM_TOKEN_DATA = {
             { hrid: '/items/knights_ingot', cost: 2000 },
             { hrid: '/items/bishops_scroll', cost: 2000 },
             { hrid: '/items/regal_jewel', cost: 3000 },
-            { hrid: '/items/sundering_jewel', cost: 3000 }
-        ]
-    }
+            { hrid: '/items/sundering_jewel', cost: 3000 },
+        ],
+    },
 };
 
 /**
@@ -78,8 +78,8 @@ export async function calculateCombatScore(profileData) {
             breakdown: {
                 houses: houseResult.breakdown,
                 abilities: abilityResult.breakdown,
-                equipment: equipmentResult.breakdown
-            }
+                equipment: equipmentResult.breakdown,
+            },
         };
     } catch (error) {
         console.error('[CombatScore] Error calculating score:', error);
@@ -89,7 +89,7 @@ export async function calculateCombatScore(profileData) {
             ability: 0,
             equipment: 0,
             equipmentHidden: false,
-            breakdown: { houses: [], abilities: [], equipment: [] }
+            breakdown: { houses: [], abilities: [], equipment: [] },
         };
     }
 }
@@ -175,7 +175,7 @@ function getShopCost(itemHrid, gameData) {
         if (shopItem.itemHrid === itemHrid) {
             // Check if purchaseable with coins
             if (shopItem.costs && shopItem.costs.length > 0) {
-                const coinCost = shopItem.costs.find(cost => cost.itemHrid === '/items/coin');
+                const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
                 if (coinCost) {
                     return coinCost.count;
                 }
@@ -200,9 +200,9 @@ function calculateHouseScore(profileData) {
     const score = totalCost / 1_000_000;
 
     // Format breakdown for display
-    const formattedBreakdown = breakdown.map(house => ({
+    const formattedBreakdown = breakdown.map((house) => ({
         name: `${house.name} ${house.level}`,
-        value: (house.cost / 1_000_000).toFixed(1)
+        value: (house.cost / 1_000_000).toFixed(1),
     }));
 
     return { score, breakdown: formattedBreakdown };
@@ -230,12 +230,12 @@ function calculateAbilityScore(profileData) {
         const abilityName = ability.abilityHrid
             .replace('/abilities/', '')
             .split('_')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
 
         breakdown.push({
             name: `${abilityName} ${ability.level}`,
-            value: (cost / 1_000_000).toFixed(1)
+            value: (cost / 1_000_000).toFixed(1),
         });
     }
 
@@ -327,7 +327,11 @@ function calculateEquipmentScore(profileData) {
                     itemCost = enhancementPath.optimalStrategy.totalCost;
                 } else {
                     // Enhancement calculation failed, fallback to base item price
-                    console.warn('[Combat Score] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
+                    console.warn(
+                        '[Combat Score] Enhancement calculation failed for:',
+                        itemHrid,
+                        '+' + enhancementLevel
+                    );
                     const basePrice = getMarketPriceWithFallback(itemHrid, 0);
                     itemCost = basePrice;
                 }
@@ -365,7 +369,7 @@ function calculateEquipmentScore(profileData) {
 
         breakdown.push({
             name: displayName,
-            value: (itemCost / 1_000_000).toFixed(1)
+            value: (itemCost / 1_000_000).toFixed(1),
         });
     }
 

@@ -71,7 +71,7 @@ class HouseCostCalculator {
                     itemHrid: item.itemHrid,
                     count: item.count,
                     marketPrice: marketPrice,
-                    totalValue: marketPrice * item.count
+                    totalValue: marketPrice * item.count,
                 });
             }
         }
@@ -82,7 +82,7 @@ class HouseCostCalculator {
             level: targetLevel,
             coins: totalCoins,
             materials: materials,
-            totalValue: totalCoins + totalMaterialValue
+            totalValue: totalCoins + totalMaterialValue,
         };
     }
 
@@ -131,7 +131,7 @@ class HouseCostCalculator {
             toLevel: targetLevel,
             coins: totalCoins,
             materials: materials,
-            totalValue: totalCoins + totalMaterialValue
+            totalValue: totalCoins + totalMaterialValue,
         };
     }
 
@@ -163,7 +163,7 @@ class HouseCostCalculator {
         const inventory = dataManager.getInventory();
         if (!inventory) return 0;
 
-        const item = inventory.find(i => i.itemHrid === itemHrid);
+        const item = inventory.find((i) => i.itemHrid === itemHrid);
         return item ? item.count : 0;
     }
 

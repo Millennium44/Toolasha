@@ -66,7 +66,7 @@ class SettingsStorage {
                 settings[settingId] = {
                     id: settingId,
                     desc: settingDef.label,
-                    type: settingDef.type || 'checkbox'
+                    type: settingDef.type || 'checkbox',
                 };
 
                 // Set default value

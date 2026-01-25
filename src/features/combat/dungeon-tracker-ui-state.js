@@ -47,15 +47,20 @@ class DungeonTrackerUIState {
      * Save current state to storage
      */
     async save() {
-        await storage.setJSON('dungeonTracker_uiState', {
-            isCollapsed: this.isCollapsed,
-            isKeysExpanded: this.isKeysExpanded,
-            isRunHistoryExpanded: this.isRunHistoryExpanded,
-            position: this.position,
-            groupBy: this.groupBy,
-            filterDungeon: this.filterDungeon,
-            filterTeam: this.filterTeam
-        }, 'settings', true);
+        await storage.setJSON(
+            'dungeonTracker_uiState',
+            {
+                isCollapsed: this.isCollapsed,
+                isKeysExpanded: this.isKeysExpanded,
+                isRunHistoryExpanded: this.isRunHistoryExpanded,
+                position: this.position,
+                groupBy: this.groupBy,
+                filterDungeon: this.filterDungeon,
+                filterTeam: this.filterTeam,
+            },
+            'settings',
+            true
+        );
     }
 
     /**

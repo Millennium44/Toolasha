@@ -116,7 +116,6 @@ class TaskProfitDisplay {
         this.unregisterHandlers.push(() => {
             webSocketHook.off('quests_updated', questsHandler);
         });
-
     }
 
     /**
@@ -124,24 +123,16 @@ class TaskProfitDisplay {
      */
     registerDOMObservers() {
         // Watch for task list appearing
-        const unregisterTaskList = domObserver.onClass(
-            'TaskProfitDisplay-TaskList',
-            'TasksPanel_taskList',
-            () => {
-                this.updateTaskProfits();
-            }
-        );
+        const unregisterTaskList = domObserver.onClass('TaskProfitDisplay-TaskList', 'TasksPanel_taskList', () => {
+            this.updateTaskProfits();
+        });
         this.unregisterHandlers.push(unregisterTaskList);
 
         // Watch for individual tasks appearing
-        const unregisterTask = domObserver.onClass(
-            'TaskProfitDisplay-Task',
-            'RandomTask_randomTask',
-            () => {
-                // Small delay to let task data settle
-                setTimeout(() => this.updateTaskProfits(), 100);
-            }
-        );
+        const unregisterTask = domObserver.onClass('TaskProfitDisplay-Task', 'RandomTask_randomTask', () => {
+            // Small delay to let task data settle
+            setTimeout(() => this.updateTaskProfits(), 100);
+        });
         this.unregisterHandlers.push(unregisterTask);
     }
 
@@ -183,7 +174,7 @@ class TaskProfitDisplay {
                 }
 
                 // Remove ALL old profit displays (visible + hidden markers)
-                taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach(el => el.remove());
+                taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => el.remove());
             }
 
             this.addProfitToTask(taskNode);
@@ -260,9 +251,10 @@ class TaskProfitDisplay {
             }
 
             // Handle market data not loaded - add to pending queue
-            if (profitData.error === 'Market data not loaded' ||
-                (profitData.rewards && profitData.rewards.error === 'Market data not loaded')) {
-
+            if (
+                profitData.error === 'Market data not loaded' ||
+                (profitData.rewards && profitData.rewards.error === 'Market data not loaded')
+            ) {
                 // Add to pending queue
                 this.pendingTaskNodes.add(taskNode);
 
@@ -278,7 +270,6 @@ class TaskProfitDisplay {
 
             // Display profit
             this.displayTaskProfit(taskNode, profitData);
-
         } catch (error) {
             console.error('[Task Profit Display] Failed to calculate profit:', error);
 
@@ -352,7 +343,7 @@ class TaskProfitDisplay {
             coinReward,
             taskTokenReward,
             quantity,
-            currentProgress
+            currentProgress,
         };
 
         return taskData;
@@ -453,11 +444,13 @@ class TaskProfitDisplay {
         const listeners = new Map();
 
         // Add click handlers for expandable sections
-        breakdownSection.querySelectorAll('.mwi-expandable-header').forEach(header => {
+        breakdownSection.querySelectorAll('.mwi-expandable-header').forEach((header) => {
             const listener = (e) => {
                 e.stopPropagation();
                 const section = header.getAttribute('data-section');
-                const detailSection = breakdownSection.querySelector(`.mwi-expandable-section[data-section="${section}"]`);
+                const detailSection = breakdownSection.querySelector(
+                    `.mwi-expandable-section[data-section="${section}"]`
+                );
 
                 if (detailSection) {
                     const isHidden = detailSection.style.display === 'none';
@@ -505,7 +498,9 @@ class TaskProfitDisplay {
 
         // Show warning if market data unavailable
         if (profitData.rewards.error) {
-            lines.push(`<div style="color: ${config.SCRIPT_COLOR_ALERT}; margin-bottom: 6px; font-style: italic;">⚠ ${profitData.rewards.error} - Token values unavailable</div>`);
+            lines.push(
+                `<div style="color: ${config.SCRIPT_COLOR_ALERT}; margin-bottom: 6px; font-style: italic;">⚠ ${profitData.rewards.error} - Token values unavailable</div>`
+            );
         }
 
         // Task Rewards section
@@ -513,21 +508,37 @@ class TaskProfitDisplay {
         lines.push(`<div style="margin-left: 10px;">Coins: ${numberFormatter(profitData.rewards.coins)}</div>`);
 
         if (!profitData.rewards.error) {
-            lines.push(`<div style="margin-left: 10px;">Task Tokens: ${numberFormatter(profitData.rewards.taskTokens)}</div>`);
-            lines.push(`<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.rewards.breakdown.tokensReceived} tokens @ ${numberFormatter(profitData.rewards.breakdown.tokenValue.toFixed(0))} each)</div>`);
-            lines.push(`<div style="margin-left: 10px;">Purple's Gift: ${numberFormatter(profitData.rewards.purpleGift)}</div>`);
-            lines.push(`<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${numberFormatter(profitData.rewards.breakdown.giftPerTask.toFixed(0))} per task)</div>`);
+            lines.push(
+                `<div style="margin-left: 10px;">Task Tokens: ${numberFormatter(profitData.rewards.taskTokens)}</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.rewards.breakdown.tokensReceived} tokens @ ${numberFormatter(profitData.rewards.breakdown.tokenValue.toFixed(0))} each)</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 10px;">Purple's Gift: ${numberFormatter(profitData.rewards.purpleGift)}</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${numberFormatter(profitData.rewards.breakdown.giftPerTask.toFixed(0))} per task)</div>`
+            );
         } else {
-            lines.push(`<div style="margin-left: 10px; color: #888; font-style: italic;">Task Tokens: Loading...</div>`);
-            lines.push(`<div style="margin-left: 10px; color: #888; font-style: italic;">Purple's Gift: Loading...</div>`);
+            lines.push(
+                `<div style="margin-left: 10px; color: #888; font-style: italic;">Task Tokens: Loading...</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 10px; color: #888; font-style: italic;">Purple's Gift: Loading...</div>`
+            );
         }
         // Action profit section
         lines.push('<div style="margin-top: 6px; margin-bottom: 4px; color: #aaa;">Action Profit:</div>');
 
         if (profitData.type === 'gathering') {
             // Gathering Value (expandable)
-            lines.push(`<div class="mwi-expandable-header" data-section="gathering" style="margin-left: 10px; cursor: pointer; user-select: none;">Gathering Value: ${numberFormatter(profitData.action.totalValue)} ▸</div>`);
-            lines.push(`<div class="mwi-expandable-section" data-section="gathering" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`);
+            lines.push(
+                `<div class="mwi-expandable-header" data-section="gathering" style="margin-left: 10px; cursor: pointer; user-select: none;">Gathering Value: ${numberFormatter(profitData.action.totalValue)} ▸</div>`
+            );
+            lines.push(
+                `<div class="mwi-expandable-section" data-section="gathering" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
+            );
 
             if (profitData.action.details) {
                 const details = profitData.action.details;
@@ -541,30 +552,43 @@ class TaskProfitDisplay {
                     for (const output of details.baseOutputs) {
                         const itemsForTask = (output.itemsPerHour / actionsPerHour) * quantity;
                         const revenueForTask = output.revenuePerHour * hoursNeeded;
-                        const dropRateText = output.dropRate < 1.0 ? ` (${formatPercentage(output.dropRate, 1)} drop)` : '';
-                        const processingText = output.isProcessed ? ` [${formatPercentage(output.processingChance, 1)} processed]` : '';
-                        lines.push(`<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}${processingText}</div>`);
+                        const dropRateText =
+                            output.dropRate < 1.0 ? ` (${formatPercentage(output.dropRate, 1)} drop)` : '';
+                        const processingText = output.isProcessed
+                            ? ` [${formatPercentage(output.processingChance, 1)} processed]`
+                            : '';
+                        lines.push(
+                            `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}${processingText}</div>`
+                        );
                     }
                 }
 
                 // Bonus Revenue (essence and rare finds)
-                if (details.bonusRevenue && details.bonusRevenue.bonusDrops && details.bonusRevenue.bonusDrops.length > 0) {
+                if (
+                    details.bonusRevenue &&
+                    details.bonusRevenue.bonusDrops &&
+                    details.bonusRevenue.bonusDrops.length > 0
+                ) {
                     const bonusRevenue = details.bonusRevenue;
                     const efficiencyMultiplier = details.efficiencyMultiplier || 1;
                     const totalBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier * hoursNeeded;
 
-                    lines.push(`<div style="margin-top: 4px; color: #aaa;">Bonus Drops: ${numberFormatter(Math.round(totalBonusRevenue))}</div>`);
+                    lines.push(
+                        `<div style="margin-top: 4px; color: #aaa;">Bonus Drops: ${numberFormatter(Math.round(totalBonusRevenue))}</div>`
+                    );
 
                     // Group drops by type
-                    const essenceDrops = bonusRevenue.bonusDrops.filter(d => d.type === 'essence');
-                    const rareFindDrops = bonusRevenue.bonusDrops.filter(d => d.type === 'rare_find');
+                    const essenceDrops = bonusRevenue.bonusDrops.filter((d) => d.type === 'essence');
+                    const rareFindDrops = bonusRevenue.bonusDrops.filter((d) => d.type === 'rare_find');
 
                     // Show essence drops
                     if (essenceDrops.length > 0) {
                         for (const drop of essenceDrops) {
                             const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                             const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
-                            lines.push(`<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`);
+                            lines.push(
+                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                            );
                         }
                     }
 
@@ -573,7 +597,9 @@ class TaskProfitDisplay {
                         for (const drop of rareFindDrops) {
                             const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                             const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
-                            lines.push(`<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`);
+                            lines.push(
+                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                            );
                         }
                     }
                 }
@@ -581,51 +607,74 @@ class TaskProfitDisplay {
                 // Processing conversions (raw → processed)
                 if (details.processingConversions && details.processingConversions.length > 0) {
                     const processingBonus = details.processingRevenueBonus * hoursNeeded;
-                    lines.push(`<div style="margin-top: 4px; color: #aaa;">Processing Bonus: ${numberFormatter(Math.round(processingBonus))}</div>`);
+                    lines.push(
+                        `<div style="margin-top: 4px; color: #aaa;">Processing Bonus: ${numberFormatter(Math.round(processingBonus))}</div>`
+                    );
                     for (const conversion of details.processingConversions) {
                         const conversionsForTask = conversion.conversionsPerHour * hoursNeeded;
                         const revenueForTask = conversion.revenuePerHour * hoursNeeded;
-                        lines.push(`<div>• ${conversion.rawItem} → ${conversion.processedItem}: ${conversionsForTask.toFixed(1)} conversions, +${numberFormatter(Math.round(conversion.valueGain))} each = ${numberFormatter(Math.round(revenueForTask))}</div>`);
+                        lines.push(
+                            `<div>• ${conversion.rawItem} → ${conversion.processedItem}: ${conversionsForTask.toFixed(1)} conversions, +${numberFormatter(Math.round(conversion.valueGain))} each = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                        );
                     }
                 }
             }
 
             lines.push(`</div>`);
-            lines.push(`<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`);
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`
+            );
         } else if (profitData.type === 'production') {
             // Output Value (expandable)
-            lines.push(`<div class="mwi-expandable-header" data-section="output" style="margin-left: 10px; cursor: pointer; user-select: none;">Output Value: ${numberFormatter(profitData.action.breakdown.outputValue)} ▸</div>`);
-            lines.push(`<div class="mwi-expandable-section" data-section="output" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`);
+            lines.push(
+                `<div class="mwi-expandable-header" data-section="output" style="margin-left: 10px; cursor: pointer; user-select: none;">Output Value: ${numberFormatter(profitData.action.breakdown.outputValue)} ▸</div>`
+            );
+            lines.push(
+                `<div class="mwi-expandable-section" data-section="output" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
+            );
 
             if (profitData.action.details) {
                 const details = profitData.action.details;
                 const itemsPerAction = details.itemsPerAction || 1;
                 const totalItems = itemsPerAction * profitData.action.breakdown.quantity;
 
-                lines.push(`<div>• Base Production: ${totalItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(totalItems * details.priceEach))}</div>`);
+                lines.push(
+                    `<div>• Base Production: ${totalItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(totalItems * details.priceEach))}</div>`
+                );
 
                 if (details.gourmetBonusItems > 0) {
-                    const bonusItems = (details.gourmetBonusItems / details.actionsPerHour) * profitData.action.breakdown.quantity;
-                    lines.push(`<div>• Gourmet Bonus: ${bonusItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(bonusItems * details.priceEach))}</div>`);
+                    const bonusItems =
+                        (details.gourmetBonusItems / details.actionsPerHour) * profitData.action.breakdown.quantity;
+                    lines.push(
+                        `<div>• Gourmet Bonus: ${bonusItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(bonusItems * details.priceEach))}</div>`
+                    );
                 }
             }
 
             lines.push(`</div>`);
 
             // Bonus Revenue (expandable) - Essence and Rare Find drops
-            if (profitData.action.details?.bonusRevenue && profitData.action.details.bonusRevenue.bonusDrops && profitData.action.details.bonusRevenue.bonusDrops.length > 0) {
+            if (
+                profitData.action.details?.bonusRevenue &&
+                profitData.action.details.bonusRevenue.bonusDrops &&
+                profitData.action.details.bonusRevenue.bonusDrops.length > 0
+            ) {
                 const details = profitData.action.details;
                 const bonusRevenue = details.bonusRevenue;
                 const hoursNeeded = profitData.action.breakdown.quantity / details.actionsPerHour;
                 const efficiencyMultiplier = details.efficiencyMultiplier || 1;
                 const totalBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier * hoursNeeded;
 
-                lines.push(`<div class="mwi-expandable-header" data-section="bonus" style="margin-left: 10px; cursor: pointer; user-select: none;">Bonus Revenue: ${numberFormatter(totalBonusRevenue)} ▸</div>`);
-                lines.push(`<div class="mwi-expandable-section" data-section="bonus" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`);
+                lines.push(
+                    `<div class="mwi-expandable-header" data-section="bonus" style="margin-left: 10px; cursor: pointer; user-select: none;">Bonus Revenue: ${numberFormatter(totalBonusRevenue)} ▸</div>`
+                );
+                lines.push(
+                    `<div class="mwi-expandable-section" data-section="bonus" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
+                );
 
                 // Group drops by type
-                const essenceDrops = bonusRevenue.bonusDrops.filter(d => d.type === 'essence');
-                const rareFindDrops = bonusRevenue.bonusDrops.filter(d => d.type === 'rare_find');
+                const essenceDrops = bonusRevenue.bonusDrops.filter((d) => d.type === 'essence');
+                const rareFindDrops = bonusRevenue.bonusDrops.filter((d) => d.type === 'rare_find');
 
                 // Show essence drops
                 if (essenceDrops.length > 0) {
@@ -633,7 +682,9 @@ class TaskProfitDisplay {
                     for (const drop of essenceDrops) {
                         const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                         const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
-                        lines.push(`<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`);
+                        lines.push(
+                            `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                        );
                     }
                 }
 
@@ -645,7 +696,9 @@ class TaskProfitDisplay {
                     for (const drop of rareFindDrops) {
                         const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                         const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
-                        lines.push(`<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`);
+                        lines.push(
+                            `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                        );
                     }
                 }
 
@@ -653,8 +706,12 @@ class TaskProfitDisplay {
             }
 
             // Material Cost (expandable)
-            lines.push(`<div class="mwi-expandable-header" data-section="materials" style="margin-left: 10px; cursor: pointer; user-select: none;">Material Cost: ${numberFormatter(profitData.action.breakdown.materialCost)} ▸</div>`);
-            lines.push(`<div class="mwi-expandable-section" data-section="materials" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`);
+            lines.push(
+                `<div class="mwi-expandable-header" data-section="materials" style="margin-left: 10px; cursor: pointer; user-select: none;">Material Cost: ${numberFormatter(profitData.action.breakdown.materialCost)} ▸</div>`
+            );
+            lines.push(
+                `<div class="mwi-expandable-section" data-section="materials" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
+            );
 
             if (profitData.action.details && profitData.action.details.materialCosts) {
                 const details = profitData.action.details;
@@ -663,7 +720,9 @@ class TaskProfitDisplay {
                 for (const mat of details.materialCosts) {
                     const totalAmount = mat.amount * actionsNeeded;
                     const totalCost = mat.totalCost * actionsNeeded;
-                    lines.push(`<div>• ${mat.itemName}: ${totalAmount.toFixed(1)} @ ${numberFormatter(Math.round(mat.askPrice))} = ${numberFormatter(Math.round(totalCost))}</div>`);
+                    lines.push(
+                        `<div>• ${mat.itemName}: ${totalAmount.toFixed(1)} @ ${numberFormatter(Math.round(mat.askPrice))} = ${numberFormatter(Math.round(totalCost))}</div>`
+                    );
                 }
 
                 if (details.teaCosts && details.teaCosts.length > 0) {
@@ -671,7 +730,9 @@ class TaskProfitDisplay {
                     for (const tea of details.teaCosts) {
                         const drinksNeeded = tea.drinksPerHour * hoursNeeded;
                         const totalCost = tea.totalCost * hoursNeeded;
-                        lines.push(`<div>• ${tea.itemName}: ${drinksNeeded.toFixed(1)} drinks @ ${numberFormatter(Math.round(tea.pricePerDrink))} = ${numberFormatter(Math.round(totalCost))}</div>`);
+                        lines.push(
+                            `<div>• ${tea.itemName}: ${drinksNeeded.toFixed(1)} drinks @ ${numberFormatter(Math.round(tea.pricePerDrink))} = ${numberFormatter(Math.round(totalCost))}</div>`
+                        );
                     }
                 }
             }
@@ -679,13 +740,19 @@ class TaskProfitDisplay {
             lines.push(`</div>`);
 
             // Net Production
-            lines.push(`<div style="margin-left: 10px;">Net Production: ${numberFormatter(profitData.action.totalProfit)}</div>`);
-            lines.push(`<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`);
+            lines.push(
+                `<div style="margin-left: 10px;">Net Production: ${numberFormatter(profitData.action.totalProfit)}</div>`
+            );
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`
+            );
         }
 
         // Total
         lines.push('<div style="border-top: 1px solid #555; margin-top: 6px; padding-top: 4px;"></div>');
-        lines.push(`<div style="font-weight: bold; color: ${config.COLOR_ACCENT};">Total Profit: ${numberFormatter(profitData.totalProfit)}</div>`);
+        lines.push(
+            `<div style="font-weight: bold; color: ${config.COLOR_ACCENT};">Total Profit: ${numberFormatter(profitData.totalProfit)}</div>`
+        );
 
         return lines.join('');
     }
@@ -746,13 +813,13 @@ class TaskProfitDisplay {
     refresh() {
         // Update all profit line colors
         const profitLines = document.querySelectorAll('.mwi-task-profit > div:first-child');
-        profitLines.forEach(line => {
+        profitLines.forEach((line) => {
             line.style.color = config.COLOR_ACCENT;
         });
 
         // Update all total profit colors in breakdowns
         const totalProfits = document.querySelectorAll('.mwi-task-profit-breakdown > div:last-child');
-        totalProfits.forEach(total => {
+        totalProfits.forEach((total) => {
             total.style.color = config.COLOR_ACCENT;
         });
     }
@@ -762,7 +829,7 @@ class TaskProfitDisplay {
      */
     disable() {
         // Unregister all handlers
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         // Unregister retry handlers
@@ -780,7 +847,7 @@ class TaskProfitDisplay {
         this.pendingTaskNodes.clear();
 
         // Clean up event listeners before removing profit displays
-        document.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach(el => {
+        document.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
             const listeners = this.eventListeners.get(el);
             if (listeners) {
                 listeners.forEach((listener, element) => {

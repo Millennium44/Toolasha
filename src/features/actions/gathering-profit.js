@@ -13,7 +13,14 @@
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
-import { parseTeaEfficiency, parseGourmetBonus, parseProcessingBonus, parseGatheringBonus, getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
+import {
+    parseTeaEfficiency,
+    parseGourmetBonus,
+    parseProcessingBonus,
+    parseGatheringBonus,
+    getDrinkConcentration,
+    parseTeaSkillLevelBonus,
+} from '../../utils/tea-parser.js';
 import { stackAdditive } from '../../utils/efficiency.js';
 import { formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
@@ -22,11 +29,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 /**
  * Action types for gathering skills (3 skills)
  */
-const GATHERING_TYPES = [
-    '/action_types/foraging',
-    '/action_types/woodcutting',
-    '/action_types/milking'
-];
+const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
 /**
  * Action types for production skills that benefit from Gourmet Tea (5 skills)
@@ -36,7 +39,7 @@ const PRODUCTION_TYPES = [
     '/action_types/cooking',
     '/action_types/cheesesmithing',
     '/action_types/crafting',
-    '/action_types/tailoring'
+    '/action_types/tailoring',
 ];
 
 /**
@@ -53,9 +56,9 @@ let processingConversionCache = null;
 function buildProcessingConversionCache(gameData) {
     const cache = new Map();
     const validProcessingTypes = [
-        '/action_types/cheesesmithing',  // Milk → Cheese conversions
-        '/action_types/crafting',         // Log → Lumber conversions
-        '/action_types/tailoring'         // Cotton/Flax/Bamboo/Cocoon/Radiant → Fabric conversions
+        '/action_types/cheesesmithing', // Milk → Cheese conversions
+        '/action_types/crafting', // Log → Lumber conversions
+        '/action_types/tailoring', // Cotton/Flax/Bamboo/Cocoon/Radiant → Fabric conversions
     ];
 
     for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
@@ -70,7 +73,7 @@ function buildProcessingConversionCache(gameData) {
             cache.set(inputItem.itemHrid, {
                 actionHrid: actionHrid,
                 outputItemHrid: outputItem.itemHrid,
-                conversionRatio: inputItem.count
+                conversionRatio: inputItem.count,
             });
         }
     }
@@ -122,16 +125,12 @@ export async function calculateGatheringProfit(actionHrid) {
 
     // Calculate action time per action (with speed bonuses)
     const baseTimePerActionSec = actionDetail.baseTimeCost / 1000000000;
-    const speedBonus = parseEquipmentSpeedBonuses(
-        equipment,
-        actionDetail.type,
-        gameData.itemDetailMap
-    );
+    const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetail.type, gameData.itemDetailMap);
     // speedBonus is already a decimal (e.g., 0.15 for 15%), don't divide by 100
     const actualTimePerActionSec = baseTimePerActionSec / (1 + speedBonus);
 
     // Calculate actions per hour
-    let actionsPerHour = 3600 / actualTimePerActionSec;
+    const actionsPerHour = 3600 / actualTimePerActionSec;
 
     // Get character's actual equipped drink slots for this action type (from WebSocket data)
     const drinkSlots = dataManager.getActionDrinkSlots(actionDetail.type);
@@ -140,12 +139,7 @@ export async function calculateGatheringProfit(actionHrid) {
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
 
     // Parse tea buffs
-    const teaEfficiency = parseTeaEfficiency(
-        actionDetail.type,
-        drinkSlots,
-        gameData.itemDetailMap,
-        drinkConcentration
-    );
+    const teaEfficiency = parseTeaEfficiency(actionDetail.type, drinkSlots, gameData.itemDetailMap, drinkConcentration);
 
     // Gourmet Tea only applies to production skills (Brewing, Cooking, Cheesesmithing, Crafting, Tailoring)
     // NOT gathering skills (Foraging, Woodcutting, Milking)
@@ -172,15 +166,15 @@ export async function calculateGatheringProfit(actionHrid) {
 
         // Get Community Buff level for gathering quantity
         const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-        communityGathering = communityBuffLevel ? 0.2 + ((communityBuffLevel - 1) * 0.005) : 0;
+        communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
 
         // Get Achievement buffs for this action type (Beginner tier: +2% Gathering Quantity)
         const achievementBuffs = dataManager.getAchievementBuffs(actionDetail.type);
-        
+
         // achievementBuffs is an array of buff objects
         // Find the gathering buff (typeHrid: "/buff_types/gathering") and get its flatBoost value
         if (Array.isArray(achievementBuffs)) {
-            const gatheringBuff = achievementBuffs.find(buff => buff.typeHrid === '/buff_types/gathering');
+            const gatheringBuff = achievementBuffs.find((buff) => buff.typeHrid === '/buff_types/gathering');
             achievementGathering = gatheringBuff?.flatBoost || 0;
         } else {
             achievementGathering = 0;
@@ -209,7 +203,7 @@ export async function calculateGatheringProfit(actionHrid) {
             name: drinkName,
             priceEach: drinkPrice,
             drinksPerHour: drinksPerHour,
-            costPerHour: costPerHour
+            costPerHour: costPerHour,
         });
     }
 
@@ -246,23 +240,14 @@ export async function calculateGatheringProfit(actionHrid) {
     }
 
     // Calculate equipment efficiency bonus (uses equipment-parser utility)
-    const equipmentEfficiency = parseEquipmentEfficiencyBonuses(
-        equipment,
-        actionDetail.type,
-        gameData.itemDetailMap
-    );
+    const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetail.type, gameData.itemDetailMap);
 
     // Total efficiency (all additive)
-    const totalEfficiency = stackAdditive(
-        levelEfficiency,
-        houseEfficiency,
-        teaEfficiency,
-        equipmentEfficiency
-    );
+    const totalEfficiency = stackAdditive(levelEfficiency, houseEfficiency, teaEfficiency, equipmentEfficiency);
 
     // Calculate efficiency multiplier (matches production profit calculator pattern)
     // Efficiency "repeats the action" - we apply it to item outputs, not action rate
-    const efficiencyMultiplier = 1 + (totalEfficiency / 100);
+    const efficiencyMultiplier = 1 + totalEfficiency / 100;
 
     // Calculate revenue from drop table
     // Processing happens PER ACTION (before efficiency multiplies the count)
@@ -332,7 +317,7 @@ export async function calculateGatheringProfit(actionHrid) {
                 processedItem: processedItemName,
                 valueGain: valueGainPerConversion,
                 conversionsPerHour: processedItemsPerHour,
-                revenuePerHour: revenueFromConversion
+                revenuePerHour: revenueFromConversion,
             });
 
             // Store outputs (show both raw and processed)
@@ -342,7 +327,7 @@ export async function calculateGatheringProfit(actionHrid) {
                 dropRate: drop.dropRate,
                 priceEach: rawPrice,
                 priceAfterTax: rawPriceAfterTax,
-                revenuePerHour: rawItemsPerHour * rawPrice
+                revenuePerHour: rawItemsPerHour * rawPrice,
             });
 
             baseOutputs.push({
@@ -353,7 +338,7 @@ export async function calculateGatheringProfit(actionHrid) {
                 priceAfterTax: processedPriceAfterTax,
                 revenuePerHour: processedItemsPerHour * processedPrice,
                 isProcessed: true, // Flag to show processing percentage
-                processingChance: processingBonus // Store the processing chance (e.g., 0.15 for 15%)
+                processingChance: processingBonus, // Store the processing chance (e.g., 0.15 for 15%)
             });
         } else {
             // No processing - simple calculation
@@ -368,7 +353,7 @@ export async function calculateGatheringProfit(actionHrid) {
                 dropRate: drop.dropRate,
                 priceEach: rawPrice,
                 priceAfterTax: rawPriceAfterTax,
-                revenuePerHour: rawItemsPerHour * rawPrice
+                revenuePerHour: rawItemsPerHour * rawPrice,
             });
         }
 
@@ -382,8 +367,9 @@ export async function calculateGatheringProfit(actionHrid) {
             if (processedItemHrid && processingBonus > 0) {
                 const processedPrice = getItemPrice(processedItemHrid, { context: 'profit', side: 'sell' }) || 0;
                 const processedPriceAfterTax = processedPrice * 0.98;
-                const weightedPrice = (rawPerAction * rawPriceAfterTax + processedPerAction * processedPriceAfterTax) /
-                                     (rawPerAction + processedPerAction);
+                const weightedPrice =
+                    (rawPerAction * rawPriceAfterTax + processedPerAction * processedPriceAfterTax) /
+                    (rawPerAction + processedPerAction);
                 revenuePerHour += bonusItemsPerHour * weightedPrice;
             } else {
                 revenuePerHour += bonusItemsPerHour * rawPriceAfterTax;
@@ -392,12 +378,7 @@ export async function calculateGatheringProfit(actionHrid) {
     }
 
     // Calculate bonus revenue from essence and rare find drops
-    const bonusRevenue = calculateBonusRevenue(
-        actionDetail,
-        actionsPerHour,
-        equipment,
-        gameData.itemDetailMap
-    );
+    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
 
     // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
     const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
@@ -414,26 +395,26 @@ export async function calculateGatheringProfit(actionHrid) {
         profitPerDay,
         revenuePerHour,
         drinkCostPerHour,
-        drinkCosts,                // Array of individual drink costs {name, priceEach, costPerHour}
-        actionsPerHour,            // Base actions per hour (without efficiency)
-        baseOutputs,               // Array of base item outputs {name, itemsPerHour, dropRate, priceEach, revenuePerHour}
-        totalEfficiency,           // Total efficiency percentage
-        efficiencyMultiplier,      // Efficiency as multiplier (1 + totalEfficiency / 100)
+        drinkCosts, // Array of individual drink costs {name, priceEach, costPerHour}
+        actionsPerHour, // Base actions per hour (without efficiency)
+        baseOutputs, // Array of base item outputs {name, itemsPerHour, dropRate, priceEach, revenuePerHour}
+        totalEfficiency, // Total efficiency percentage
+        efficiencyMultiplier, // Efficiency as multiplier (1 + totalEfficiency / 100)
         speedBonus,
-        bonusRevenue,              // Essence and rare find details
-        processingBonus,           // Processing Tea chance (as decimal)
-        processingRevenueBonus,    // Extra revenue from Processing conversions
-        processingConversions,     // Array of conversion details {rawItem, processedItem, valueGain}
-        gatheringQuantity: totalGathering,  // Total gathering quantity bonus (as decimal) - renamed for display consistency
+        bonusRevenue, // Essence and rare find details
+        processingBonus, // Processing Tea chance (as decimal)
+        processingRevenueBonus, // Extra revenue from Processing conversions
+        processingConversions, // Array of conversion details {rawItem, processedItem, valueGain}
+        gatheringQuantity: totalGathering, // Total gathering quantity bonus (as decimal) - renamed for display consistency
         details: {
             levelEfficiency,
             houseEfficiency,
             teaEfficiency,
             equipmentEfficiency,
-            communityBuffQuantity: communityGathering,  // Community Buff component (as decimal)
-            gatheringTeaBonus: gatheringTea,            // Gathering Tea component (as decimal)
-            achievementGathering: achievementGathering  // Achievement Tier component (as decimal)
-        }
+            communityBuffQuantity: communityGathering, // Community Buff component (as decimal)
+            gatheringTeaBonus: gatheringTea, // Gathering Tea component (as decimal)
+            achievementGathering: achievementGathering, // Achievement Tier component (as decimal)
+        },
     };
 }
 
@@ -491,7 +472,9 @@ export function formatProfitDisplay(profitData) {
             lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
             const decimals = output.itemsPerHour < 1 ? 2 : 1;
             if (output.dropRate < 1.0) {
-                lines.push(`• ${output.name}: ~${output.itemsPerHour.toFixed(decimals)}/hour (${formatPercentage(output.dropRate, 1)} drop rate)`);
+                lines.push(
+                    `• ${output.name}: ~${output.itemsPerHour.toFixed(decimals)}/hour (${formatPercentage(output.dropRate, 1)} drop rate)`
+                );
             } else {
                 lines.push(`• ${output.name}: ~${output.itemsPerHour.toFixed(decimals)}/hour`);
             }
@@ -507,7 +490,9 @@ export function formatProfitDisplay(profitData) {
         if (profitData.drinkCosts && profitData.drinkCosts.length > 0) {
             for (const drink of profitData.drinkCosts) {
                 lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
-                lines.push(`• ${drink.name}: ${formatWithSeparator(Math.round(drink.priceEach))} each × ${drink.drinksPerHour.toFixed(1)}/hour → ${formatWithSeparator(Math.round(drink.costPerHour))}/hour`);
+                lines.push(
+                    `• ${drink.name}: ${formatWithSeparator(Math.round(drink.priceEach))} each × ${drink.drinksPerHour.toFixed(1)}/hour → ${formatWithSeparator(Math.round(drink.costPerHour))}/hour`
+                );
                 lines.push(`</span>`);
             }
         }
@@ -515,7 +500,9 @@ export function formatProfitDisplay(profitData) {
 
     // Show bonus revenue breakdown (essences and rare finds)
     if (profitData.bonusRevenue && profitData.bonusRevenue.totalBonusRevenue > 0) {
-        lines.push(`<br>Bonus revenue: ${formatWithSeparator(Math.round(profitData.bonusRevenue.totalBonusRevenue))}/hour`);
+        lines.push(
+            `<br>Bonus revenue: ${formatWithSeparator(Math.round(profitData.bonusRevenue.totalBonusRevenue))}/hour`
+        );
 
         const bonusParts = [];
         if (profitData.bonusRevenue.essenceFindBonus > 0) {
@@ -535,7 +522,9 @@ export function formatProfitDisplay(profitData) {
                 lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
                 const decimals = drop.dropsPerHour < 1 ? 2 : 1;
                 const dropRatePct = formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
-                lines.push(`• ${drop.itemName}: ${dropRatePct} drop, ~${drop.dropsPerHour.toFixed(decimals)}/hour → ${formatWithSeparator(Math.round(drop.revenuePerHour))}/hour`);
+                lines.push(
+                    `• ${drop.itemName}: ${dropRatePct} drop, ~${drop.dropsPerHour.toFixed(decimals)}/hour → ${formatWithSeparator(Math.round(drop.revenuePerHour))}/hour`
+                );
                 lines.push(`</span>`);
             }
         }
@@ -551,7 +540,9 @@ export function formatProfitDisplay(profitData) {
             for (const conversion of profitData.processingConversions) {
                 lines.push(`<br><span style="font-size: 0.85em; opacity: 0.7; margin-left: 10px;">`);
                 const decimals = conversion.conversionsPerHour < 1 ? 2 : 1;
-                lines.push(`• ${conversion.rawItem} → ${conversion.processedItem}: ~${conversion.conversionsPerHour.toFixed(decimals)} converted/hour, +${formatWithSeparator(Math.round(conversion.valueGain))} per conversion → ${formatWithSeparator(Math.round(conversion.revenuePerHour))}/hour`);
+                lines.push(
+                    `• ${conversion.rawItem} → ${conversion.processedItem}: ~${conversion.conversionsPerHour.toFixed(decimals)} converted/hour, +${formatWithSeparator(Math.round(conversion.valueGain))} per conversion → ${formatWithSeparator(Math.round(conversion.revenuePerHour))}/hour`
+                );
                 lines.push(`</span>`);
             }
         }

@@ -25,10 +25,10 @@ class DungeonTrackerUIChart {
         let filteredRuns = allRuns;
 
         if (this.state.filterDungeon !== 'all') {
-            filteredRuns = filteredRuns.filter(r => r.dungeonName === this.state.filterDungeon);
+            filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
         }
         if (this.state.filterTeam !== 'all') {
-            filteredRuns = filteredRuns.filter(r => r.teamKey === this.state.filterTeam);
+            filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
         }
 
         if (filteredRuns.length === 0) {
@@ -45,7 +45,7 @@ class DungeonTrackerUIChart {
 
         // Prepare data
         const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
-        const durations = filteredRuns.map(r => (r.duration || r.totalTime || 0) / 60000); // Convert to minutes
+        const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000); // Convert to minutes
 
         // Calculate stats
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
@@ -63,7 +63,7 @@ class DungeonTrackerUIChart {
                 pointRadius: 3,
                 pointHoverRadius: 5,
                 tension: 0.1,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Average',
@@ -73,7 +73,7 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Fastest',
@@ -83,7 +83,7 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Slowest',
@@ -93,8 +93,8 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
-            }
+                fill: false,
+            },
         ];
 
         // Destroy existing chart
@@ -108,7 +108,7 @@ class DungeonTrackerUIChart {
             type: 'line',
             data: {
                 labels: labels,
-                datasets: datasets
+                datasets: datasets,
             },
             options: {
                 responsive: true,
@@ -124,7 +124,7 @@ class DungeonTrackerUIChart {
                         labels: {
                             color: '#ccc',
                             usePointStyle: true,
-                            padding: 15
+                            padding: 15,
                         },
                         onClick: (e, legendItem, legend) => {
                             const index = legendItem.datasetIndex;
@@ -134,53 +134,53 @@ class DungeonTrackerUIChart {
                             // Toggle visibility
                             meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
                             ci.update();
-                        }
+                        },
                     },
                     title: {
-                        display: false
+                        display: false,
                     },
                     tooltip: {
                         callbacks: {
-                            label: function(context) {
+                            label: function (context) {
                                 const label = context.dataset.label || '';
                                 const value = context.parsed.y;
                                 const minutes = Math.floor(value);
                                 const seconds = Math.floor((value - minutes) * 60);
                                 return `${label}: ${minutes}m ${seconds}s`;
-                            }
-                        }
-                    }
+                            },
+                        },
+                    },
                 },
                 scales: {
                     x: {
                         title: {
                             display: true,
                             text: 'Run Number',
-                            color: '#ccc'
+                            color: '#ccc',
                         },
                         ticks: {
-                            color: '#999'
+                            color: '#999',
                         },
                         grid: {
-                            color: '#333'
-                        }
+                            color: '#333',
+                        },
                     },
                     y: {
                         title: {
                             display: true,
                             text: 'Duration (minutes)',
-                            color: '#ccc'
+                            color: '#ccc',
                         },
                         ticks: {
-                            color: '#999'
+                            color: '#999',
                         },
                         grid: {
-                            color: '#333'
+                            color: '#333',
                         },
-                        beginAtZero: false
-                    }
-                }
-            }
+                        beginAtZero: false,
+                    },
+                },
+            },
         });
     }
 
@@ -284,10 +284,10 @@ class DungeonTrackerUIChart {
         let filteredRuns = allRuns;
 
         if (this.state.filterDungeon !== 'all') {
-            filteredRuns = filteredRuns.filter(r => r.dungeonName === this.state.filterDungeon);
+            filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
         }
         if (this.state.filterTeam !== 'all') {
-            filteredRuns = filteredRuns.filter(r => r.teamKey === this.state.filterTeam);
+            filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
         }
 
         if (filteredRuns.length === 0) return;
@@ -297,7 +297,7 @@ class DungeonTrackerUIChart {
 
         // Prepare data (same as main chart)
         const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
-        const durations = filteredRuns.map(r => (r.duration || r.totalTime || 0) / 60000);
+        const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000);
 
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
         const fastestDuration = Math.min(...durations);
@@ -313,7 +313,7 @@ class DungeonTrackerUIChart {
                 pointRadius: 3,
                 pointHoverRadius: 5,
                 tension: 0.1,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Average',
@@ -323,7 +323,7 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Fastest',
@@ -333,7 +333,7 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
+                fill: false,
             },
             {
                 label: 'Slowest',
@@ -343,8 +343,8 @@ class DungeonTrackerUIChart {
                 borderDash: [5, 5],
                 pointRadius: 0,
                 tension: 0,
-                fill: false
-            }
+                fill: false,
+            },
         ];
 
         // Create chart
@@ -353,7 +353,7 @@ class DungeonTrackerUIChart {
             type: 'line',
             data: {
                 labels: labels,
-                datasets: datasets
+                datasets: datasets,
             },
             options: {
                 responsive: true,
@@ -371,8 +371,8 @@ class DungeonTrackerUIChart {
                             usePointStyle: true,
                             padding: 15,
                             font: {
-                                size: 14
-                            }
+                                size: 14,
+                            },
                         },
                         onClick: (e, legendItem, legend) => {
                             const index = legendItem.datasetIndex;
@@ -381,19 +381,19 @@ class DungeonTrackerUIChart {
 
                             meta.hidden = meta.hidden === null ? !ci.data.datasets[index].hidden : null;
                             ci.update();
-                        }
+                        },
                     },
                     tooltip: {
                         callbacks: {
-                            label: function(context) {
+                            label: function (context) {
                                 const label = context.dataset.label || '';
                                 const value = context.parsed.y;
                                 const minutes = Math.floor(value);
                                 const seconds = Math.floor((value - minutes) * 60);
                                 return `${label}: ${minutes}m ${seconds}s`;
-                            }
-                        }
-                    }
+                            },
+                        },
+                    },
                 },
                 scales: {
                     x: {
@@ -402,15 +402,15 @@ class DungeonTrackerUIChart {
                             text: 'Run Number',
                             color: '#ccc',
                             font: {
-                                size: 14
-                            }
+                                size: 14,
+                            },
                         },
                         ticks: {
-                            color: '#999'
+                            color: '#999',
                         },
                         grid: {
-                            color: '#333'
-                        }
+                            color: '#333',
+                        },
                     },
                     y: {
                         title: {
@@ -418,19 +418,19 @@ class DungeonTrackerUIChart {
                             text: 'Duration (minutes)',
                             color: '#ccc',
                             font: {
-                                size: 14
-                            }
+                                size: 14,
+                            },
                         },
                         ticks: {
-                            color: '#999'
+                            color: '#999',
                         },
                         grid: {
-                            color: '#333'
+                            color: '#333',
                         },
-                        beginAtZero: false
-                    }
-                }
-            }
+                        beginAtZero: false,
+                    },
+                },
+            },
         });
     }
 }

@@ -23,10 +23,10 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         experienceBonus: 0,
 
         // Best items per slot for display
-        toolSlot: null,    // main_hand or two_hand
-        bodySlot: null,    // body
-        legsSlot: null,    // legs
-        handsSlot: null,   // hands
+        toolSlot: null, // main_hand or two_hand
+        bodySlot: null, // body
+        legsSlot: null, // legs
+        handsSlot: null, // hands
     };
 
     // Get items to scan - only use equipment map (already filtered to equipped items only)
@@ -34,17 +34,17 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
 
     if (equipment) {
         // Scan only equipped items from equipment map
-        itemsToScan = Array.from(equipment.values()).filter(item => item && item.itemHrid);
+        itemsToScan = Array.from(equipment.values()).filter((item) => item && item.itemHrid);
     }
 
     // Track best item per slot (by item level, then enhancement level)
     const slotCandidates = {
-        tool: [],    // main_hand or two_hand or skill-specific tool
-        body: [],    // body
-        legs: [],    // legs
-        hands: [],   // hands
-        neck: [],    // neck (accessories have 5× multiplier)
-        ring: [],    // ring (accessories have 5× multiplier)
+        tool: [], // main_hand or two_hand or skill-specific tool
+        body: [], // body
+        legs: [], // legs
+        hands: [], // hands
+        neck: [], // neck (accessories have 5× multiplier)
+        ring: [], // ring (accessories have 5× multiplier)
         earring: [], // earring (accessories have 5× multiplier)
     };
 
@@ -72,23 +72,27 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         }
 
         // Check if item has any skill-related stats (including universal skills)
-        const hasSkillStats = allStats[successStat] || allStats[speedStat] ||
-                             allStats[rareFindStat] || allStats[experienceStat] ||
-                             allStats.skillingSpeed || allStats.skillingExperience;
+        const hasSkillStats =
+            allStats[successStat] ||
+            allStats[speedStat] ||
+            allStats[rareFindStat] ||
+            allStats[experienceStat] ||
+            allStats.skillingSpeed ||
+            allStats.skillingExperience;
 
         if (!hasSkillStats) continue;
 
         // Calculate bonuses for this item (backward-compatible output)
-        let itemBonuses = {
+        const itemBonuses = {
             item: item,
             itemDetails: itemDetails,
             itemLevel: itemDetails.itemLevel || 0,
             enhancementLevel: enhancementLevel,
             // Named bonuses (dynamic based on skill)
             toolBonus: allStats[successStat] || 0,
-            speedBonus: (allStats[speedStat] || 0) + (allStats.skillingSpeed || 0),  // Combine speed sources
+            speedBonus: (allStats[speedStat] || 0) + (allStats.skillingSpeed || 0), // Combine speed sources
             rareFindBonus: allStats[rareFindStat] || 0,
-            experienceBonus: (allStats[experienceStat] || 0) + (allStats.skillingExperience || 0),  // Combine experience sources
+            experienceBonus: (allStats[experienceStat] || 0) + (allStats.skillingExperience || 0), // Combine experience sources
             // Generic access to all stats
             allStats: allStats,
         };
@@ -96,9 +100,11 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         // Group by slot
         // Tool slots: skill-specific tools (e.g., enhancing_tool, cooking_tool) plus main_hand/two_hand
         const skillToolType = `/equipment_types/${skillName}_tool`;
-        if (equipmentType === skillToolType ||
+        if (
+            equipmentType === skillToolType ||
             equipmentType === '/equipment_types/main_hand' ||
-            equipmentType === '/equipment_types/two_hand') {
+            equipmentType === '/equipment_types/two_hand'
+        ) {
             slotCandidates.tool.push(itemBonuses);
         } else if (equipmentType === '/equipment_types/body') {
             slotCandidates.body.push(itemBonuses);
@@ -215,10 +221,10 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
  */
 export function detectEnhancingTeas(drinkSlots, itemDetailMap) {
     const teas = {
-        enhancing: false,        // Enhancing Tea (+3 levels)
-        superEnhancing: false,   // Super Enhancing Tea (+6 levels)
-        ultraEnhancing: false,   // Ultra Enhancing Tea (+8 levels)
-        blessed: false,          // Blessed Tea (1% double jump)
+        enhancing: false, // Enhancing Tea (+3 levels)
+        superEnhancing: false, // Super Enhancing Tea (+6 levels)
+        ultraEnhancing: false, // Ultra Enhancing Tea (+8 levels)
+        blessed: false, // Blessed Tea (1% double jump)
     };
 
     if (!drinkSlots || drinkSlots.length === 0) {
@@ -267,9 +273,9 @@ export function getEnhancingTeaLevelBonus(teas) {
 export function getEnhancingTeaSpeedBonus(teas) {
     // Teas don't stack - highest one wins
     // Base speed bonuses (before drink concentration):
-    if (teas.ultraEnhancing) return 6;  // +6% base
-    if (teas.superEnhancing) return 4;  // +4% base
-    if (teas.enhancing) return 2;        // +2% base
+    if (teas.ultraEnhancing) return 6; // +6% base
+    if (teas.superEnhancing) return 4; // +4% base
+    if (teas.enhancing) return 2; // +2% base
 
     return 0;
 }

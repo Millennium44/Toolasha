@@ -99,7 +99,7 @@ class ListingPriceDisplay {
                 if (data.marketItemOrderBooks) {
                     // Delay re-render to let estimatedListingAge populate cache first (race condition)
                     setTimeout(() => {
-                        document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach(table => {
+                        document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach((table) => {
                             table.classList.remove('mwi-listing-prices-set');
                             this.updateTable(table);
                         });
@@ -198,10 +198,12 @@ class ListingPriceDisplay {
      */
     handleListing(listing) {
         // Filter out cancelled and fully claimed listings
-        if (listing.status === "/market_listing_status/cancelled" ||
-            (listing.status === "/market_listing_status/filled" &&
-             listing.unclaimedItemCount === 0 &&
-             listing.unclaimedCoinCount === 0)) {
+        if (
+            listing.status === '/market_listing_status/cancelled' ||
+            (listing.status === '/market_listing_status/filled' &&
+                listing.unclaimedItemCount === 0 &&
+                listing.unclaimedCoinCount === 0)
+        ) {
             delete this.allListings[listing.id];
             return;
         }
@@ -217,7 +219,7 @@ class ListingPriceDisplay {
             price: listing.price,
             createdTimestamp: listing.createdTimestamp,
             unclaimedCoinCount: listing.unclaimedCoinCount || 0,
-            unclaimedItemCount: listing.unclaimedItemCount || 0
+            unclaimedItemCount: listing.unclaimedItemCount || 0,
         };
     }
 
@@ -232,8 +234,8 @@ class ListingPriceDisplay {
         }
 
         // Clear any existing price displays from this table before re-rendering
-        tableNode.querySelectorAll('.mwi-listing-price-header').forEach(el => el.remove());
-        tableNode.querySelectorAll('.mwi-listing-price-cell').forEach(el => el.remove());
+        tableNode.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
+        tableNode.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
 
         // Wait until row count matches listing count
         const tbody = tableNode.querySelector('tbody');
@@ -249,9 +251,9 @@ class ListingPriceDisplay {
         }
 
         // OPTIMIZATION: Pre-fetch all market prices in one batch
-        const itemsToPrice = Object.values(this.allListings).map(listing => ({
+        const itemsToPrice = Object.values(this.allListings).map((listing) => ({
             itemHrid: listing.itemHrid,
-            enhancementLevel: listing.enhancementLevel
+            enhancementLevel: listing.enhancementLevel,
         }));
         const priceCache = marketAPI.getPricesBatch(itemsToPrice);
 
@@ -348,7 +350,7 @@ class ListingPriceDisplay {
             const rowInfo = this.extractRowInfo(row);
 
             // Find matching listing with improved criteria
-            const matchedListing = listings.find(listing => {
+            const matchedListing = listings.find((listing) => {
                 if (used.has(listing.id)) return false;
 
                 // Basic matching criteria
@@ -363,7 +365,7 @@ class ListingPriceDisplay {
 
                 // If quantity info is available from row, use it for precise matching
                 if (rowInfo.filledQuantity !== null && rowInfo.orderQuantity !== null) {
-                    const quantityMatch = 
+                    const quantityMatch =
                         listing.filledQuantity === rowInfo.filledQuantity &&
                         listing.orderQuantity === rowInfo.orderQuantity;
                     return quantityMatch;
@@ -449,9 +451,10 @@ class ListingPriceDisplay {
         let price = NaN;
         const priceNode = row.querySelector('[class*="price"]') || row.children[3];
         if (priceNode) {
-            let text = (priceNode.firstChild && priceNode.firstChild.textContent)
-                ? priceNode.firstChild.textContent
-                : priceNode.textContent;
+            let text =
+                priceNode.firstChild && priceNode.firstChild.textContent
+                    ? priceNode.firstChild.textContent
+                    : priceNode.textContent;
             text = String(text).trim();
 
             // Handle K/M suffixes (e.g., "340K" = 340000, "1.5M" = 1500000)
@@ -514,7 +517,15 @@ class ListingPriceDisplay {
 
             // Create Total Price cell
             const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
-            const totalPriceCell = this.createTotalPriceCell(itemHrid, isSell, price, orderQuantity, filledQuantity, unclaimedCoinCount, unclaimedItemCount);
+            const totalPriceCell = this.createTotalPriceCell(
+                itemHrid,
+                isSell,
+                price,
+                orderQuantity,
+                filledQuantity,
+                unclaimedCoinCount,
+                unclaimedItemCount
+            );
             row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
 
             // Create Listed Age cell (if setting enabled)
@@ -594,7 +605,7 @@ class ListingPriceDisplay {
         }
 
         // Find matching order book for this enhancement level
-        let orderBook = orderBookData.orderBooks.find(ob => ob.enhancementLevel === enhancementLevel);
+        let orderBook = orderBookData.orderBooks.find((ob) => ob.enhancementLevel === enhancementLevel);
 
         // For non-enhanceable items (enh level 0), orderBook won't have enhancementLevel field
         // Just use the first (and only) orderBook entry
@@ -651,7 +662,15 @@ class ListingPriceDisplay {
      * @param {number} unclaimedItemCount - Unclaimed items (for filled buy orders)
      * @returns {HTMLElement} Table cell element
      */
-    createTotalPriceCell(itemHrid, isSell, price, orderQuantity, filledQuantity, unclaimedCoinCount, unclaimedItemCount) {
+    createTotalPriceCell(
+        itemHrid,
+        isSell,
+        price,
+        orderQuantity,
+        filledQuantity,
+        unclaimedCoinCount,
+        unclaimedItemCount
+    ) {
         const cell = document.createElement('td');
         cell.classList.add('mwi-listing-price-cell');
 
@@ -717,8 +736,8 @@ class ListingPriceDisplay {
      */
     getAmountColor(amount) {
         if (amount >= 1000000) return '#FFD700'; // Gold for 1M+
-        if (amount >= 100000) return '#00FF00';  // Green for 100K+
-        if (amount >= 10000) return '#FFFFFF';   // White for 10K+
+        if (amount >= 100000) return '#00FF00'; // Green for 100K+
+        if (amount >= 10000) return '#FFFFFF'; // White for 10K+
         return '#AAAAAA'; // Gray for small amounts
     }
 
@@ -726,11 +745,11 @@ class ListingPriceDisplay {
      * Clear all injected displays
      */
     clearDisplays() {
-        document.querySelectorAll('.mwi-listing-prices-set').forEach(table => {
+        document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
             table.classList.remove('mwi-listing-prices-set');
         });
-        document.querySelectorAll('.mwi-listing-price-header').forEach(el => el.remove());
-        document.querySelectorAll('.mwi-listing-price-cell').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
     }
 
     /**

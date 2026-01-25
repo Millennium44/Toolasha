@@ -84,7 +84,7 @@ class SkillExperiencePercentage {
      */
     updateAllSkills() {
         const progressBars = document.querySelectorAll('[class*="NavigationBar_currentExperience"]');
-        progressBars.forEach(bar => this.updateSkillPercentage(bar));
+        progressBars.forEach((bar) => this.updateSkillPercentage(bar));
     }
 
     /**
@@ -143,7 +143,7 @@ class SkillExperiencePercentage {
     refresh() {
         // Update all existing percentage spans with new color
         const percentageSpans = document.querySelectorAll('.mwi-exp-percentage');
-        percentageSpans.forEach(span => {
+        percentageSpans.forEach((span) => {
             span.style.color = config.COLOR_ACCENT;
         });
     }
@@ -159,10 +159,10 @@ class SkillExperiencePercentage {
         }
 
         // Remove all percentage spans
-        document.querySelectorAll('.mwi-exp-percentage').forEach(span => span.remove());
+        document.querySelectorAll('.mwi-exp-percentage').forEach((span) => span.remove());
 
         // Unregister observers
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         this.processedBars.clear();

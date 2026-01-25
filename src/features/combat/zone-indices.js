@@ -287,12 +287,12 @@ class ZoneIndices {
     refresh() {
         // Update all existing zone index spans with new color
         const taskIndices = document.querySelectorAll('span.script_taskMapIndex');
-        taskIndices.forEach(span => {
+        taskIndices.forEach((span) => {
             span.style.color = config.COLOR_ACCENT;
         });
 
         const mapIndices = document.querySelectorAll('span.script_mapIndex');
-        mapIndices.forEach(span => {
+        mapIndices.forEach((span) => {
             span.style.color = config.COLOR_ACCENT;
         });
     }

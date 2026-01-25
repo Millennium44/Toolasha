@@ -20,7 +20,7 @@ import marketAPI from '../../api/marketplace.js';
 function formatAttempts(num) {
     return new Intl.NumberFormat('en-US', {
         minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        maximumFractionDigits: 2,
     }).format(num);
 }
 
@@ -110,14 +110,18 @@ export async function displayEnhancementStats(panel, itemHrid) {
         const protectionItemHrid = getProtectionItemFromUI(panel);
 
         // Calculate per-action time (simple calculation, no Markov chain needed)
-        const perActionTime = calculatePerActionTime(
-            params.enhancingLevel,
-            itemLevel,
-            params.speedBonus
-        );
+        const perActionTime = calculatePerActionTime(params.enhancingLevel, itemLevel, params.speedBonus);
 
         // Format and inject display
-        const html = formatEnhancementDisplay(panel, params, perActionTime, itemDetails, effectiveProtectFrom, itemDetails.enhancementCosts || [], protectionItemHrid);
+        const html = formatEnhancementDisplay(
+            panel,
+            params,
+            perActionTime,
+            itemDetails,
+            effectiveProtectFrom,
+            itemDetails.enhancementCosts || [],
+            protectionItemHrid
+        );
         injectDisplay(panel, html);
     } catch (error) {
         console.error('[MWI Tools] ❌ Error displaying enhancement stats:', error);
@@ -142,14 +146,16 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
     lines.push('<div style="margin-top: 12px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">');
     lines.push('<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">');
     lines.push('<div style="color: #ffa500; font-weight: bold; font-size: 0.95em;">Costs by Enhancement Level:</div>');
-    lines.push('<button id="mwi-expand-costs-table-btn" style="background: rgba(0, 255, 234, 0.1); border: 1px solid #00ffe7; color: #00ffe7; cursor: pointer; font-size: 18px; font-weight: bold; padding: 4px 10px; border-radius: 4px; transition: all 0.15s ease;" title="View full table">⤢</button>');
+    lines.push(
+        '<button id="mwi-expand-costs-table-btn" style="background: rgba(0, 255, 234, 0.1); border: 1px solid #00ffe7; color: #00ffe7; cursor: pointer; font-size: 18px; font-weight: bold; padding: 4px 10px; border-radius: 4px; transition: all 0.15s ease;" title="View full table">⤢</button>'
+    );
     lines.push('</div>');
 
     // Calculate costs for each level
     const costData = [];
     for (let level = 1; level <= 20; level++) {
         // Protection only applies when target level reaches the protection threshold
-        const effectiveProtect = (protectFromLevel >= 2 && level >= protectFromLevel) ? protectFromLevel : 0;
+        const effectiveProtect = protectFromLevel >= 2 && level >= protectFromLevel ? protectFromLevel : 0;
 
         const calc = calculateEnhancement({
             enhancingLevel: params.enhancingLevel,
@@ -160,7 +166,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
             targetLevel: level,
             protectFrom: effectiveProtect,
             blessedTea: params.teas.blessed,
-            guzzlingBonus: params.guzzlingBonus
+            guzzlingBonus: params.guzzlingBonus,
         });
 
         // Calculate material cost breakdown
@@ -168,7 +174,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
         const materialBreakdown = {};
 
         if (enhancementCosts && enhancementCosts.length > 0) {
-            enhancementCosts.forEach(cost => {
+            enhancementCosts.forEach((cost) => {
                 const itemDetail = gameData.itemDetailMap[cost.itemHrid];
                 let itemPrice = 0;
 
@@ -183,7 +189,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
                     }
                 }
 
-                const quantity = cost.count * calc.attempts;  // Use exact decimal attempts
+                const quantity = cost.count * calc.attempts; // Use exact decimal attempts
                 const itemCost = quantity * itemPrice;
                 materialCost += itemCost;
 
@@ -192,7 +198,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
                 materialBreakdown[itemName] = {
                     cost: itemCost,
                     quantity: quantity,
-                    unitPrice: itemPrice
+                    unitPrice: itemPrice,
                 };
             });
         }
@@ -215,7 +221,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
             materialBreakdown[protectionName] = {
                 cost: protectionCost,
                 quantity: calc.protectionCount,
-                unitPrice: protectionPrice
+                unitPrice: protectionPrice,
             };
         }
 
@@ -223,11 +229,11 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
 
         costData.push({
             level,
-            attempts: calc.attempts,  // Use exact decimal attempts
+            attempts: calc.attempts, // Use exact decimal attempts
             protection: calc.protectionCount,
             time: calc.totalTime,
             cost: totalCost,
-            breakdown: materialBreakdown
+            breakdown: materialBreakdown,
         });
     }
 
@@ -263,11 +269,21 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
 
     // Add Philosopher's Mirror summary banner (if applicable)
     if (isPhilosopherMirror && mirrorStartLevel !== null) {
-        lines.push('<div style="background: linear-gradient(90deg, rgba(255, 215, 0, 0.15), rgba(255, 215, 0, 0.05)); border: 1px solid #FFD700; border-radius: 4px; padding: 8px; margin-bottom: 8px;">');
-        lines.push('<div style="color: #FFD700; font-weight: bold; font-size: 0.95em;">💎 Philosopher\'s Mirror Strategy:</div>');
-        lines.push(`<div style="color: #fff; font-size: 0.85em; margin-top: 4px;">• Use mirrors starting at <strong>+${mirrorStartLevel}</strong></div>`);
-        lines.push(`<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +20: <strong>${Math.round(totalSavings).toLocaleString()}</strong> coins</div>`);
-        lines.push(`<div style="color: #aaa; font-size: 0.75em; margin-top: 4px; font-style: italic;">Rows highlighted in gold show where mirror is cheaper</div>`);
+        lines.push(
+            '<div style="background: linear-gradient(90deg, rgba(255, 215, 0, 0.15), rgba(255, 215, 0, 0.05)); border: 1px solid #FFD700; border-radius: 4px; padding: 8px; margin-bottom: 8px;">'
+        );
+        lines.push(
+            '<div style="color: #FFD700; font-weight: bold; font-size: 0.95em;">💎 Philosopher\'s Mirror Strategy:</div>'
+        );
+        lines.push(
+            `<div style="color: #fff; font-size: 0.85em; margin-top: 4px;">• Use mirrors starting at <strong>+${mirrorStartLevel}</strong></div>`
+        );
+        lines.push(
+            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +20: <strong>${Math.round(totalSavings).toLocaleString()}</strong> coins</div>`
+        );
+        lines.push(
+            `<div style="color: #aaa; font-size: 0.75em; margin-top: 4px; font-style: italic;">Rows highlighted in gold show where mirror is cheaper</div>`
+        );
         lines.push('</div>');
     }
 
@@ -277,19 +293,21 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
 
     // Get all unique material names
     const allMaterials = new Set();
-    costData.forEach(data => {
-        Object.keys(data.breakdown).forEach(mat => allMaterials.add(mat));
+    costData.forEach((data) => {
+        Object.keys(data.breakdown).forEach((mat) => allMaterials.add(mat));
     });
     const materialNames = Array.from(allMaterials);
 
     // Header row
-    lines.push('<tr style="color: #888; border-bottom: 1px solid #444; position: sticky; top: 0; background: rgba(0,0,0,0.9);">');
+    lines.push(
+        '<tr style="color: #888; border-bottom: 1px solid #444; position: sticky; top: 0; background: rgba(0,0,0,0.9);">'
+    );
     lines.push('<th style="text-align: left; padding: 4px;">Level</th>');
     lines.push('<th style="text-align: right; padding: 4px;">Attempts</th>');
     lines.push('<th style="text-align: right; padding: 4px;">Protection</th>');
 
     // Add material columns
-    materialNames.forEach(matName => {
+    materialNames.forEach((matName) => {
         lines.push(`<th style="text-align: right; padding: 4px;">${matName}</th>`);
     });
 
@@ -305,7 +323,7 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
 
     costData.forEach((data, index) => {
         const isLastRow = index === costData.length - 1;
-        let borderStyle = isLastRow ? '' : 'border-bottom: 1px solid #333;';
+        const borderStyle = isLastRow ? '' : 'border-bottom: 1px solid #333;';
 
         // Highlight row if mirror is cheaper
         let rowStyle = borderStyle;
@@ -315,27 +333,39 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
 
         lines.push(`<tr style="${rowStyle}">`);
         lines.push(`<td style="padding: 6px 4px; color: #fff; font-weight: bold;">+${data.level}</td>`);
-        lines.push(`<td style="padding: 6px 4px; text-align: right; color: #ccc;">${formatAttempts(data.attempts)}</td>`);
-        lines.push(`<td style="padding: 6px 4px; text-align: right; color: ${data.protection > 0 ? '#ffa500' : '#888'};">${data.protection > 0 ? formatAttempts(data.protection) : '-'}</td>`);
+        lines.push(
+            `<td style="padding: 6px 4px; text-align: right; color: #ccc;">${formatAttempts(data.attempts)}</td>`
+        );
+        lines.push(
+            `<td style="padding: 6px 4px; text-align: right; color: ${data.protection > 0 ? '#ffa500' : '#888'};">${data.protection > 0 ? formatAttempts(data.protection) : '-'}</td>`
+        );
 
         // Add material breakdown columns
-        materialNames.forEach(matName => {
+        materialNames.forEach((matName) => {
             const matData = data.breakdown[matName];
             if (matData && matData.cost > 0) {
                 const cost = Math.round(matData.cost).toLocaleString();
                 const unitPrice = Math.round(matData.unitPrice).toLocaleString();
-                const qty = matData.quantity % 1 === 0 ?
-                    Math.round(matData.quantity).toLocaleString() :
-                    matData.quantity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                const qty =
+                    matData.quantity % 1 === 0
+                        ? Math.round(matData.quantity).toLocaleString()
+                        : matData.quantity.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                          });
                 // Format as: quantity × unit price → total cost
-                lines.push(`<td style="padding: 6px 4px; text-align: right; color: #ccc;">${qty} × ${unitPrice} → ${cost}</td>`);
+                lines.push(
+                    `<td style="padding: 6px 4px; text-align: right; color: #ccc;">${qty} × ${unitPrice} → ${cost}</td>`
+                );
             } else {
                 lines.push(`<td style="padding: 6px 4px; text-align: right; color: #888;">-</td>`);
             }
         });
 
         lines.push(`<td style="padding: 6px 4px; text-align: right; color: #ccc;">${timeReadable(data.time)}</td>`);
-        lines.push(`<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${Math.round(data.cost).toLocaleString()}</td>`);
+        lines.push(
+            `<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${Math.round(data.cost).toLocaleString()}</td>`
+        );
 
         // Add Mirror Cost column if Philosopher's Mirror is equipped
         if (isPhilosopherMirror) {
@@ -344,7 +374,9 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
                 const isCheaper = data.isMirrorCheaper;
                 const color = isCheaper ? '#FFD700' : '#888';
                 const symbol = isCheaper ? '✨ ' : '';
-                lines.push(`<td style="padding: 6px 4px; text-align: right; color: ${color}; font-weight: ${isCheaper ? 'bold' : 'normal'};">${symbol}${mirrorCostFormatted}</td>`);
+                lines.push(
+                    `<td style="padding: 6px 4px; text-align: right; color: ${color}; font-weight: ${isCheaper ? 'bold' : 'normal'};">${symbol}${mirrorCostFormatted}</td>`
+                );
             } else {
                 // Levels 1-2 cannot use mirrors
                 lines.push(`<td style="padding: 6px 4px; text-align: right; color: #666;">N/A</td>`);
@@ -368,8 +400,8 @@ function generateCostsByLevelTable(panel, params, itemLevel, protectFromLevel, e
  */
 function getProtectFromLevelFromUI(panel) {
     // Find the "Protect From Level" input
-    const labels = Array.from(panel.querySelectorAll('*')).filter(el =>
-        el.textContent.trim() === 'Protect From Level' && el.children.length === 0
+    const labels = Array.from(panel.querySelectorAll('*')).filter(
+        (el) => el.textContent.trim() === 'Protect From Level' && el.children.length === 0
     );
 
     if (labels.length > 0) {
@@ -395,40 +427,68 @@ function getProtectFromLevelFromUI(panel) {
  * @param {string|null} protectionItemHrid - Protection item HRID (cached, avoid repeated DOM queries)
  * @returns {string} HTML string
  */
-function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, protectFromLevel, enhancementCosts, protectionItemHrid) {
+function formatEnhancementDisplay(
+    panel,
+    params,
+    perActionTime,
+    itemDetails,
+    protectFromLevel,
+    enhancementCosts,
+    protectionItemHrid
+) {
     const lines = [];
 
     // Header
-    lines.push('<div style="margin-top: 15px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 0.9em;">');
-    lines.push('<div style="color: #ffa500; font-weight: bold; margin-bottom: 10px; font-size: 1.1em;">⚙️ ENHANCEMENT CALCULATOR</div>');
+    lines.push(
+        '<div style="margin-top: 15px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 0.9em;">'
+    );
+    lines.push(
+        '<div style="color: #ffa500; font-weight: bold; margin-bottom: 10px; font-size: 1.1em;">⚙️ ENHANCEMENT CALCULATOR</div>'
+    );
 
     // Item info
-    lines.push(`<div style="color: #ddd; margin-bottom: 12px; font-weight: bold;">${itemDetails.name} <span style="color: #888;">(Item Level ${itemDetails.itemLevel})</span></div>`);
+    lines.push(
+        `<div style="color: #ddd; margin-bottom: 12px; font-weight: bold;">${itemDetails.name} <span style="color: #888;">(Item Level ${itemDetails.itemLevel})</span></div>`
+    );
 
     // Current stats section
     lines.push('<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">');
-    lines.push('<div style="color: #ffa500; font-weight: bold; margin-bottom: 6px; font-size: 0.95em;">Your Enhancing Stats:</div>');
+    lines.push(
+        '<div style="color: #ffa500; font-weight: bold; margin-bottom: 6px; font-size: 0.95em;">Your Enhancing Stats:</div>'
+    );
 
     // Two column layout for stats
     lines.push('<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 0.85em;">');
 
     // Left column
     lines.push('<div>');
-    lines.push(`<div style="color: #ccc;"><span style="color: #888;">Level:</span> ${params.enhancingLevel - params.detectedTeaBonus}${params.detectedTeaBonus > 0 ? ` <span style="color: #88ff88;">(+${params.detectedTeaBonus.toFixed(1)} tea)</span>` : ''}</div>`);
-    lines.push(`<div style="color: #ccc;"><span style="color: #888;">House:</span> Observatory Lvl ${params.houseLevel}</div>`);
+    lines.push(
+        `<div style="color: #ccc;"><span style="color: #888;">Level:</span> ${params.enhancingLevel - params.detectedTeaBonus}${params.detectedTeaBonus > 0 ? ` <span style="color: #88ff88;">(+${params.detectedTeaBonus.toFixed(1)} tea)</span>` : ''}</div>`
+    );
+    lines.push(
+        `<div style="color: #ccc;"><span style="color: #888;">House:</span> Observatory Lvl ${params.houseLevel}</div>`
+    );
 
     // Display each equipment slot
     if (params.toolSlot) {
-        lines.push(`<div style="color: #ccc;"><span style="color: #888;">Tool:</span> ${params.toolSlot.name}${params.toolSlot.enhancementLevel > 0 ? ` +${params.toolSlot.enhancementLevel}` : ''}</div>`);
+        lines.push(
+            `<div style="color: #ccc;"><span style="color: #888;">Tool:</span> ${params.toolSlot.name}${params.toolSlot.enhancementLevel > 0 ? ` +${params.toolSlot.enhancementLevel}` : ''}</div>`
+        );
     }
     if (params.bodySlot) {
-        lines.push(`<div style="color: #ccc;"><span style="color: #888;">Body:</span> ${params.bodySlot.name}${params.bodySlot.enhancementLevel > 0 ? ` +${params.bodySlot.enhancementLevel}` : ''}</div>`);
+        lines.push(
+            `<div style="color: #ccc;"><span style="color: #888;">Body:</span> ${params.bodySlot.name}${params.bodySlot.enhancementLevel > 0 ? ` +${params.bodySlot.enhancementLevel}` : ''}</div>`
+        );
     }
     if (params.legsSlot) {
-        lines.push(`<div style="color: #ccc;"><span style="color: #888;">Legs:</span> ${params.legsSlot.name}${params.legsSlot.enhancementLevel > 0 ? ` +${params.legsSlot.enhancementLevel}` : ''}</div>`);
+        lines.push(
+            `<div style="color: #ccc;"><span style="color: #888;">Legs:</span> ${params.legsSlot.name}${params.legsSlot.enhancementLevel > 0 ? ` +${params.legsSlot.enhancementLevel}` : ''}</div>`
+        );
     }
     if (params.handsSlot) {
-        lines.push(`<div style="color: #ccc;"><span style="color: #888;">Hands:</span> ${params.handsSlot.name}${params.handsSlot.enhancementLevel > 0 ? ` +${params.handsSlot.enhancementLevel}` : ''}</div>`);
+        lines.push(
+            `<div style="color: #ccc;"><span style="color: #888;">Hands:</span> ${params.handsSlot.name}${params.handsSlot.enhancementLevel > 0 ? ` +${params.handsSlot.enhancementLevel}` : ''}</div>`
+        );
     }
     lines.push('</div>');
 
@@ -446,20 +506,28 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
     }
 
     if (totalSuccess > 0) {
-        lines.push(`<div style="color: #88ff88;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}%</div>`);
+        lines.push(
+            `<div style="color: #88ff88;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}%</div>`
+        );
 
         // Show breakdown: equipment + house + level advantage
         const equipmentSuccess = params.equipmentSuccessBonus || 0;
         const houseSuccess = params.houseSuccessBonus || 0;
 
         if (equipmentSuccess > 0) {
-            lines.push(`<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentSuccess.toFixed(2)}%</div>`);
+            lines.push(
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentSuccess.toFixed(2)}%</div>`
+            );
         }
         if (houseSuccess > 0) {
-            lines.push(`<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${houseSuccess.toFixed(2)}%</div>`);
+            lines.push(
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${houseSuccess.toFixed(2)}%</div>`
+            );
         }
         if (successLevelAdvantage > 0) {
-            lines.push(`<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`);
+            lines.push(
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`
+            );
         }
     }
 
@@ -472,24 +540,36 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
     }
 
     if (totalSpeed > 0) {
-        lines.push(`<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}%</div>`);
+        lines.push(
+            `<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}%</div>`
+        );
 
         // Show breakdown: equipment + house + community + tea + level advantage
         if (params.equipmentSpeedBonus > 0) {
-            lines.push(`<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${params.equipmentSpeedBonus.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${params.equipmentSpeedBonus.toFixed(1)}%</div>`
+            );
         }
         if (params.houseSpeedBonus > 0) {
-            lines.push(`<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${params.houseSpeedBonus.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${params.houseSpeedBonus.toFixed(1)}%</div>`
+            );
         }
         if (params.communitySpeedBonus > 0) {
-            lines.push(`<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community T${params.communityBuffLevel}:</span> +${params.communitySpeedBonus.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community T${params.communityBuffLevel}:</span> +${params.communitySpeedBonus.toFixed(1)}%</div>`
+            );
         }
         if (params.teaSpeedBonus > 0) {
             const teaName = params.teas.ultraEnhancing ? 'Ultra' : params.teas.superEnhancing ? 'Super' : 'Enhancing';
-            lines.push(`<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">${teaName} Tea:</span> +${params.teaSpeedBonus.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">${teaName} Tea:</span> +${params.teaSpeedBonus.toFixed(1)}%</div>`
+            );
         }
         if (speedLevelAdvantage > 0) {
-            lines.push(`<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${speedLevelAdvantage.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${speedLevelAdvantage.toFixed(1)}%</div>`
+            );
         }
     } else if (totalSpeed === 0 && speedLevelAdvantage === 0) {
         lines.push(`<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +0.0%</div>`);
@@ -498,22 +578,32 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
     if (params.teas.blessed) {
         // Calculate Blessed Tea bonus with Guzzling Pouch concentration
         const blessedBonus = 1.1; // Base 1.1% from Blessed Tea
-        lines.push(`<div style="color: #ffdd88;"><span style="color: #888;">Blessed:</span> +${blessedBonus.toFixed(1)}%</div>`);
+        lines.push(
+            `<div style="color: #ffdd88;"><span style="color: #888;">Blessed:</span> +${blessedBonus.toFixed(1)}%</div>`
+        );
     }
     if (params.rareFindBonus > 0) {
-        lines.push(`<div style="color: #ffaa55;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}%</div>`);
+        lines.push(
+            `<div style="color: #ffaa55;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}%</div>`
+        );
 
         // Show house room breakdown if available
         if (params.houseRareFindBonus > 0) {
             const equipmentRareFind = params.rareFindBonus - params.houseRareFindBonus;
             if (equipmentRareFind > 0) {
-                lines.push(`<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentRareFind.toFixed(1)}%</div>`);
+                lines.push(
+                    `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentRareFind.toFixed(1)}%</div>`
+                );
             }
-            lines.push(`<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms:</span> +${params.houseRareFindBonus.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms:</span> +${params.houseRareFindBonus.toFixed(1)}%</div>`
+            );
         }
     }
     if (params.experienceBonus > 0) {
-        lines.push(`<div style="color: #ffdd88;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}%</div>`);
+        lines.push(
+            `<div style="color: #ffdd88;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}%</div>`
+        );
 
         // Show breakdown: equipment + house wisdom + tea wisdom + community wisdom
         const teaWisdom = params.teaWisdomBonus || 0;
@@ -522,17 +612,25 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
         const equipmentExperience = params.experienceBonus - houseWisdom - teaWisdom - communityWisdom;
 
         if (equipmentExperience > 0) {
-            lines.push(`<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentExperience.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentExperience.toFixed(1)}%</div>`
+            );
         }
         if (houseWisdom > 0) {
-            lines.push(`<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms (Wisdom):</span> +${houseWisdom.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms (Wisdom):</span> +${houseWisdom.toFixed(1)}%</div>`
+            );
         }
         if (communityWisdom > 0) {
             const wisdomLevel = params.communityWisdomLevel || 0;
-            lines.push(`<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community (Wisdom T${wisdomLevel}):</span> +${communityWisdom.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community (Wisdom T${wisdomLevel}):</span> +${communityWisdom.toFixed(1)}%</div>`
+            );
         }
         if (teaWisdom > 0) {
-            lines.push(`<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Wisdom Tea:</span> +${teaWisdom.toFixed(1)}%</div>`);
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Wisdom Tea:</span> +${teaWisdom.toFixed(1)}%</div>`
+            );
         }
     }
     lines.push('</div>');
@@ -541,19 +639,28 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
     lines.push('</div>'); // Close stats section
 
     // Costs by level table for all 20 levels
-    const costsByLevelHTML = generateCostsByLevelTable(panel, params, itemDetails.itemLevel, protectFromLevel, enhancementCosts, protectionItemHrid);
+    const costsByLevelHTML = generateCostsByLevelTable(
+        panel,
+        params,
+        itemDetails.itemLevel,
+        protectFromLevel,
+        enhancementCosts,
+        protectionItemHrid
+    );
     lines.push(costsByLevelHTML);
 
     // Materials cost section (if enhancement costs exist) - just show per-attempt materials
     if (enhancementCosts && enhancementCosts.length > 0) {
         lines.push('<div style="margin-top: 12px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">');
-        lines.push('<div style="color: #ffa500; font-weight: bold; margin-bottom: 6px; font-size: 0.95em;">Materials Per Attempt:</div>');
+        lines.push(
+            '<div style="color: #ffa500; font-weight: bold; margin-bottom: 6px; font-size: 0.95em;">Materials Per Attempt:</div>'
+        );
 
         // Get game data for item names
         const gameData = dataManager.getInitClientData();
 
         // Materials per attempt with pricing
-        enhancementCosts.forEach(cost => {
+        enhancementCosts.forEach((cost) => {
             const itemDetail = gameData.itemDetailMap[cost.itemHrid];
             const itemName = itemDetail ? itemDetail.name : cost.itemHrid;
 
@@ -571,10 +678,12 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
             }
 
             const totalCost = cost.count * itemPrice;
-            const formattedCount = Number.isInteger(cost.count) ?
-                cost.count.toLocaleString() :
-                cost.count.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            lines.push(`<div style="font-size: 0.85em; color: #ccc;">${formattedCount}× ${itemName} <span style="color: #888;">(@${itemPrice.toLocaleString()} → ${totalCost.toLocaleString()})</span></div>`);
+            const formattedCount = Number.isInteger(cost.count)
+                ? cost.count.toLocaleString()
+                : cost.count.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            lines.push(
+                `<div style="font-size: 0.85em; color: #ccc;">${formattedCount}× ${itemName} <span style="color: #888;">(@${itemPrice.toLocaleString()} → ${totalCost.toLocaleString()})</span></div>`
+            );
         });
 
         // Show protection item cost if protection is active (level 2+) AND item is equipped
@@ -592,7 +701,9 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
                     protectionPrice = protectionItemDetail?.sellPrice || 0;
                 }
 
-                lines.push(`<div style="font-size: 0.85em; color: #ffa500; margin-top: 4px;">1× ${protectionItemName} <span style="color: #888;">(if used) (@${protectionPrice.toLocaleString()})</span></div>`);
+                lines.push(
+                    `<div style="font-size: 0.85em; color: #ffa500; margin-top: 4px;">1× ${protectionItemName} <span style="color: #888;">(if used) (@${protectionPrice.toLocaleString()})</span></div>`
+                );
             }
         }
 
@@ -614,7 +725,7 @@ function formatEnhancementDisplay(panel, params, perActionTime, itemDetails, pro
     // Calculate total speed for display (includes level advantage if applicable)
     let displaySpeed = params.speedBonus;
     if (params.enhancingLevel > itemDetails.itemLevel) {
-        displaySpeed += (params.enhancingLevel - itemDetails.itemLevel);
+        displaySpeed += params.enhancingLevel - itemDetails.itemLevel;
     }
 
     lines.push(`• Action time: ${perActionTime.toFixed(2)}s (includes ${displaySpeed.toFixed(1)}% speed bonus)`);
@@ -644,7 +755,7 @@ function findCurrentActionTab(panel) {
 
     while (current && depth < maxDepth) {
         const buttons = Array.from(current.querySelectorAll('button[role="tab"]'));
-        const currentActionTab = buttons.find(btn => btn.textContent.trim() === 'Current Action');
+        const currentActionTab = buttons.find((btn) => btn.textContent.trim() === 'Current Action');
 
         if (currentActionTab) {
             // Cache it on the panel for future lookups
@@ -670,9 +781,11 @@ function injectDisplay(panel, html) {
     const currentActionTab = findCurrentActionTab(panel);
     if (currentActionTab) {
         // Check if Current Action tab is active
-        if (currentActionTab.getAttribute('aria-selected') === 'true' ||
+        if (
+            currentActionTab.getAttribute('aria-selected') === 'true' ||
             currentActionTab.classList.contains('Mui-selected') ||
-            currentActionTab.getAttribute('tabindex') === '0') {
+            currentActionTab.getAttribute('tabindex') === '0'
+        ) {
             // Current Action tab is active, don't inject calculator
             return;
         }
@@ -765,7 +878,7 @@ function showCostsTableModal(container) {
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        backdropFilter: 'blur(4px)'
+        backdropFilter: 'blur(4px)',
     });
 
     // Create modal
@@ -780,7 +893,7 @@ function showCostsTableModal(container) {
         maxWidth: '95vw',
         maxHeight: '90vh',
         overflow: 'auto',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8)'
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8)',
     });
 
     // Clone and style the table
@@ -789,7 +902,7 @@ function showCostsTableModal(container) {
 
     // Update all cell padding for better readability
     const cells = clonedTable.querySelectorAll('th, td');
-    cells.forEach(cell => {
+    cells.forEach((cell) => {
         cell.style.padding = '8px 12px';
     });
 

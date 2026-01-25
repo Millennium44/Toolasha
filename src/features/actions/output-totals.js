@@ -94,7 +94,7 @@ class OutputTotals {
         const amount = parseFloat(inputBox.value);
 
         // Remove existing totals (cloned outputs and XP)
-        detailPanel.querySelectorAll('.mwi-output-total').forEach(el => el.remove());
+        detailPanel.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
 
         // No amount entered - nothing to calculate
         if (isNaN(amount) || amount <= 0) {
@@ -118,7 +118,7 @@ class OutputTotals {
         // Process Essences and Rares - find all dropTable containers
         const allDropTables = detailPanel.querySelectorAll('[class*="SkillActionDetail_dropTable"]');
 
-        allDropTables.forEach(container => {
+        allDropTables.forEach((container) => {
             if (processedContainers.has(container)) {
                 return;
             }
@@ -161,13 +161,13 @@ class OutputTotals {
             }
 
             // Check if this child has multiple drop elements
-            const hasDropElements = child.children.length > 1 &&
-                                   child.querySelector('[class*="SkillActionDetail_drop"]');
+            const hasDropElements =
+                child.children.length > 1 && child.querySelector('[class*="SkillActionDetail_drop"]');
 
             if (hasDropElements) {
                 // Process multiple drop elements (typical for outputs/essences/rares)
                 const dropElements = child.querySelectorAll('[class*="SkillActionDetail_drop"]');
-                dropElements.forEach(dropEl => {
+                dropElements.forEach((dropEl) => {
                     // Skip if this drop element already has a total
                     if (dropEl.nextSibling?.classList?.contains('mwi-output-total')) {
                         return;
@@ -198,7 +198,7 @@ class OutputTotals {
         const hasRange = child.children[0]?.innerText?.includes('-');
         const hasNumbers = child.children[0]?.innerText?.match(/[\d\.]+/);
 
-        const outputElement = (hasRange || hasNumbers) ? child.children[0] : null;
+        const outputElement = hasRange || hasNumbers ? child.children[0] : null;
 
         if (!outputElement) return null;
 
@@ -234,13 +234,22 @@ class OutputTotals {
             // Range output (e.g., "1.3 - 4")
             const minOutput = parseFloat(output[0].trim());
             const maxOutput = parseFloat(output[1].trim());
-            const expectedMin = (minOutput * amount * dropRate).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-            const expectedMax = (maxOutput * amount * dropRate).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+            const expectedMin = (minOutput * amount * dropRate).toLocaleString('en-US', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            });
+            const expectedMax = (maxOutput * amount * dropRate).toLocaleString('en-US', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            });
             clone.innerText = `${expectedMin} - ${expectedMax}`;
         } else {
             // Single value output
             const value = parseFloat(output[0].trim());
-            const expectedValue = (value * amount * dropRate).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+            const expectedValue = (value * amount * dropRate).toLocaleString('en-US', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            });
             clone.innerText = `${expectedValue}`;
         }
 
@@ -324,7 +333,7 @@ class OutputTotals {
         // Set total XP text (formatted with 1 decimal place and thousand separators)
         clone.childNodes[0].textContent = totalXP.toLocaleString('en-US', {
             minimumFractionDigits: 1,
-            maximumFractionDigits: 1
+            maximumFractionDigits: 1,
         });
 
         // Insert after original XP element
@@ -348,7 +357,7 @@ class OutputTotals {
         }
 
         // Remove all injected elements
-        document.querySelectorAll('.mwi-output-total').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
 
         this.isInitialized = false;
     }

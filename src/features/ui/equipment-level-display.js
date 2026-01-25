@@ -64,12 +64,9 @@ class EquipmentLevelDisplay {
         }
 
         // Register with centralized DOM observer
-        this.unregisterHandler = domObserver.register(
-            'EquipmentLevelDisplay',
-            () => {
-                this.addItemLevels();
-            }
-        );
+        this.unregisterHandler = domObserver.register('EquipmentLevelDisplay', () => {
+            this.addItemLevels();
+        });
 
         // Process any existing items on page
         this.addItemLevels();
@@ -95,7 +92,9 @@ class EquipmentLevelDisplay {
      */
     addItemLevels() {
         // Find all item icon divs (the clickable containers)
-        const iconDivs = document.querySelectorAll('div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6');
+        const iconDivs = document.querySelectorAll(
+            'div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6'
+        );
 
         for (const div of iconDivs) {
             // Skip if already processed
@@ -209,7 +208,7 @@ class EquipmentLevelDisplay {
             ['/items/chimerical_chest_key', '3.4.5.6'],
             ['/items/sinister_chest_key', '5.7.8.10'],
             ['/items/enchanted_chest_key', '7.8.9.11'],
-            ['/items/pirate_chest_key', '6.9.10.11']
+            ['/items/pirate_chest_key', '6.9.10.11'],
         ]);
 
         return keyMap.get(itemHrid) || null;
@@ -221,7 +220,7 @@ class EquipmentLevelDisplay {
     refresh() {
         // Update color for all level overlays
         const overlays = document.querySelectorAll('div.script_itemLevel');
-        overlays.forEach(overlay => {
+        overlays.forEach((overlay) => {
             overlay.style.color = config.COLOR_ACCENT;
         });
     }

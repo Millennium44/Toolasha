@@ -19,7 +19,7 @@ class TaskIcons {
         this.SPRITES = {
             ITEMS: '/static/media/items_sprite.328d6606.svg',
             ACTIONS: '/static/media/actions_sprite.e6388cbc.svg',
-            MONSTERS: '/static/media/combat_monsters_sprite.75d964d1.svg'
+            MONSTERS: '/static/media/combat_monsters_sprite.75d964d1.svg',
         };
 
         // Cache for parsed game data
@@ -96,23 +96,15 @@ class TaskIcons {
         this.processAllTaskCards();
 
         // Watch for task list appearing
-        const unregisterTaskList = domObserver.onClass(
-            'TaskIcons-TaskList',
-            'TasksPanel_taskList',
-            () => {
-                this.processAllTaskCards();
-            }
-        );
+        const unregisterTaskList = domObserver.onClass('TaskIcons-TaskList', 'TasksPanel_taskList', () => {
+            this.processAllTaskCards();
+        });
         this.observers.push(unregisterTaskList);
 
         // Watch for individual task cards appearing
-        const unregisterTask = domObserver.onClass(
-            'TaskIcons-Task',
-            'RandomTask_randomTask',
-            () => {
-                this.processAllTaskCards();
-            }
-        );
+        const unregisterTask = domObserver.onClass('TaskIcons-Task', 'RandomTask_randomTask', () => {
+            this.processAllTaskCards();
+        });
         this.observers.push(unregisterTask);
 
         // Watch for task rerolls via WebSocket
@@ -191,7 +183,7 @@ class TaskIcons {
         }
 
         const taskCards = taskList.querySelectorAll(GAME.TASK_CARD);
-        taskCards.forEach(card => {
+        taskCards.forEach((card) => {
             card.removeAttribute('data-mwi-task-processed');
         });
     }
@@ -237,7 +229,7 @@ class TaskIcons {
             skillType: skillType.trim(),
             taskName: taskName.trim(),
             fullText,
-            isCombatTask: skillType.trim() === 'Defeat'
+            isCombatTask: skillType.trim() === 'Defeat',
         };
 
         return taskInfo;
@@ -350,7 +342,14 @@ class TaskIcons {
         // Position monster on the right (ends at 100%)
         const monsterPosition = 100 - iconWidth;
         const iconName = monsterHrid.split('/').pop();
-        this.addIconOverlay(taskCard, this.SPRITES.MONSTERS, iconName, 'monster', `${monsterPosition}%`, `${iconWidth}%`);
+        this.addIconOverlay(
+            taskCard,
+            this.SPRITES.MONSTERS,
+            iconName,
+            'monster',
+            `${monsterPosition}%`,
+            `${iconWidth}%`
+        );
 
         // Add dungeon icons if enabled
         if (config.isFeatureEnabled('taskIconsDungeons') && dungeonCount > 0) {
@@ -467,7 +466,7 @@ class TaskIcons {
         const monsterPosition = 100 - iconWidth;
         let position = monsterPosition - iconWidth; // Start one icon to the left of monster
 
-        dungeonHrids.forEach(dungeonHrid => {
+        dungeonHrids.forEach((dungeonHrid) => {
             const iconName = dungeonHrid.split('/').pop();
             this.addIconOverlay(taskCard, this.SPRITES.ACTIONS, iconName, 'dungeon', `${position}%`, `${iconWidth}%`);
             position -= iconWidth; // Move left for next dungeon
@@ -526,7 +525,7 @@ class TaskIcons {
      */
     removeIcons(taskCard) {
         const existingIcons = taskCard.querySelectorAll('.mwi-task-icon');
-        existingIcons.forEach(icon => icon.remove());
+        existingIcons.forEach((icon) => icon.remove());
     }
 
     /**
@@ -534,12 +533,12 @@ class TaskIcons {
      */
     cleanup() {
         // Unregister all observers
-        this.observers.forEach(unregister => unregister());
+        this.observers.forEach((unregister) => unregister());
         this.observers = [];
 
         // Remove all icons and data attributes
-        document.querySelectorAll('.mwi-task-icon').forEach(icon => icon.remove());
-        document.querySelectorAll('[data-mwi-task-processed]').forEach(card => {
+        document.querySelectorAll('.mwi-task-icon').forEach((icon) => icon.remove());
+        document.querySelectorAll('[data-mwi-task-processed]').forEach((card) => {
             card.removeAttribute('data-mwi-task-processed');
         });
 
