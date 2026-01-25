@@ -3,12 +3,10 @@
  * Calculates expected value for openable containers
  */
 
-import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
-import { numberFormatter } from '../../utils/formatters.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
-import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice } from '../../utils/market-data.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -127,7 +125,7 @@ class ExpectedValueCalculator {
         }
 
         let totalExpectedValue = 0;
-        let missingDataCount = 0;
+        let _missingDataCount = 0;
 
         // Calculate expected value for each drop
         for (const drop of dropTable) {
@@ -148,7 +146,7 @@ class ExpectedValueCalculator {
             const price = this.getDropPrice(itemHrid);
 
             if (price === null) {
-                missingDataCount++;
+                _missingDataCount++;
                 continue; // Skip drops with missing data
             }
 

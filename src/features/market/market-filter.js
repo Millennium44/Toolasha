@@ -63,7 +63,7 @@ class MarketFilter {
         const unregisterItems = domObserver.onClass(
             'market-filter-items',
             'MarketplacePanel_marketItems',
-            (marketItemsContainer) => {
+            (_marketItemsContainer) => {
                 this.applyFilters();
             }
         );
@@ -79,9 +79,9 @@ class MarketFilter {
 
     /**
      * Inject filter UI into marketplace panel
-     * @param {HTMLElement} oriFilterContainer - Original filter container
+     * @param {HTMLElement} _oriFilterContainer - Original filter container
      */
-    injectFilterUI(oriFilterContainer) {
+    injectFilterUI(_oriFilterContainer) {
         // Check if already injected
         if (document.querySelector('#toolasha-market-filters')) {
             return;
@@ -103,7 +103,7 @@ class MarketFilter {
         filterDiv.appendChild(this.createSlotFilter());
 
         // Insert after the original filter container
-        oriFilterContainer.parentElement.insertBefore(filterDiv, oriFilterContainer.nextSibling);
+        _oriFilterContainer.parentElement.insertBefore(filterDiv, _oriFilterContainer.nextSibling);
 
         this.filterContainer = filterDiv;
 

@@ -8,11 +8,6 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
-import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
-import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import networthCache from '../networth/networth-cache.js';
-import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { getItemPrice } from '../../utils/market-data.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 
 /**
@@ -129,7 +124,6 @@ class InventorySort {
                     clearInterval(retryCheck);
                 }
             }, retryInterval);
-        } else {
         }
     }
 

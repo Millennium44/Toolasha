@@ -403,7 +403,7 @@ async function handleEnhancementResult(action, _data) {
         const protectedFailure = previousLevel > 0 && newLevel === previousLevel && protectionItemHrid !== null;
         const wasFailure = levelDecreased || failedAtZero || protectedFailure;
 
-        const wasBlessed = wasSuccess && newLevel - previousLevel >= 2; // Blessed tea detection
+        const _wasBlessed = wasSuccess && newLevel - previousLevel >= 2; // Blessed tea detection
 
         // Update lastAttempt BEFORE recording (so next attempt compares correctly)
         currentSession.lastAttempt = {
@@ -422,6 +422,7 @@ async function handleEnhancementResult(action, _data) {
 
             // Check if we've reached target
             if (newLevel >= currentSession.targetLevel) {
+                // Target reached - session will auto-complete on next UI update
             }
         } else if (wasFailure) {
             const xpGain = calculateFailureXP(previousLevel, itemHrid);
@@ -432,7 +433,9 @@ async function handleEnhancementResult(action, _data) {
         }
         // Note: If newLevel === previousLevel (and not 0->0), we track costs but don't record attempt
         // This happens with protection items that prevent level decrease
-    } catch (error) {}
+    } catch {
+        // Silent failure
+    }
 }
 
 /**

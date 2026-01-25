@@ -65,7 +65,9 @@ class EnhancementTracker {
             }
 
             this.isInitialized = true;
-        } catch (error) {}
+        } catch {
+            // Silent failure
+        }
     }
 
     /**

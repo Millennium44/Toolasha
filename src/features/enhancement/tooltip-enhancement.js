@@ -9,11 +9,9 @@
  * - Item tooltips: Shows optimal path to reach current enhancement level
  */
 
-import { calculateEnhancement, calculatePerActionTime } from '../../utils/enhancement-calculator.js';
+import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
 import { numberFormatter } from '../../utils/formatters.js';
-import config from '../../core/config.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 
 /**
@@ -106,7 +104,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     }
 
     // Step 4: Build final result with breakdown
-    const finalCost = targetCosts[currentEnhancementLevel];
+    const _finalCost = targetCosts[currentEnhancementLevel];
 
     // Find which protection strategy was optimal for final level (before mirrors)
     const finalLevelResults = allResults[currentEnhancementLevel - 1];
@@ -204,10 +202,10 @@ function buildMirrorOptimizedResult(
     targetCosts,
     optimalTraditional,
     mirrorPrice,
-    config
+    _config
 ) {
     const gameData = dataManager.getInitClientData();
-    const itemDetails = gameData.itemDetailMap[itemHrid];
+    const _itemDetails = gameData.itemDetailMap[itemHrid];
 
     // Calculate Fibonacci quantities for consumed items
     const n = targetLevel - mirrorStartLevel;

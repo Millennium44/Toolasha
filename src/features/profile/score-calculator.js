@@ -9,10 +9,9 @@
 import { calculateAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateBattleHousesCost } from '../../utils/house-cost-calculator.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 
 /**
@@ -296,7 +295,7 @@ function calculateEquipmentScore(profileData) {
     let totalValue = 0;
     const breakdown = [];
 
-    for (const [slot, itemData] of Object.entries(equippedItems)) {
+    for (const [_slot, itemData] of Object.entries(equippedItems)) {
         if (!itemData?.itemHrid) continue;
 
         const itemHrid = itemData.itemHrid;

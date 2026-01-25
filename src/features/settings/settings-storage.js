@@ -4,7 +4,7 @@
  */
 
 import storage from '../../core/storage.js';
-import { settingsGroups, getAllSettingIds } from './settings-config.js';
+import { settingsGroups } from './settings-config.js';
 
 class SettingsStorage {
     constructor() {

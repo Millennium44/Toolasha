@@ -28,7 +28,7 @@ function getBaseItemLevel(itemHrid) {
         }
 
         return 0;
-    } catch (error) {
+    } catch {
         return 0;
     }
 }
@@ -88,7 +88,7 @@ function getWisdomBuff() {
 
         // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
         return totalFlatBoost;
-    } catch (error) {
+    } catch {
         return 0;
     }
 }
@@ -264,7 +264,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             expectedTime: result.totalTime,
             successMultiplier: result.successMultiplier,
         };
-    } catch (error) {
+    } catch {
         return null;
     }
 }

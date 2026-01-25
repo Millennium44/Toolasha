@@ -30,7 +30,7 @@ export async function loadSessions() {
     try {
         const sessions = await storage.getJSON(STORAGE_KEY, STORAGE_STORE, {});
         return sessions;
-    } catch (error) {
+    } catch {
         return {};
     }
 }
@@ -43,7 +43,9 @@ export async function loadSessions() {
 export async function saveCurrentSessionId(sessionId) {
     try {
         await storage.set(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE, true); // immediate=true for rapid updates
-    } catch (error) {}
+    } catch {
+        // Silent failure
+    }
 }
 
 /**
@@ -53,7 +55,7 @@ export async function saveCurrentSessionId(sessionId) {
 export async function loadCurrentSessionId() {
     try {
         return await storage.get(CURRENT_SESSION_KEY, STORAGE_STORE, null);
-    } catch (error) {
+    } catch {
         return null;
     }
 }
@@ -119,7 +121,7 @@ export function importSession(jsonStr) {
         }
 
         return session;
-    } catch (error) {
+    } catch {
         return null;
     }
 }
@@ -132,5 +134,7 @@ export async function clearAllSessions() {
     try {
         await storage.setJSON(STORAGE_KEY, {}, STORAGE_STORE);
         await storage.set(CURRENT_SESSION_KEY, null, STORAGE_STORE);
-    } catch (error) {}
+    } catch {
+        // Silent failure
+    }
 }

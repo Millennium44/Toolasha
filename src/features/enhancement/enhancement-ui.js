@@ -115,7 +115,7 @@ class EnhancementUI {
         this.unregisterScreenObserver = domObserver.onClass(
             'EnhancementUI-ScreenDetection',
             'EnhancingPanel_enhancingPanel',
-            (node) => {
+            (_node) => {
                 this.checkEnhancingScreen();
             },
             { debounce: false }
@@ -687,8 +687,8 @@ class EnhancementUI {
         // Calculate stats
         const totalAttempts = session.totalAttempts;
         const totalSuccess = session.totalSuccesses;
-        const totalFailure = session.totalFailures;
-        const successRate = totalAttempts > 0 ? formatPercentage(totalSuccess / totalAttempts, 1) : '0.0%';
+        const _totalFailure = session.totalFailures;
+        const _successRate = totalAttempts > 0 ? formatPercentage(totalSuccess / totalAttempts, 1) : '0.0%';
 
         const duration = getSessionDuration(session);
         const durationText = this.formatDuration(duration);

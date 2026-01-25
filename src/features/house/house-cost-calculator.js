@@ -5,7 +5,6 @@
 
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import config from '../../core/config.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
 class HouseCostCalculator {

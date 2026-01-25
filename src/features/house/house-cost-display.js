@@ -5,8 +5,7 @@
 
 import houseCostCalculator from './house-cost-calculator.js';
 import config from '../../core/config.js';
-import { numberFormatter, coinFormatter } from '../../utils/formatters.js';
-import { createCollapsibleSection } from '../../utils/ui-components.js';
+import { coinFormatter } from '../../utils/formatters.js';
 
 class HouseCostDisplay {
     constructor() {
@@ -80,7 +79,7 @@ class HouseCostDisplay {
 
             // Mark this modal as processed
             this.currentModalContent = modalContent;
-        } catch (error) {
+        } catch {
             // Silently fail - augmentation is optional
         }
     }

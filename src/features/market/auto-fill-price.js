@@ -5,8 +5,6 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import marketAPI from '../../api/marketplace.js';
-import dataManager from '../../core/data-manager.js';
 
 class AutoFillPrice {
     constructor() {

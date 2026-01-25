@@ -3,10 +3,8 @@
  * Calculates production costs and profit for crafted items
  */
 
-import config from '../../core/config.js';
-import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
-import * as efficiency from '../../utils/efficiency.js';
+import marketAPI from '../../api/marketplace.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import {
@@ -18,7 +16,6 @@ import {
     parseActionLevelBonus,
     parseTeaSkillLevelBonus,
 } from '../../utils/tea-parser.js';
-import expectedValueCalculator from './expected-value-calculator.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 

@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { buildCharacterSheetLink, buildSegmentsFromCharacterData } from './character-sheet.js';
+import { buildCharacterSheetLink } from './character-sheet.js';
 
 /**
  * CharacterCardButton class manages character card export button on profiles
@@ -101,9 +101,9 @@ class CharacterCardButton {
 
     /**
      * Inject character card button into profile panel
-     * @param {Element} profilePanel - Profile panel element
+     * @param {Element} _profilePanel - Profile panel element
      */
-    injectButton(profilePanel) {
+    injectButton(_profilePanel) {
         // Check if button already exists
         const existingButton = document.getElementById('mwi-character-card-btn');
         if (existingButton) {
@@ -196,11 +196,11 @@ class CharacterCardButton {
             // Otherwise leave consumables empty (can't see other player's consumables outside party)
 
             // Find the profile modal for fallback
-            const modal = document.querySelector('.SharableProfile_modal__2OmCQ');
+            const _modal = document.querySelector('.SharableProfile_modal__2OmCQ');
 
             // Build character sheet link using cached data (preferred) or DOM fallback
             const url = buildCharacterSheetLink(
-                modal,
+                _modal,
                 'https://tib-san.github.io/mwi-character-sheet/',
                 characterData,
                 clientData,
