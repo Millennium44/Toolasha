@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.05
+// @version      0.5.06
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -13245,24 +13245,42 @@
          */
         extractCurrentPrices(panel) {
             try {
-                // Find the top order section
+                // Try method 1: Find the top order section (works in compact view)
                 const topOrderSection = panel.querySelector('[class*="MarketplacePanel_topOrderSection"]');
-                if (!topOrderSection) {
-                    return null;
+                if (topOrderSection) {
+                    // The top order section contains two price displays: Sell (Ask) and Buy (Bid)
+                    const priceTexts = topOrderSection.querySelectorAll('[class*="MarketplacePanel_price"]');
+
+                    if (priceTexts.length >= 2) {
+                        // First price is Sell price (Ask), second is Buy price (Bid)
+                        const askText = priceTexts[0].textContent.trim();
+                        const bidText = priceTexts[1].textContent.trim();
+
+                        return {
+                            ask: this.parsePrice(askText),
+                            bid: this.parsePrice(bidText),
+                        };
+                    }
                 }
 
-                // The top order section contains two price displays: Sell (Ask) and Buy (Bid)
-                const priceTexts = topOrderSection.querySelectorAll('[class*="MarketplacePanel_price"]');
+                // Method 2: Extract from order book table (when viewing full order book)
+                // Find all price elements in the panel
+                const allPriceElements = panel.querySelectorAll('[class*="MarketplacePanel_price"]');
 
-                if (priceTexts.length >= 2) {
-                    // First price is Sell price (Ask), second is Buy price (Bid)
-                    const askText = priceTexts[0].textContent.trim();
-                    const bidText = priceTexts[1].textContent.trim();
+                if (allPriceElements.length >= 2) {
+                    // In order book view, prices appear in table rows
+                    // Left table = Ask orders (sell listings), Right table = Bid orders (buy listings)
+                    // First price is typically the lowest ask, second is typically the highest bid
+                    const askText = allPriceElements[0].textContent.trim();
+                    const bidText = allPriceElements[1].textContent.trim();
 
-                    return {
-                        ask: this.parsePrice(askText),
-                        bid: this.parsePrice(bidText),
-                    };
+                    const ask = this.parsePrice(askText);
+                    const bid = this.parsePrice(bidText);
+
+                    // Sanity check: ask should be >= bid (or at least positive)
+                    if (ask > 0 && bid > 0) {
+                        return { ask, bid };
+                    }
                 }
 
                 return null;
@@ -42430,7 +42448,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.05',
+            version: '0.5.06',
 
             // Feature toggle API (for users to manage settings via console)
             features: {
