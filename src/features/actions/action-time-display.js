@@ -14,9 +14,13 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
-import { timeReadable } from '../../utils/formatters.js';
+import { timeReadable, formatWithSeparator } from '../../utils/formatters.js';
 import domObserver from '../../core/dom-observer.js';
 import { parseArtisanBonus, getDrinkConcentration, parseGatheringBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
+import { calculateExpPerHour } from '../../utils/experience-calculator.js';
+import { calculateGatheringProfit } from './gathering-profit.js';
+import profitCalculator from '../market/profit-calculator.js';
+import marketAPI from '../../api/marketplace.js';
 
 /**
  * ActionTimeDisplay class manages the time display panel and queue tooltips
@@ -30,6 +34,7 @@ class ActionTimeDisplay {
         this.actionNameObserver = null;
         this.queueMenuObserver = null; // Observer for queue menu mutations
         this.characterInitHandler = null; // Handler for character switch
+        this.activeProfitCalculationId = null; // Track active profit calculation to prevent race conditions
     }
 
     /**
@@ -106,6 +111,9 @@ class ActionTimeDisplay {
      * Clean up old observers and re-initialize for new character's action panel
      */
     handleCharacterSwitch() {
+        // Cancel any active profit calculations to prevent stale data
+        this.activeProfitCalculationId = null;
+
         // Clear appended stats from old character's action panel (before it's removed)
         const oldActionNameElement = document.querySelector('div[class*="Header_actionName"]');
         if (oldActionNameElement) {
@@ -878,6 +886,7 @@ class ActionTimeDisplay {
 
             let accumulatedTime = 0;
             let hasInfinite = false;
+            const actionsToCalculate = []; // Store actions for async profit calculation (with time in seconds)
 
             // First, calculate time for current action to include in total
             // Read from DOM to get the actual current action (not from cache)
@@ -922,6 +931,8 @@ class ActionTimeDisplay {
                         // Check if infinite BEFORE calculating count
                         const isInfinite = !currentAction.hasMaxCount || currentAction.actionHrid.includes('/combat/');
 
+                        let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
+
                         if (isInfinite) {
                             // Check for material limit on infinite actions
                             const inventory = dataManager.getInventory();
@@ -943,6 +954,7 @@ class ActionTimeDisplay {
                                     const actualAttempts = materialLimit;
                                     const totalTime = actualAttempts * actionTime;
                                     accumulatedTime += totalTime;
+                                    actionTimeSeconds = totalTime;
                                 }
                             } else {
                                 // Could not calculate action time
@@ -963,7 +975,16 @@ class ActionTimeDisplay {
                                 const actualAttempts = Math.ceil(count / avgActionsPerAttempt);
                                 const totalTime = actualAttempts * actionTime;
                                 accumulatedTime += totalTime;
+                                actionTimeSeconds = totalTime;
                             }
+                        }
+
+                        // Store action for profit calculation (done async after UI renders)
+                        if (actionTimeSeconds > 0 && !isInfinite) {
+                            actionsToCalculate.push({
+                                actionHrid: currentAction.actionHrid,
+                                timeSeconds: actionTimeSeconds
+                            });
                         }
                     }
                 }
@@ -1043,6 +1064,7 @@ class ActionTimeDisplay {
 
                 // Calculate total time for this action
                 let totalTime;
+                let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
                 if (isTrulyInfinite) {
                     totalTime = Infinity;
                 } else {
@@ -1061,6 +1083,15 @@ class ActionTimeDisplay {
                     }
                     totalTime = actualAttempts * actionTime;
                     accumulatedTime += totalTime;
+                    actionTimeSeconds = totalTime;
+                }
+
+                // Store action for profit calculation (done async after UI renders)
+                if (actionTimeSeconds > 0 && !isTrulyInfinite) {
+                    actionsToCalculate.push({
+                        actionHrid: actionObj.actionHrid,
+                        timeSeconds: actionTimeSeconds
+                    });
                 }
 
                 // Format completion time
@@ -1118,23 +1149,143 @@ class ActionTimeDisplay {
                 text-align: center;
             `;
 
+            // Build total time text
+            let totalText = '';
             if (hasInfinite) {
                 // Show finite time first, then add infinity indicator
                 if (accumulatedTime > 0) {
-                    totalDiv.textContent = `Total time: ${timeReadable(accumulatedTime)} + [∞]`;
+                    totalText = `Total time: ${timeReadable(accumulatedTime)} + [∞]`;
                 } else {
-                    totalDiv.textContent = 'Total time: [∞]';
+                    totalText = 'Total time: [∞]';
                 }
             } else {
-                totalDiv.textContent = `Total time: ${timeReadable(accumulatedTime)}`;
+                totalText = `Total time: ${timeReadable(accumulatedTime)}`;
             }
+
+            totalDiv.innerHTML = totalText;
 
             // Insert after queue menu
             queueMenu.insertAdjacentElement('afterend', totalDiv);
 
+            // Calculate profit asynchronously (non-blocking)
+            if (actionsToCalculate.length > 0 && marketAPI.isLoaded()) {
+                this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText);
+            }
+
         } catch (error) {
             console.error('[MWI Tools] Error injecting queue times:', error);
         }
+    }
+
+    /**
+     * Calculate and display total profit asynchronously (non-blocking)
+     * @param {HTMLElement} totalDiv - The total display div element
+     * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds} objects
+     * @param {string} baseText - Base text (time) to prepend
+     */
+    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText) {
+        // Generate unique ID for this calculation to prevent race conditions
+        const calculationId = Date.now() + Math.random();
+        this.activeProfitCalculationId = calculationId;
+
+        try {
+            let totalProfit = 0;
+            let hasProfitData = false;
+
+            // Create all profit calculation promises at once (parallel execution)
+            const profitPromises = actionsToCalculate.map(action =>
+                Promise.race([
+                    this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
+                ]).catch(() => null) // Convert rejections to null
+            );
+
+            // Wait for all calculations to complete in parallel
+            const results = await Promise.allSettled(profitPromises);
+
+            // Check if this calculation is still valid (character might have switched)
+            if (this.activeProfitCalculationId !== calculationId) {
+                console.log('[Action Time Display] Profit calculation cancelled (character switched)');
+                return;
+            }
+
+            // Aggregate results
+            results.forEach(result => {
+                if (result.status === 'fulfilled' && result.value !== null) {
+                    totalProfit += result.value;
+                    hasProfitData = true;
+                }
+            });
+
+            // Update display with value
+            if (hasProfitData) {
+                // Get value mode setting to determine label and color
+                const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
+                const isEstimatedValue = valueMode === 'estimated_value';
+                
+                // Estimated value is always positive (revenue), so always use profit color
+                // Profit can be negative, so use appropriate color
+                const valueColor = (isEstimatedValue || totalProfit >= 0)
+                    ? config.getSettingValue('color_profit', '#4ade80')
+                    : config.getSettingValue('color_loss', '#f87171');
+                const valueSign = totalProfit >= 0 ? '+' : '';
+                const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
+                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatWithSeparator(Math.round(totalProfit))}</span>`;
+                totalDiv.innerHTML = baseText + valueText;
+            }
+        } catch (error) {
+            console.warn('[Action Time Display] Error calculating total profit:', error);
+        }
+    }
+
+    /**
+     * Calculate profit or estimated value for a single action based on time spent
+     * @param {string} actionHrid - Action HRID
+     * @param {number} timeSeconds - Time spent on this action in seconds
+     * @returns {Promise<number|null>} Total value (profit or revenue) or null if unavailable
+     */
+    async calculateProfitForAction(actionHrid, timeSeconds) {
+        const actionDetails = dataManager.getActionDetails(actionHrid);
+        if (!actionDetails) {
+            return null;
+        }
+
+        // Get value mode setting (profit or estimated_value)
+        const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
+
+        // Calculate value per hour based on mode
+        let valuePerHour = null;
+        
+        // Try gathering profit first (foraging, woodcutting, milking)
+        const gatheringProfit = await calculateGatheringProfit(actionHrid);
+        if (gatheringProfit) {
+            if (valueMode === 'estimated_value' && gatheringProfit.revenuePerHour !== undefined) {
+                valuePerHour = gatheringProfit.revenuePerHour;
+            } else if (gatheringProfit.profitPerHour !== undefined) {
+                valuePerHour = gatheringProfit.profitPerHour;
+            }
+        } else if (actionDetails.outputItems?.[0]?.itemHrid) {
+            // Try production profit (crafting, cooking, etc.)
+            const productionProfit = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+            if (productionProfit) {
+                if (valueMode === 'estimated_value') {
+                    // Calculate revenue: (items * priceAfterTax) + bonus revenue
+                    const revenuePerHour = (productionProfit.totalItemsPerHour * productionProfit.priceAfterTax) + 
+                                          ((productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier);
+                    valuePerHour = revenuePerHour;
+                } else if (productionProfit.profitPerHour !== undefined) {
+                    valuePerHour = productionProfit.profitPerHour;
+                }
+            }
+        }
+
+        // Calculate value based on time spent
+        if (valuePerHour !== null) {
+            const timeHours = timeSeconds / 3600;
+            return valuePerHour * timeHours;
+        }
+
+        return null;
     }
 
     /**
