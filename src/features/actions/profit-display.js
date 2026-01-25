@@ -41,7 +41,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     const marketTax = Math.round(grossRevenue * 0.02);
     const revenue = grossRevenue;
     const costs = Math.round(profitData.drinkCostPerHour + marketTax);
-    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
 
     // ===== Build Detailed Breakdown Content =====
     const detailsContent = document.createElement('div');
@@ -305,6 +305,38 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     );
     profitSection.id = 'mwi-foraging-profit';
 
+    // Get the summary div to update it dynamically
+    const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
+
+    // Set up listener to update summary with total profit when input changes
+    if (inputField && profitSummaryDiv) {
+        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        
+        const updateSummary = (newValue) => {
+            const inputValue = inputField.value;
+            
+            if (inputValue === '∞') {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
+            } else if (newValue > 0) {
+                // Calculate total profit for selected actions
+                const efficiencyMultiplier = 1 + (profitData.totalEfficiency / 100);
+                const actualAttempts = Math.ceil(newValue / efficiencyMultiplier);
+                const hoursNeeded = actualAttempts / profitData.actionsPerHour;
+                const totalProfit = Math.round((profitData.profitPerHour) * hoursNeeded);
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
+            } else {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
+            }
+        };
+
+        // Update summary initially
+        const initialValue = parseInt(inputField.value) || 0;
+        updateSummary(initialValue);
+
+        // Attach listener for future changes
+        attachInputListeners(panel, inputField, updateSummary);
+    }
+
     // Find insertion point - look for existing collapsible sections or drop table
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
     if (insertionPoint) {
@@ -370,7 +402,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     // Calculate market tax (2% of revenue)
     const marketTax = Math.round(revenue * 0.02);
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
-    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
 
     // ===== Build Detailed Breakdown Content =====
     const detailsContent = document.createElement('div');
@@ -688,6 +720,38 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         0
     );
     profitSection.id = 'mwi-production-profit';
+
+    // Get the summary div to update it dynamically
+    const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
+
+    // Set up listener to update summary with total profit when input changes
+    if (inputField && profitSummaryDiv) {
+        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        
+        const updateSummary = (newValue) => {
+            const inputValue = inputField.value;
+            
+            if (inputValue === '∞') {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
+            } else if (newValue > 0) {
+                // Calculate total profit for selected actions
+                const efficiencyMultiplier = 1 + (profitData.efficiencyBonus / 100);
+                const actualAttempts = Math.ceil(newValue / efficiencyMultiplier);
+                const hoursNeeded = actualAttempts / profitData.actionsPerHour;
+                const totalProfit = Math.round((profitData.profitPerHour) * hoursNeeded);
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
+            } else {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
+            }
+        };
+
+        // Update summary initially
+        const initialValue = parseInt(inputField.value) || 0;
+        updateSummary(initialValue);
+
+        // Attach listener for future changes
+        attachInputListeners(panel, inputField, updateSummary);
+    }
 
     // Find insertion point - look for existing collapsible sections or drop table
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
