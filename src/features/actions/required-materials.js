@@ -270,7 +270,7 @@ class RequiredMaterials {
             }
 
             let actionDetails = null;
-            for (const [hrid, details] of Object.entries(gameData.actionDetailMap)) {
+            for (const [_hrid, details] of Object.entries(gameData.actionDetailMap)) {
                 if (details.name === actionName) {
                     actionDetails = details;
                     break;
@@ -324,7 +324,7 @@ class RequiredMaterials {
             }
 
             let actionDetails = null;
-            for (const [hrid, details] of Object.entries(gameData.actionDetailMap)) {
+            for (const [_hrid, details] of Object.entries(gameData.actionDetailMap)) {
                 if (details.name === actionName) {
                     actionDetails = details;
                     break;

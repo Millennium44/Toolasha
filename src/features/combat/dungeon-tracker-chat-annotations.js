@@ -477,7 +477,7 @@ class DungeonTrackerChatAnnotations {
      */
     getTeamFromMessage(msg) {
         const text = msg.textContent.trim();
-        const matches = [...text.matchAll(/\[([^\[\]-]+?)\s*-\s*[\d,]+\]/g)];
+        const matches = [...text.matchAll(/\[([^[\]-]+?)\s*-\s*[\d,]+\]/g)];
         return matches.map((m) => m[1].trim()).sort();
     }
 

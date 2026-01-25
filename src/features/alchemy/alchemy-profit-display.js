@@ -7,7 +7,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import alchemyProfit from './alchemy-profit.js';
-import { formatKMB, formatWithSeparator, formatPercentage, formatLargeNumber } from '../../utils/formatters.js';
+import { formatWithSeparator, formatPercentage, formatLargeNumber } from '../../utils/formatters.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 
 class AlchemyProfitDisplay {
@@ -47,7 +47,7 @@ class AlchemyProfitDisplay {
         this.unregisterObserver = domObserver.onClass(
             'AlchemyProfitDisplay',
             'SkillActionDetail_alchemyComponent',
-            (alchemyComponent) => {
+            (_alchemyComponent) => {
                 this.checkAndUpdateDisplay();
             }
         );

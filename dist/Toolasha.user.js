@@ -18393,7 +18393,7 @@
                 const xpPerDay = xpPerHour * 24;
 
                 // Calculate daily level progress
-                const dailyLevelProgress = xpPerDay / xpNeededThisLevel;
+                const _dailyLevelProgress = xpPerDay / xpNeededThisLevel;
 
                 // Create content
                 const content = document.createElement('div');
@@ -20342,7 +20342,7 @@
                 }
 
                 let actionDetails = null;
-                for (const [hrid, details] of Object.entries(gameData.actionDetailMap)) {
+                for (const [_hrid, details] of Object.entries(gameData.actionDetailMap)) {
                     if (details.name === actionName) {
                         actionDetails = details;
                         break;
@@ -20396,7 +20396,7 @@
                 }
 
                 let actionDetails = null;
-                for (const [hrid, details] of Object.entries(gameData.actionDetailMap)) {
+                for (const [_hrid, details] of Object.entries(gameData.actionDetailMap)) {
                     if (details.name === actionName) {
                         actionDetails = details;
                         break;
@@ -34224,7 +34224,7 @@
                         }
 
                         // FALLBACK: Check if text starts with non-timestamp text followed by colon
-                        if (/^[^\[]+:/.test(text)) {
+                        if (/^[^[]+:/.test(text)) {
                             continue; // Skip player messages
                         }
 
@@ -34236,12 +34236,13 @@
                             );
 
                             if (timestampMatch) {
-                                let [, date, hour, min, sec, period] = timestampMatch;
-                                const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+                                const date = timestampMatch[1];
+                                let hour = parseInt(timestampMatch[2], 10);
+                                let min = parseInt(timestampMatch[3], 10);
+                                let sec = parseInt(timestampMatch[4], 10);
+                                let period = timestampMatch[5];
 
-                                hour = parseInt(hour, 10);
-                                min = parseInt(min, 10);
-                                sec = parseInt(sec, 10);
+                                const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                                 // Handle AM/PM if present
                                 if (period === 'PM' && hour < 12) hour += 12;
@@ -35749,7 +35750,7 @@
          */
         getTeamFromMessage(msg) {
             const text = msg.textContent.trim();
-            const matches = [...text.matchAll(/\[([^\[\]-]+?)\s*-\s*[\d,]+\]/g)];
+            const matches = [...text.matchAll(/\[([^[\]-]+?)\s*-\s*[\d,]+\]/g)];
             return matches.map((m) => m[1].trim()).sort();
         }
 
@@ -39382,7 +39383,7 @@
 
                 // Don't include infoText - it contains our profit display which causes update loops
                 return `${successRate}:${consumables}:${catalyst}:${requirements}`;
-            } catch (error) {
+            } catch (_error) {
                 return '';
             }
         }
@@ -39434,7 +39435,7 @@
             this.unregisterObserver = domObserver.onClass(
                 'AlchemyProfitDisplay',
                 'SkillActionDetail_alchemyComponent',
-                (alchemyComponent) => {
+                (_alchemyComponent) => {
                     this.checkAndUpdateDisplay();
                 }
             );
@@ -41197,7 +41198,7 @@
                 return;
             }
 
-            const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, isParty } =
+            const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, _isParty } =
                 exportData;
 
             // Step 1: Switch to Group Combat tab

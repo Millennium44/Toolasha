@@ -370,7 +370,7 @@ class DungeonTracker {
                     }
 
                     // FALLBACK: Check if text starts with non-timestamp text followed by colon
-                    if (/^[^\[]+:/.test(text)) {
+                    if (/^[^[]+:/.test(text)) {
                         continue; // Skip player messages
                     }
 
@@ -382,12 +382,13 @@ class DungeonTracker {
                         );
 
                         if (timestampMatch) {
-                            let [, date, hour, min, sec, period] = timestampMatch;
-                            const [month, day] = date.split('/').map((x) => parseInt(x, 10));
+                            const date = timestampMatch[1];
+                            let hour = parseInt(timestampMatch[2], 10);
+                            let min = parseInt(timestampMatch[3], 10);
+                            let sec = parseInt(timestampMatch[4], 10);
+                            let period = timestampMatch[5];
 
-                            hour = parseInt(hour, 10);
-                            min = parseInt(min, 10);
-                            sec = parseInt(sec, 10);
+                            const [month, day] = date.split('/').map((x) => parseInt(x, 10));
 
                             // Handle AM/PM if present
                             if (period === 'PM' && hour < 12) hour += 12;

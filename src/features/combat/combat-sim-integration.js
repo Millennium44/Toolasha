@@ -116,7 +116,7 @@ async function importDataToSimulator(button) {
             return;
         }
 
-        const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, isParty } =
+        const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, _isParty } =
             exportData;
 
         // Step 1: Switch to Group Combat tab

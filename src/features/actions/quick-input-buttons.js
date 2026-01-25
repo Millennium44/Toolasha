@@ -1036,7 +1036,7 @@ class QuickInputButtons {
             const xpPerDay = xpPerHour * 24;
 
             // Calculate daily level progress
-            const dailyLevelProgress = xpPerDay / xpNeededThisLevel;
+            const _dailyLevelProgress = xpPerDay / xpNeededThisLevel;
 
             // Create content
             const content = document.createElement('div');
