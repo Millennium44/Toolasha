@@ -20175,11 +20175,12 @@
 
             // CRITICAL: Remove injected DOM elements BEFORE clearing Maps
             // This prevents detached SVG elements from accumulating
+            // Note: .remove() is safe to call even if element is already detached
             for (const [actionPanel, data] of this.actionElements.entries()) {
-                if (data.displayElement && data.displayElement.parentNode) {
+                if (data.displayElement) {
                     data.displayElement.remove();
                 }
-                if (data.pinElement && data.pinElement.parentNode) {
+                if (data.pinElement) {
                     data.pinElement.remove();
                 }
             }
@@ -20499,8 +20500,9 @@
         clearAllReferences() {
             // CRITICAL: Remove injected DOM elements BEFORE clearing Maps
             // This prevents detached SVG elements from accumulating
+            // Note: .remove() is safe to call even if element is already detached
             for (const [actionPanel, data] of this.actionElements.entries()) {
-                if (data.displayElement && data.displayElement.parentNode) {
+                if (data.displayElement) {
                     data.displayElement.remove();
                 }
             }
