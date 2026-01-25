@@ -10,7 +10,6 @@
  * - Market tax (2%)
  */
 
-import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 import {
@@ -109,13 +108,8 @@ export async function calculateGatheringProfit(actionHrid) {
         processingConversionCache = buildProcessingConversionCache(gameData);
     }
 
-    // Ensure market data is loaded (check in-memory first to avoid storage reads)
-    if (!marketAPI.isLoaded()) {
-        const marketData = await marketAPI.fetch();
-        if (!marketData) {
-            return null;
-        }
-    }
+    // Note: Market API is pre-loaded by caller (max-produceable.js)
+    // No need to check or fetch here
 
     // Get character data
     const equipment = dataManager.getEquipment();

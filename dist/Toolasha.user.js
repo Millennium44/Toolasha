@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.12
+// @version      0.5.13
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -7987,13 +7987,8 @@
             processingConversionCache = buildProcessingConversionCache(gameData);
         }
 
-        // Ensure market data is loaded (check in-memory first to avoid storage reads)
-        if (!marketAPI.isLoaded()) {
-            const marketData = await marketAPI.fetch();
-            if (!marketData) {
-                return null;
-            }
-        }
+        // Note: Market API is pre-loaded by caller (max-produceable.js)
+        // No need to check or fetch here
 
         // Get character data
         const equipment = dataManager.getEquipment();
@@ -13416,13 +13411,8 @@
             return null; // No output - nothing to calculate
         }
 
-        // Ensure market data is loaded
-        if (!marketAPI.isLoaded()) {
-            const marketData = await marketAPI.fetch();
-            if (!marketData) {
-                return null;
-            }
-        }
+        // Note: Market API is pre-loaded by caller (max-produceable.js)
+        // No need to check or fetch here
 
         // Get output item HRID
         const outputItemHrid = actionDetail.outputItems[0].itemHrid;
@@ -42475,7 +42465,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.12',
+            version: '0.5.13',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

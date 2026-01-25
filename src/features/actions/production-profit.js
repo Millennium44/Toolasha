@@ -5,7 +5,6 @@
  * Reuses existing profit calculator from tooltip system.
  */
 
-import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import profitCalculator from '../market/profit-calculator.js';
 
@@ -43,13 +42,8 @@ export async function calculateProductionProfit(actionHrid) {
         return null; // No output - nothing to calculate
     }
 
-    // Ensure market data is loaded
-    if (!marketAPI.isLoaded()) {
-        const marketData = await marketAPI.fetch();
-        if (!marketData) {
-            return null;
-        }
-    }
+    // Note: Market API is pre-loaded by caller (max-produceable.js)
+    // No need to check or fetch here
 
     // Get output item HRID
     const outputItemHrid = actionDetail.outputItems[0].itemHrid;
