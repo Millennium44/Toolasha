@@ -28,13 +28,9 @@ class NetworkAlert {
         }
 
         // 2. Watch for header to appear (handles SPA navigation)
-        const unregister = domObserver.onClass(
-            'NetworkAlert',
-            'Header_totalLevel',
-            (elem) => {
-                this.prepareContainer(elem);
-            }
-        );
+        const unregister = domObserver.onClass('NetworkAlert', 'Header_totalLevel', (elem) => {
+            this.prepareContainer(elem);
+        });
         this.unregisterHandlers.push(unregister);
     }
 
@@ -123,7 +119,7 @@ class NetworkAlert {
             this.container = null;
         }
 
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
     }
 }

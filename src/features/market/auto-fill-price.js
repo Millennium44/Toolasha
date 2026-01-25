@@ -44,25 +44,21 @@ class AutoFillPrice {
      */
     registerDOMObservers() {
         // Watch for order modals appearing
-        const unregister = domObserver.onClass(
-            'auto-fill-price',
-            'Modal_modalContainer',
-            (modal) => {
-                // Check if this is a marketplace order modal (not instant buy/sell)
-                const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
-                if (!header) return;
+        const unregister = domObserver.onClass('auto-fill-price', 'Modal_modalContainer', (modal) => {
+            // Check if this is a marketplace order modal (not instant buy/sell)
+            const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
+            if (!header) return;
 
-                const headerText = header.textContent.trim();
+            const headerText = header.textContent.trim();
 
-                // Skip instant buy/sell modals (contain "Now" in title)
-                if (headerText.includes(' Now') || headerText.includes('立即')) {
-                    return;
-                }
-
-                // Handle the order modal
-                this.handleOrderModal(modal);
+            // Skip instant buy/sell modals (contain "Now" in title)
+            if (headerText.includes(' Now') || headerText.includes('立即')) {
+                return;
             }
-        );
+
+            // Handle the order modal
+            this.handleOrderModal(modal);
+        });
 
         this.unregisterHandlers.push(unregister);
     }
@@ -111,7 +107,9 @@ class AutoFillPrice {
      */
     adjustPrice(modal, isBuyOrder) {
         // Find the price input container
-        const inputContainer = modal.querySelector('div[class*="MarketplacePanel_inputContainer"] div[class*="MarketplacePanel_priceInputs"]');
+        const inputContainer = modal.querySelector(
+            'div[class*="MarketplacePanel_inputContainer"] div[class*="MarketplacePanel_priceInputs"]'
+        );
         if (!inputContainer) {
             return;
         }
@@ -137,7 +135,7 @@ class AutoFillPrice {
      * Cleanup on disable
      */
     disable() {
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.isActive = false;
         this.isInitialized = false;

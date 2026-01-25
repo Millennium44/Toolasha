@@ -7,10 +7,10 @@
  * Session states
  */
 export const SessionState = {
-    IDLE: 'idle',           // No active session
-    TRACKING: 'tracking',   // Currently tracking enhancements
+    IDLE: 'idle', // No active session
+    TRACKING: 'tracking', // Currently tracking enhancements
     COMPLETED: 'completed', // Target reached or manually stopped
-    ARCHIVED: 'archived'    // Historical session (read-only)
+    ARCHIVED: 'archived', // Historical session (read-only)
 };
 
 /**
@@ -45,7 +45,7 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
         lastAttempt: {
             attemptNumber: 0,
             level: startLevel,
-            timestamp: now
+            timestamp: now,
         },
 
         // Attempt tracking (per level)
@@ -74,7 +74,7 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
         milestonesReached: [], // [5, 10, 15, 20]
 
         // Enhancement predictions (optional - calculated at session start)
-        predictions: null // { expectedAttempts, expectedProtections, ... }
+        predictions: null, // { expectedAttempts, expectedProtections, ... }
     };
 }
 
@@ -88,7 +88,7 @@ export function initializeLevelTracking(session, level) {
         session.attemptsPerLevel[level] = {
             success: 0,
             fail: 0,
-            successRate: 0
+            successRate: 0,
         };
     }
 }
@@ -196,7 +196,7 @@ export function addMaterialCost(session, itemHrid, count, unitCost) {
     if (!session.materialCosts[itemHrid]) {
         session.materialCosts[itemHrid] = {
             count: 0,
-            totalCost: 0
+            totalCost: 0,
         };
     }
 
@@ -241,8 +241,7 @@ export function addProtectionCost(session, protectionItemHrid, cost) {
  * @param {Object} session - Session object
  */
 function recalculateTotalCost(session) {
-    const materialTotal = Object.values(session.materialCosts)
-        .reduce((sum, m) => sum + m.totalCost, 0);
+    const materialTotal = Object.values(session.materialCosts).reduce((sum, m) => sum + m.totalCost, 0);
 
     session.totalCost = materialTotal + session.coinCost + session.protectionCost;
 }

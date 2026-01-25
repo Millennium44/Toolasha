@@ -54,7 +54,7 @@ class HousePanelObserver {
      */
     async handleHouseModal(modalContent) {
         // Wait a moment for content to fully load
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Modal shows one room at a time, not a grid
         // Process the currently displayed room
@@ -116,7 +116,6 @@ class HousePanelObserver {
         return null;
     }
 
-
     /**
      * Observe modal for room switching
      * @param {Element} modalContent - The house panel modal content
@@ -139,7 +138,7 @@ class HousePanelObserver {
         observer.observe(modalContent, {
             childList: true,
             subtree: true,
-            characterData: true
+            characterData: true,
         });
 
         // Store observer for cleanup
@@ -153,11 +152,11 @@ class HousePanelObserver {
      * Clean up observers
      */
     cleanup() {
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         if (this.modalObservers) {
-            this.modalObservers.forEach(observer => observer.disconnect());
+            this.modalObservers.forEach((observer) => observer.disconnect());
             this.modalObservers = [];
         }
 

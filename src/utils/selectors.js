@@ -65,7 +65,7 @@ export const GAME = {
     PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',
 
     // Tooltips
-    MUI_TOOLTIP: '.MuiTooltip-tooltip'
+    MUI_TOOLTIP: '.MuiTooltip-tooltip',
 };
 
 /**
@@ -125,7 +125,7 @@ export const TOOLASHA = {
     // Legacy/cleanup markers
     INSERTED_SPAN: '.insertedSpan',
     SCRIPT_INJECTED: '.script-injected',
-    CONSUMABLE_STATS_INJECTED: '.consumable-stats-injected'
+    CONSUMABLE_STATS_INJECTED: '.consumable-stats-injected',
 };
 
 /**
@@ -134,7 +134,7 @@ export const TOOLASHA = {
 export const ENHANCEMENT = {
     TILL_LEVEL: '#tillLevel',
     TILL_LEVEL_INPUT: '#tillLevelInput',
-    TILL_LEVEL_NUMBER: '#tillLevelNumber'
+    TILL_LEVEL_NUMBER: '#tillLevelNumber',
 };
 
 /**
@@ -142,5 +142,5 @@ export const ENHANCEMENT = {
  */
 export const COMBAT_SIM = {
     GROUP_COMBAT_TAB: 'a#group-combat-tab',
-    GET_PRICES_BUTTON: 'button#buttonGetPrices'
+    GET_PRICES_BUTTON: 'button#buttonGetPrices',
 };

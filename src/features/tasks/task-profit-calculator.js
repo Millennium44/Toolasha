@@ -22,18 +22,18 @@ export function calculateTaskTokenValue() {
             tokenValue: null,
             giftPerTask: null,
             totalPerToken: null,
-            error: 'Market data not loaded'
+            error: 'Market data not loaded',
         };
     }
 
     const taskShopItems = [
         '/items/large_meteorite_cache',
         '/items/large_artisans_crate',
-        '/items/large_treasure_chest'
+        '/items/large_treasure_chest',
     ];
 
     // Get expected value of each Task Shop item (all cost 30 tokens)
-    const expectedValues = taskShopItems.map(itemHrid => {
+    const expectedValues = taskShopItems.map((itemHrid) => {
         const result = expectedValueCalculator.calculateExpectedValue(itemHrid);
         return result?.expectedValue || 0;
     });
@@ -53,7 +53,7 @@ export function calculateTaskTokenValue() {
         tokenValue: taskTokenValue,
         giftPerTask: giftPerTask,
         totalPerToken: taskTokenValue + giftPerTask,
-        error: null
+        error: null,
     };
 }
 
@@ -76,9 +76,9 @@ export function calculateTaskRewardValue(coinReward, taskTokenReward) {
             breakdown: {
                 tokenValue: 0,
                 tokensReceived: taskTokenReward,
-                giftPerTask: 0
+                giftPerTask: 0,
             },
-            error: tokenData.error
+            error: tokenData.error,
         };
     }
 
@@ -93,9 +93,9 @@ export function calculateTaskRewardValue(coinReward, taskTokenReward) {
         breakdown: {
             tokenValue: tokenData.tokenValue,
             tokensReceived: taskTokenReward,
-            giftPerTask: tokenData.giftPerTask
+            giftPerTask: tokenData.giftPerTask,
         },
-        error: null
+        error: null,
     };
 }
 
@@ -139,7 +139,6 @@ function detectTaskType(taskDescription) {
  * @returns {Object|null} {actionHrid, quantity, currentProgress, description} or null if parsing fails
  */
 function parseTaskDescription(taskDescription, taskType, quantity, currentProgress) {
-
     const gameData = dataManager.getInitClientData();
     if (!gameData) {
         return null;
@@ -175,7 +174,6 @@ function parseTaskDescription(taskDescription, taskType, quantity, currentProgre
  * @returns {Promise<Object>} Profit breakdown
  */
 async function calculateGatheringTaskProfit(actionHrid, quantity) {
-
     let profitData;
     try {
         profitData = await calculateGatheringProfit(actionHrid);
@@ -189,8 +187,8 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
             breakdown: {
                 actionHrid,
                 quantity,
-                perAction: 0
-            }
+                perAction: 0,
+            },
         };
     }
 
@@ -202,7 +200,7 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
         breakdown: {
             actionHrid,
             quantity,
-            perAction: profitPerAction
+            perAction: profitPerAction,
         },
         // Include detailed data for expandable display
         details: {
@@ -211,8 +209,8 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
             bonusRevenue: profitData.bonusRevenue,
             processingConversions: profitData.processingConversions,
             processingRevenueBonus: profitData.processingRevenueBonus,
-            efficiencyMultiplier: profitData.efficiencyMultiplier
-        }
+            efficiencyMultiplier: profitData.efficiencyMultiplier,
+        },
     };
 }
 
@@ -223,14 +221,12 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
  * @returns {Promise<Object>} Profit breakdown
  */
 async function calculateProductionTaskProfit(actionHrid, quantity) {
-
     let profitData;
     try {
         profitData = await calculateProductionProfit(actionHrid);
     } catch (error) {
         profitData = null;
     }
-
 
     if (!profitData) {
         return {
@@ -240,15 +236,18 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
                 quantity,
                 outputValue: 0,
                 materialCost: 0,
-                perAction: 0
-            }
+                perAction: 0,
+            },
         };
     }
 
     // Calculate per-action values from per-hour values
     const profitPerAction = profitData.profitPerHour / profitData.actionsPerHour;
-    const revenuePerAction = (profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax) / profitData.actionsPerHour;
-    const costsPerAction = (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) / profitData.actionsPerHour;
+    const revenuePerAction =
+        (profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax) /
+        profitData.actionsPerHour;
+    const costsPerAction =
+        (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) / profitData.actionsPerHour;
 
     return {
         totalProfit: profitPerAction * quantity,
@@ -257,7 +256,7 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
             quantity,
             outputValue: revenuePerAction * quantity,
             materialCost: costsPerAction * quantity,
-            perAction: profitPerAction
+            perAction: profitPerAction,
         },
         // Include detailed data for expandable display
         details: {
@@ -269,8 +268,8 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
             actionsPerHour: profitData.actionsPerHour,
             itemsPerAction: profitData.itemsPerHour / profitData.actionsPerHour,
             bonusRevenue: profitData.bonusRevenue, // Pass through bonus revenue data
-            efficiencyMultiplier: profitData.details?.efficiencyMultiplier || 1 // Pass through efficiency multiplier
-        }
+            efficiencyMultiplier: profitData.details?.efficiencyMultiplier || 1, // Pass through efficiency multiplier
+        },
     };
 }
 
@@ -294,35 +293,26 @@ export async function calculateTaskProfit(taskData) {
         return {
             type: taskType,
             error: 'Unable to parse task description',
-            totalProfit: 0
+            totalProfit: 0,
         };
     }
 
     // Calculate task rewards
-    const rewardValue = calculateTaskRewardValue(
-        taskData.coinReward,
-        taskData.taskTokenReward
-    );
+    const rewardValue = calculateTaskRewardValue(taskData.coinReward, taskData.taskTokenReward);
 
     // Calculate action profit based on task type
     let actionProfit = null;
     if (taskType === 'gathering') {
-        actionProfit = await calculateGatheringTaskProfit(
-            taskInfo.actionHrid,
-            taskInfo.quantity
-        );
+        actionProfit = await calculateGatheringTaskProfit(taskInfo.actionHrid, taskInfo.quantity);
     } else if (taskType === 'production') {
-        actionProfit = await calculateProductionTaskProfit(
-            taskInfo.actionHrid,
-            taskInfo.quantity
-        );
+        actionProfit = await calculateProductionTaskProfit(taskInfo.actionHrid, taskInfo.quantity);
     }
 
     if (!actionProfit) {
         return {
             type: taskType,
             error: 'Unable to calculate action profit',
-            totalProfit: 0
+            totalProfit: 0,
         };
     }
 
@@ -335,6 +325,6 @@ export async function calculateTaskProfit(taskData) {
         totalProfit,
         rewards: rewardValue,
         action: actionProfit,
-        taskInfo: taskInfo
+        taskInfo: taskInfo,
     };
 }

@@ -82,8 +82,8 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
 
     // Bonus Drops subsections - split by type
     const bonusDrops = profitData.bonusRevenue?.bonusDrops || [];
-    const essenceDrops = bonusDrops.filter(drop => drop.type === 'essence');
-    const rareFinds = bonusDrops.filter(drop => drop.type === 'rare_find');
+    const essenceDrops = bonusDrops.filter((drop) => drop.type === 'essence');
+    const rareFinds = bonusDrops.filter((drop) => drop.type === 'rare_find');
 
     // Essence Drops subsection
     let essenceSection = null;
@@ -213,8 +213,12 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     }
 
     if (effParts.length > 0) {
-        modifierLines.push(`<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`);
-        modifierLines.push(`<div style="margin-left: 8px;">• Efficiency: +${profitData.totalEfficiency.toFixed(1)}% (${effParts.join(', ')})</div>`);
+        modifierLines.push(
+            `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+        );
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Efficiency: +${profitData.totalEfficiency.toFixed(1)}% (${effParts.join(', ')})</div>`
+        );
     }
 
     // Gathering Quantity
@@ -229,7 +233,9 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         if (profitData.details.achievementGathering > 0) {
             gatheringParts.push(`${(profitData.details.achievementGathering * 100).toFixed(1)}% achievement`);
         }
-        modifierLines.push(`<div style="margin-left: 8px;">• Gathering Quantity: +${(profitData.gatheringQuantity * 100).toFixed(1)}% (${gatheringParts.join(', ')})</div>`);
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Gathering Quantity: +${(profitData.gatheringQuantity * 100).toFixed(1)}% (${gatheringParts.join(', ')})</div>`
+        );
     }
 
     modifiersDiv.innerHTML = modifierLines.join('');
@@ -295,14 +301,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     }
 
     // Create main profit section
-    const profitSection = createCollapsibleSection(
-        '💰',
-        'Profitability',
-        summary,
-        topLevelContent,
-        false,
-        0
-    );
+    const profitSection = createCollapsibleSection('💰', 'Profitability', summary, topLevelContent, false, 0);
     profitSection.id = 'mwi-foraging-profit';
 
     // Get the summary div to update it dynamically
@@ -311,18 +310,18 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     // Set up listener to update summary with total profit when input changes
     if (inputField && profitSummaryDiv) {
         const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
-        
+
         const updateSummary = (newValue) => {
             const inputValue = inputField.value;
-            
+
             if (inputValue === '∞') {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
             } else if (newValue > 0) {
                 // Calculate total profit for selected actions
-                const efficiencyMultiplier = 1 + (profitData.totalEfficiency / 100);
+                const efficiencyMultiplier = 1 + profitData.totalEfficiency / 100;
                 const actualAttempts = Math.ceil(newValue / efficiencyMultiplier);
                 const hoursNeeded = actualAttempts / profitData.actionsPerHour;
-                const totalProfit = Math.round((profitData.profitPerHour) * hoursNeeded);
+                const totalProfit = Math.round(profitData.profitPerHour * hoursNeeded);
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
             } else {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
@@ -341,7 +340,10 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
     if (insertionPoint) {
         // Insert after last collapsible section
-        while (insertionPoint.nextElementSibling && insertionPoint.nextElementSibling.className === 'mwi-collapsible-section') {
+        while (
+            insertionPoint.nextElementSibling &&
+            insertionPoint.nextElementSibling.className === 'mwi-collapsible-section'
+        ) {
             insertionPoint = insertionPoint.nextElementSibling;
         }
         insertionPoint.insertAdjacentElement('afterend', profitSection);
@@ -349,10 +351,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         // Fallback: insert after drop table
         const dropTableElement = panel.querySelector(dropTableSelector);
         if (dropTableElement) {
-            dropTableElement.parentNode.insertBefore(
-                profitSection,
-                dropTableElement.nextSibling
-            );
+            dropTableElement.parentNode.insertBefore(profitSection, dropTableElement.nextSibling);
         }
     }
 }
@@ -373,14 +372,26 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
 
     // Validate required fields
     const requiredFields = [
-        'profitPerHour', 'profitPerDay', 'itemsPerHour', 'priceAfterTax',
-        'gourmetBonusItems', 'materialCostPerHour', 'totalTeaCostPerHour',
-        'actionsPerHour', 'efficiencyBonus', 'levelEfficiency', 'houseEfficiency',
-        'teaEfficiency', 'equipmentEfficiency', 'artisanBonus', 'gourmetBonus',
-        'materialCosts', 'teaCosts'
+        'profitPerHour',
+        'profitPerDay',
+        'itemsPerHour',
+        'priceAfterTax',
+        'gourmetBonusItems',
+        'materialCostPerHour',
+        'totalTeaCostPerHour',
+        'actionsPerHour',
+        'efficiencyBonus',
+        'levelEfficiency',
+        'houseEfficiency',
+        'teaEfficiency',
+        'equipmentEfficiency',
+        'artisanBonus',
+        'gourmetBonus',
+        'materialCosts',
+        'teaCosts',
     ];
 
-    const missingFields = requiredFields.filter(field => profitData[field] === undefined);
+    const missingFields = requiredFields.filter((field) => profitData[field] === undefined);
     if (missingFields.length > 0) {
         console.error('❌ Production profit data missing required fields:', missingFields, 'for action:', actionHrid);
         console.error('Received profitData:', profitData);
@@ -398,7 +409,11 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     const profitPerDay = Math.round(profit * 24);
     const bonusRevenueTotal = profitData.bonusRevenue?.totalBonusRevenue || 0;
     // Use outputPrice (pre-tax) for revenue display
-    const revenue = Math.round(profitData.itemsPerHour * profitData.outputPrice + profitData.gourmetBonusItems * profitData.outputPrice + bonusRevenueTotal);
+    const revenue = Math.round(
+        profitData.itemsPerHour * profitData.outputPrice +
+            profitData.gourmetBonusItems * profitData.outputPrice +
+            bonusRevenueTotal
+    );
     // Calculate market tax (2% of revenue)
     const marketTax = Math.round(revenue * 0.02);
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
@@ -455,8 +470,8 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
 
     // Bonus Drops subsections - split by type
     const bonusDrops = profitData.bonusRevenue?.bonusDrops || [];
-    const essenceDrops = bonusDrops.filter(drop => drop.type === 'essence');
-    const rareFinds = bonusDrops.filter(drop => drop.type === 'rare_find');
+    const essenceDrops = bonusDrops.filter((drop) => drop.type === 'essence');
+    const rareFinds = bonusDrops.filter((drop) => drop.type === 'rare_find');
 
     // Essence Drops subsection
     let essenceSection = null;
@@ -527,7 +542,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             line.style.marginLeft = '8px';
             // Material structure: { itemName, amount, askPrice, totalCost, baseAmount }
             const amountPerAction = material.amount || 0;
-            const efficiencyMultiplier = 1 + (profitData.efficiencyBonus / 100);
+            const efficiencyMultiplier = 1 + profitData.efficiencyBonus / 100;
             const amountPerHour = amountPerAction * profitData.actionsPerHour * efficiencyMultiplier;
 
             // Build material line with embedded Artisan information
@@ -626,24 +641,36 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     }
 
     if (effParts.length > 0) {
-        modifierLines.push(`<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`);
-        modifierLines.push(`<div style="margin-left: 8px;">• Efficiency: +${profitData.efficiencyBonus.toFixed(1)}% (${effParts.join(', ')})</div>`);
+        modifierLines.push(
+            `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+        );
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Efficiency: +${profitData.efficiencyBonus.toFixed(1)}% (${effParts.join(', ')})</div>`
+        );
     }
 
     // Artisan Bonus (still shown here for reference, also embedded in materials)
     if (profitData.artisanBonus > 0) {
         if (modifierLines.length === 0) {
-            modifierLines.push(`<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`);
+            modifierLines.push(
+                `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+            );
         }
-        modifierLines.push(`<div style="margin-left: 8px;">• Artisan: -${formatPercentage(profitData.artisanBonus, 1)} material requirement</div>`);
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Artisan: -${formatPercentage(profitData.artisanBonus, 1)} material requirement</div>`
+        );
     }
 
     // Gourmet Bonus
     if (profitData.gourmetBonus > 0) {
         if (modifierLines.length === 0) {
-            modifierLines.push(`<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`);
+            modifierLines.push(
+                `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+            );
         }
-        modifierLines.push(`<div style="margin-left: 8px;">• Gourmet: +${formatPercentage(profitData.gourmetBonus, 1)} bonus items</div>`);
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Gourmet: +${formatPercentage(profitData.gourmetBonus, 1)} bonus items</div>`
+        );
     }
 
     modifiersDiv.innerHTML = modifierLines.join('');
@@ -711,14 +738,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     }
 
     // Create main profit section
-    const profitSection = createCollapsibleSection(
-        '💰',
-        'Profitability',
-        summary,
-        topLevelContent,
-        false,
-        0
-    );
+    const profitSection = createCollapsibleSection('💰', 'Profitability', summary, topLevelContent, false, 0);
     profitSection.id = 'mwi-production-profit';
 
     // Get the summary div to update it dynamically
@@ -727,18 +747,18 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     // Set up listener to update summary with total profit when input changes
     if (inputField && profitSummaryDiv) {
         const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
-        
+
         const updateSummary = (newValue) => {
             const inputValue = inputField.value;
-            
+
             if (inputValue === '∞') {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
             } else if (newValue > 0) {
                 // Calculate total profit for selected actions
-                const efficiencyMultiplier = 1 + (profitData.efficiencyBonus / 100);
+                const efficiencyMultiplier = 1 + profitData.efficiencyBonus / 100;
                 const actualAttempts = Math.ceil(newValue / efficiencyMultiplier);
                 const hoursNeeded = actualAttempts / profitData.actionsPerHour;
-                const totalProfit = Math.round((profitData.profitPerHour) * hoursNeeded);
+                const totalProfit = Math.round(profitData.profitPerHour * hoursNeeded);
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
             } else {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
@@ -757,7 +777,10 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
     if (insertionPoint) {
         // Insert after last collapsible section
-        while (insertionPoint.nextElementSibling && insertionPoint.nextElementSibling.className === 'mwi-collapsible-section') {
+        while (
+            insertionPoint.nextElementSibling &&
+            insertionPoint.nextElementSibling.className === 'mwi-collapsible-section'
+        ) {
             insertionPoint = insertionPoint.nextElementSibling;
         }
         insertionPoint.insertAdjacentElement('afterend', profitSection);
@@ -765,10 +788,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         // Fallback: insert after drop table
         const dropTableElement = panel.querySelector(dropTableSelector);
         if (dropTableElement) {
-            dropTableElement.parentNode.insertBefore(
-                profitSection,
-                dropTableElement.nextSibling
-            );
+            dropTableElement.parentNode.insertBefore(profitSection, dropTableElement.nextSibling);
         }
     }
 }
@@ -781,7 +801,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
  */
 function buildGatheringActionsBreakdown(profitData, actionsCount) {
     // Calculate actual attempts needed (input is desired output actions)
-    const efficiencyMultiplier = 1 + (profitData.totalEfficiency / 100);
+    const efficiencyMultiplier = 1 + profitData.totalEfficiency / 100;
     const actualAttempts = Math.ceil(actionsCount / efficiencyMultiplier);
     const hoursNeeded = actualAttempts / profitData.actionsPerHour;
 
@@ -828,8 +848,8 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
 
     // Bonus Drops subsections
     const bonusDrops = profitData.bonusRevenue?.bonusDrops || [];
-    const essenceDrops = bonusDrops.filter(drop => drop.type === 'essence');
-    const rareFinds = bonusDrops.filter(drop => drop.type === 'rare_find');
+    const essenceDrops = bonusDrops.filter((drop) => drop.type === 'essence');
+    const rareFinds = bonusDrops.filter((drop) => drop.type === 'rare_find');
 
     // Essence Drops subsection
     let essenceSection = null;
@@ -967,17 +987,24 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
  */
 function buildProductionActionsBreakdown(profitData, actionsCount) {
     // Calculate actual attempts needed (input is desired output actions)
-    const efficiencyMultiplier = 1 + (profitData.efficiencyBonus / 100);
+    const efficiencyMultiplier = 1 + profitData.efficiencyBonus / 100;
     const actualAttempts = Math.ceil(actionsCount / efficiencyMultiplier);
     const hoursNeeded = actualAttempts / profitData.actionsPerHour;
 
     // Calculate totals
     const bonusRevenueTotal = profitData.bonusRevenue?.totalBonusRevenue || 0;
     // Use outputPrice (pre-tax) for revenue display
-    const totalRevenue = Math.round((profitData.itemsPerHour * profitData.outputPrice + profitData.gourmetBonusItems * profitData.outputPrice + bonusRevenueTotal) * hoursNeeded);
+    const totalRevenue = Math.round(
+        (profitData.itemsPerHour * profitData.outputPrice +
+            profitData.gourmetBonusItems * profitData.outputPrice +
+            bonusRevenueTotal) *
+            hoursNeeded
+    );
     // Calculate market tax (2% of revenue)
     const totalMarketTax = Math.round(totalRevenue * 0.02);
-    const totalCosts = Math.round((profitData.materialCostPerHour + profitData.totalTeaCostPerHour) * hoursNeeded + totalMarketTax);
+    const totalCosts = Math.round(
+        (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) * hoursNeeded + totalMarketTax
+    );
     const totalProfit = totalRevenue - totalCosts;
 
     const detailsContent = document.createElement('div');
@@ -1032,8 +1059,8 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
     // Bonus Drops subsections
     const bonusDrops = profitData.bonusRevenue?.bonusDrops || [];
-    const essenceDrops = bonusDrops.filter(drop => drop.type === 'essence');
-    const rareFinds = bonusDrops.filter(drop => drop.type === 'rare_find');
+    const essenceDrops = bonusDrops.filter((drop) => drop.type === 'essence');
+    const rareFinds = bonusDrops.filter((drop) => drop.type === 'rare_find');
 
     // Essence Drops subsection
     let essenceSection = null;
@@ -1101,7 +1128,7 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
     // Material Costs subsection
     const materialCostsContent = document.createElement('div');
     if (profitData.materialCosts && profitData.materialCosts.length > 0) {
-        const efficiencyMultiplier = 1 + (profitData.efficiencyBonus / 100);
+        const efficiencyMultiplier = 1 + profitData.efficiencyBonus / 100;
         for (const material of profitData.materialCosts) {
             const totalMaterial = material.amount * actionsCount * efficiencyMultiplier;
             const totalMaterialCost = material.totalCost * actionsCount * efficiencyMultiplier;

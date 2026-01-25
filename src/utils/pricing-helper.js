@@ -12,7 +12,11 @@ import config from '../core/config.js';
  * @param {string} respectSetting - Config setting key for respect pricing mode flag (default: 'expectedValue_respectPricingMode')
  * @returns {number} Selected price (bid or ask)
  */
-export function selectPrice(priceData, modeSetting = 'profitCalc_pricingMode', respectSetting = 'expectedValue_respectPricingMode') {
+export function selectPrice(
+    priceData,
+    modeSetting = 'profitCalc_pricingMode',
+    respectSetting = 'expectedValue_respectPricingMode'
+) {
     if (!priceData) return 0;
 
     const pricingMode = config.getSettingValue(modeSetting, 'conservative');

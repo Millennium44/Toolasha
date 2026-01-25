@@ -26,7 +26,7 @@ export function calculateEfficiency(efficiencyPercent) {
         guaranteed,
         chanceForMore,
         min: guaranteed,
-        max: guaranteed + (chanceForMore > 0 ? 1 : 0)
+        max: guaranteed + (chanceForMore > 0 ? 1 : 0),
     };
 }
 
@@ -43,7 +43,7 @@ export function calculateEfficiency(efficiencyPercent) {
  */
 export function calculateExpectedOutput(efficiencyPercent, baseOutput = 1) {
     const eff = calculateEfficiency(efficiencyPercent);
-    const expectedActions = eff.guaranteed + (eff.chanceForMore / 100);
+    const expectedActions = eff.guaranteed + eff.chanceForMore / 100;
     return expectedActions * baseOutput;
 }
 
@@ -59,7 +59,7 @@ export function calculateExpectedOutput(efficiencyPercent, baseOutput = 1) {
  * // Formula: 6 / (1 + 0.30) = 4.615s
  */
 export function calculateActionTime(baseTime, speedPercent) {
-    return baseTime / (1 + (speedPercent / 100));
+    return baseTime / (1 + speedPercent / 100);
 }
 
 /**
@@ -106,9 +106,9 @@ export function calculateActionsForTarget(targetCount, efficiencyPercent) {
     const maxOutput = eff.max;
 
     return {
-        min: Math.ceil(targetCount / maxOutput),  // Best case (always max output)
-        max: Math.ceil(targetCount / minOutput),  // Worst case (always min output)
-        expected: expectedActions                  // Average case
+        min: Math.ceil(targetCount / maxOutput), // Best case (always max output)
+        max: Math.ceil(targetCount / minOutput), // Worst case (always min output)
+        expected: expectedActions, // Average case
     };
 }
 
@@ -176,5 +176,5 @@ export default {
     calculateXpPerHour,
     calculateLevelProgress,
     stackAdditive,
-    stackMultiplicative
+    stackMultiplicative,
 };

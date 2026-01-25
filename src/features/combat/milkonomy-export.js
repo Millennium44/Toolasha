@@ -66,7 +66,7 @@ function mapSlotType(slotType) {
         '/equipment_types/neck': 'neck',
         '/equipment_types/earrings': 'earrings',
         '/equipment_types/ring': 'ring',
-        '/equipment_types/pouch': 'pouch'
+        '/equipment_types/pouch': 'pouch',
     };
     return mapping[slotType] || slotType;
 }
@@ -79,7 +79,7 @@ function mapSlotType(slotType) {
  */
 function getSkillLevel(skills, actionType) {
     const skillHrid = actionType.replace('/action_types/', '/skills/');
-    const skill = skills.find(s => s.skillHrid === skillHrid);
+    const skill = skills.find((s) => s.skillHrid === skillHrid);
     return skill?.level || 1;
 }
 
@@ -167,7 +167,7 @@ function getBestEquipmentForSkill(inventory, gameData, skillName, slotType) {
         matchingItems.push({
             hrid: invItem.itemHrid,
             enhancementLevel: invItem.enhancementLevel || 0,
-            name: itemDetail.name
+            name: itemDetail.name,
         });
     }
 
@@ -178,7 +178,7 @@ function getBestEquipmentForSkill(inventory, gameData, skillName, slotType) {
 
         const equipment = {
             type: mapSlotType(slotType),
-            hrid: best.hrid
+            hrid: best.hrid,
         };
 
         // Only include enhanceLevel if the item can be enhanced (has the field)
@@ -209,7 +209,7 @@ function getHouseLevel(actionType) {
         '/action_types/cooking': '/house_rooms/kitchen',
         '/action_types/brewing': '/house_rooms/brewery',
         '/action_types/alchemy': '/house_rooms/laboratory',
-        '/action_types/enhancing': '/house_rooms/observatory'
+        '/action_types/enhancing': '/house_rooms/observatory',
     };
 
     const roomHrid = roomMapping[actionType];
@@ -227,9 +227,7 @@ function getActiveTeas(actionType) {
     const drinkSlots = dataManager.getActionDrinkSlots(actionType);
     if (!drinkSlots || drinkSlots.length === 0) return [];
 
-    return drinkSlots
-        .filter(slot => slot && slot.itemHrid)
-        .map(slot => slot.itemHrid);
+    return drinkSlots.filter((slot) => slot && slot.itemHrid).map((slot) => slot.itemHrid);
 }
 
 /**
@@ -255,7 +253,7 @@ function constructActionConfig(skillName, skills, inventory, gameData) {
         body: getBestEquipmentForSkill(inventory, gameData, skillName, bodyType),
         charm: getBestEquipmentForSkill(inventory, gameData, skillName, charmType),
         houseLevel: getHouseLevel(actionType),
-        tea: getActiveTeas(actionType)
+        tea: getActiveTeas(actionType),
     };
 }
 
@@ -289,7 +287,7 @@ function getEquippedItem(equipmentMap, gameData, slotType) {
             // Item has skilling stats - include it
             const equipment = {
                 type: mapSlotType(slotType),
-                hrid: item.itemHrid
+                hrid: item.itemHrid,
             };
 
             // Only include enhanceLevel if the item has an enhancement level field
@@ -321,7 +319,9 @@ export async function constructMilkonomyExport(externalProfileId = null) {
         // Milkonomy export is only for your own character (no external profiles)
         if (externalProfileId) {
             console.error('[Milkonomy Export] External profile export not supported');
-            alert('Milkonomy export is only available for your own profile.\n\nTo export another player:\n1. Use Combat Sim Export instead\n2. Or copy their profile link and open it separately');
+            alert(
+                'Milkonomy export is only available for your own profile.\n\nTo export another player:\n1. Use Combat Sim Export instead\n2. Or copy their profile link and open it separately'
+            );
             return null;
         }
 
@@ -355,7 +355,7 @@ export async function constructMilkonomyExport(externalProfileId = null) {
             'cooking',
             'brewing',
             'alchemy',
-            'enhancing'
+            'enhancing',
         ];
 
         const actionConfigMap = {};
@@ -374,7 +374,7 @@ export async function constructMilkonomyExport(externalProfileId = null) {
             '/equipment_types/neck',
             '/equipment_types/earrings',
             '/equipment_types/ring',
-            '/equipment_types/pouch'
+            '/equipment_types/pouch',
         ];
 
         for (const slotType of specialSlots) {
@@ -389,12 +389,7 @@ export async function constructMilkonomyExport(externalProfileId = null) {
 
         // Build community buff map
         const communityBuffMap = {};
-        const buffTypes = [
-            'experience',
-            'gathering_quantity',
-            'production_efficiency',
-            'enhancing_speed'
-        ];
+        const buffTypes = ['experience', 'gathering_quantity', 'production_efficiency', 'enhancing_speed'];
 
         for (const buffType of buffTypes) {
             const buffHrid = `/community_buff_types/${buffType}`;
@@ -402,7 +397,7 @@ export async function constructMilkonomyExport(externalProfileId = null) {
             communityBuffMap[buffType] = {
                 type: buffType,
                 hrid: buffHrid,
-                level: level
+                level: level,
             };
         }
 
@@ -412,9 +407,8 @@ export async function constructMilkonomyExport(externalProfileId = null) {
             color,
             actionConfigMap,
             specialEquimentMap: specialEquipmentMap,
-            communityBuffMap
+            communityBuffMap,
         };
-
     } catch (error) {
         console.error('[Milkonomy Export] Export construction failed:', error);
         return null;

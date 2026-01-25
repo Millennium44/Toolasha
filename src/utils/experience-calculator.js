@@ -51,7 +51,7 @@ export function calculateExpPerHour(actionHrid) {
         itemDetailMap: gameData.itemDetailMap,
         includeCommunityBuff: true,
         includeBreakdown: false,
-        floorActionLevel: true
+        floorActionLevel: true,
     });
 
     if (!stats) {
@@ -67,7 +67,7 @@ export function calculateExpPerHour(actionHrid) {
     // Efficiency gives guaranteed repeats + chance for extra
     const guaranteedActions = 1 + Math.floor(totalEfficiency / 100);
     const chanceForExtra = totalEfficiency % 100;
-    const avgActionsPerAttempt = guaranteedActions + (chanceForExtra / 100);
+    const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
     // Calculate actions per hour WITH efficiency (total completions including free repeats)
     const actionsPerHourWithEfficiency = baseActionsPerHour * avgActionsPerAttempt;
@@ -88,10 +88,10 @@ export function calculateExpPerHour(actionHrid) {
         actionsPerHour: actionsPerHourWithEfficiency,
         xpMultiplier: xpData.totalMultiplier,
         actionTime,
-        totalEfficiency
+        totalEfficiency,
     };
 }
 
 export default {
-    calculateExpPerHour
+    calculateExpPerHour,
 };

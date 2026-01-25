@@ -51,7 +51,7 @@ class DungeonTrackerUIInteractions {
             const rect = this.container.getBoundingClientRect();
             this.dragOffset = {
                 x: e.clientX - rect.left,
-                y: e.clientY - rect.top
+                y: e.clientY - rect.top,
             };
             header.style.cursor = 'grabbing';
         });

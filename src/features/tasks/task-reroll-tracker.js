@@ -74,7 +74,7 @@ class TaskRerollTracker {
      * Clean up observers and handlers
      */
     cleanup() {
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.isInitialized = false;
     }
@@ -88,9 +88,7 @@ class TaskRerollTracker {
             return;
         }
 
-        const activeTaskIds = new Set(
-            dataManager.characterData.characterQuests.map(quest => quest.id)
-        );
+        const activeTaskIds = new Set(dataManager.characterData.characterQuests.map((quest) => quest.id));
 
         let hasChanges = false;
 
@@ -125,16 +123,17 @@ class TaskRerollTracker {
                 const newCowbellCount = quest.cowbellRerollCount || 0;
 
                 // Only update if counts increased or task is new
-                if (!existingData ||
+                if (
+                    !existingData ||
                     newCoinCount > existingData.coinRerollCount ||
-                    newCowbellCount > existingData.cowbellRerollCount) {
-
+                    newCowbellCount > existingData.cowbellRerollCount
+                ) {
                     this.taskRerollData.set(quest.id, {
                         coinRerollCount: Math.max(existingData?.coinRerollCount || 0, newCoinCount),
                         cowbellRerollCount: Math.max(existingData?.cowbellRerollCount || 0, newCowbellCount),
                         monsterHrid: quest.monsterHrid || '',
                         actionHrid: quest.actionHrid || '',
-                        goalCount: quest.goalCount || 0
+                        goalCount: quest.goalCount || 0,
                     });
                     hasChanges = true;
                 }
@@ -178,16 +177,17 @@ class TaskRerollTracker {
                 const newCowbellCount = quest.cowbellRerollCount || 0;
 
                 // Only update if counts increased or task is new
-                if (!existingData ||
+                if (
+                    !existingData ||
                     newCoinCount > existingData.coinRerollCount ||
-                    newCowbellCount > existingData.cowbellRerollCount) {
-
+                    newCowbellCount > existingData.cowbellRerollCount
+                ) {
                     this.taskRerollData.set(quest.id, {
                         coinRerollCount: Math.max(existingData?.coinRerollCount || 0, newCoinCount),
                         cowbellRerollCount: Math.max(existingData?.cowbellRerollCount || 0, newCowbellCount),
                         monsterHrid: quest.monsterHrid || '',
                         actionHrid: quest.actionHrid || '',
-                        goalCount: quest.goalCount || 0
+                        goalCount: quest.goalCount || 0,
                     });
                     hasChanges = true;
                 }
@@ -218,7 +218,6 @@ class TaskRerollTracker {
         this.unregisterHandlers.push(() => {
             dataManager.off('character_initialized', initHandler);
         });
-
     }
 
     /**
@@ -226,24 +225,16 @@ class TaskRerollTracker {
      */
     registerDOMObservers() {
         // Watch for task list appearing
-        const unregisterTaskList = domObserver.onClass(
-            'TaskRerollTracker-TaskList',
-            'TasksPanel_taskList',
-            () => {
-                this.updateAllTaskDisplays();
-            }
-        );
+        const unregisterTaskList = domObserver.onClass('TaskRerollTracker-TaskList', 'TasksPanel_taskList', () => {
+            this.updateAllTaskDisplays();
+        });
         this.unregisterHandlers.push(unregisterTaskList);
 
         // Watch for individual tasks appearing
-        const unregisterTask = domObserver.onClass(
-            'TaskRerollTracker-Task',
-            'RandomTask_randomTask',
-            () => {
-                // Small delay to let task data settle
-                setTimeout(() => this.updateAllTaskDisplays(), 100);
-            }
-        );
+        const unregisterTask = domObserver.onClass('TaskRerollTracker-Task', 'RandomTask_randomTask', () => {
+            // Small delay to let task data settle
+            setTimeout(() => this.updateAllTaskDisplays(), 100);
+        });
         this.unregisterHandlers.push(unregisterTask);
     }
 

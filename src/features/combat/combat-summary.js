@@ -103,7 +103,7 @@ class CombatSummary {
         }
 
         // Wait for battle panel to appear and inject summary
-        let tryTimes = 0;
+        const tryTimes = 0;
         this.findAndInjectSummary(message, totalPriceAsk, totalPriceBid, totalSkillsExp, tryTimes);
     }
 
@@ -154,43 +154,53 @@ class CombatSummary {
             }
 
             // Total revenue
-            document.querySelector('div#mwi-combat-encounters')?.insertAdjacentHTML(
-                'afterend',
-                `<div id="mwi-combat-revenue" style="color: ${textColor};">Total revenue: ${formatWithSeparator(Math.round(totalPriceAsk))} / ${formatWithSeparator(Math.round(totalPriceBid))}</div>`
-            );
+            document
+                .querySelector('div#mwi-combat-encounters')
+                ?.insertAdjacentHTML(
+                    'afterend',
+                    `<div id="mwi-combat-revenue" style="color: ${textColor};">Total revenue: ${formatWithSeparator(Math.round(totalPriceAsk))} / ${formatWithSeparator(Math.round(totalPriceBid))}</div>`
+                );
 
             // Per-hour revenue
             if (battleDurationSec) {
                 const revenuePerHourAsk = totalPriceAsk / (battleDurationSec / 3600);
                 const revenuePerHourBid = totalPriceBid / (battleDurationSec / 3600);
 
-                document.querySelector('div#mwi-combat-revenue')?.insertAdjacentHTML(
-                    'afterend',
-                    `<div id="mwi-combat-revenue-hour" style="color: ${textColor};">Revenue/hour: ${formatWithSeparator(Math.round(revenuePerHourAsk))} / ${formatWithSeparator(Math.round(revenuePerHourBid))}</div>`
-                );
+                document
+                    .querySelector('div#mwi-combat-revenue')
+                    ?.insertAdjacentHTML(
+                        'afterend',
+                        `<div id="mwi-combat-revenue-hour" style="color: ${textColor};">Revenue/hour: ${formatWithSeparator(Math.round(revenuePerHourAsk))} / ${formatWithSeparator(Math.round(revenuePerHourBid))}</div>`
+                    );
 
                 // Per-day revenue
-                document.querySelector('div#mwi-combat-revenue-hour')?.insertAdjacentHTML(
-                    'afterend',
-                    `<div id="mwi-combat-revenue-day" style="color: ${textColor};">Revenue/day: ${formatWithSeparator(Math.round(revenuePerHourAsk * 24))} / ${formatWithSeparator(Math.round(revenuePerHourBid * 24))}</div>`
-                );
+                document
+                    .querySelector('div#mwi-combat-revenue-hour')
+                    ?.insertAdjacentHTML(
+                        'afterend',
+                        `<div id="mwi-combat-revenue-day" style="color: ${textColor};">Revenue/day: ${formatWithSeparator(Math.round(revenuePerHourAsk * 24))} / ${formatWithSeparator(Math.round(revenuePerHourBid * 24))}</div>`
+                    );
             }
 
             // Total experience
-            document.querySelector('div#mwi-combat-revenue-day')?.insertAdjacentHTML(
-                'afterend',
-                `<div id="mwi-combat-total-exp" style="color: ${textColor};">Total exp: ${formatWithSeparator(Math.round(totalSkillsExp))}</div>`
-            );
+            document
+                .querySelector('div#mwi-combat-revenue-day')
+                ?.insertAdjacentHTML(
+                    'afterend',
+                    `<div id="mwi-combat-total-exp" style="color: ${textColor};">Total exp: ${formatWithSeparator(Math.round(totalSkillsExp))}</div>`
+                );
 
             // Per-hour experience breakdowns
             if (battleDurationSec) {
                 const totalExpPerHour = totalSkillsExp / (battleDurationSec / 3600);
 
                 // Insert total exp/hour first
-                document.querySelector('div#mwi-combat-total-exp')?.insertAdjacentHTML(
-                    'afterend',
-                    `<div id="mwi-combat-total-exp-hour" style="color: ${textColor};">Total exp/hour: ${formatWithSeparator(Math.round(totalExpPerHour))}</div>`
-                );
+                document
+                    .querySelector('div#mwi-combat-total-exp')
+                    ?.insertAdjacentHTML(
+                        'afterend',
+                        `<div id="mwi-combat-total-exp-hour" style="color: ${textColor};">Total exp/hour: ${formatWithSeparator(Math.round(totalExpPerHour))}</div>`
+                    );
 
                 // Individual skill exp/hour
                 const skills = [
@@ -200,7 +210,7 @@ class CombatSummary {
                     { skillHrid: '/skills/defense', name: 'Defense' },
                     { skillHrid: '/skills/melee', name: 'Melee' },
                     { skillHrid: '/skills/intelligence', name: 'Intelligence' },
-                    { skillHrid: '/skills/stamina', name: 'Stamina' }
+                    { skillHrid: '/skills/stamina', name: 'Stamina' },
                 ];
 
                 let lastElement = document.querySelector('div#mwi-combat-total-exp-hour');
@@ -223,7 +233,6 @@ class CombatSummary {
             } else {
                 console.warn('[Combat Summary] Unable to display hourly stats due to null battleDurationSec');
             }
-
         } else if (tryTimes <= 10) {
             // Retry if element not found
             setTimeout(() => {

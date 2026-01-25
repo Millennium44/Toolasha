@@ -74,15 +74,11 @@ class InventorySort {
         }
 
         // Watch for inventory panel (for future opens/reloads)
-        const unregister = domObserver.onClass(
-            'InventorySort',
-            'Inventory_items',
-            (elem) => {
-                this.currentInventoryElem = elem;
-                this.injectSortControls(elem);
-                this.applyCurrentSort();
-            }
-        );
+        const unregister = domObserver.onClass('InventorySort', 'Inventory_items', (elem) => {
+            this.currentInventoryElem = elem;
+            this.injectSortControls(elem);
+            this.applyCurrentSort();
+        });
         this.unregisterHandlers.push(unregister);
 
         // Register with badge manager for coordinated rendering
@@ -91,7 +87,6 @@ class InventorySort {
             (itemElem) => this.renderBadgesForItem(itemElem),
             50 // Priority: render before bid/ask badges (lower = earlier)
         );
-
 
         // Store handler reference for cleanup
         this.itemsUpdatedHandler = () => {
@@ -115,7 +110,6 @@ class InventorySort {
     setupMarketDataListener() {
         // If market data isn't loaded yet, retry periodically
         if (!marketAPI.isLoaded()) {
-
             let retryCount = 0;
             const maxRetries = 10;
             const retryInterval = 500; // 500ms between retries
@@ -159,9 +153,12 @@ class InventorySort {
      */
     saveSettings() {
         try {
-            localStorage.setItem('toolasha_inventory_sort', JSON.stringify({
-                mode: this.currentMode
-            }));
+            localStorage.setItem(
+                'toolasha_inventory_sort',
+                JSON.stringify({
+                    mode: this.currentMode,
+                })
+            );
         } catch (error) {
             console.error('[InventorySort] Failed to save settings:', error);
         }
@@ -247,7 +244,7 @@ class InventorySort {
         if (!this.controlsContainer) return;
 
         const buttons = this.controlsContainer.querySelectorAll('button');
-        buttons.forEach(button => {
+        buttons.forEach((button) => {
             const isActive = button.dataset.mode === this.currentMode;
 
             if (isActive) {
@@ -276,7 +273,7 @@ class InventorySort {
 
         // Remove all existing stack price badges so they can be recreated with new settings
         const badges = document.querySelectorAll('.mwi-stack-price');
-        badges.forEach(badge => badge.remove());
+        badges.forEach((badge) => badge.remove());
 
         this.applyCurrentSort();
     }
@@ -310,7 +307,9 @@ class InventorySort {
             const isLootsCategory = categoryName === 'Loots';
             const shouldSort = isLootsCategory
                 ? false
-                : (isEquipmentCategory ? config.getSetting('invSort_sortEquipment') : true);
+                : isEquipmentCategory
+                  ? config.getSetting('invSort_sortEquipment')
+                  : true;
 
             // Ensure category label stays at top
             const label = categoryDiv.querySelector('[class*="Inventory_label"]');
@@ -326,7 +325,7 @@ class InventorySort {
                 this.sortItemsByPrice(itemElems, this.currentMode);
             } else {
                 // Reset to default order
-                itemElems.forEach(itemElem => {
+                itemElems.forEach((itemElem) => {
                     itemElem.style.order = 0;
                 });
             }
@@ -343,9 +342,9 @@ class InventorySort {
      */
     sortItemsByPrice(itemElems, mode) {
         // Convert NodeList to array with values
-        const items = Array.from(itemElems).map(elem => ({
+        const items = Array.from(itemElems).map((elem) => ({
             elem,
-            value: parseFloat(elem.dataset[mode + 'Value']) || 0
+            value: parseFloat(elem.dataset[mode + 'Value']) || 0,
         }));
 
         // Sort by value descending (highest first)
@@ -445,7 +444,7 @@ class InventorySort {
         this.updateButtonStates();
 
         // Update all price badge colors
-        document.querySelectorAll('.mwi-stack-price').forEach(badge => {
+        document.querySelectorAll('.mwi-stack-price').forEach((badge) => {
             badge.style.color = config.COLOR_ACCENT;
         });
     }
@@ -471,10 +470,10 @@ class InventorySort {
 
         // Remove all badges
         const badges = document.querySelectorAll('.mwi-stack-price');
-        badges.forEach(badge => badge.remove());
+        badges.forEach((badge) => badge.remove());
 
         // Unregister observers
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         this.currentInventoryElem = null;

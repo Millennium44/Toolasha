@@ -110,7 +110,7 @@ class DungeonTrackerUI {
 
         this.characterSelectObserver.observe(document.body, {
             childList: true,
-            subtree: true
+            subtree: true,
         });
     }
 
@@ -401,7 +401,7 @@ class DungeonTrackerUI {
                 if (currentRun) this.update(currentRun);
             },
             onUpdateChart: () => this.updateChart(),
-            onUpdateHistory: () => this.updateRunHistory()
+            onUpdateHistory: () => this.updateRunHistory(),
         });
 
         // Apply initial states
@@ -469,12 +469,12 @@ class DungeonTrackerUI {
 
         // Apply dungeon filter
         if (this.state.filterDungeon !== 'all') {
-            runHistory = runHistory.filter(r => r.dungeonName === this.state.filterDungeon);
+            runHistory = runHistory.filter((r) => r.dungeonName === this.state.filterDungeon);
         }
 
         // Apply team filter
         if (this.state.filterTeam !== 'all') {
-            runHistory = runHistory.filter(r => r.teamKey === this.state.filterTeam);
+            runHistory = runHistory.filter((r) => r.teamKey === this.state.filterTeam);
         }
 
         // Calculate stats from filtered runs
@@ -482,14 +482,14 @@ class DungeonTrackerUI {
             // Sort by timestamp (descending for most recent first)
             runHistory.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-            const durations = runHistory.map(r => r.duration || r.totalTime || 0);
+            const durations = runHistory.map((r) => r.duration || r.totalTime || 0);
             const total = durations.reduce((sum, d) => sum + d, 0);
 
             stats = {
                 totalRuns: runHistory.length,
                 avgTime: Math.floor(total / runHistory.length),
                 fastestTime: Math.min(...durations),
-                slowestTime: Math.max(...durations)
+                slowestTime: Math.max(...durations),
             };
 
             lastRunTime = durations[0]; // First run after sorting (most recent)
@@ -599,12 +599,13 @@ class DungeonTrackerUI {
         });
 
         if (playerNames.length === 0) {
-            keysList.innerHTML = '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No key data yet</div>';
+            keysList.innerHTML =
+                '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No key data yet</div>';
             return;
         }
 
         // Build player list HTML
-        playerNames.forEach(playerName => {
+        playerNames.forEach((playerName) => {
             const keyCount = keyCountsMap[playerName];
             const isCurrentPlayer = playerName === characterName;
 
@@ -717,9 +718,11 @@ class DungeonTrackerUI {
         // Force remove ALL dungeon tracker containers (handles duplicates from memory leak)
         const allContainers = document.querySelectorAll('#mwi-dungeon-tracker');
         if (allContainers.length > 1) {
-            console.warn(`[Toolasha Dungeon Tracker UI] Found ${allContainers.length} UI containers, removing all (memory leak detected)`);
+            console.warn(
+                `[Toolasha Dungeon Tracker UI] Found ${allContainers.length} UI containers, removing all (memory leak detected)`
+            );
         }
-        allContainers.forEach(container => container.remove());
+        allContainers.forEach((container) => container.remove());
 
         // Clear instance reference
         this.container = null;

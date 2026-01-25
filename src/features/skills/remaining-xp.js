@@ -37,13 +37,9 @@ class RemainingXP {
      */
     watchSkillButtons() {
         // Watch for left navigation bar skills (non-combat skills)
-        const unregisterNav = domObserver.onClass(
-            'RemainingXP-NavSkillBar',
-            'NavigationBar_currentExperience',
-            () => {
-                this.updateAllSkillBars();
-            }
-        );
+        const unregisterNav = domObserver.onClass('RemainingXP-NavSkillBar', 'NavigationBar_currentExperience', () => {
+            this.updateAllSkillBars();
+        });
         this.unregisterObservers.push(unregisterNav);
 
         // Wait for character data to be loaded before first update
@@ -72,13 +68,13 @@ class RemainingXP {
      */
     updateAllSkillBars() {
         // Remove any existing XP displays
-        document.querySelectorAll('.mwi-remaining-xp').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-remaining-xp').forEach((el) => el.remove());
 
         // Find all skill progress bars (broader selector to catch combat skills too)
         // Use attribute selector to match any class containing "currentExperience"
         const progressBars = document.querySelectorAll('[class*="currentExperience"]');
 
-        progressBars.forEach(progressBar => {
+        progressBars.forEach((progressBar) => {
             this.addRemainingXP(progressBar);
         });
     }
@@ -154,7 +150,6 @@ class RemainingXP {
 
             // Insert after the progress bar
             progressContainer.insertBefore(xpDisplay, progressBar.nextSibling);
-
         } catch (error) {
             // Silent fail - don't spam console with errors
         }
@@ -176,7 +171,7 @@ class RemainingXP {
         }
 
         // Find the skill
-        const skill = characterData.characterSkills.find(s => s.skillHrid === skillHrid);
+        const skill = characterData.characterSkills.find((s) => s.skillHrid === skillHrid);
         if (!skill) {
             return null;
         }
@@ -209,11 +204,11 @@ class RemainingXP {
         }
 
         // Unregister observers
-        this.unregisterObservers.forEach(unregister => unregister());
+        this.unregisterObservers.forEach((unregister) => unregister());
         this.unregisterObservers = [];
 
         // Remove all XP displays
-        document.querySelectorAll('.mwi-remaining-xp').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-remaining-xp').forEach((el) => el.remove());
 
         this.initialized = false;
     }

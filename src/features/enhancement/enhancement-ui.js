@@ -23,17 +23,17 @@ const STYLE = {
         danger: '#ff0055',
         success: '#00ff99',
         headerBg: 'rgba(15, 5, 35, 0.7)',
-        gold: '#FFD700'
+        gold: '#FFD700',
     },
     borderRadius: {
         small: '4px',
         medium: '8px',
-        large: '12px'
+        large: '12px',
     },
     transitions: {
         fast: 'all 0.15s ease',
-        medium: 'all 0.25s ease'
-    }
+        medium: 'all 0.25s ease',
+    },
 };
 
 // Table styling
@@ -196,7 +196,7 @@ class EnhancementUI {
      */
     switchToSession(sessionId) {
         const sessions = Object.values(enhancementTracker.getAllSessions());
-        const index = sessions.findIndex(session => session.id === sessionId);
+        const index = sessions.findIndex((session) => session.id === sessionId);
 
         if (index !== -1) {
             this.currentViewingIndex = index;
@@ -232,7 +232,7 @@ class EnhancementUI {
             color: STYLE.colors.textPrimary,
             display: 'flex',
             flexDirection: 'column',
-            transition: 'width 0.2s ease'
+            transition: 'width 0.2s ease',
         });
 
         // Create header
@@ -274,7 +274,7 @@ class EnhancementUI {
             background: STYLE.colors.headerBg,
             borderBottom: `1px solid ${STYLE.colors.border}`,
             userSelect: 'none',
-            flexShrink: '0'
+            flexShrink: '0',
         });
 
         // Title with session counter
@@ -302,7 +302,7 @@ class EnhancementUI {
             display: 'flex',
             gap: '5px',
             alignItems: 'center',
-            marginLeft: 'auto'
+            marginLeft: 'auto',
         });
 
         // Previous session button
@@ -342,7 +342,7 @@ class EnhancementUI {
             fontSize: '14px',
             padding: '2px 8px',
             borderRadius: '3px',
-            transition: STYLE.transitions.fast
+            transition: STYLE.transitions.fast,
         });
 
         button.addEventListener('mouseover', () => {
@@ -374,7 +374,7 @@ class EnhancementUI {
             padding: '2px 8px',
             borderRadius: '3px',
             transition: STYLE.transitions.fast,
-            marginLeft: '5px'
+            marginLeft: '5px',
         });
 
         button.addEventListener('mouseover', () => {
@@ -411,7 +411,7 @@ class EnhancementUI {
             fontSize: '14px',
             padding: '2px 8px',
             borderRadius: '3px',
-            transition: STYLE.transitions.fast
+            transition: STYLE.transitions.fast,
         });
 
         button.addEventListener('mouseover', () => {
@@ -530,7 +530,7 @@ class EnhancementUI {
             padding: '10px 15px',
             fontSize: '12px',
             borderTop: `1px solid ${STYLE.colors.border}`,
-            color: STYLE.colors.textPrimary
+            color: STYLE.colors.textPrimary,
         });
 
         summary.innerHTML = `
@@ -694,7 +694,7 @@ class EnhancementUI {
         const durationText = this.formatDuration(duration);
 
         // Calculate XP/hour if we have enough data (at least 5 seconds + some XP)
-        const xpPerHour = (duration >= 5 && session.totalXP > 0) ? Math.floor((session.totalXP / duration) * 3600) : 0;
+        const xpPerHour = duration >= 5 && session.totalXP > 0 ? Math.floor((session.totalXP / duration) * 3600) : 0;
 
         // Status display
         const statusColor = session.state === SessionState.COMPLETED ? STYLE.colors.success : STYLE.colors.accent;
@@ -815,14 +815,16 @@ class EnhancementUI {
         for (const level of levels) {
             const levelData = session.attemptsPerLevel[level];
             const rate = formatPercentage(levelData.successRate, 1);
-            const isCurrent = (parseInt(level) === session.currentLevel);
+            const isCurrent = parseInt(level) === session.currentLevel;
 
-            const rowStyle = isCurrent ? `
+            const rowStyle = isCurrent
+                ? `
                 background: linear-gradient(90deg, rgba(126, 87, 194, 0.25), rgba(0, 242, 255, 0.1));
                 box-shadow: 0 0 12px rgba(126, 87, 194, 0.5), inset 0 0 6px rgba(0, 242, 255, 0.3);
                 border-left: 3px solid ${STYLE.colors.accent};
                 font-weight: bold;
-            ` : '';
+            `
+                : '';
 
             rows += `
                 <tr style="${rowStyle}">
@@ -883,8 +885,10 @@ class EnhancementUI {
 
         // Material costs
         if (hasMaterials) {
-            html += '<div style="margin-bottom: 8px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">';
-            html += '<div style="font-weight: bold; margin-bottom: 3px; color: ${STYLE.colors.textSecondary};">Materials:</div>';
+            html +=
+                '<div style="margin-bottom: 8px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">';
+            html +=
+                '<div style="font-weight: bold; margin-bottom: 3px; color: ${STYLE.colors.textSecondary};">Materials:</div>';
 
             for (const [itemHrid, data] of Object.entries(session.materialCosts)) {
                 const itemDetails = gameData?.itemDetailMap?.[itemHrid];
@@ -914,7 +918,7 @@ class EnhancementUI {
         // Protection costs
         if (hasProtection) {
             const protectionItemName = session.protectionItemHrid
-                ? (gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection')
+                ? gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection'
                 : 'Protection';
 
             html += `

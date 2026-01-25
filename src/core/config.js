@@ -18,38 +18,38 @@ class Config {
         // === CONSTANTS ===
 
         // Number formatting separators (locale-aware)
-        this.THOUSAND_SEPARATOR = new Intl.NumberFormat().format(1111).replaceAll("1", "").at(0) || "";
-        this.DECIMAL_SEPARATOR = new Intl.NumberFormat().format(1.1).replaceAll("1", "").at(0);
+        this.THOUSAND_SEPARATOR = new Intl.NumberFormat().format(1111).replaceAll('1', '').at(0) || '';
+        this.DECIMAL_SEPARATOR = new Intl.NumberFormat().format(1.1).replaceAll('1', '').at(0);
 
         // Extended color palette (configurable)
         // Dark background colors (for UI elements on dark backgrounds)
-        this.COLOR_PROFIT = "#047857";      // Emerald green for positive values
-        this.COLOR_LOSS = "#f87171";        // Red for negative values
-        this.COLOR_WARNING = "#ffa500";     // Orange for warnings
-        this.COLOR_INFO = "#60a5fa";        // Blue for informational
-        this.COLOR_ESSENCE = "#c084fc";     // Purple for essences
+        this.COLOR_PROFIT = '#047857'; // Emerald green for positive values
+        this.COLOR_LOSS = '#f87171'; // Red for negative values
+        this.COLOR_WARNING = '#ffa500'; // Orange for warnings
+        this.COLOR_INFO = '#60a5fa'; // Blue for informational
+        this.COLOR_ESSENCE = '#c084fc'; // Purple for essences
 
         // Tooltip colors (for text on light/tooltip backgrounds)
-        this.COLOR_TOOLTIP_PROFIT = "#047857";  // Green for tooltips
-        this.COLOR_TOOLTIP_LOSS = "#dc2626";    // Darker red for tooltips
-        this.COLOR_TOOLTIP_INFO = "#2563eb";    // Darker blue for tooltips
-        this.COLOR_TOOLTIP_WARNING = "#ea580c"; // Darker orange for tooltips
+        this.COLOR_TOOLTIP_PROFIT = '#047857'; // Green for tooltips
+        this.COLOR_TOOLTIP_LOSS = '#dc2626'; // Darker red for tooltips
+        this.COLOR_TOOLTIP_INFO = '#2563eb'; // Darker blue for tooltips
+        this.COLOR_TOOLTIP_WARNING = '#ea580c'; // Darker orange for tooltips
 
         // General colors
-        this.COLOR_TEXT_PRIMARY = "#ffffff"; // Primary text color
-        this.COLOR_TEXT_SECONDARY = "#888888"; // Secondary text color
-        this.COLOR_BORDER = "#444444";      // Border color
-        this.COLOR_GOLD = "#ffa500";        // Gold/currency color
-        this.COLOR_ACCENT = "#22c55e";      // Script accent color (green)
-        this.COLOR_REMAINING_XP = "#FFFFFF"; // Remaining XP text color
+        this.COLOR_TEXT_PRIMARY = '#ffffff'; // Primary text color
+        this.COLOR_TEXT_SECONDARY = '#888888'; // Secondary text color
+        this.COLOR_BORDER = '#444444'; // Border color
+        this.COLOR_GOLD = '#ffa500'; // Gold/currency color
+        this.COLOR_ACCENT = '#22c55e'; // Script accent color (green)
+        this.COLOR_REMAINING_XP = '#FFFFFF'; // Remaining XP text color
 
         // Legacy color constants (mapped to COLOR_ACCENT)
         this.SCRIPT_COLOR_MAIN = this.COLOR_ACCENT;
         this.SCRIPT_COLOR_TOOLTIP = this.COLOR_ACCENT;
-        this.SCRIPT_COLOR_ALERT = "red";
+        this.SCRIPT_COLOR_ALERT = 'red';
 
         // Market API URL
-        this.MARKET_API_URL = "https://www.milkywayidle.com/game_data/marketplace.json";
+        this.MARKET_API_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
 
         // === SETTINGS MAP ===
 
@@ -69,42 +69,42 @@ class Config {
                 name: 'Market Prices in Tooltips',
                 category: 'Market',
                 description: 'Shows bid/ask prices in item tooltips',
-                settingKey: 'itemTooltip_prices'
+                settingKey: 'itemTooltip_prices',
             },
             tooltipProfit: {
                 enabled: true,
                 name: 'Profit Calculator in Tooltips',
                 category: 'Market',
                 description: 'Shows production cost and profit in tooltips',
-                settingKey: 'itemTooltip_profit'
+                settingKey: 'itemTooltip_profit',
             },
             tooltipConsumables: {
                 enabled: true,
                 name: 'Consumable Effects in Tooltips',
                 category: 'Market',
                 description: 'Shows buff effects and durations for food/drinks',
-                settingKey: 'showConsumTips'
+                settingKey: 'showConsumTips',
             },
             expectedValueCalculator: {
                 enabled: true,
                 name: 'Expected Value Calculator',
                 category: 'Market',
                 description: 'Shows EV for openable containers (crates, chests)',
-                settingKey: 'itemTooltip_expectedValue'
+                settingKey: 'itemTooltip_expectedValue',
             },
             market_showListingPrices: {
                 enabled: true,
                 name: 'Market Listing Price Display',
                 category: 'Market',
                 description: 'Shows top order price, total value, and listing age on My Listings',
-                settingKey: 'market_showListingPrices'
+                settingKey: 'market_showListingPrices',
             },
             market_showEstimatedListingAge: {
                 enabled: true,
                 name: 'Estimated Listing Age',
                 category: 'Market',
                 description: 'Estimates creation time for all market listings using listing ID interpolation',
-                settingKey: 'market_showEstimatedListingAge'
+                settingKey: 'market_showEstimatedListingAge',
             },
 
             // Action Features
@@ -113,28 +113,28 @@ class Config {
                 name: 'Action Queue Time Display',
                 category: 'Actions',
                 description: 'Shows total time and completion time for queued actions',
-                settingKey: 'totalActionTime'
+                settingKey: 'totalActionTime',
             },
             quickInputButtons: {
                 enabled: true,
                 name: 'Quick Input Buttons',
                 category: 'Actions',
                 description: 'Adds 1/10/100/1000 buttons to action inputs',
-                settingKey: 'actionPanel_totalTime_quickInputs'
+                settingKey: 'actionPanel_totalTime_quickInputs',
             },
             actionPanelProfit: {
                 enabled: true,
                 name: 'Action Profit Display',
                 category: 'Actions',
                 description: 'Shows profit/loss for gathering and production',
-                settingKey: 'actionPanel_foragingTotal'
+                settingKey: 'actionPanel_foragingTotal',
             },
             requiredMaterials: {
                 enabled: true,
                 name: 'Required Materials Display',
                 category: 'Actions',
                 description: 'Shows total required and missing materials for production actions',
-                settingKey: 'requiredMaterials'
+                settingKey: 'requiredMaterials',
             },
 
             // Combat Features
@@ -143,49 +143,50 @@ class Config {
                 name: 'Ability Book Requirements',
                 category: 'Combat',
                 description: 'Shows books needed to reach target level',
-                settingKey: 'skillbook'
+                settingKey: 'skillbook',
             },
             zoneIndices: {
                 enabled: true,
                 name: 'Combat Zone Indices',
                 category: 'Combat',
                 description: 'Shows zone numbers in combat location list',
-                settingKey: 'mapIndex'
+                settingKey: 'mapIndex',
             },
             taskZoneIndices: {
                 enabled: true,
                 name: 'Task Zone Indices',
                 category: 'Tasks',
                 description: 'Shows zone numbers on combat tasks',
-                settingKey: 'taskMapIndex'
+                settingKey: 'taskMapIndex',
             },
             combatScore: {
                 enabled: true,
                 name: 'Profile Gear Score',
                 category: 'Combat',
                 description: 'Shows gear score on profile',
-                settingKey: 'combatScore'
+                settingKey: 'combatScore',
             },
             dungeonTracker: {
                 enabled: true,
                 name: 'Dungeon Tracker',
                 category: 'Combat',
-                description: 'Real-time dungeon progress tracking in top bar with wave times, statistics, and party chat completion messages',
-                settingKey: 'dungeonTracker'
+                description:
+                    'Real-time dungeon progress tracking in top bar with wave times, statistics, and party chat completion messages',
+                settingKey: 'dungeonTracker',
             },
             combatSimIntegration: {
                 enabled: true,
                 name: 'Combat Simulator Integration',
                 category: 'Combat',
                 description: 'Auto-import character/party data into Shykai Combat Simulator',
-                settingKey: null // New feature, no legacy setting
+                settingKey: null, // New feature, no legacy setting
             },
             enhancementSimulator: {
                 enabled: true,
                 name: 'Enhancement Simulator',
                 category: 'Market',
                 description: 'Shows enhancement cost calculations in item tooltips',
-                settingKey: 'enhanceSim'
+                settingKey: 'enhanceSim',
             },
 
             // UI Features
@@ -194,28 +195,28 @@ class Config {
                 name: 'Equipment Level on Icons',
                 category: 'UI',
                 description: 'Shows item level number on equipment icons',
-                settingKey: 'itemIconLevel'
+                settingKey: 'itemIconLevel',
             },
             alchemyItemDimming: {
                 enabled: true,
                 name: 'Alchemy Item Dimming',
                 category: 'UI',
                 description: 'Dims items requiring higher Alchemy level',
-                settingKey: 'alchemyItemDimming'
+                settingKey: 'alchemyItemDimming',
             },
             skillExperiencePercentage: {
                 enabled: true,
                 name: 'Skill Experience Percentage',
                 category: 'UI',
                 description: 'Shows XP progress percentage in left sidebar',
-                settingKey: 'expPercentage'
+                settingKey: 'expPercentage',
             },
             largeNumberFormatting: {
                 enabled: true,
                 name: 'Use K/M/B Number Formatting',
                 category: 'UI',
                 description: 'Display large numbers as 1.5M instead of 1,500,000',
-                settingKey: 'formatting_useKMBFormat'
+                settingKey: 'formatting_useKMBFormat',
             },
 
             // Task Features
@@ -224,28 +225,28 @@ class Config {
                 name: 'Task Profit Calculator',
                 category: 'Tasks',
                 description: 'Shows expected profit from task rewards',
-                settingKey: 'taskProfitCalculator'
+                settingKey: 'taskProfitCalculator',
             },
             taskRerollTracker: {
                 enabled: true,
                 name: 'Task Reroll Tracker',
                 category: 'Tasks',
                 description: 'Tracks reroll costs and history',
-                settingKey: 'taskRerollTracker'
+                settingKey: 'taskRerollTracker',
             },
             taskSorter: {
                 enabled: true,
                 name: 'Task Sorting',
                 category: 'Tasks',
                 description: 'Adds button to sort tasks by skill type',
-                settingKey: 'taskSorter'
+                settingKey: 'taskSorter',
             },
             taskIcons: {
                 enabled: true,
                 name: 'Task Icons',
                 category: 'Tasks',
                 description: 'Shows visual icons on task cards',
-                settingKey: 'taskIcons'
+                settingKey: 'taskIcons',
             },
             taskIconsDungeons: {
                 enabled: false,
@@ -253,7 +254,7 @@ class Config {
                 category: 'Tasks',
                 description: 'Shows dungeon icons for combat tasks',
                 settingKey: 'taskIconsDungeons',
-                dependencies: ['taskIcons']
+                dependencies: ['taskIcons'],
             },
 
             // Skills Features
@@ -262,7 +263,7 @@ class Config {
                 name: 'Remaining XP Display',
                 category: 'Skills',
                 description: 'Shows remaining XP to next level on skill bars',
-                settingKey: 'skillRemainingXP'
+                settingKey: 'skillRemainingXP',
             },
 
             // House Features
@@ -271,7 +272,7 @@ class Config {
                 name: 'House Upgrade Costs',
                 category: 'House',
                 description: 'Shows market value of upgrade materials',
-                settingKey: 'houseUpgradeCosts'
+                settingKey: 'houseUpgradeCosts',
             },
 
             // Economy Features
@@ -280,35 +281,35 @@ class Config {
                 name: 'Net Worth Calculator',
                 category: 'Economy',
                 description: 'Shows total asset value in header (Current Assets)',
-                settingKey: 'networth'
+                settingKey: 'networth',
             },
             inventorySummary: {
                 enabled: true,
                 name: 'Inventory Summary Panel',
                 category: 'Economy',
                 description: 'Shows detailed networth breakdown below inventory',
-                settingKey: 'invWorth'
+                settingKey: 'invWorth',
             },
             inventorySort: {
                 enabled: true,
                 name: 'Inventory Sort',
                 category: 'Economy',
                 description: 'Sorts inventory by Ask/Bid price',
-                settingKey: 'invSort'
+                settingKey: 'invSort',
             },
             inventorySortBadges: {
                 enabled: false,
                 name: 'Inventory Sort Price Badges',
                 category: 'Economy',
                 description: 'Shows stack value badges on items when sorting',
-                settingKey: 'invSort_showBadges'
+                settingKey: 'invSort_showBadges',
             },
             inventoryBadgePrices: {
                 enabled: false,
                 name: 'Inventory Price Badges',
                 category: 'Economy',
                 description: 'Shows stack value badges on items (independent of sorting)',
-                settingKey: 'invBadgePrices'
+                settingKey: 'invBadgePrices',
             },
 
             // Enhancement Features
@@ -317,7 +318,7 @@ class Config {
                 name: 'Enhancement Tracker',
                 category: 'Enhancement',
                 description: 'Tracks enhancement attempts, costs, and statistics',
-                settingKey: 'enhancementTracker'
+                settingKey: 'enhancementTracker',
             },
 
             // Notification Features
@@ -326,8 +327,8 @@ class Config {
                 name: 'Empty Queue Notification',
                 category: 'Notifications',
                 description: 'Browser notification when action queue becomes empty',
-                settingKey: 'notifiEmptyAction'
-            }
+                settingKey: 'notifiEmptyAction',
+            },
         };
 
         // Note: loadSettings() must be called separately (async)
@@ -486,7 +487,7 @@ class Config {
     resetToDefaults() {
         // Find default values from constructor (all true except notifiEmptyAction)
         for (const key in this.settingsMap) {
-            this.settingsMap[key].isTrue = (key === 'notifiEmptyAction') ? false : true;
+            this.settingsMap[key].isTrue = key !== 'notifiEmptyAction';
         }
 
         this.saveSettings();
@@ -505,7 +506,7 @@ class Config {
                 return {
                     success: false,
                     count: 0,
-                    error: 'No character ID available'
+                    error: 'No character ID available',
                 };
             }
 
@@ -517,14 +518,14 @@ class Config {
 
             return {
                 success: true,
-                count: syncedCount
+                count: syncedCount,
             };
         } catch (error) {
             console.error('[Config] Failed to sync settings:', error);
             return {
                 success: false,
                 count: 0,
-                error: error.message
+                error: error.message,
             };
         }
     }
@@ -548,24 +549,24 @@ class Config {
      */
     applyColorSettings() {
         // Apply extended color palette from settings
-        this.COLOR_PROFIT = this.getSettingValue('color_profit', "#047857");
-        this.COLOR_LOSS = this.getSettingValue('color_loss', "#f87171");
-        this.COLOR_WARNING = this.getSettingValue('color_warning', "#ffa500");
-        this.COLOR_INFO = this.getSettingValue('color_info', "#60a5fa");
-        this.COLOR_ESSENCE = this.getSettingValue('color_essence', "#c084fc");
-        this.COLOR_TOOLTIP_PROFIT = this.getSettingValue('color_tooltip_profit', "#047857");
-        this.COLOR_TOOLTIP_LOSS = this.getSettingValue('color_tooltip_loss', "#dc2626");
-        this.COLOR_TOOLTIP_INFO = this.getSettingValue('color_tooltip_info', "#2563eb");
-        this.COLOR_TOOLTIP_WARNING = this.getSettingValue('color_tooltip_warning', "#ea580c");
-        this.COLOR_TEXT_PRIMARY = this.getSettingValue('color_text_primary', "#ffffff");
-        this.COLOR_TEXT_SECONDARY = this.getSettingValue('color_text_secondary', "#888888");
-        this.COLOR_BORDER = this.getSettingValue('color_border', "#444444");
-        this.COLOR_GOLD = this.getSettingValue('color_gold', "#ffa500");
-        this.COLOR_ACCENT = this.getSettingValue('color_accent', "#22c55e");
-        this.COLOR_REMAINING_XP = this.getSettingValue('color_remaining_xp', "#FFFFFF");
-        this.COLOR_INVBADGE_ASK = this.getSettingValue('color_invBadge_ask', "#047857");
-        this.COLOR_INVBADGE_BID = this.getSettingValue('color_invBadge_bid', "#60a5fa");
-        this.COLOR_TRANSMUTE = this.getSettingValue('color_transmute', "#ffffff");
+        this.COLOR_PROFIT = this.getSettingValue('color_profit', '#047857');
+        this.COLOR_LOSS = this.getSettingValue('color_loss', '#f87171');
+        this.COLOR_WARNING = this.getSettingValue('color_warning', '#ffa500');
+        this.COLOR_INFO = this.getSettingValue('color_info', '#60a5fa');
+        this.COLOR_ESSENCE = this.getSettingValue('color_essence', '#c084fc');
+        this.COLOR_TOOLTIP_PROFIT = this.getSettingValue('color_tooltip_profit', '#047857');
+        this.COLOR_TOOLTIP_LOSS = this.getSettingValue('color_tooltip_loss', '#dc2626');
+        this.COLOR_TOOLTIP_INFO = this.getSettingValue('color_tooltip_info', '#2563eb');
+        this.COLOR_TOOLTIP_WARNING = this.getSettingValue('color_tooltip_warning', '#ea580c');
+        this.COLOR_TEXT_PRIMARY = this.getSettingValue('color_text_primary', '#ffffff');
+        this.COLOR_TEXT_SECONDARY = this.getSettingValue('color_text_secondary', '#888888');
+        this.COLOR_BORDER = this.getSettingValue('color_border', '#444444');
+        this.COLOR_GOLD = this.getSettingValue('color_gold', '#ffa500');
+        this.COLOR_ACCENT = this.getSettingValue('color_accent', '#22c55e');
+        this.COLOR_REMAINING_XP = this.getSettingValue('color_remaining_xp', '#FFFFFF');
+        this.COLOR_INVBADGE_ASK = this.getSettingValue('color_invBadge_ask', '#047857');
+        this.COLOR_INVBADGE_BID = this.getSettingValue('color_invBadge_bid', '#60a5fa');
+        this.COLOR_TRANSMUTE = this.getSettingValue('color_transmute', '#ffffff');
 
         // Set legacy SCRIPT_COLOR_MAIN to accent color
         this.SCRIPT_COLOR_MAIN = this.COLOR_ACCENT;
@@ -645,7 +646,7 @@ class Config {
                 key,
                 name: feature.name,
                 description: feature.description,
-                enabled: this.isFeatureEnabled(key)
+                enabled: this.isFeatureEnabled(key),
             });
         }
 
@@ -676,7 +677,7 @@ class Config {
             name: feature.name,
             category: feature.category,
             description: feature.description,
-            enabled: this.isFeatureEnabled(featureKey)
+            enabled: this.isFeatureEnabled(featureKey),
         };
     }
 }

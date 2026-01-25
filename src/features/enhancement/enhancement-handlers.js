@@ -20,7 +20,6 @@ export function setupEnhancementHandlers() {
 
     // Listen for wildcard to catch all messages for debugging
     webSocketHook.on('*', handleDebugMessage);
-
 }
 
 /**
@@ -133,9 +132,7 @@ async function handleEnhancementStart(action) {
         const sessionId = await enhancementTracker.startSession(itemHrid, currentLevel, targetLevel, protectFrom);
         enhancementUI.switchToSession(sessionId);
         enhancementUI.scheduleUpdate();
-
-    } catch (error) {
-    }
+    } catch (error) {}
 }
 
 /**
@@ -158,7 +155,7 @@ function parseItemHash(primaryItemHash) {
         const parts = primaryItemHash.split('::');
 
         // Find the part that starts with /items/
-        const itemPart = parts.find(part => part.startsWith('/items/'));
+        const itemPart = parts.find((part) => part.startsWith('/items/'));
         if (itemPart) {
             itemHrid = itemPart;
         }
@@ -208,7 +205,7 @@ function getEnhancementMaterials(itemHrid) {
 
         // Case 1: Array of objects (current format)
         if (Array.isArray(costs) && costs.length > 0 && typeof costs[0] === 'object') {
-            materials = costs.map(cost => [cost.itemHrid, cost.count]);
+            materials = costs.map((cost) => [cost.itemHrid, cost.count]);
         }
         // Case 2: Already in correct format [["/items/foo", 30], ["/items/bar", 20]]
         else if (Array.isArray(costs) && costs.length > 0 && Array.isArray(costs[0])) {
@@ -220,11 +217,8 @@ function getEnhancementMaterials(itemHrid) {
         }
 
         // Filter out any invalid entries
-        materials = materials.filter(m =>
-            Array.isArray(m) &&
-            m.length === 2 &&
-            typeof m[0] === 'string' &&
-            typeof m[1] === 'number'
+        materials = materials.filter(
+            (m) => Array.isArray(m) && m.length === 2 && typeof m[0] === 'string' && typeof m[1] === 'number'
         );
 
         return materials.length > 0 ? materials : null;
@@ -255,7 +249,7 @@ async function trackMaterialCosts(itemHrid) {
             await enhancementTracker.trackMaterialCost(resourceHrid, count);
             // Add to material cost total
             const priceData = marketAPI.getPrice(resourceHrid, 0);
-            const unitCost = priceData ? (priceData.ask || priceData.bid || 0) : 0;
+            const unitCost = priceData ? priceData.ask || priceData.bid || 0 : 0;
             materialCost += unitCost * count;
         }
     }
@@ -407,13 +401,13 @@ async function handleEnhancementResult(action, data) {
         const protectedFailure = previousLevel > 0 && newLevel === previousLevel && protectionItemHrid !== null;
         const wasFailure = levelDecreased || failedAtZero || protectedFailure;
 
-        const wasBlessed = wasSuccess && (newLevel - previousLevel) >= 2; // Blessed tea detection
+        const wasBlessed = wasSuccess && newLevel - previousLevel >= 2; // Blessed tea detection
 
         // Update lastAttempt BEFORE recording (so next attempt compares correctly)
         currentSession.lastAttempt = {
             attemptNumber: adjustedCount,
             level: newLevel,
-            timestamp: Date.now()
+            timestamp: Date.now(),
         };
 
         // Record the result and track XP
@@ -436,9 +430,7 @@ async function handleEnhancementResult(action, data) {
         }
         // Note: If newLevel === previousLevel (and not 0->0), we track costs but don't record attempt
         // This happens with protection items that prevent level decrease
-
-    } catch (error) {
-    }
+    } catch (error) {}
 }
 
 /**

@@ -37,7 +37,7 @@ class RequiredMaterials {
     processActionPanels() {
         const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
 
-        panels.forEach(panel => {
+        panels.forEach((panel) => {
             // Skip if already processed
             if (this.processedPanels.has(panel)) {
                 return;
@@ -67,7 +67,7 @@ class RequiredMaterials {
     updateRequiredMaterials(panel, amount) {
         // Remove existing displays
         const existingDisplays = panel.querySelectorAll('.mwi-required-materials');
-        existingDisplays.forEach(el => el.remove());
+        existingDisplays.forEach((el) => el.remove());
 
         const numActions = parseInt(amount) || 0;
         if (numActions <= 0) {
@@ -93,8 +93,9 @@ class RequiredMaterials {
 
         // Get inventory spans and input spans
         const inventorySpans = panel.querySelectorAll('[class*="SkillActionDetail_inventoryCount"]');
-        const inputSpans = Array.from(panel.querySelectorAll('[class*="SkillActionDetail_inputCount"]'))
-            .filter(span => !span.textContent.includes('Required'));
+        const inputSpans = Array.from(panel.querySelectorAll('[class*="SkillActionDetail_inputCount"]')).filter(
+            (span) => !span.textContent.includes('Required')
+        );
 
         // Process each regular material using MWIT-E's approach
         // Iterate through requiresDiv children to find inputCount spans and their target containers
@@ -177,7 +178,7 @@ class RequiredMaterials {
             }
 
             // Find the inventory count from game UI
-            let inventoryElement = upgradeContainer.querySelector('[class*="Item_count"]');
+            const inventoryElement = upgradeContainer.querySelector('[class*="Item_count"]');
             let invValue = 0;
 
             if (inventoryElement) {
@@ -242,7 +243,6 @@ class RequiredMaterials {
 
             // Insert after entire upgrade container (not inside it)
             upgradeContainer.after(displaySpan);
-
         } catch (error) {
             console.error('[Required Materials] Error processing upgrade item:', error);
         }
@@ -287,16 +287,15 @@ class RequiredMaterials {
 
             // Add regular input items (affected by Artisan Tea)
             if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
-                actionDetails.inputItems.forEach(item => {
+                actionDetails.inputItems.forEach((item) => {
                     regularMaterials.push({
-                        count: item.count || 0
+                        count: item.count || 0,
                     });
                 });
             }
 
             // Return separated data
             return { upgradeItemCount, regularMaterials };
-
         } catch (error) {
             console.error('[Required Materials] Error getting base requirements:', error);
             return { upgradeItemCount: null, regularMaterials: [] };
@@ -346,7 +345,6 @@ class RequiredMaterials {
             const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
             return artisanBonus;
-
         } catch (error) {
             console.error('[Required Materials] Error calculating artisan bonus:', error);
             return 0;
@@ -374,11 +372,11 @@ class RequiredMaterials {
     }
 
     cleanup() {
-        this.observers.forEach(unregister => unregister());
+        this.observers.forEach((unregister) => unregister());
         this.observers = [];
         this.processedPanels = new WeakSet();
 
-        document.querySelectorAll('.mwi-required-materials').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-required-materials').forEach((el) => el.remove());
 
         this.initialized = false;
     }

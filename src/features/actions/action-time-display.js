@@ -16,7 +16,12 @@ import config from '../../core/config.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { timeReadable, formatWithSeparator } from '../../utils/formatters.js';
 import domObserver from '../../core/dom-observer.js';
-import { parseArtisanBonus, getDrinkConcentration, parseGatheringBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
+import {
+    parseArtisanBonus,
+    getDrinkConcentration,
+    parseGatheringBonus,
+    parseGourmetBonus,
+} from '../../utils/tea-parser.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
@@ -94,13 +99,13 @@ class ActionTimeDisplay {
                     // Reconnect to continue watching
                     this.queueMenuObserver.observe(queueMenu, {
                         childList: true,
-                        subtree: true
+                        subtree: true,
                     });
                 });
 
                 this.queueMenuObserver.observe(queueMenu, {
                     childList: true,
-                    subtree: true
+                    subtree: true,
                 });
             }
         );
@@ -163,7 +168,7 @@ class ActionTimeDisplay {
         this.actionNameObserver.observe(actionNameElement, {
             childList: true,
             characterData: true,
-            subtree: true
+            subtree: true,
         });
     }
 
@@ -197,10 +202,7 @@ class ActionTimeDisplay {
         `;
 
         // Insert after action name
-        actionNameContainer.parentNode.insertBefore(
-            this.displayElement,
-            actionNameContainer.nextSibling
-        );
+        actionNameContainer.parentNode.insertBefore(this.displayElement, actionNameContainer.nextSibling);
     }
 
     /**
@@ -372,7 +374,7 @@ class ActionTimeDisplay {
             actionHrid: action.actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
-            floorActionLevel: true
+            floorActionLevel: true,
         });
 
         if (!stats) {
@@ -387,7 +389,7 @@ class ActionTimeDisplay {
         // Calculate average actions per attempt from efficiency
         const guaranteedActions = 1 + Math.floor(totalEfficiency / 100);
         const chanceForExtra = totalEfficiency % 100;
-        const avgActionsPerAttempt = guaranteedActions + (chanceForExtra / 100);
+        const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
         // Calculate actions per hour WITH efficiency (total action completions including free repeats)
         const actionsPerHourWithEfficiency = baseActionsPerHour * avgActionsPerAttempt;
@@ -396,19 +398,16 @@ class ActionTimeDisplay {
         let itemsPerHour;
 
         // Gathering action types (need special handling for dropTable)
-        const GATHERING_TYPES = [
-            '/action_types/foraging',
-            '/action_types/woodcutting',
-            '/action_types/milking'
-        ];
+        const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
         // Production action types that benefit from Gourmet Tea
-        const PRODUCTION_TYPES = [
-            '/action_types/brewing',
-            '/action_types/cooking'
-        ];
+        const PRODUCTION_TYPES = ['/action_types/brewing', '/action_types/cooking'];
 
-        if (actionDetails.dropTable && actionDetails.dropTable.length > 0 && GATHERING_TYPES.includes(actionDetails.type)) {
+        if (
+            actionDetails.dropTable &&
+            actionDetails.dropTable.length > 0 &&
+            GATHERING_TYPES.includes(actionDetails.type)
+        ) {
             // Gathering action - use dropTable with gathering quantity bonus
             const mainDrop = actionDetails.dropTable[0];
             const baseAvgAmount = (mainDrop.minCount + mainDrop.maxCount) / 2;
@@ -420,7 +419,7 @@ class ActionTimeDisplay {
 
             // Community buff
             const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-            const communityGathering = communityBuffLevel ? 0.2 + ((communityBuffLevel - 1) * 0.005) : 0;
+            const communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
 
             // Achievement buffs
             const achievementBuffs = dataManager.getAchievementBuffs(actionDetails.type);
@@ -464,7 +463,13 @@ class ActionTimeDisplay {
             const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
             // Calculate max actions based on materials (pass efficiency to account for free repeat actions)
-            materialLimit = this.calculateMaterialLimit(actionDetails, inventory, artisanBonus, totalEfficiency, action);
+            materialLimit = this.calculateMaterialLimit(
+                actionDetails,
+                inventory,
+                artisanBonus,
+                totalEfficiency,
+                action
+            );
         }
 
         // Get queue size for display (total queued, doesn't change)
@@ -527,7 +532,7 @@ class ActionTimeDisplay {
                 hour: 'numeric',
                 minute: '2-digit',
                 second: '2-digit',
-                hour12: true
+                hour12: true,
             });
         } else {
             // Future date: Show date and time in 12-hour format
@@ -537,7 +542,7 @@ class ActionTimeDisplay {
                 hour: 'numeric',
                 minute: '2-digit',
                 second: '2-digit',
-                hour12: true
+                hour12: true,
             });
         }
 
@@ -561,7 +566,9 @@ class ActionTimeDisplay {
         statsToAppend.push(`${actionTime.toFixed(2)}s/action`);
 
         // Show both actions/hr (with efficiency) and items/hr (actual item output)
-        statsToAppend.push(`${actionsPerHourWithEfficiency.toFixed(0)} actions/hr (${itemsPerHour.toFixed(0)} items/hr)`);
+        statsToAppend.push(
+            `${actionsPerHourWithEfficiency.toFixed(0)} actions/hr (${itemsPerHour.toFixed(0)} items/hr)`
+        );
 
         // Append to game's div (with marker for cleanup)
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
@@ -591,7 +598,7 @@ class ActionTimeDisplay {
         this.actionNameObserver.observe(actionNameElement, {
             childList: true,
             characterData: true,
-            subtree: true
+            subtree: true,
         });
     }
 
@@ -605,9 +612,7 @@ class ActionTimeDisplay {
         const markerSpan = actionNameElement.querySelector('.mwi-appended-stats');
         if (markerSpan) {
             // Remove the marker span temporarily to get clean text
-            const cleanText = actionNameElement.textContent
-                .replace(markerSpan.textContent, '')
-                .trim();
+            const cleanText = actionNameElement.textContent.replace(markerSpan.textContent, '').trim();
             return cleanText;
         }
         // No marker found, return as-is
@@ -664,7 +669,7 @@ class ActionTimeDisplay {
             actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
-            floorActionLevel: true
+            floorActionLevel: true,
         });
     }
 
@@ -702,7 +707,7 @@ class ActionTimeDisplay {
         // Average actions per attempt = 1 + floor(eff/100) + (eff%100)/100
         const guaranteedActions = 1 + Math.floor(totalEfficiency / 100);
         const chanceForExtra = totalEfficiency % 100;
-        const avgActionsPerAttempt = guaranteedActions + (chanceForExtra / 100);
+        const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
         // Check for primaryItemHash (ONLY for Alchemy actions: Coinify, Decompose, Transmute)
         // Crafting actions also have primaryItemHash but should use the standard input/upgrade logic
@@ -715,10 +720,11 @@ class ActionTimeDisplay {
                 const enhancementLevel = parts.length >= 4 ? parseInt(parts[3]) : 0;
 
                 // Find item in inventory
-                const inventoryItem = inventory.find(item =>
-                    item.itemHrid === itemHrid &&
-                    item.itemLocationHrid === '/item_locations/inventory' &&
-                    (item.enhancementLevel || 0) === enhancementLevel
+                const inventoryItem = inventory.find(
+                    (item) =>
+                        item.itemHrid === itemHrid &&
+                        item.itemLocationHrid === '/item_locations/inventory' &&
+                        (item.enhancementLevel || 0) === enhancementLevel
                 );
 
                 const availableCount = inventoryItem?.count || 0;
@@ -749,9 +755,9 @@ class ActionTimeDisplay {
         if (hasInputItems) {
             for (const inputItem of actionDetails.inputItems) {
                 // Find item in inventory
-                const inventoryItem = inventory.find(item =>
-                    item.itemHrid === inputItem.itemHrid &&
-                    item.itemLocationHrid === '/item_locations/inventory'
+                const inventoryItem = inventory.find(
+                    (item) =>
+                        item.itemHrid === inputItem.itemHrid && item.itemLocationHrid === '/item_locations/inventory'
                 );
 
                 const availableCount = inventoryItem?.count || 0;
@@ -769,9 +775,8 @@ class ActionTimeDisplay {
 
         // Check upgrade item (NOT affected by Artisan Tea)
         if (hasUpgradeItem) {
-            const inventoryItem = inventory.find(item =>
-                item.itemHrid === hasUpgradeItem &&
-                item.itemLocationHrid === '/item_locations/inventory'
+            const inventoryItem = inventory.find(
+                (item) => item.itemHrid === hasUpgradeItem && item.itemLocationHrid === '/item_locations/inventory'
             );
 
             const availableCount = inventoryItem?.count || 0;
@@ -820,7 +825,7 @@ class ActionTimeDisplay {
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
             // Find enhancing action matching this item
-            return cachedActions.find(a => {
+            return cachedActions.find((a) => {
                 const actionDetails = dataManager.getActionDetails(a.actionHrid);
                 if (!actionDetails || actionDetails.type !== '/action_types/enhancing') {
                     return false;
@@ -843,7 +848,7 @@ class ActionTimeDisplay {
         }
 
         // Match action from cache (same logic as main display)
-        return cachedActions.find(a => {
+        return cachedActions.find((a) => {
             const actionDetails = dataManager.getActionDetails(a.actionHrid);
             if (!actionDetails || actionDetails.name !== actionNameFromDiv) {
                 return false;
@@ -878,7 +883,7 @@ class ActionTimeDisplay {
             }
 
             // Clear all existing time displays to prevent duplicates
-            queueMenu.querySelectorAll('.mwi-queue-action-time').forEach(el => el.remove());
+            queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
             const existingTotal = document.querySelector('#mwi-queue-total-time');
             if (existingTotal) {
                 existingTotal.remove();
@@ -911,7 +916,7 @@ class ActionTimeDisplay {
                 }
 
                 // Match current action from cache
-                const currentAction = currentActions.find(a => {
+                const currentAction = currentActions.find((a) => {
                     const actionDetails = dataManager.getActionDetails(a.actionHrid);
                     if (!actionDetails || actionDetails.name !== actionNameFromDom) {
                         return false;
@@ -946,7 +951,13 @@ class ActionTimeDisplay {
                             const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
                             if (timeData) {
                                 const { actionTime, totalEfficiency } = timeData;
-                                const materialLimit = this.calculateMaterialLimit(actionDetails, inventory, artisanBonus, totalEfficiency, currentAction);
+                                const materialLimit = this.calculateMaterialLimit(
+                                    actionDetails,
+                                    inventory,
+                                    artisanBonus,
+                                    totalEfficiency,
+                                    currentAction
+                                );
 
                                 if (materialLimit !== null) {
                                     // Material-limited infinite action - calculate time
@@ -969,7 +980,7 @@ class ActionTimeDisplay {
                                 // Calculate average actions per attempt from efficiency
                                 const guaranteedActions = 1 + Math.floor(totalEfficiency / 100);
                                 const chanceForExtra = totalEfficiency % 100;
-                                const avgActionsPerAttempt = guaranteedActions + (chanceForExtra / 100);
+                                const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
                                 // Calculate actual attempts needed
                                 const actualAttempts = Math.ceil(count / avgActionsPerAttempt);
@@ -983,7 +994,7 @@ class ActionTimeDisplay {
                         if (actionTimeSeconds > 0 && !isInfinite) {
                             actionsToCalculate.push({
                                 actionHrid: currentAction.actionHrid,
-                                timeSeconds: actionTimeSeconds
+                                timeSeconds: actionTimeSeconds,
                             });
                         }
                     }
@@ -1044,7 +1055,13 @@ class ActionTimeDisplay {
                     const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
                     const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
-                    materialLimit = this.calculateMaterialLimit(actionDetails, inventory, artisanBonus, totalEfficiency, actionObj);
+                    materialLimit = this.calculateMaterialLimit(
+                        actionDetails,
+                        inventory,
+                        artisanBonus,
+                        totalEfficiency,
+                        actionObj
+                    );
                 }
 
                 // Determine if truly infinite (no material limit)
@@ -1078,7 +1095,7 @@ class ActionTimeDisplay {
                         // Finite action - count is items, convert to attempts
                         const guaranteedActions = 1 + Math.floor(totalEfficiency / 100);
                         const chanceForExtra = totalEfficiency % 100;
-                        const avgActionsPerAttempt = guaranteedActions + (chanceForExtra / 100);
+                        const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
                         actualAttempts = Math.ceil(count / avgActionsPerAttempt);
                     }
                     totalTime = actualAttempts * actionTime;
@@ -1090,7 +1107,7 @@ class ActionTimeDisplay {
                 if (actionTimeSeconds > 0 && !isTrulyInfinite) {
                     actionsToCalculate.push({
                         actionHrid: actionObj.actionHrid,
-                        timeSeconds: actionTimeSeconds
+                        timeSeconds: actionTimeSeconds,
                     });
                 }
 
@@ -1171,7 +1188,6 @@ class ActionTimeDisplay {
             if (actionsToCalculate.length > 0 && marketAPI.isLoaded()) {
                 this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText);
             }
-
         } catch (error) {
             console.error('[MWI Tools] Error injecting queue times:', error);
         }
@@ -1193,11 +1209,12 @@ class ActionTimeDisplay {
             let hasProfitData = false;
 
             // Create all profit calculation promises at once (parallel execution)
-            const profitPromises = actionsToCalculate.map(action =>
-                Promise.race([
-                    this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
-                ]).catch(() => null) // Convert rejections to null
+            const profitPromises = actionsToCalculate.map(
+                (action) =>
+                    Promise.race([
+                        this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500)),
+                    ]).catch(() => null) // Convert rejections to null
             );
 
             // Wait for all calculations to complete in parallel
@@ -1210,7 +1227,7 @@ class ActionTimeDisplay {
             }
 
             // Aggregate results
-            results.forEach(result => {
+            results.forEach((result) => {
                 if (result.status === 'fulfilled' && result.value !== null) {
                     totalProfit += result.value;
                     hasProfitData = true;
@@ -1222,12 +1239,13 @@ class ActionTimeDisplay {
                 // Get value mode setting to determine label and color
                 const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
                 const isEstimatedValue = valueMode === 'estimated_value';
-                
+
                 // Estimated value is always positive (revenue), so always use profit color
                 // Profit can be negative, so use appropriate color
-                const valueColor = (isEstimatedValue || totalProfit >= 0)
-                    ? config.getSettingValue('color_profit', '#4ade80')
-                    : config.getSettingValue('color_loss', '#f87171');
+                const valueColor =
+                    isEstimatedValue || totalProfit >= 0
+                        ? config.getSettingValue('color_profit', '#4ade80')
+                        : config.getSettingValue('color_loss', '#f87171');
                 const valueSign = totalProfit >= 0 ? '+' : '';
                 const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
                 const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatWithSeparator(Math.round(totalProfit))}</span>`;
@@ -1255,7 +1273,7 @@ class ActionTimeDisplay {
 
         // Calculate value per hour based on mode
         let valuePerHour = null;
-        
+
         // Try gathering profit first (foraging, woodcutting, milking)
         const gatheringProfit = await calculateGatheringProfit(actionHrid);
         if (gatheringProfit) {
@@ -1270,8 +1288,9 @@ class ActionTimeDisplay {
             if (productionProfit) {
                 if (valueMode === 'estimated_value') {
                     // Calculate revenue: (items * priceAfterTax) + bonus revenue
-                    const revenuePerHour = (productionProfit.totalItemsPerHour * productionProfit.priceAfterTax) + 
-                                          ((productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier);
+                    const revenuePerHour =
+                        productionProfit.totalItemsPerHour * productionProfit.priceAfterTax +
+                        (productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier;
                     valuePerHour = revenuePerHour;
                 } else if (productionProfit.profitPerHour !== undefined) {
                     valuePerHour = productionProfit.profitPerHour;

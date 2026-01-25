@@ -18,7 +18,7 @@ const PRODUCTION_TYPES = [
     '/action_types/cooking',
     '/action_types/cheesesmithing',
     '/action_types/crafting',
-    '/action_types/tailoring'
+    '/action_types/tailoring',
 ];
 
 /**
@@ -27,7 +27,6 @@ const PRODUCTION_TYPES = [
  * @returns {Object|null} Profit data or null if not applicable
  */
 export async function calculateProductionProfit(actionHrid) {
-
     // Get action details
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
@@ -79,7 +78,9 @@ export function formatProfitDisplay(profitData) {
     return {
         profit: Math.round(profitData.profitPerHour),
         profitPerDay: Math.round(profitData.profitPerDay),
-        revenue: Math.round(profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax),
+        revenue: Math.round(
+            profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax
+        ),
         costs: Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour),
         actionsPerHour: profitData.actionsPerHour,
         totalEfficiency: profitData.efficiencyBonus,
@@ -105,7 +106,7 @@ export function formatProfitDisplay(profitData) {
             equipmentEfficiency: profitData.equipmentEfficiency,
             artisanBonus: profitData.artisanBonus,
             gourmetBonus: profitData.gourmetBonus,
-            efficiencyMultiplier: profitData.efficiencyMultiplier  // For time calculations
-        }
+            efficiencyMultiplier: profitData.efficiencyMultiplier, // For time calculations
+        },
     };
 }

@@ -61,22 +61,18 @@ class TransmuteRates {
         this.isInitialized = true;
 
         // Watch for individual source items being added to the dictionary
-        const unregister = domObserver.onClass(
-            'TransmuteRates',
-            'ItemDictionary_item',
-            (elem) => {
-                // When a new source item appears, find the parent section and inject rates
-                const section = elem.closest('[class*="ItemDictionary_transmutedFrom"]');
+        const unregister = domObserver.onClass('TransmuteRates', 'ItemDictionary_item', (elem) => {
+            // When a new source item appears, find the parent section and inject rates
+            const section = elem.closest('[class*="ItemDictionary_transmutedFrom"]');
 
-                if (section) {
-                    // Debounce to avoid injecting multiple times as items are added
-                    clearTimeout(this.injectTimeout);
-                    this.injectTimeout = setTimeout(() => {
-                        this.injectRates(section);
-                    }, 50);
-                }
+            if (section) {
+                // Debounce to avoid injecting multiple times as items are added
+                clearTimeout(this.injectTimeout);
+                this.injectTimeout = setTimeout(() => {
+                    this.injectRates(section);
+                }, 50);
             }
-        );
+        });
         this.unregisterHandlers.push(unregister);
 
         // Check if dictionary is already open
@@ -152,7 +148,7 @@ class TransmuteRates {
 
             // Find current item in source's drop table
             const dropEntry = sourceItem.alchemyDetail.transmuteDropTable.find(
-                entry => entry.itemHrid === currentItemHrid
+                (entry) => entry.itemHrid === currentItemHrid
             );
 
             if (!dropEntry) {
@@ -162,9 +158,9 @@ class TransmuteRates {
             // Calculate effective rate based on setting
             const includeBaseRate = config.getSetting('itemDictionary_transmuteIncludeBaseRate') !== false;
             const effectiveRate = includeBaseRate
-                ? transmuteSuccessRate * dropEntry.dropRate  // Total probability
-                : dropEntry.dropRate;                         // Conditional probability
-            const percentageText = `${(effectiveRate * 100).toFixed(effectiveRate * 100 % 1 === 0 ? 1 : 2)}%`;
+                ? transmuteSuccessRate * dropEntry.dropRate // Total probability
+                : dropEntry.dropRate; // Conditional probability
+            const percentageText = `${(effectiveRate * 100).toFixed((effectiveRate * 100) % 1 === 0 ? 1 : 2)}%`;
 
             // Create rate element
             const rateElem = document.createElement('span');
@@ -193,7 +189,7 @@ class TransmuteRates {
      */
     refreshRates() {
         // Remove all existing rate displays
-        document.querySelectorAll('.mwi-transmute-rate').forEach(elem => elem.remove());
+        document.querySelectorAll('.mwi-transmute-rate').forEach((elem) => elem.remove());
 
         // Re-inject if section is visible
         const existingSection = document.querySelector('[class*="ItemDictionary_transmutedFrom"]');
@@ -210,11 +206,11 @@ class TransmuteRates {
         clearTimeout(this.injectTimeout);
 
         // Unregister all observers
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         // Remove all injected rate displays
-        document.querySelectorAll('.mwi-transmute-rate').forEach(elem => elem.remove());
+        document.querySelectorAll('.mwi-transmute-rate').forEach((elem) => elem.remove());
 
         // Clear cache
         this.nameToHridCache.clear();

@@ -18,14 +18,9 @@ import {
     canExtendSession,
     extendSession,
     validateSession,
-    SessionState
+    SessionState,
 } from './enhancement-session.js';
-import {
-    saveSessions,
-    loadSessions,
-    saveCurrentSessionId,
-    loadCurrentSessionId
-} from './enhancement-storage.js';
+import { saveSessions, loadSessions, saveCurrentSessionId, loadCurrentSessionId } from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
 
 /**
@@ -70,8 +65,7 @@ class EnhancementTracker {
             }
 
             this.isInitialized = true;
-        } catch (error) {
-        }
+        } catch (error) {}
     }
 
     /**
@@ -220,7 +214,6 @@ class EnhancementTracker {
         finalizeSession(session);
         await saveSessions(this.sessions);
 
-
         // Clear current session
         this.currentSessionId = null;
         await saveCurrentSessionId(null);
@@ -240,7 +233,6 @@ class EnhancementTracker {
 
         recordSuccess(session, previousLevel, newLevel);
         await saveSessions(this.sessions);
-
 
         // Check if target reached
         if (session.state === SessionState.COMPLETED) {
@@ -262,7 +254,6 @@ class EnhancementTracker {
 
         recordFailure(session, previousLevel);
         await saveSessions(this.sessions);
-
     }
 
     /**
@@ -277,11 +268,10 @@ class EnhancementTracker {
 
         // Get market price
         const priceData = marketAPI.getPrice(itemHrid, 0);
-        const unitCost = priceData ? (priceData.ask || priceData.bid || 0) : 0;
+        const unitCost = priceData ? priceData.ask || priceData.bid || 0 : 0;
 
         addMaterialCost(session, itemHrid, count, unitCost);
         await saveSessions(this.sessions);
-
     }
 
     /**
@@ -295,7 +285,6 @@ class EnhancementTracker {
 
         addCoinCost(session, amount);
         await saveSessions(this.sessions);
-
     }
 
     /**
@@ -310,7 +299,6 @@ class EnhancementTracker {
 
         addProtectionCost(session, protectionItemHrid, cost);
         await saveSessions(this.sessions);
-
     }
 
     /**

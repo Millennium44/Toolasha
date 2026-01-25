@@ -109,5 +109,5 @@ export function createCollapsibleSection(icon, title, summary, content, defaultO
 }
 
 export default {
-    createCollapsibleSection
+    createCollapsibleSection,
 };

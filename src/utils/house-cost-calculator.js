@@ -73,15 +73,7 @@ export function calculateHouseBuildCost(houseRoomHrid, currentLevel) {
  * @returns {Object} {totalCost, breakdown: [{name, level, cost}]}
  */
 export function calculateBattleHousesCost(characterHouseRooms) {
-    const battleHouses = [
-        'dining_room',
-        'library',
-        'dojo',
-        'gym',
-        'armory',
-        'archery_range',
-        'mystical_study'
-    ];
+    const battleHouses = ['dining_room', 'library', 'dojo', 'gym', 'armory', 'archery_range', 'mystical_study'];
 
     const gameData = dataManager.getInitClientData();
     if (!gameData) return { totalCost: 0, breakdown: [] };
@@ -94,9 +86,7 @@ export function calculateBattleHousesCost(characterHouseRooms) {
 
     for (const [houseRoomHrid, houseData] of Object.entries(characterHouseRooms)) {
         // Check if this is a battle house
-        const isBattleHouse = battleHouses.some(battleHouse =>
-            houseRoomHrid.includes(battleHouse)
-        );
+        const isBattleHouse = battleHouses.some((battleHouse) => houseRoomHrid.includes(battleHouse));
 
         if (!isBattleHouse) continue;
 
@@ -113,7 +103,7 @@ export function calculateBattleHousesCost(characterHouseRooms) {
         breakdown.push({
             name: houseName,
             level: level,
-            cost: cost
+            cost: cost,
         });
     }
 

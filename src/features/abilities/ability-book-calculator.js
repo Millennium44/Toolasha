@@ -99,7 +99,6 @@ class AbilityBookCalculator {
 
             // Inject calculator UI
             this.injectCalculator(panel, abilityData, xpPerBook, itemHrid);
-
         } catch (error) {
             console.error('[AbilityBookCalculator] Error handling dictionary:', error);
         }
@@ -115,10 +114,7 @@ class AbilityBookCalculator {
         if (!titleElement) return null;
 
         // Get the item name from title
-        const itemName = titleElement.textContent.trim()
-            .toLowerCase()
-            .replaceAll(' ', '_')
-            .replaceAll("'", '');
+        const itemName = titleElement.textContent.trim().toLowerCase().replaceAll(' ', '_').replaceAll("'", '');
 
         // Look up ability HRID from name
         const gameData = dataManager.getInitClientData();
@@ -146,11 +142,11 @@ class AbilityBookCalculator {
         }
 
         // characterAbilities is an ARRAY of ability objects
-        const ability = characterData.characterAbilities.find(a => a.abilityHrid === abilityHrid);
+        const ability = characterData.characterAbilities.find((a) => a.abilityHrid === abilityHrid);
         if (ability) {
             return {
                 level: ability.level || 0,
-                xp: ability.experience || 0
+                xp: ability.experience || 0,
             };
         }
 
@@ -219,7 +215,7 @@ class AbilityBookCalculator {
                 marginTop: '16px',
                 padding: '12px',
                 border: '1px solid rgba(255,255,255,0.2)',
-                borderRadius: '4px'
+                borderRadius: '4px',
             },
             '',
             'tillLevel'
@@ -278,7 +274,7 @@ class AbilityBookCalculator {
 
         // Look for a container that has exactly 2 children (two-column layout)
         for (const child of directChildren) {
-            const grandchildren = Array.from(child.children).filter(c => {
+            const grandchildren = Array.from(child.children).filter((c) => {
                 // Filter for visible elements that look like content columns
                 const style = window.getComputedStyle(c);
                 return style.display !== 'none' && c.offsetHeight > 50; // At least 50px tall
@@ -301,7 +297,7 @@ class AbilityBookCalculator {
      */
     refresh() {
         // Update all .tillLevel elements
-        document.querySelectorAll('.tillLevel').forEach(calc => {
+        document.querySelectorAll('.tillLevel').forEach((calc) => {
             calc.style.color = config.COLOR_ACCENT;
         });
     }

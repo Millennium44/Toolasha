@@ -16,12 +16,21 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
-import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses, debugEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
-import { parseArtisanBonus, getDrinkConcentration, parseActionLevelBonus, parseTeaEfficiencyBreakdown, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
-import { formatPercentage } from '../../utils/formatters.js';
+import {
+    parseEquipmentSpeedBonuses,
+    parseEquipmentEfficiencyBonuses,
+    debugEquipmentSpeedBonuses,
+} from '../../utils/equipment-parser.js';
+import {
+    parseArtisanBonus,
+    getDrinkConcentration,
+    parseActionLevelBonus,
+    parseTeaEfficiencyBreakdown,
+    parseTeaSkillLevelBonus,
+} from '../../utils/tea-parser.js';
+import { formatPercentage, timeReadable, formatWithSeparator } from '../../utils/formatters.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { stackAdditive } from '../../utils/efficiency.js';
-import { timeReadable, formatWithSeparator } from '../../utils/formatters.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
@@ -66,7 +75,7 @@ class QuickInputButtons {
 
         // Check for existing action panels that may already be open
         const existingPanels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
-        existingPanels.forEach(panel => {
+        existingPanels.forEach((panel) => {
             this.injectButtons(panel);
         });
     }
@@ -124,8 +133,11 @@ class QuickInputButtons {
             const hasNormalXP = experienceGain && experienceGain.skillHrid && experienceGain.value > 0;
 
             // Calculate action duration and efficiency
-            const { actionTime, totalEfficiency, efficiencyBreakdown } = this.calculateActionMetrics(actionDetails, gameData);
-            const efficiencyMultiplier = 1 + (totalEfficiency / 100);
+            const { actionTime, totalEfficiency, efficiencyBreakdown } = this.calculateActionMetrics(
+                actionDetails,
+                gameData
+            );
+            const efficiencyMultiplier = 1 + totalEfficiency / 100;
 
             // Find the container to insert after (same as original MWI Tools)
             const inputContainer = numberInput.parentNode.parentNode.parentNode;
@@ -139,259 +151,287 @@ class QuickInputButtons {
 
             // Calculate speed breakdown
             const baseTime = actionDetails.baseTimeCost / 1e9;
-            const speedBonus = parseEquipmentSpeedBonuses(
-                equipment,
-                actionDetails.type,
-                itemDetailMap
-            );
+            const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap);
 
             // ===== SECTION 1: Action Speed & Time (Skip for combat) =====
             let speedSection = null;
 
             if (hasNormalXP) {
                 const speedContent = document.createElement('div');
-            speedContent.style.cssText = `
+                speedContent.style.cssText = `
                 color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
                 font-size: 0.9em;
                 line-height: 1.6;
             `;
 
-            const speedLines = [];
+                const speedLines = [];
 
-            // Check if task speed applies (need to calculate before display)
-            const isTaskAction = actionDetails.hrid && dataManager.isTaskAction(actionDetails.hrid);
-            const taskSpeedBonus = isTaskAction ? dataManager.getTaskSpeedBonus() : 0;
+                // Check if task speed applies (need to calculate before display)
+                const isTaskAction = actionDetails.hrid && dataManager.isTaskAction(actionDetails.hrid);
+                const taskSpeedBonus = isTaskAction ? dataManager.getTaskSpeedBonus() : 0;
 
-            // Calculate intermediate time (after equipment speed, before task speed)
-            const timeAfterEquipment = baseTime / (1 + speedBonus);
+                // Calculate intermediate time (after equipment speed, before task speed)
+                const timeAfterEquipment = baseTime / (1 + speedBonus);
 
-            speedLines.push(`Base: ${baseTime.toFixed(2)}s → ${timeAfterEquipment.toFixed(2)}s`);
-            if (speedBonus > 0) {
-                speedLines.push(`Speed: +${formatPercentage(speedBonus, 1)} | ${(3600 / timeAfterEquipment).toFixed(0)}/hr`);
-            } else {
-                speedLines.push(`${(3600 / timeAfterEquipment).toFixed(0)}/hr`);
-            }
-
-            // Add speed breakdown
-            const speedBreakdown = this.calculateSpeedBreakdown(actionDetails, equipment, itemDetailMap);
-            if (speedBreakdown.total > 0) {
-                // Equipment and tools (combined from debugEquipmentSpeedBonuses)
-                for (const item of speedBreakdown.equipmentAndTools) {
-                    const enhText = item.enhancementLevel > 0 ? ` +${item.enhancementLevel}` : '';
-                    const detailText = item.enhancementBonus > 0 ?
-                        ` (${formatPercentage(item.baseBonus, 1)} + ${formatPercentage(item.enhancementBonus * item.enhancementLevel, 1)})` :
-                        '';
-                    speedLines.push(`  - ${item.itemName}${enhText}: +${formatPercentage(item.scaledBonus, 1)}${detailText}`);
+                speedLines.push(`Base: ${baseTime.toFixed(2)}s → ${timeAfterEquipment.toFixed(2)}s`);
+                if (speedBonus > 0) {
+                    speedLines.push(
+                        `Speed: +${formatPercentage(speedBonus, 1)} | ${(3600 / timeAfterEquipment).toFixed(0)}/hr`
+                    );
+                } else {
+                    speedLines.push(`${(3600 / timeAfterEquipment).toFixed(0)}/hr`);
                 }
 
-                // Consumables
-                for (const item of speedBreakdown.consumables) {
-                    const detailText = item.drinkConcentration > 0 ?
-                        ` (${item.baseSpeed.toFixed(1)}% × ${(1 + item.drinkConcentration / 100).toFixed(2)})` :
-                        '';
-                    speedLines.push(`  - ${item.name}: +${item.speed.toFixed(1)}%${detailText}`);
-                }
-            }
+                // Add speed breakdown
+                const speedBreakdown = this.calculateSpeedBreakdown(actionDetails, equipment, itemDetailMap);
+                if (speedBreakdown.total > 0) {
+                    // Equipment and tools (combined from debugEquipmentSpeedBonuses)
+                    for (const item of speedBreakdown.equipmentAndTools) {
+                        const enhText = item.enhancementLevel > 0 ? ` +${item.enhancementLevel}` : '';
+                        const detailText =
+                            item.enhancementBonus > 0
+                                ? ` (${formatPercentage(item.baseBonus, 1)} + ${formatPercentage(item.enhancementBonus * item.enhancementLevel, 1)})`
+                                : '';
+                        speedLines.push(
+                            `  - ${item.itemName}${enhText}: +${formatPercentage(item.scaledBonus, 1)}${detailText}`
+                        );
+                    }
 
-            // Task Speed section (multiplicative, separate from equipment speed)
-            if (isTaskAction && taskSpeedBonus > 0) {
-                speedLines.push(''); // Empty line separator
-                speedLines.push(`<span style="font-weight: 500;">Task Speed (multiplicative): +${taskSpeedBonus.toFixed(1)}%</span>`);
-                speedLines.push(`${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${(3600 / actionTime).toFixed(0)}/hr`);
-
-                // Find equipped task badge for details
-                const trinketSlot = equipment.get('/item_locations/trinket');
-                if (trinketSlot && trinketSlot.itemHrid) {
-                    const itemDetails = itemDetailMap[trinketSlot.itemHrid];
-                    if (itemDetails) {
-                        const enhText = trinketSlot.enhancementLevel > 0 ? ` +${trinketSlot.enhancementLevel}` : '';
-
-                        // Calculate breakdown
-                        const baseTaskSpeed = itemDetails.equipmentDetail?.noncombatStats?.taskSpeed || 0;
-                        const enhancementBonus = itemDetails.equipmentDetail?.noncombatEnhancementBonuses?.taskSpeed || 0;
-                        const enhancementLevel = trinketSlot.enhancementLevel || 0;
-
-                        const detailText = enhancementBonus > 0 ?
-                            ` (${(baseTaskSpeed * 100).toFixed(1)}% + ${(enhancementBonus * enhancementLevel * 100).toFixed(1)}%)` :
-                            '';
-
-                        speedLines.push(`  - ${itemDetails.name}${enhText}: +${taskSpeedBonus.toFixed(1)}%${detailText}`);
+                    // Consumables
+                    for (const item of speedBreakdown.consumables) {
+                        const detailText =
+                            item.drinkConcentration > 0
+                                ? ` (${item.baseSpeed.toFixed(1)}% × ${(1 + item.drinkConcentration / 100).toFixed(2)})`
+                                : '';
+                        speedLines.push(`  - ${item.name}: +${item.speed.toFixed(1)}%${detailText}`);
                     }
                 }
-            }
 
-            // Add Efficiency breakdown
-            speedLines.push(''); // Empty line
-            speedLines.push(`<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round((3600 / actionTime) * efficiencyMultiplier)}/hr)</span>`);
+                // Task Speed section (multiplicative, separate from equipment speed)
+                if (isTaskAction && taskSpeedBonus > 0) {
+                    speedLines.push(''); // Empty line separator
+                    speedLines.push(
+                        `<span style="font-weight: 500;">Task Speed (multiplicative): +${taskSpeedBonus.toFixed(1)}%</span>`
+                    );
+                    speedLines.push(
+                        `${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${(3600 / actionTime).toFixed(0)}/hr`
+                    );
 
-            // Detailed efficiency breakdown
-            if (efficiencyBreakdown.levelEfficiency > 0 || (efficiencyBreakdown.actionLevelBreakdown && efficiencyBreakdown.actionLevelBreakdown.length > 0)) {
-                // Calculate raw level delta (before any Action Level bonuses)
-                const rawLevelDelta = efficiencyBreakdown.skillLevel - efficiencyBreakdown.baseRequirement;
+                    // Find equipped task badge for details
+                    const trinketSlot = equipment.get('/item_locations/trinket');
+                    if (trinketSlot && trinketSlot.itemHrid) {
+                        const itemDetails = itemDetailMap[trinketSlot.itemHrid];
+                        if (itemDetails) {
+                            const enhText = trinketSlot.enhancementLevel > 0 ? ` +${trinketSlot.enhancementLevel}` : '';
 
-                // Show final level efficiency
-                speedLines.push(`  - Level: +${efficiencyBreakdown.levelEfficiency.toFixed(1)}%`);
+                            // Calculate breakdown
+                            const baseTaskSpeed = itemDetails.equipmentDetail?.noncombatStats?.taskSpeed || 0;
+                            const enhancementBonus =
+                                itemDetails.equipmentDetail?.noncombatEnhancementBonuses?.taskSpeed || 0;
+                            const enhancementLevel = trinketSlot.enhancementLevel || 0;
 
-                // Show raw level delta (what you'd get without Action Level bonuses)
-                speedLines.push(`    - Raw level delta: +${rawLevelDelta.toFixed(1)}% (${efficiencyBreakdown.skillLevel} - ${efficiencyBreakdown.baseRequirement} base requirement)`);
+                            const detailText =
+                                enhancementBonus > 0
+                                    ? ` (${(baseTaskSpeed * 100).toFixed(1)}% + ${(enhancementBonus * enhancementLevel * 100).toFixed(1)}%)`
+                                    : '';
 
-                // Show Action Level bonus teas that reduce level efficiency
-                if (efficiencyBreakdown.actionLevelBreakdown && efficiencyBreakdown.actionLevelBreakdown.length > 0) {
-                    for (const tea of efficiencyBreakdown.actionLevelBreakdown) {
-                        // Calculate impact: base tea effect reduces efficiency
-                        const baseTeaImpact = -tea.baseActionLevel;
-                        speedLines.push(`    - ${tea.name} impact: ${baseTeaImpact.toFixed(1)}% (raises requirement)`);
-
-                        // Show DC contribution as additional reduction if > 0
-                        if (tea.dcContribution > 0) {
-                            const dcImpact = -tea.dcContribution;
-                            speedLines.push(`      - Drink Concentration: ${dcImpact.toFixed(1)}%`);
+                            speedLines.push(
+                                `  - ${itemDetails.name}${enhText}: +${taskSpeedBonus.toFixed(1)}%${detailText}`
+                            );
                         }
                     }
                 }
-            }
-            if (efficiencyBreakdown.houseEfficiency > 0) {
-                // Get house room name
-                const houseRoomName = this.getHouseRoomName(actionDetails.type);
-                speedLines.push(`  - House: +${efficiencyBreakdown.houseEfficiency.toFixed(1)}% (${houseRoomName})`);
-            }
-            if (efficiencyBreakdown.equipmentEfficiency > 0) {
-                speedLines.push(`  - Equipment: +${efficiencyBreakdown.equipmentEfficiency.toFixed(1)}%`);
-            }
-            // Break out individual teas - show BASE efficiency on main line, DC as sub-line
-            if (efficiencyBreakdown.teaBreakdown && efficiencyBreakdown.teaBreakdown.length > 0) {
-                for (const tea of efficiencyBreakdown.teaBreakdown) {
-                    // Show BASE efficiency (without DC scaling) on main line
-                    speedLines.push(`  - ${tea.name}: +${tea.baseEfficiency.toFixed(1)}%`);
-                    // Show DC contribution as sub-line if > 0
-                    if (tea.dcContribution > 0) {
-                        speedLines.push(`    - Drink Concentration: +${tea.dcContribution.toFixed(1)}%`);
+
+                // Add Efficiency breakdown
+                speedLines.push(''); // Empty line
+                speedLines.push(
+                    `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round((3600 / actionTime) * efficiencyMultiplier)}/hr)</span>`
+                );
+
+                // Detailed efficiency breakdown
+                if (
+                    efficiencyBreakdown.levelEfficiency > 0 ||
+                    (efficiencyBreakdown.actionLevelBreakdown && efficiencyBreakdown.actionLevelBreakdown.length > 0)
+                ) {
+                    // Calculate raw level delta (before any Action Level bonuses)
+                    const rawLevelDelta = efficiencyBreakdown.skillLevel - efficiencyBreakdown.baseRequirement;
+
+                    // Show final level efficiency
+                    speedLines.push(`  - Level: +${efficiencyBreakdown.levelEfficiency.toFixed(1)}%`);
+
+                    // Show raw level delta (what you'd get without Action Level bonuses)
+                    speedLines.push(
+                        `    - Raw level delta: +${rawLevelDelta.toFixed(1)}% (${efficiencyBreakdown.skillLevel} - ${efficiencyBreakdown.baseRequirement} base requirement)`
+                    );
+
+                    // Show Action Level bonus teas that reduce level efficiency
+                    if (
+                        efficiencyBreakdown.actionLevelBreakdown &&
+                        efficiencyBreakdown.actionLevelBreakdown.length > 0
+                    ) {
+                        for (const tea of efficiencyBreakdown.actionLevelBreakdown) {
+                            // Calculate impact: base tea effect reduces efficiency
+                            const baseTeaImpact = -tea.baseActionLevel;
+                            speedLines.push(
+                                `    - ${tea.name} impact: ${baseTeaImpact.toFixed(1)}% (raises requirement)`
+                            );
+
+                            // Show DC contribution as additional reduction if > 0
+                            if (tea.dcContribution > 0) {
+                                const dcImpact = -tea.dcContribution;
+                                speedLines.push(`      - Drink Concentration: ${dcImpact.toFixed(1)}%`);
+                            }
+                        }
                     }
                 }
-            }
-            if (efficiencyBreakdown.communityEfficiency > 0) {
-                const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/production_efficiency');
-                speedLines.push(`  - Community: +${efficiencyBreakdown.communityEfficiency.toFixed(1)}% (Production Efficiency T${communityBuffLevel})`);
-            }
+                if (efficiencyBreakdown.houseEfficiency > 0) {
+                    // Get house room name
+                    const houseRoomName = this.getHouseRoomName(actionDetails.type);
+                    speedLines.push(
+                        `  - House: +${efficiencyBreakdown.houseEfficiency.toFixed(1)}% (${houseRoomName})`
+                    );
+                }
+                if (efficiencyBreakdown.equipmentEfficiency > 0) {
+                    speedLines.push(`  - Equipment: +${efficiencyBreakdown.equipmentEfficiency.toFixed(1)}%`);
+                }
+                // Break out individual teas - show BASE efficiency on main line, DC as sub-line
+                if (efficiencyBreakdown.teaBreakdown && efficiencyBreakdown.teaBreakdown.length > 0) {
+                    for (const tea of efficiencyBreakdown.teaBreakdown) {
+                        // Show BASE efficiency (without DC scaling) on main line
+                        speedLines.push(`  - ${tea.name}: +${tea.baseEfficiency.toFixed(1)}%`);
+                        // Show DC contribution as sub-line if > 0
+                        if (tea.dcContribution > 0) {
+                            speedLines.push(`    - Drink Concentration: +${tea.dcContribution.toFixed(1)}%`);
+                        }
+                    }
+                }
+                if (efficiencyBreakdown.communityEfficiency > 0) {
+                    const communityBuffLevel = dataManager.getCommunityBuffLevel(
+                        '/community_buff_types/production_efficiency'
+                    );
+                    speedLines.push(
+                        `  - Community: +${efficiencyBreakdown.communityEfficiency.toFixed(1)}% (Production Efficiency T${communityBuffLevel})`
+                    );
+                }
 
-            // Total time (dynamic)
-            const totalTimeLine = document.createElement('div');
-            totalTimeLine.style.cssText = `
+                // Total time (dynamic)
+                const totalTimeLine = document.createElement('div');
+                totalTimeLine.style.cssText = `
                 color: var(--text-color-main, ${config.COLOR_INFO});
                 font-weight: 500;
                 margin-top: 4px;
             `;
 
-            const updateTotalTime = () => {
-                const inputValue = numberInput.value;
-
-                if (inputValue === '∞') {
-                    totalTimeLine.textContent = 'Total time: ∞';
-                    return;
-                }
-
-                const queueCount = parseInt(inputValue) || 0;
-                if (queueCount > 0) {
-                    // Input is number of ACTIONS to complete (affected by efficiency)
-                    // Calculate actual attempts needed
-                    const actualAttempts = Math.ceil(queueCount / efficiencyMultiplier);
-                    const totalSeconds = actualAttempts * actionTime;
-                    totalTimeLine.textContent = `Total time: ${timeReadable(totalSeconds)}`;
-                } else {
-                    totalTimeLine.textContent = 'Total time: 0s';
-                }
-            };
-
-            speedLines.push(''); // Empty line before total time
-            speedContent.innerHTML = speedLines.join('<br>');
-            speedContent.appendChild(totalTimeLine);
-
-            // Initial update
-            updateTotalTime();
-
-            // Watch for input changes
-            const inputObserver = new MutationObserver(() => {
-                updateTotalTime();
-            });
-
-            inputObserver.observe(numberInput, {
-                attributes: true,
-                attributeFilter: ['value']
-            });
-
-            numberInput.addEventListener('input', updateTotalTime);
-            numberInput.addEventListener('change', updateTotalTime);
-            panel.addEventListener('click', () => {
-                setTimeout(updateTotalTime, 50);
-            });
-
-            // Create initial summary for Action Speed & Time
-            const actionsPerHourWithEfficiency = Math.round((3600 / actionTime) * efficiencyMultiplier);
-            const initialSummary = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
-
-            speedSection = createCollapsibleSection(
-                '⏱',
-                'Action Speed & Time',
-                initialSummary,
-                speedContent,
-                false // Collapsed by default
-            );
-
-            // Get the summary div to update it dynamically
-            const speedSummaryDiv = speedSection.querySelector('.mwi-section-header + div');
-
-            // Enhanced updateTotalTime to also update the summary
-            const originalUpdateTotalTime = updateTotalTime;
-            const enhancedUpdateTotalTime = () => {
-                originalUpdateTotalTime();
-
-                // Update summary when collapsed
-                if (speedSummaryDiv) {
+                const updateTotalTime = () => {
                     const inputValue = numberInput.value;
+
                     if (inputValue === '∞') {
-                        speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ∞`;
+                        totalTimeLine.textContent = 'Total time: ∞';
+                        return;
+                    }
+
+                    const queueCount = parseInt(inputValue) || 0;
+                    if (queueCount > 0) {
+                        // Input is number of ACTIONS to complete (affected by efficiency)
+                        // Calculate actual attempts needed
+                        const actualAttempts = Math.ceil(queueCount / efficiencyMultiplier);
+                        const totalSeconds = actualAttempts * actionTime;
+                        totalTimeLine.textContent = `Total time: ${timeReadable(totalSeconds)}`;
                     } else {
-                        const queueCount = parseInt(inputValue) || 0;
-                        if (queueCount > 0) {
-                            const actualAttempts = Math.ceil(queueCount / efficiencyMultiplier);
-                            const totalSeconds = actualAttempts * actionTime;
-                            speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ${timeReadable(totalSeconds)}`;
+                        totalTimeLine.textContent = 'Total time: 0s';
+                    }
+                };
+
+                speedLines.push(''); // Empty line before total time
+                speedContent.innerHTML = speedLines.join('<br>');
+                speedContent.appendChild(totalTimeLine);
+
+                // Initial update
+                updateTotalTime();
+
+                // Watch for input changes
+                const inputObserver = new MutationObserver(() => {
+                    updateTotalTime();
+                });
+
+                inputObserver.observe(numberInput, {
+                    attributes: true,
+                    attributeFilter: ['value'],
+                });
+
+                numberInput.addEventListener('input', updateTotalTime);
+                numberInput.addEventListener('change', updateTotalTime);
+                panel.addEventListener('click', () => {
+                    setTimeout(updateTotalTime, 50);
+                });
+
+                // Create initial summary for Action Speed & Time
+                const actionsPerHourWithEfficiency = Math.round((3600 / actionTime) * efficiencyMultiplier);
+                const initialSummary = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
+
+                speedSection = createCollapsibleSection(
+                    '⏱',
+                    'Action Speed & Time',
+                    initialSummary,
+                    speedContent,
+                    false // Collapsed by default
+                );
+
+                // Get the summary div to update it dynamically
+                const speedSummaryDiv = speedSection.querySelector('.mwi-section-header + div');
+
+                // Enhanced updateTotalTime to also update the summary
+                const originalUpdateTotalTime = updateTotalTime;
+                const enhancedUpdateTotalTime = () => {
+                    originalUpdateTotalTime();
+
+                    // Update summary when collapsed
+                    if (speedSummaryDiv) {
+                        const inputValue = numberInput.value;
+                        if (inputValue === '∞') {
+                            speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ∞`;
                         } else {
-                            speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
+                            const queueCount = parseInt(inputValue) || 0;
+                            if (queueCount > 0) {
+                                const actualAttempts = Math.ceil(queueCount / efficiencyMultiplier);
+                                const totalSeconds = actualAttempts * actionTime;
+                                speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ${timeReadable(totalSeconds)}`;
+                            } else {
+                                speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            // Replace all updateTotalTime calls with enhanced version
-            inputObserver.disconnect();
-            inputObserver.observe(numberInput, {
-                attributes: true,
-                attributeFilter: ['value']
-            });
+                // Replace all updateTotalTime calls with enhanced version
+                inputObserver.disconnect();
+                inputObserver.observe(numberInput, {
+                    attributes: true,
+                    attributeFilter: ['value'],
+                });
 
-            const newInputObserver = new MutationObserver(() => {
+                const newInputObserver = new MutationObserver(() => {
+                    enhancedUpdateTotalTime();
+                });
+                newInputObserver.observe(numberInput, {
+                    attributes: true,
+                    attributeFilter: ['value'],
+                });
+
+                numberInput.removeEventListener('input', updateTotalTime);
+                numberInput.removeEventListener('change', updateTotalTime);
+                numberInput.addEventListener('input', enhancedUpdateTotalTime);
+                numberInput.addEventListener('change', enhancedUpdateTotalTime);
+
+                panel.removeEventListener('click', () => {
+                    setTimeout(updateTotalTime, 50);
+                });
+                panel.addEventListener('click', () => {
+                    setTimeout(enhancedUpdateTotalTime, 50);
+                });
+
+                // Initial update with enhanced version
                 enhancedUpdateTotalTime();
-            });
-            newInputObserver.observe(numberInput, {
-                attributes: true,
-                attributeFilter: ['value']
-            });
-
-            numberInput.removeEventListener('input', updateTotalTime);
-            numberInput.removeEventListener('change', updateTotalTime);
-            numberInput.addEventListener('input', enhancedUpdateTotalTime);
-            numberInput.addEventListener('change', enhancedUpdateTotalTime);
-
-            panel.removeEventListener('click', () => {
-                setTimeout(updateTotalTime, 50);
-            });
-            panel.addEventListener('click', () => {
-                setTimeout(enhancedUpdateTotalTime, 50);
-            });
-
-            // Initial update with enhanced version
-            enhancedUpdateTotalTime();
             } // End hasNormalXP check - speedSection only created for non-combat
 
             // ===== SECTION 2: Level Progress =====
@@ -417,7 +457,7 @@ class QuickInputButtons {
                 // FIRST ROW: Time-based buttons (hours)
                 queueContent.appendChild(document.createTextNode('Do '));
 
-                this.presetHours.forEach(hours => {
+                this.presetHours.forEach((hours) => {
                     const button = this.createButton(hours === 0.5 ? '0.5' : hours.toString(), () => {
                         // How many actions (outputs) fit in X hours?
                         // With efficiency, fewer actual attempts produce more outputs
@@ -439,7 +479,7 @@ class QuickInputButtons {
                 // SECOND ROW: Count-based buttons (times)
                 queueContent.appendChild(document.createTextNode('Do '));
 
-                this.presetValues.forEach(value => {
+                this.presetValues.forEach((value) => {
                     const button = this.createButton(value.toLocaleString(), () => {
                         this.setInputValue(numberInput, value);
                     });
@@ -468,10 +508,8 @@ class QuickInputButtons {
                     if (levelProgressSection) {
                         speedSection.insertAdjacentElement('afterend', levelProgressSection);
                     }
-                } else {
-                    if (levelProgressSection) {
-                        queueContent.insertAdjacentElement('afterend', levelProgressSection);
-                    }
+                } else if (levelProgressSection) {
+                    queueContent.insertAdjacentElement('afterend', levelProgressSection);
                 }
             } else {
                 // Combat: Insert levelProgressSection directly after inputContainer
@@ -479,7 +517,6 @@ class QuickInputButtons {
                     inputContainer.insertAdjacentElement('afterend', levelProgressSection);
                 }
             }
-
         } catch (error) {
             console.error('[Toolasha] Error injecting quick input buttons:', error);
         }
@@ -528,7 +565,7 @@ class QuickInputButtons {
             actionHrid: actionDetails.hrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: true,
-            floorActionLevel: true
+            floorActionLevel: true,
         });
 
         if (!stats) {
@@ -547,8 +584,8 @@ class QuickInputButtons {
                     baseRequirement: 1,
                     actionLevelBonus: 0,
                     actionLevelBreakdown: [],
-                    effectiveRequirement: 1
-                }
+                    effectiveRequirement: 1,
+                },
             };
         }
 
@@ -570,14 +607,19 @@ class QuickInputButtons {
             '/action_types/milking': '/house_rooms/dairy_barn',
             '/action_types/tailoring': '/house_rooms/sewing_parlor',
             '/action_types/woodcutting': '/house_rooms/log_shed',
-            '/action_types/brewing': '/house_rooms/brewery'
+            '/action_types/brewing': '/house_rooms/brewery',
         };
 
         const roomHrid = roomMapping[actionType];
         if (!roomHrid) return 'Unknown Room';
 
         const room = houseRooms.get(roomHrid);
-        const roomName = roomHrid.split('/').pop().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const roomName = roomHrid
+            .split('/')
+            .pop()
+            .split('_')
+            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ');
         const level = room?.level || 0;
 
         return `${roomName} level ${level}`;
@@ -594,7 +636,7 @@ class QuickInputButtons {
         const breakdown = {
             equipmentAndTools: [],
             consumables: [],
-            total: 0
+            total: 0,
         };
 
         // Get all equipment speed bonuses using the existing parser
@@ -606,7 +648,7 @@ class QuickInputButtons {
         const skillSpecificSpeed = skillName + 'Speed';
 
         // Filter for relevant speeds (skill-specific or generic skillingSpeed)
-        const relevantSpeeds = allSpeedBonuses.filter(item => {
+        const relevantSpeeds = allSpeedBonuses.filter((item) => {
             return item.speedType === skillSpecificSpeed || item.speedType === 'skillingSpeed';
         });
 
@@ -650,7 +692,7 @@ class QuickInputButtons {
         const enhancingTeas = {
             '/items/enhancing_tea': { name: 'Enhancing Tea', baseSpeed: 0.02 },
             '/items/super_enhancing_tea': { name: 'Super Enhancing Tea', baseSpeed: 0.04 },
-            '/items/ultra_enhancing_tea': { name: 'Ultra Enhancing Tea', baseSpeed: 0.06 }
+            '/items/ultra_enhancing_tea': { name: 'Ultra Enhancing Tea', baseSpeed: 0.06 },
         };
 
         for (const drink of drinkSlots) {
@@ -663,7 +705,7 @@ class QuickInputButtons {
                     name: teaInfo.name,
                     baseSpeed: teaInfo.baseSpeed * 100,
                     drinkConcentration: drinkConcentration * 100,
-                    speed: scaledSpeed * 100
+                    speed: scaledSpeed * 100,
                 });
             }
         }
@@ -750,9 +792,8 @@ class QuickInputButtons {
             // Check upgrade item first (e.g., Crimson Staff → Azure Staff)
             if (actionDetails.upgradeItemHrid) {
                 // Upgrade recipes require base item (enhancement level 0)
-                const upgradeItem = inventory.find(item =>
-                    item.itemHrid === actionDetails.upgradeItemHrid &&
-                    item.enhancementLevel === 0
+                const upgradeItem = inventory.find(
+                    (item) => item.itemHrid === actionDetails.upgradeItemHrid && item.enhancementLevel === 0
                 );
                 const availableAmount = upgradeItem?.count || 0;
                 const baseRequirement = 1; // Upgrade items always require exactly 1
@@ -772,7 +813,7 @@ class QuickInputButtons {
             if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
                 for (const input of actionDetails.inputItems) {
                     // Find ALL items with this HRID (different enhancement levels stack separately)
-                    const allMatchingItems = inventory.filter(item => item.itemHrid === input.itemHrid);
+                    const allMatchingItems = inventory.filter((item) => item.itemHrid === input.itemHrid);
 
                     // Sum up counts across all enhancement levels
                     const availableAmount = allMatchingItems.reduce((total, item) => total + (item.count || 0), 0);
@@ -811,7 +852,7 @@ class QuickInputButtons {
     getSkillLevel(skills, skillType) {
         // Map action type to skill HRID
         const skillHrid = skillType.replace('/action_types/', '/skills/');
-        const skill = skills.find(s => s.skillHrid === skillHrid);
+        const skill = skills.find((s) => s.skillHrid === skillHrid);
         return skill?.level || 1;
     }
 
@@ -837,7 +878,12 @@ class QuickInputButtons {
         const effectiveRequirement = baseRequirement + Math.floor(actionLevelBonus);
 
         // Calculate tea skill level bonus (e.g., +8 Cheesesmithing from Ultra Cheesesmithing Tea)
-        const teaSkillLevelBonus = parseTeaSkillLevelBonus(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
+        const teaSkillLevelBonus = parseTeaSkillLevelBonus(
+            actionDetails.type,
+            activeDrinks,
+            itemDetailMap,
+            drinkConcentration
+        );
 
         // Apply tea skill level bonus to effective player level
         const effectiveLevel = skillLevel + teaSkillLevelBonus;
@@ -845,11 +891,16 @@ class QuickInputButtons {
         const houseEfficiency = calculateHouseEfficiency(actionDetails.type);
         const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap);
 
-        const teaBreakdown = parseTeaEfficiencyBreakdown(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
+        const teaBreakdown = parseTeaEfficiencyBreakdown(
+            actionDetails.type,
+            activeDrinks,
+            itemDetailMap,
+            drinkConcentration
+        );
         const teaEfficiency = teaBreakdown.reduce((sum, tea) => sum + tea.efficiency, 0);
 
         const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/production_efficiency');
-        const communityEfficiency = communityBuffLevel ? (0.14 + ((communityBuffLevel - 1) * 0.003)) * 100 : 0;
+        const communityEfficiency = communityBuffLevel ? (0.14 + (communityBuffLevel - 1) * 0.003) * 100 : 0;
 
         return stackAdditive(levelEfficiency, houseEfficiency, equipmentEfficiency, teaEfficiency, communityEfficiency);
     }
@@ -867,7 +918,15 @@ class QuickInputButtons {
      * @param {Object} levelExperienceTable - XP requirements per level
      * @returns {Object} {actionsNeeded, timeNeeded}
      */
-    calculateMultiLevelProgress(currentLevel, currentXP, targetLevel, baseEfficiency, actionTime, xpPerAction, levelExperienceTable) {
+    calculateMultiLevelProgress(
+        currentLevel,
+        currentXP,
+        targetLevel,
+        baseEfficiency,
+        actionTime,
+        xpPerAction,
+        levelExperienceTable
+    ) {
         let totalActions = 0;
         let totalTime = 0;
 
@@ -885,7 +944,7 @@ class QuickInputButtons {
             // Progressive efficiency: +1% per level gained during grind
             const levelsGained = level - currentLevel;
             const progressiveEfficiency = baseEfficiency + levelsGained;
-            const efficiencyMultiplier = 1 + (progressiveEfficiency / 100);
+            const efficiencyMultiplier = 1 + progressiveEfficiency / 100;
 
             // Calculate XP per performed action (base XP × efficiency multiplier)
             // Efficiency means each action repeats, giving more XP per performed action
@@ -931,7 +990,7 @@ class QuickInputButtons {
             }
 
             // Find the skill
-            const skill = skills.find(s => s.skillHrid === skillHrid);
+            const skill = skills.find((s) => s.skillHrid === skillHrid);
             if (!skill) {
                 return null;
             }
@@ -996,7 +1055,9 @@ class QuickInputButtons {
             lines.push('');
 
             // Action details
-            lines.push(`XP per action: ${formatWithSeparator(baseXP.toFixed(1))} base → ${formatWithSeparator(modifiedXP.toFixed(1))} (×${xpData.totalMultiplier.toFixed(2)})`);
+            lines.push(
+                `XP per action: ${formatWithSeparator(baseXP.toFixed(1))} base → ${formatWithSeparator(modifiedXP.toFixed(1))} (×${xpData.totalMultiplier.toFixed(2)})`
+            );
 
             // XP breakdown (if any bonuses exist)
             if (xpData.totalWisdom > 0 || xpData.charmExperience > 0) {
@@ -1044,18 +1105,27 @@ class QuickInputButtons {
 
             // Single level progress (always shown)
             const singleLevel = this.calculateMultiLevelProgress(
-                currentLevel, currentXP, nextLevel,
-                baseEfficiency, actionTime, modifiedXP, levelExperienceTable
+                currentLevel,
+                currentXP,
+                nextLevel,
+                baseEfficiency,
+                actionTime,
+                modifiedXP,
+                levelExperienceTable
             );
 
-            lines.push(`<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">To Level ${nextLevel}:</span>`);
+            lines.push(
+                `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">To Level ${nextLevel}:</span>`
+            );
             lines.push(`  Actions: ${formatWithSeparator(singleLevel.actionsNeeded)}`);
             lines.push(`  Time: ${timeReadable(singleLevel.timeNeeded)}`);
 
             lines.push('');
 
             // Multi-level calculator (interactive section)
-            lines.push(`<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Target Level Calculator:</span>`);
+            lines.push(
+                `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Target Level Calculator:</span>`
+            );
             lines.push(`<div style="margin-top: 4px;">
                 <span>To level </span>
                 <input
@@ -1083,7 +1153,9 @@ class QuickInputButtons {
             </div>`);
 
             lines.push('');
-            lines.push(`XP/hour: ${formatWithSeparator(Math.round(xpPerHour))} | XP/day: ${formatWithSeparator(Math.round(xpPerDay))}`);
+            lines.push(
+                `XP/hour: ${formatWithSeparator(Math.round(xpPerHour))} | XP/day: ${formatWithSeparator(Math.round(xpPerDay))}`
+            );
 
             content.innerHTML = lines.join('<br>');
 
@@ -1096,8 +1168,13 @@ class QuickInputButtons {
 
                 if (targetLevel > currentLevel && targetLevel <= 200) {
                     const result = this.calculateMultiLevelProgress(
-                        currentLevel, currentXP, targetLevel,
-                        baseEfficiency, actionTime, modifiedXP, levelExperienceTable
+                        currentLevel,
+                        currentXP,
+                        targetLevel,
+                        baseEfficiency,
+                        actionTime,
+                        modifiedXP,
+                        levelExperienceTable
                     );
 
                     targetLevelResult.innerHTML = `

@@ -13,7 +13,7 @@ const DUNGEON_MAX_WAVES = {
     '/actions/combat/chimerical_den': 50,
     '/actions/combat/sinister_circus': 60,
     '/actions/combat/enchanted_fortress': 65,
-    '/actions/combat/pirate_cove': 65
+    '/actions/combat/pirate_cove': 65,
 };
 
 class DungeonTrackerStorage {
@@ -46,7 +46,7 @@ class DungeonTrackerStorage {
         const namePart = dungeonHrid.split('/').pop();
         const name = namePart
             .split('_')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
 
         // Get max waves from nested combatZoneInfo.dungeonInfo.maxWaves
@@ -59,7 +59,7 @@ class DungeonTrackerStorage {
 
         return {
             name: actionDetails.name || name,
-            maxWaves: maxWaves
+            maxWaves: maxWaves,
         };
     }
 
@@ -75,9 +75,7 @@ class DungeonTrackerStorage {
         const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
 
         // Filter by dungeon HRID and tier
-        const runs = allRuns.filter(r =>
-            r.dungeonHrid === dungeonHrid && r.tier === tier
-        );
+        const runs = allRuns.filter((r) => r.dungeonHrid === dungeonHrid && r.tier === tier);
 
         if (limit > 0 && runs.length > limit) {
             return runs.slice(0, limit);
@@ -101,14 +99,14 @@ class DungeonTrackerStorage {
                 avgTime: 0,
                 fastestTime: 0,
                 slowestTime: 0,
-                avgWaveTime: 0
+                avgWaveTime: 0,
             };
         }
 
         const totalTime = runs.reduce((sum, run) => sum + run.totalTime, 0);
         const avgTime = totalTime / runs.length;
-        const fastestTime = Math.min(...runs.map(r => r.totalTime));
-        const slowestTime = Math.max(...runs.map(r => r.totalTime));
+        const fastestTime = Math.min(...runs.map((r) => r.totalTime));
+        const slowestTime = Math.max(...runs.map((r) => r.totalTime));
 
         const totalAvgWaveTime = runs.reduce((sum, run) => sum + run.avgWaveTime, 0);
         const avgWaveTime = totalAvgWaveTime / runs.length;
@@ -118,7 +116,7 @@ class DungeonTrackerStorage {
             avgTime,
             fastestTime,
             slowestTime,
-            avgWaveTime
+            avgWaveTime,
         };
     }
 
@@ -129,7 +127,7 @@ class DungeonTrackerStorage {
      */
     async getStatsByName(dungeonName) {
         const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
-        const runs = allRuns.filter(r => r.dungeonName === dungeonName);
+        const runs = allRuns.filter((r) => r.dungeonName === dungeonName);
 
         if (runs.length === 0) {
             return {
@@ -137,12 +135,12 @@ class DungeonTrackerStorage {
                 avgTime: 0,
                 fastestTime: 0,
                 slowestTime: 0,
-                avgWaveTime: 0
+                avgWaveTime: 0,
             };
         }
 
         // Use 'duration' field (chat-based) or 'totalTime' field (websocket-based)
-        const durations = runs.map(r => r.duration || r.totalTime || 0);
+        const durations = runs.map((r) => r.duration || r.totalTime || 0);
         const totalTime = durations.reduce((sum, d) => sum + d, 0);
         const avgTime = totalTime / runs.length;
         const fastestTime = Math.min(...durations);
@@ -155,7 +153,7 @@ class DungeonTrackerStorage {
             avgTime,
             fastestTime,
             slowestTime,
-            avgWaveTime
+            avgWaveTime,
         };
     }
 
@@ -204,9 +202,7 @@ class DungeonTrackerStorage {
         const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
 
         // Filter to this dungeon+tier
-        const dungeonRuns = allRuns.filter(r =>
-            r.dungeonHrid === dungeonHrid && r.tier === tier
-        );
+        const dungeonRuns = allRuns.filter((r) => r.dungeonHrid === dungeonHrid && r.tier === tier);
 
         if (runIndex < 0 || runIndex >= dungeonRuns.length) {
             console.warn('[Dungeon Tracker Storage] Invalid run index:', runIndex);
@@ -215,10 +211,11 @@ class DungeonTrackerStorage {
 
         // Find the run to delete in the full array
         const runToDelete = dungeonRuns[runIndex];
-        const indexInAllRuns = allRuns.findIndex(r =>
-            r.timestamp === runToDelete.timestamp &&
-            r.dungeonHrid === runToDelete.dungeonHrid &&
-            r.tier === runToDelete.tier
+        const indexInAllRuns = allRuns.findIndex(
+            (r) =>
+                r.timestamp === runToDelete.timestamp &&
+                r.dungeonHrid === runToDelete.dungeonHrid &&
+                r.tier === runToDelete.tier
         );
 
         if (indexInAllRuns === -1) {
@@ -244,9 +241,7 @@ class DungeonTrackerStorage {
         const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
 
         // Filter OUT the runs we want to delete
-        const filteredRuns = allRuns.filter(r =>
-            !(r.dungeonHrid === dungeonHrid && r.tier === tier)
-        );
+        const filteredRuns = allRuns.filter((r) => !(r.dungeonHrid === dungeonHrid && r.tier === tier));
 
         // Save back the filtered list
         return storage.setJSON('allRuns', filteredRuns, this.unifiedStoreName, true);
@@ -267,10 +262,7 @@ class DungeonTrackerStorage {
 
         // Find all dungeon actions (combat actions with maxCount field)
         const dungeonHrids = Object.entries(initData.actionDetailMap)
-            .filter(([hrid, details]) =>
-                hrid.startsWith('/actions/combat/') &&
-                details.maxCount !== undefined
-            )
+            .filter(([hrid, details]) => hrid.startsWith('/actions/combat/') && details.maxCount !== undefined)
             .map(([hrid]) => hrid);
 
         // Check each dungeon+tier combination
@@ -283,7 +275,7 @@ class DungeonTrackerStorage {
                         dungeonHrid,
                         tier,
                         dungeonName: dungeonInfo?.name || 'Unknown',
-                        runCount: runs.length
+                        runCount: runs.length,
                     });
                 }
             }
@@ -318,7 +310,7 @@ class DungeonTrackerStorage {
         const newTimestamp = new Date(run.timestamp).getTime();
 
         // Check for duplicates (same time window, team, and duration)
-        const isDuplicate = allRuns.some(r => {
+        const isDuplicate = allRuns.some((r) => {
             const existingTimestamp = new Date(r.timestamp).getTime();
             const timeDiff = Math.abs(existingTimestamp - newTimestamp);
             const durationDiff = Math.abs(r.duration - run.duration);
@@ -345,7 +337,7 @@ class DungeonTrackerStorage {
                 source: 'chat',
                 waveTimes: null,
                 avgWaveTime: null,
-                keyCountsMap: run.keyCountsMap || null  // Include key counts if available
+                keyCountsMap: run.keyCountsMap || null, // Include key counts if available
             };
 
             // Add to front of list (most recent first)
@@ -381,11 +373,11 @@ class DungeonTrackerStorage {
         let filtered = allRuns;
 
         if (filters.dungeonName && filters.dungeonName !== 'all') {
-            filtered = filtered.filter(r => r.dungeonName === filters.dungeonName);
+            filtered = filtered.filter((r) => r.dungeonName === filters.dungeonName);
         }
 
         if (filters.teamKey && filters.teamKey !== 'all') {
-            filtered = filtered.filter(r => r.teamKey === filters.teamKey);
+            filtered = filtered.filter((r) => r.teamKey === filters.teamKey);
         }
 
         return filtered;
@@ -413,7 +405,7 @@ class DungeonTrackerStorage {
         // Calculate stats for each team
         const results = [];
         for (const [teamKey, runs] of Object.entries(teamGroups)) {
-            const durations = runs.map(r => r.duration);
+            const durations = runs.map((r) => r.duration);
             const avgTime = durations.reduce((a, b) => a + b, 0) / durations.length;
             const bestTime = Math.min(...durations);
             const worstTime = Math.max(...durations);
@@ -423,7 +415,7 @@ class DungeonTrackerStorage {
                 runCount: runs.length,
                 avgTime,
                 bestTime,
-                worstTime
+                worstTime,
             });
         }
 

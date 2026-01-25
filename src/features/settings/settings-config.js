@@ -12,9 +12,9 @@ export const settingsGroups = {
                 id: 'networkAlert',
                 label: 'Show alert when market price data cannot be fetched',
                 type: 'checkbox',
-                default: true
-            }
-        }
+                default: true,
+            },
+        },
     },
 
     actionPanel: {
@@ -25,33 +25,33 @@ export const settingsGroups = {
                 id: 'totalActionTime',
                 label: 'Top left: Estimated total time and completion time',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             actionPanel_totalTime: {
                 id: 'actionPanel_totalTime',
                 label: 'Action panel: Total time, times to reach target level, exp/hour',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             actionPanel_totalTime_quickInputs: {
                 id: 'actionPanel_totalTime_quickInputs',
                 label: 'Action panel: Quick input buttons (hours, count presets, Max)',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['actionPanel_totalTime']
+                dependencies: ['actionPanel_totalTime'],
             },
             actionPanel_foragingTotal: {
                 id: 'actionPanel_foragingTotal',
                 label: 'Action panel: Overall profit for multi-outcome foraging',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['actionPanel_totalTime']
+                dependencies: ['actionPanel_totalTime'],
             },
             actionQueue: {
                 id: 'actionQueue',
                 label: 'Queued actions: Show total time and completion time',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             actionQueue_valueMode: {
                 id: 'actionQueue_valueMode',
@@ -60,31 +60,31 @@ export const settingsGroups = {
                 default: 'profit',
                 options: [
                     { value: 'profit', label: 'Total Profit (revenue - all costs)' },
-                    { value: 'estimated_value', label: 'Estimated Value (revenue after tax)' }
+                    { value: 'estimated_value', label: 'Estimated Value (revenue after tax)' },
                 ],
                 dependencies: ['actionQueue'],
-                help: 'Choose how to calculate the total value for queued actions. Profit shows net earnings after materials and drinks. Estimated Value shows gross revenue after market tax (always positive).'
+                help: 'Choose how to calculate the total value for queued actions. Profit shows net earnings after materials and drinks. Estimated Value shows gross revenue after market tax (always positive).',
             },
             actionPanel_outputTotals: {
                 id: 'actionPanel_outputTotals',
                 label: 'Action panel: Show total expected outputs below per-action outputs',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays calculated totals when you enter a quantity in the action input'
+                help: 'Displays calculated totals when you enter a quantity in the action input',
             },
             actionPanel_maxProduceable: {
                 id: 'actionPanel_maxProduceable',
                 label: 'Action panel: Show max produceable count on crafting actions',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays how many items you can make based on current inventory'
+                help: 'Displays how many items you can make based on current inventory',
             },
             actionPanel_gatheringStats: {
                 id: 'actionPanel_gatheringStats',
                 label: 'Action panel: Show profit/exp per hour on gathering actions',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays profit/hr and exp/hr on gathering tiles (foraging, woodcutting, milking)'
+                help: 'Displays profit/hr and exp/hr on gathering tiles (foraging, woodcutting, milking)',
             },
             actionPanel_hideNegativeProfit: {
                 id: 'actionPanel_hideNegativeProfit',
@@ -92,7 +92,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['actionPanel_maxProduceable', 'actionPanel_gatheringStats'],
-                help: 'Hides action panels that would result in a loss (negative profit/hr)'
+                help: 'Hides action panels that would result in a loss (negative profit/hr)',
             },
             actionPanel_sortByProfit: {
                 id: 'actionPanel_sortByProfit',
@@ -100,23 +100,23 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['actionPanel_maxProduceable', 'actionPanel_gatheringStats'],
-                help: 'Sorts action tiles by profit/hr in descending order. Actions without profit data appear at the end.'
+                help: 'Sorts action tiles by profit/hr in descending order. Actions without profit data appear at the end.',
             },
             requiredMaterials: {
                 id: 'requiredMaterials',
                 label: 'Action panel: Show total required and missing materials',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays total materials needed and shortfall when entering quantity'
+                help: 'Displays total materials needed and shortfall when entering quantity',
             },
             alchemy_profitDisplay: {
                 id: 'alchemy_profitDisplay',
                 label: 'Alchemy panel: Show profit calculator',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices'
-            }
-        }
+                help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices',
+            },
+        },
     },
 
     tooltips: {
@@ -127,14 +127,14 @@ export const settingsGroups = {
                 id: 'itemTooltip_prices',
                 label: 'Show 24-hour average market prices',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             itemTooltip_profit: {
                 id: 'itemTooltip_profit',
                 label: 'Show production cost and profit',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['itemTooltip_prices']
+                dependencies: ['itemTooltip_prices'],
             },
             itemTooltip_detailedProfit: {
                 id: 'itemTooltip_detailedProfit',
@@ -142,14 +142,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['itemTooltip_profit'],
-                help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown'
+                help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['itemTooltip_prices']
+                dependencies: ['itemTooltip_prices'],
             },
             expectedValue_showDrops: {
                 id: 'expectedValue_showDrops',
@@ -160,36 +160,36 @@ export const settingsGroups = {
                     { value: 'Top 5', label: 'Top 5' },
                     { value: 'Top 10', label: 'Top 10' },
                     { value: 'All', label: 'All Drops' },
-                    { value: 'None', label: 'Summary Only' }
+                    { value: 'None', label: 'Summary Only' },
                 ],
-                dependencies: ['itemTooltip_expectedValue']
+                dependencies: ['itemTooltip_expectedValue'],
             },
             expectedValue_respectPricingMode: {
                 id: 'expectedValue_respectPricingMode',
                 label: 'Use pricing mode for expected value calculations',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['itemTooltip_expectedValue']
+                dependencies: ['itemTooltip_expectedValue'],
             },
             showConsumTips: {
                 id: 'showConsumTips',
                 label: 'HP/MP consumables: Restore speed, cost performance',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             enhanceSim: {
                 id: 'enhanceSim',
                 label: 'Show enhancement simulator calculations',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             enhanceSim_showConsumedItemsDetail: {
                 id: 'enhanceSim_showConsumedItemsDetail',
                 label: 'Enhancement tooltips: Show detailed breakdown for consumed items',
                 type: 'checkbox',
                 default: false,
-                help: 'When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher\'s Mirror calculations',
-                dependencies: ['enhanceSim']
+                help: "When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher's Mirror calculations",
+                dependencies: ['enhanceSim'],
             },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
@@ -197,7 +197,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['itemTooltip_profit'],
-                help: 'Shows gathering actions that produce this item (foraging, woodcutting, milking)'
+                help: 'Shows gathering actions that produce this item (foraging, woodcutting, milking)',
             },
             itemTooltip_gatheringRareDrops: {
                 id: 'itemTooltip_gatheringRareDrops',
@@ -205,9 +205,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['itemTooltip_gathering'],
-                help: 'Shows rare find drops from gathering zones (e.g., Thread of Expertise from Asteroid Belt)'
-            }
-        }
+                help: 'Shows rare find drops from gathering zones (e.g., Thread of Expertise from Asteroid Belt)',
+            },
+        },
     },
 
     enhancementSimulator: {
@@ -219,7 +219,7 @@ export const settingsGroups = {
                 label: 'Auto-detect your stats (false = use market defaults)',
                 type: 'checkbox',
                 default: false,
-                help: 'Most players should use market defaults to see realistic professional enhancer costs'
+                help: 'Most players should use market defaults to see realistic professional enhancer costs',
             },
             enhanceSim_enhancingLevel: {
                 id: 'enhanceSim_enhancingLevel',
@@ -228,7 +228,7 @@ export const settingsGroups = {
                 default: 140,
                 min: 1,
                 max: 150,
-                help: 'Default: 140 (professional enhancer level)'
+                help: 'Default: 140 (professional enhancer level)',
             },
             enhanceSim_houseLevel: {
                 id: 'enhanceSim_houseLevel',
@@ -237,7 +237,7 @@ export const settingsGroups = {
                 default: 8,
                 min: 0,
                 max: 8,
-                help: 'Default: 8 (max level)'
+                help: 'Default: 8 (max level)',
             },
             enhanceSim_toolBonus: {
                 id: 'enhanceSim_toolBonus',
@@ -247,7 +247,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 30,
                 step: 0.01,
-                help: 'Default: 6.05 (Celestial Enhancer +13)'
+                help: 'Default: 6.05 (Celestial Enhancer +13)',
             },
             enhanceSim_speedBonus: {
                 id: 'enhanceSim_speedBonus',
@@ -257,35 +257,35 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 step: 0.1,
-                help: 'Default: 48.5 (All enhancing gear +10: Body/Legs/Hands + Philosopher\'s Necklace)'
+                help: "Default: 48.5 (All enhancing gear +10: Body/Legs/Hands + Philosopher's Necklace)",
             },
             enhanceSim_blessedTea: {
                 id: 'enhanceSim_blessedTea',
                 label: 'Blessed Tea active',
                 type: 'checkbox',
                 default: true,
-                help: 'Professional enhancers use this to reduce attempts'
+                help: 'Professional enhancers use this to reduce attempts',
             },
             enhanceSim_ultraEnhancingTea: {
                 id: 'enhanceSim_ultraEnhancingTea',
                 label: 'Ultra Enhancing Tea active',
                 type: 'checkbox',
                 default: true,
-                help: 'Provides +8 base skill levels (scales with drink concentration)'
+                help: 'Provides +8 base skill levels (scales with drink concentration)',
             },
             enhanceSim_superEnhancingTea: {
                 id: 'enhanceSim_superEnhancingTea',
                 label: 'Super Enhancing Tea active',
                 type: 'checkbox',
                 default: false,
-                help: 'Provides +6 base skill levels (Ultra is better)'
+                help: 'Provides +6 base skill levels (Ultra is better)',
             },
             enhanceSim_enhancingTea: {
                 id: 'enhanceSim_enhancingTea',
                 label: 'Enhancing Tea active',
                 type: 'checkbox',
                 default: false,
-                help: 'Provides +3 base skill levels (Ultra is better)'
+                help: 'Provides +3 base skill levels (Ultra is better)',
             },
             enhanceSim_drinkConcentration: {
                 id: 'enhanceSim_drinkConcentration',
@@ -295,9 +295,9 @@ export const settingsGroups = {
                 min: 0,
                 max: 20,
                 step: 0.1,
-                help: 'Default: 12.9 (Guzzling Pouch +10)'
-            }
-        }
+                help: 'Default: 12.9 (Guzzling Pouch +10)',
+            },
+        },
     },
 
     enhancementTracker: {
@@ -310,7 +310,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 requiresRefresh: true,
-                help: 'Track enhancement attempts, costs, and statistics'
+                help: 'Track enhancement attempts, costs, and statistics',
             },
             enhancementTracker_showOnlyOnEnhancingScreen: {
                 id: 'enhancementTracker_showOnlyOnEnhancingScreen',
@@ -318,9 +318,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['enhancementTracker'],
-                help: 'Hide tracker when not on the Enhancing screen'
-            }
-        }
+                help: 'Hide tracker when not on the Enhancing screen',
+            },
+        },
     },
 
     economy: {
@@ -332,28 +332,28 @@ export const settingsGroups = {
                 label: 'Top right: Show current assets (net worth)',
                 type: 'checkbox',
                 default: true,
-                help: 'Enhanced items valued by enhancement simulator'
+                help: 'Enhanced items valued by enhancement simulator',
             },
             invWorth: {
                 id: 'invWorth',
                 label: 'Below inventory: Show inventory summary',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['networth']
+                dependencies: ['networth'],
             },
             invSort: {
                 id: 'invSort',
                 label: 'Sort inventory items by value',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['networth']
+                dependencies: ['networth'],
             },
             invSort_showBadges: {
                 id: 'invSort_showBadges',
                 label: 'Show stack value badges when sorting by Ask/Bid',
                 type: 'checkbox',
                 default: false,
-                dependencies: ['invSort']
+                dependencies: ['invSort'],
             },
             invSort_badgesOnNone: {
                 id: 'invSort_badgesOnNone',
@@ -361,21 +361,21 @@ export const settingsGroups = {
                 type: 'select',
                 default: 'None',
                 options: ['None', 'Ask', 'Bid'],
-                dependencies: ['invSort']
+                dependencies: ['invSort'],
             },
             invSort_sortEquipment: {
                 id: 'invSort_sortEquipment',
                 label: 'Enable sorting for Equipment category',
                 type: 'checkbox',
                 default: false,
-                dependencies: ['invSort']
+                dependencies: ['invSort'],
             },
             invBadgePrices: {
                 id: 'invBadgePrices',
                 label: 'Show price badges on item icons',
                 type: 'checkbox',
                 default: false,
-                help: 'Displays per-item ask or bid price on inventory items'
+                help: 'Displays per-item ask or bid price on inventory items',
             },
             invBadgePrices_type: {
                 id: 'invBadgePrices_type',
@@ -384,7 +384,7 @@ export const settingsGroups = {
                 default: 'Ask',
                 options: ['None', 'Ask', 'Bid'],
                 dependencies: ['invBadgePrices'],
-                help: 'Ask (instant-buy price), Bid (instant-sell price), or None'
+                help: 'Ask (instant-buy price), Bid (instant-sell price), or None',
             },
             profitCalc_pricingMode: {
                 id: 'profitCalc_pricingMode',
@@ -394,8 +394,8 @@ export const settingsGroups = {
                 options: [
                     { value: 'conservative', label: 'Conservative (Ask/Bid - instant trading)' },
                     { value: 'hybrid', label: 'Hybrid (Ask/Ask - instant buy, patient sell)' },
-                    { value: 'optimistic', label: 'Optimistic (Bid/Ask - patient trading)' }
-                ]
+                    { value: 'optimistic', label: 'Optimistic (Bid/Ask - patient trading)' },
+                ],
             },
             networth_highEnhancementUseCost: {
                 id: 'networth_highEnhancementUseCost',
@@ -403,7 +403,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['networth'],
-                help: 'Market prices are unreliable for highly enhanced items (+13 and above). Use calculated enhancement cost instead.'
+                help: 'Market prices are unreliable for highly enhanced items (+13 and above). Use calculated enhancement cost instead.',
             },
             networth_highEnhancementMinLevel: {
                 id: 'networth_highEnhancementMinLevel',
@@ -415,10 +415,10 @@ export const settingsGroups = {
                     { value: 11, label: '+11 and above' },
                     { value: 12, label: '+12 and above' },
                     { value: 13, label: '+13 and above (recommended)' },
-                    { value: 15, label: '+15 and above' }
+                    { value: 15, label: '+15 and above' },
                 ],
                 dependencies: ['networth_highEnhancementUseCost'],
-                help: 'Enhancement level at which to stop trusting market prices'
+                help: 'Enhancement level at which to stop trusting market prices',
             },
             networth_includeCowbells: {
                 id: 'networth_includeCowbells',
@@ -426,9 +426,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['networth'],
-                help: 'Cowbells are not tradeable, but they have a value based on Bag of 10 Cowbells market price'
-            }
-        }
+                help: 'Cowbells are not tradeable, but they have a value based on Bag of 10 Cowbells market price',
+            },
+        },
     },
 
     skills: {
@@ -440,7 +440,7 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show remaining XP to next level',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays how much XP needed to reach the next level under skill progress bars'
+                help: 'Displays how much XP needed to reach the next level under skill progress bars',
             },
             skillRemainingXP_blackBorder: {
                 id: 'skillRemainingXP_blackBorder',
@@ -448,15 +448,15 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['skillRemainingXP'],
-                help: 'Adds a black outline/shadow to the XP text for better readability against progress bars'
+                help: 'Adds a black outline/shadow to the XP text for better readability against progress bars',
             },
             skillbook: {
                 id: 'skillbook',
                 label: 'Skill books: Show books needed to reach target level',
                 type: 'checkbox',
-                default: true
-            }
-        }
+                default: true,
+            },
+        },
     },
 
     combat: {
@@ -467,44 +467,44 @@ export const settingsGroups = {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             characterCard: {
                 id: 'characterCard',
                 label: 'Profile panel: Show View Card button',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds button to open character sheet in external viewer'
+                help: 'Adds button to open character sheet in external viewer',
             },
             dungeonTracker: {
                 id: 'dungeonTracker',
                 label: 'Dungeon Tracker: Real-time progress tracking',
                 type: 'checkbox',
                 default: true,
-                help: 'Tracks dungeon runs with server-validated duration from party messages'
+                help: 'Tracks dungeon runs with server-validated duration from party messages',
             },
             dungeonTrackerUI: {
                 id: 'dungeonTrackerUI',
                 label: '  ├─ Show Dungeon Tracker UI panel',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays dungeon progress panel with wave counter, run history, and statistics'
+                help: 'Displays dungeon progress panel with wave counter, run history, and statistics',
             },
             dungeonTrackerChatAnnotations: {
                 id: 'dungeonTrackerChatAnnotations',
                 label: '  └─ Show run time in party chat',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)'
+                help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
             },
             combatSummary: {
                 id: 'combatSummary',
                 label: 'Combat Summary: Show detailed statistics on return',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays encounters/hour, revenue, experience rates when returning from combat'
-            }
-        }
+                help: 'Displays encounters/hour, revenue, experience rates when returning from combat',
+            },
+        },
     },
 
     tasks: {
@@ -515,7 +515,7 @@ export const settingsGroups = {
                 id: 'taskProfitCalculator',
                 label: 'Show total profit for gathering/production tasks',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             taskRerollTracker: {
                 id: 'taskRerollTracker',
@@ -523,20 +523,20 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 requiresRefresh: true,
-                help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)'
+                help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
             },
             taskMapIndex: {
                 id: 'taskMapIndex',
                 label: 'Show combat zone index numbers on tasks',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             taskIcons: {
                 id: 'taskIcons',
                 label: 'Show visual icons on task cards',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays semi-transparent item/monster icons on task cards'
+                help: 'Displays semi-transparent item/monster icons on task cards',
             },
             taskIconsDungeons: {
                 id: 'taskIconsDungeons',
@@ -544,9 +544,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['taskIcons'],
-                help: 'Shows which dungeons contain the monster (requires Task Icons enabled)'
-            }
-        }
+                help: 'Shows which dungeons contain the monster (requires Task Icons enabled)',
+            },
+        },
     },
 
     ui: {
@@ -558,64 +558,64 @@ export const settingsGroups = {
                 label: 'Use K/M/B number formatting (e.g., 1.5M instead of 1,500,000)',
                 type: 'checkbox',
                 default: true,
-                help: 'Applies to tooltips, action panels, profit displays, and all number formatting throughout the UI'
+                help: 'Applies to tooltips, action panels, profit displays, and all number formatting throughout the UI',
             },
             ui_externalLinks: {
                 id: 'ui_externalLinks',
                 label: 'Left sidebar: Show external tool links',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds quick links to Combat Sim, Market Tracker, Enhancelator, and Milkonomy'
+                help: 'Adds quick links to Combat Sim, Market Tracker, Enhancelator, and Milkonomy',
             },
             expPercentage: {
                 id: 'expPercentage',
                 label: 'Left sidebar: Show skill XP percentages',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             itemIconLevel: {
                 id: 'itemIconLevel',
                 label: 'Bottom left corner of icons: Show equipment level',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             showsKeyInfoInIcon: {
                 id: 'showsKeyInfoInIcon',
                 label: 'Bottom left corner of key icons: Show zone index',
                 type: 'checkbox',
                 default: true,
-                dependencies: ['itemIconLevel']
+                dependencies: ['itemIconLevel'],
             },
             mapIndex: {
                 id: 'mapIndex',
                 label: 'Combat zones: Show zone index numbers',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             alchemyItemDimming: {
                 id: 'alchemyItemDimming',
                 label: 'Alchemy panel: Dim items requiring higher level',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             marketFilter: {
                 id: 'marketFilter',
                 label: 'Marketplace: Filter by level, class, slot',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             fillMarketOrderPrice: {
                 id: 'fillMarketOrderPrice',
                 label: 'Auto-fill marketplace orders with optimal price',
                 type: 'checkbox',
-                default: true
+                default: true,
             },
             market_visibleItemCount: {
                 id: 'market_visibleItemCount',
                 label: 'Market: Show inventory count on items',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays how many of each item you own when browsing the market'
+                help: 'Displays how many of each item you own when browsing the market',
             },
             market_visibleItemCountOpacity: {
                 id: 'market_visibleItemCountOpacity',
@@ -626,7 +626,7 @@ export const settingsGroups = {
                 max: 1,
                 step: 0.05,
                 dependencies: ['market_visibleItemCount'],
-                help: 'How transparent item tiles appear when you own zero of that item'
+                help: 'How transparent item tiles appear when you own zero of that item',
             },
             market_visibleItemCountIncludeEquipped: {
                 id: 'market_visibleItemCountIncludeEquipped',
@@ -634,21 +634,21 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['market_visibleItemCount'],
-                help: 'Include currently equipped items in the displayed count'
+                help: 'Include currently equipped items in the displayed count',
             },
             market_showListingPrices: {
                 id: 'market_showListingPrices',
                 label: 'Market: Show prices on individual listings',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays top order price and total value on each listing in My Listings table'
+                help: 'Displays top order price and total value on each listing in My Listings table',
             },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
                 label: 'Market: Show personal trade history',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays your last buy/sell prices for items in marketplace'
+                help: 'Displays your last buy/sell prices for items in marketplace',
             },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
@@ -658,7 +658,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 4,
                 dependencies: ['market_showListingPrices'],
-                help: 'Number of decimal places to show for listing prices'
+                help: 'Number of decimal places to show for listing prices',
             },
             market_showListingAge: {
                 id: 'market_showListingAge',
@@ -666,7 +666,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['market_showListingPrices'],
-                help: 'Display how long ago each listing was created on the My Listings tab (e.g., "3h 45m")'
+                help: 'Display how long ago each listing was created on the My Listings tab (e.g., "3h 45m")',
             },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
@@ -674,14 +674,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 dependencies: ['market_showListingPrices', 'market_showEstimatedListingAge'],
-                help: 'Display estimated age of the top competing order for each of your listings (requires estimated listing age feature to be active)'
+                help: 'Display estimated age of the top competing order for each of your listings (requires estimated listing age feature to be active)',
             },
             market_showEstimatedListingAge: {
                 id: 'market_showEstimatedListingAge',
                 label: 'Market: Show estimated age on order book',
                 type: 'checkbox',
                 default: false,
-                help: 'Estimates creation time for all market listings using listing ID interpolation'
+                help: 'Estimates creation time for all market listings using listing ID interpolation',
             },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
@@ -690,10 +690,10 @@ export const settingsGroups = {
                 default: 'datetime',
                 options: [
                     { value: 'elapsed', label: 'Elapsed Time (e.g., "3h 45m")' },
-                    { value: 'datetime', label: 'Date/Time (e.g., "01-13 14:30")' }
+                    { value: 'datetime', label: 'Date/Time (e.g., "01-13 14:30")' },
                 ],
                 dependencies: ['market_showEstimatedListingAge'],
-                help: 'Choose how to display listing creation times'
+                help: 'Choose how to display listing creation times',
             },
             market_listingTimeFormat: {
                 id: 'market_listingTimeFormat',
@@ -702,17 +702,17 @@ export const settingsGroups = {
                 default: '24hour',
                 options: [
                     { value: '24hour', label: '24-hour (14:30)' },
-                    { value: '12hour', label: '12-hour (2:30 PM)' }
+                    { value: '12hour', label: '12-hour (2:30 PM)' },
                 ],
                 dependencies: ['market_showEstimatedListingAge'],
-                help: 'Time format when using Date/Time display (only applies if Date/Time format is selected)'
+                help: 'Time format when using Date/Time display (only applies if Date/Time format is selected)',
             },
             itemDictionary_transmuteRates: {
                 id: 'itemDictionary_transmuteRates',
                 label: 'Item Dictionary: Show transmutation success rates',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays success rate percentages in the "Transmuted From (Alchemy)" section'
+                help: 'Displays success rate percentages in the "Transmuted From (Alchemy)" section',
             },
             itemDictionary_transmuteIncludeBaseRate: {
                 id: 'itemDictionary_transmuteIncludeBaseRate',
@@ -720,9 +720,9 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 dependencies: ['itemDictionary_transmuteRates'],
-                help: 'When enabled, shows total probability (base rate × drop rate). When disabled, shows conditional probability (drop rate only, matching "Transmutes Into" section)'
-            }
-        }
+                help: 'When enabled, shows total probability (base rate × drop rate). When disabled, shows conditional probability (drop rate only, matching "Transmutes Into" section)',
+            },
+        },
     },
 
     house: {
@@ -733,9 +733,9 @@ export const settingsGroups = {
                 id: 'houseUpgradeCosts',
                 label: 'Show upgrade costs with market prices and inventory comparison',
                 type: 'checkbox',
-                default: true
-            }
-        }
+                default: true,
+            },
+        },
     },
 
     notifications: {
@@ -747,9 +747,9 @@ export const settingsGroups = {
                 label: 'Browser notification when action queue is empty',
                 type: 'checkbox',
                 default: false,
-                help: 'Only works when the game page is open'
-            }
-        }
+                help: 'Only works when the game page is open',
+            },
+        },
     },
 
     colors: {
@@ -761,129 +761,129 @@ export const settingsGroups = {
                 label: 'Profit/Positive Values',
                 type: 'color',
                 default: '#047857',
-                help: 'Color used for profit, gains, and positive values'
+                help: 'Color used for profit, gains, and positive values',
             },
             color_loss: {
                 id: 'color_loss',
                 label: 'Loss/Negative Values',
                 type: 'color',
                 default: '#f87171',
-                help: 'Color used for losses, costs, and negative values'
+                help: 'Color used for losses, costs, and negative values',
             },
             color_warning: {
                 id: 'color_warning',
                 label: 'Warnings',
                 type: 'color',
                 default: '#ffa500',
-                help: 'Color used for warnings and important notices'
+                help: 'Color used for warnings and important notices',
             },
             color_info: {
                 id: 'color_info',
                 label: 'Informational',
                 type: 'color',
                 default: '#60a5fa',
-                help: 'Color used for informational text and highlights'
+                help: 'Color used for informational text and highlights',
             },
             color_essence: {
                 id: 'color_essence',
                 label: 'Essences',
                 type: 'color',
                 default: '#c084fc',
-                help: 'Color used for essence drops and essence-related text'
+                help: 'Color used for essence drops and essence-related text',
             },
             color_tooltip_profit: {
                 id: 'color_tooltip_profit',
                 label: 'Tooltip Profit/Positive',
                 type: 'color',
                 default: '#047857',
-                help: 'Color for profit/positive values in tooltips (light backgrounds)'
+                help: 'Color for profit/positive values in tooltips (light backgrounds)',
             },
             color_tooltip_loss: {
                 id: 'color_tooltip_loss',
                 label: 'Tooltip Loss/Negative',
                 type: 'color',
                 default: '#dc2626',
-                help: 'Color for loss/negative values in tooltips (light backgrounds)'
+                help: 'Color for loss/negative values in tooltips (light backgrounds)',
             },
             color_tooltip_info: {
                 id: 'color_tooltip_info',
                 label: 'Tooltip Informational',
                 type: 'color',
                 default: '#2563eb',
-                help: 'Color for informational text in tooltips (light backgrounds)'
+                help: 'Color for informational text in tooltips (light backgrounds)',
             },
             color_tooltip_warning: {
                 id: 'color_tooltip_warning',
                 label: 'Tooltip Warnings',
                 type: 'color',
                 default: '#ea580c',
-                help: 'Color for warnings in tooltips (light backgrounds)'
+                help: 'Color for warnings in tooltips (light backgrounds)',
             },
             color_text_primary: {
                 id: 'color_text_primary',
                 label: 'Primary Text',
                 type: 'color',
                 default: '#ffffff',
-                help: 'Main text color'
+                help: 'Main text color',
             },
             color_text_secondary: {
                 id: 'color_text_secondary',
                 label: 'Secondary Text',
                 type: 'color',
                 default: '#888888',
-                help: 'Dimmed/secondary text color'
+                help: 'Dimmed/secondary text color',
             },
             color_border: {
                 id: 'color_border',
                 label: 'Borders',
                 type: 'color',
                 default: '#444444',
-                help: 'Border and separator color'
+                help: 'Border and separator color',
             },
             color_gold: {
                 id: 'color_gold',
                 label: 'Gold/Currency',
                 type: 'color',
                 default: '#ffa500',
-                help: 'Color used for gold and currency displays'
+                help: 'Color used for gold and currency displays',
             },
             color_accent: {
                 id: 'color_accent',
                 label: 'Script Accent Color',
                 type: 'color',
                 default: '#22c55e',
-                help: 'Primary accent color for script UI elements (buttons, headers, zone numbers, XP percentages, etc.)'
+                help: 'Primary accent color for script UI elements (buttons, headers, zone numbers, XP percentages, etc.)',
             },
             color_remaining_xp: {
                 id: 'color_remaining_xp',
                 label: 'Remaining XP Text',
                 type: 'color',
                 default: '#FFFFFF',
-                help: 'Color for remaining XP text below skill bars in left navigation'
+                help: 'Color for remaining XP text below skill bars in left navigation',
             },
             color_invBadge_ask: {
                 id: 'color_invBadge_ask',
                 label: 'Inventory Badge: Ask Price',
                 type: 'color',
                 default: '#047857',
-                help: 'Color for Ask price badges on inventory items (seller asking price - better selling value)'
+                help: 'Color for Ask price badges on inventory items (seller asking price - better selling value)',
             },
             color_invBadge_bid: {
                 id: 'color_invBadge_bid',
                 label: 'Inventory Badge: Bid Price',
                 type: 'color',
                 default: '#60a5fa',
-                help: 'Color for Bid price badges on inventory items (buyer bid price - instant-sell value)'
+                help: 'Color for Bid price badges on inventory items (buyer bid price - instant-sell value)',
             },
             color_transmute: {
                 id: 'color_transmute',
                 label: 'Transmutation Rates',
                 type: 'color',
                 default: '#ffffff',
-                help: 'Color used for transmutation success rate percentages in Item Dictionary'
-            }
-        }
-    }
+                help: 'Color used for transmutation success rate percentages in Item Dictionary',
+            },
+        },
+    },
 };
 
 /**

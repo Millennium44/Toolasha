@@ -128,14 +128,16 @@ class MarketFilter {
 
         const select = document.createElement('select');
         select.id = `toolasha-level-${type}`;
-        select.style.cssText = 'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
+        select.style.cssText =
+            'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
 
         // Level options
-        const levels = type === 'min'
-            ? [1, 10, 20, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95, 100]
-            : [10, 20, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95, 100, 1000];
+        const levels =
+            type === 'min'
+                ? [1, 10, 20, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95, 100]
+                : [10, 20, 30, 40, 50, 60, 65, 70, 75, 80, 85, 90, 95, 100, 1000];
 
-        levels.forEach(level => {
+        levels.forEach((level) => {
             const option = document.createElement('option');
             option.value = level;
             option.textContent = level === 1000 ? 'All' : level;
@@ -174,7 +176,8 @@ class MarketFilter {
 
         const select = document.createElement('select');
         select.id = 'toolasha-class-filter';
-        select.style.cssText = 'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
+        select.style.cssText =
+            'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
 
         const classes = [
             { value: 'all', label: 'All' },
@@ -183,10 +186,10 @@ class MarketFilter {
             { value: 'defense', label: 'Defense' },
             { value: 'ranged', label: 'Ranged' },
             { value: 'magic', label: 'Magic' },
-            { value: 'others', label: 'Others' }
+            { value: 'others', label: 'Others' },
         ];
 
-        classes.forEach(cls => {
+        classes.forEach((cls) => {
             const option = document.createElement('option');
             option.value = cls.value;
             option.textContent = cls.label;
@@ -217,7 +220,8 @@ class MarketFilter {
 
         const select = document.createElement('select');
         select.id = 'toolasha-slot-filter';
-        select.style.cssText = 'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
+        select.style.cssText =
+            'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
 
         const slots = [
             { value: 'all', label: 'All' },
@@ -233,10 +237,10 @@ class MarketFilter {
             { value: 'earrings', label: 'Earrings' },
             { value: 'ring', label: 'Ring' },
             { value: 'pouch', label: 'Pouch' },
-            { value: 'back', label: 'Back' }
+            { value: 'back', label: 'Back' },
         ];
 
-        slots.forEach(slot => {
+        slots.forEach((slot) => {
             const option = document.createElement('option');
             option.value = slot.value;
             option.textContent = slot.label;
@@ -271,7 +275,7 @@ class MarketFilter {
         // Find all item divs
         const itemDivs = marketItemsContainer.querySelectorAll('div[class*="Item_itemContainer"]');
 
-        itemDivs.forEach(itemDiv => {
+        itemDivs.forEach((itemDiv) => {
             // Get item HRID from SVG use element (same as MWI Tools)
             const useElement = itemDiv.querySelector('use');
             if (!useElement) {
@@ -299,7 +303,12 @@ class MarketFilter {
 
             if (!itemData.equipmentDetail) {
                 // Not equipment, hide if any non-"all" filter is active
-                if (this.minLevel > 1 || this.maxLevel < 1000 || this.skillRequirement !== 'all' || this.equipmentSlot !== 'all') {
+                if (
+                    this.minLevel > 1 ||
+                    this.maxLevel < 1000 ||
+                    this.skillRequirement !== 'all' ||
+                    this.equipmentSlot !== 'all'
+                ) {
                     itemDiv.style.display = 'none';
                 } else {
                     itemDiv.style.display = '';
@@ -342,17 +351,15 @@ class MarketFilter {
             if (this.skillRequirement === 'others') {
                 // "Others" means non-combat skills
                 const combatSkills = ['attack', 'melee', 'defense', 'ranged', 'magic'];
-                const hasCombatReq = levelRequirements.some(req =>
-                    combatSkills.some(skill => req.skillHrid.includes(skill))
+                const hasCombatReq = levelRequirements.some((req) =>
+                    combatSkills.some((skill) => req.skillHrid.includes(skill))
                 );
                 if (hasCombatReq) {
                     return false;
                 }
             } else {
                 // Specific skill requirement
-                const hasRequirement = levelRequirements.some(req =>
-                    req.skillHrid.includes(this.skillRequirement)
-                );
+                const hasRequirement = levelRequirements.some((req) => req.skillHrid.includes(this.skillRequirement));
                 if (!hasRequirement) {
                     return false;
                 }
@@ -366,7 +373,7 @@ class MarketFilter {
      * Cleanup on disable
      */
     disable() {
-        this.unregisterHandlers.forEach(unregister => unregister());
+        this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
         // Remove filter UI

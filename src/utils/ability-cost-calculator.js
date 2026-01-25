@@ -11,8 +11,14 @@ import marketAPI from '../api/marketplace.js';
  * List of starter abilities that give 50 XP per book (others give 500)
  */
 const STARTER_ABILITIES = [
-    'poke', 'scratch', 'smack', 'quick_shot',
-    'water_strike', 'fireball', 'entangle', 'minor_heal'
+    'poke',
+    'scratch',
+    'smack',
+    'quick_shot',
+    'water_strike',
+    'fireball',
+    'entangle',
+    'minor_heal',
 ];
 
 /**
@@ -21,7 +27,7 @@ const STARTER_ABILITIES = [
  * @returns {boolean} True if starter ability
  */
 export function isStarterAbility(abilityHrid) {
-    return STARTER_ABILITIES.some(skill => abilityHrid.includes(skill));
+    return STARTER_ABILITIES.some((skill) => abilityHrid.includes(skill));
 }
 
 /**

@@ -43,8 +43,7 @@ export async function loadSessions() {
 export async function saveCurrentSessionId(sessionId) {
     try {
         await storage.set(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE, true); // immediate=true for rapid updates
-    } catch (error) {
-    }
+    } catch (error) {}
 }
 
 /**
@@ -133,6 +132,5 @@ export async function clearAllSessions() {
     try {
         await storage.setJSON(STORAGE_KEY, {}, STORAGE_STORE);
         await storage.set(CURRENT_SESSION_KEY, null, STORAGE_STORE);
-    } catch (error) {
-    }
+    } catch (error) {}
 }
