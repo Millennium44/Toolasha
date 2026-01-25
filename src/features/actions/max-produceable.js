@@ -12,6 +12,7 @@
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
+import marketAPI from '../../api/marketplace.js';
 import actionPanelSort from './action-panel-sort.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
@@ -109,7 +110,7 @@ class MaxProduceable {
             clearTimeout(this.profitCalcTimeout);
             this.profitCalcTimeout = setTimeout(() => {
                 this.updateAllCounts();
-            }, 300); // Wait 300ms after last panel appears (reduced from 1000ms for better responsiveness)
+            }, 50); // Wait 50ms after last panel appears for better responsiveness
         });
 
         // Check for existing action panels that may already be open
@@ -123,7 +124,7 @@ class MaxProduceable {
             clearTimeout(this.profitCalcTimeout);
             this.profitCalcTimeout = setTimeout(() => {
                 this.updateAllCounts();
-            }, 300); // Reduced from 1000ms for better responsiveness
+            }, 50); // Fast initial load for better responsiveness
         }
     }
 
@@ -429,6 +430,12 @@ class MaxProduceable {
      * Update all counts
      */
     async updateAllCounts() {
+        // Pre-load market API ONCE before all profit calculations
+        // This prevents all 20+ calculations from triggering simultaneous fetches
+        if (!marketAPI.isLoaded()) {
+            await marketAPI.fetch();
+        }
+
         // Get inventory once and build index for O(1) lookups
         const inventory = dataManager.getInventory();
 

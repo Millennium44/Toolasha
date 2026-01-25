@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.10
+// @version      0.5.11
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -19273,7 +19273,7 @@
                 clearTimeout(this.profitCalcTimeout);
                 this.profitCalcTimeout = setTimeout(() => {
                     this.updateAllCounts();
-                }, 300); // Wait 300ms after last panel appears (reduced from 1000ms for better responsiveness)
+                }, 50); // Wait 50ms after last panel appears for better responsiveness
             });
 
             // Check for existing action panels that may already be open
@@ -19287,7 +19287,7 @@
                 clearTimeout(this.profitCalcTimeout);
                 this.profitCalcTimeout = setTimeout(() => {
                     this.updateAllCounts();
-                }, 300); // Reduced from 1000ms for better responsiveness
+                }, 50); // Fast initial load for better responsiveness
             }
         }
 
@@ -19593,6 +19593,12 @@
          * Update all counts
          */
         async updateAllCounts() {
+            // Pre-load market API ONCE before all profit calculations
+            // This prevents all 20+ calculations from triggering simultaneous fetches
+            if (!marketAPI.isLoaded()) {
+                await marketAPI.fetch();
+            }
+
             // Get inventory once and build index for O(1) lookups
             const inventory = dataManager.getInventory();
 
@@ -42468,7 +42474,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.10',
+            version: '0.5.11',
 
             // Feature toggle API (for users to manage settings via console)
             features: {
