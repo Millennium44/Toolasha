@@ -19664,6 +19664,7 @@
             this.itemsUpdatedHandler = null;
             this.actionCompletedHandler = null;
             this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
+            this.actionNameToHridCache = null; // Cached reverse lookup map (name → hrid)
         }
 
         /**
@@ -19864,19 +19865,21 @@
 
             const actionName = nameElement.textContent.trim();
 
-            // Look up action by name in game data
-            const initData = dataManager.getInitClientData();
-            if (!initData) {
-                return null;
-            }
+            // Build reverse lookup cache on first use (name → hrid)
+            if (!this.actionNameToHridCache) {
+                const initData = dataManager.getInitClientData();
+                if (!initData) {
+                    return null;
+                }
 
-            for (const [hrid, action] of Object.entries(initData.actionDetailMap)) {
-                if (action.name === actionName) {
-                    return hrid;
+                this.actionNameToHridCache = new Map();
+                for (const [hrid, action] of Object.entries(initData.actionDetailMap)) {
+                    this.actionNameToHridCache.set(action.name, hrid);
                 }
             }
 
-            return null;
+            // O(1) lookup instead of O(n) iteration
+            return this.actionNameToHridCache.get(actionName) || null;
         }
 
         /**
@@ -20115,6 +20118,12 @@
             if (this.profitCalcTimeout) {
                 clearTimeout(this.profitCalcTimeout);
                 this.profitCalcTimeout = null;
+            }
+
+            // Clear action name cache
+            if (this.actionNameToHridCache) {
+                this.actionNameToHridCache.clear();
+                this.actionNameToHridCache = null;
             }
 
             // Remove DOM observer
