@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.11
+// @version      0.5.12
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -30128,9 +30128,9 @@
          * Setup settings listeners for feature toggle and color changes
          */
         setupSettingListener() {
-            config.onSettingChange('invSort', (value) => {
+            config.onSettingChange('invSort', async (value) => {
                 if (value) {
-                    this.initialize();
+                    await this.initialize();
                 } else {
                     this.disable();
                 }
@@ -30146,7 +30146,7 @@
         /**
          * Initialize inventory sort feature
          */
-        initialize() {
+        async initialize() {
             if (!config.getSetting('invSort')) {
                 return;
             }
@@ -30157,7 +30157,7 @@
             }
 
             // Load persisted settings
-            this.loadSettings();
+            await this.loadSettings();
 
             // Check if inventory is already open
             const existingInv = document.querySelector('[class*="Inventory_items"]');
@@ -30227,14 +30227,13 @@
         }
 
         /**
-         * Load settings from localStorage
+         * Load settings from storage
          */
-        loadSettings() {
+        async loadSettings() {
             try {
-                const saved = localStorage.getItem('toolasha_inventory_sort');
-                if (saved) {
-                    const settings = JSON.parse(saved);
-                    this.currentMode = settings.mode || 'none';
+                const settings = await storage.getJSON('inventorySort', 'settings');
+                if (settings && settings.mode) {
+                    this.currentMode = settings.mode;
                 }
             } catch (error) {
                 console.error('[InventorySort] Failed to load settings:', error);
@@ -30242,15 +30241,17 @@
         }
 
         /**
-         * Save settings to localStorage
+         * Save settings to storage
          */
         saveSettings() {
             try {
-                localStorage.setItem(
-                    'toolasha_inventory_sort',
-                    JSON.stringify({
+                storage.setJSON(
+                    'inventorySort',
+                    {
                         mode: this.currentMode,
-                    })
+                    },
+                    'settings',
+                    true // immediate write for user preference
                 );
             } catch (error) {
                 console.error('[InventorySort] Failed to save settings:', error);
@@ -42474,7 +42475,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.11',
+            version: '0.5.12',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
+import storage from '../../core/storage.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
@@ -29,9 +30,9 @@ class InventorySort {
      * Setup settings listeners for feature toggle and color changes
      */
     setupSettingListener() {
-        config.onSettingChange('invSort', (value) => {
+        config.onSettingChange('invSort', async (value) => {
             if (value) {
-                this.initialize();
+                await this.initialize();
             } else {
                 this.disable();
             }
@@ -47,7 +48,7 @@ class InventorySort {
     /**
      * Initialize inventory sort feature
      */
-    initialize() {
+    async initialize() {
         if (!config.getSetting('invSort')) {
             return;
         }
@@ -58,7 +59,7 @@ class InventorySort {
         }
 
         // Load persisted settings
-        this.loadSettings();
+        await this.loadSettings();
 
         // Check if inventory is already open
         const existingInv = document.querySelector('[class*="Inventory_items"]');
@@ -128,14 +129,13 @@ class InventorySort {
     }
 
     /**
-     * Load settings from localStorage
+     * Load settings from storage
      */
-    loadSettings() {
+    async loadSettings() {
         try {
-            const saved = localStorage.getItem('toolasha_inventory_sort');
-            if (saved) {
-                const settings = JSON.parse(saved);
-                this.currentMode = settings.mode || 'none';
+            const settings = await storage.getJSON('inventorySort', 'settings');
+            if (settings && settings.mode) {
+                this.currentMode = settings.mode;
             }
         } catch (error) {
             console.error('[InventorySort] Failed to load settings:', error);
@@ -143,15 +143,17 @@ class InventorySort {
     }
 
     /**
-     * Save settings to localStorage
+     * Save settings to storage
      */
     saveSettings() {
         try {
-            localStorage.setItem(
-                'toolasha_inventory_sort',
-                JSON.stringify({
+            storage.setJSON(
+                'inventorySort',
+                {
                     mode: this.currentMode,
-                })
+                },
+                'settings',
+                true // immediate write for user preference
             );
         } catch (error) {
             console.error('[InventorySort] Failed to save settings:', error);
