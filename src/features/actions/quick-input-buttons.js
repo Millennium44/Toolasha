@@ -35,6 +35,7 @@ import { calculateExperienceMultiplier } from '../../utils/experience-parser.js'
 import { setReactInputValue } from '../../utils/react-input.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
+import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 
 /**
  * QuickInputButtons class manages quick input button injection
@@ -176,10 +177,10 @@ class QuickInputButtons {
                 speedLines.push(`Base: ${baseTime.toFixed(2)}s → ${timeAfterEquipment.toFixed(2)}s`);
                 if (speedBonus > 0) {
                     speedLines.push(
-                        `Speed: +${formatPercentage(speedBonus, 1)} | ${(3600 / timeAfterEquipment).toFixed(0)}/hr`
+                        `Speed: +${formatPercentage(speedBonus, 1)} | ${calculateActionsPerHour(timeAfterEquipment).toFixed(0)}/hr`
                     );
                 } else {
-                    speedLines.push(`${(3600 / timeAfterEquipment).toFixed(0)}/hr`);
+                    speedLines.push(`${calculateActionsPerHour(timeAfterEquipment).toFixed(0)}/hr`);
                 }
 
                 // Add speed breakdown
@@ -214,7 +215,7 @@ class QuickInputButtons {
                         `<span style="font-weight: 500;">Task Speed (multiplicative): +${taskSpeedBonus.toFixed(1)}%</span>`
                     );
                     speedLines.push(
-                        `${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${(3600 / actionTime).toFixed(0)}/hr`
+                        `${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${calculateActionsPerHour(actionTime).toFixed(0)}/hr`
                     );
 
                     // Find equipped task badge for details
@@ -245,7 +246,7 @@ class QuickInputButtons {
                 // Add Efficiency breakdown
                 speedLines.push(''); // Empty line
                 speedLines.push(
-                    `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round((3600 / actionTime) * efficiencyMultiplier)}/hr)</span>`
+                    `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round(calculateActionsPerHour(actionTime) * efficiencyMultiplier)}/hr)</span>`
                 );
 
                 // Detailed efficiency breakdown
@@ -366,7 +367,9 @@ class QuickInputButtons {
                 });
 
                 // Create initial summary for Action Speed & Time
-                const actionsPerHourWithEfficiency = Math.round((3600 / actionTime) * efficiencyMultiplier);
+                const actionsPerHourWithEfficiency = Math.round(
+                    calculateActionsPerHour(actionTime) * efficiencyMultiplier
+                );
                 const initialSummary = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
 
                 speedSection = createCollapsibleSection(
@@ -1032,7 +1035,8 @@ class QuickInputButtons {
 
             // Calculate rates using shared utility (includes efficiency)
             const expData = calculateExpPerHour(actionDetails.hrid);
-            const xpPerHour = expData?.expPerHour || (actionsNeeded > 0 ? (3600 / actionTime) * modifiedXP : 0);
+            const xpPerHour =
+                expData?.expPerHour || (actionsNeeded > 0 ? calculateActionsPerHour(actionTime) * modifiedXP : 0);
             const xpPerDay = xpPerHour * 24;
 
             // Calculate daily level progress

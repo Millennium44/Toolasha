@@ -7,6 +7,7 @@ import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -153,10 +154,9 @@ class ExpectedValueCalculator {
             // Check if item is tradeable (for tax calculation)
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const canBeSold = itemDetails?.tradeable !== false;
-            const taxFactor = canBeSold ? 1 - this.MARKET_TAX : 1.0;
-
-            // Calculate expected value: avgCount × dropRate × price × taxFactor
-            const dropValue = avgCount * dropRate * price * taxFactor;
+            const dropValue = canBeSold
+                ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                : avgCount * dropRate * price;
             totalExpectedValue += dropValue;
         }
 
@@ -182,7 +182,7 @@ class ExpectedValueCalculator {
 
             if (bagValue > 0) {
                 // Apply 18% market tax (Cowbell Bag only), then divide by 10
-                return (bagValue * 0.82) / 10;
+                return calculatePriceAfterTax(bagValue, 0.18) / 10;
             }
             return null; // No bag price available
         }
@@ -289,8 +289,12 @@ class ExpectedValueCalculator {
 
             // Calculate expected value for this drop
             const itemCanBeSold = itemDetails.tradeable !== false;
-            const taxFactor = itemCanBeSold ? 1 - this.MARKET_TAX : 1.0;
-            const dropValue = price !== null ? avgCount * dropRate * price * taxFactor : 0;
+            const dropValue =
+                price !== null
+                    ? itemCanBeSold
+                        ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                        : avgCount * dropRate * price
+                    : 0;
 
             drops.push({
                 itemHrid,

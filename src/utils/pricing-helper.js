@@ -30,13 +30,3 @@ export function selectPrice(
     // Hybrid/Optimistic: Use ask
     return priceData.ask || 0;
 }
-
-/**
- * Apply market tax to a price
- * @param {number} price - Price before tax
- * @param {number} taxRate - Tax rate (default: 0.02 for 2%)
- * @returns {number} Price after tax
- */
-export function applyMarketTax(price, taxRate = 0.02) {
-    return price * (1 - taxRate);
-}
