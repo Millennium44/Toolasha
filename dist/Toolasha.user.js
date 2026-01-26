@@ -23551,32 +23551,45 @@
         const achievementTiers = ['Beginner', 'Novice', 'Adept', 'Veteran', 'Elite', 'Champion'];
         const achievementFlags = new Array(6).fill('0');
 
-        if (characterData.characterAchievements) {
+        if (characterData.characterAchievements && clientData?.achievementDetailMap) {
             const tierCounts = {};
 
-            // Count achievements by tier
+            // Count completed achievements by tier
+            // characterAchievements only has achievementHrid and isCompleted
+            // Need to look up tierHrid from achievementDetailMap
             for (const achievement of characterData.characterAchievements) {
-                if (achievement.achievementTier) {
-                    tierCounts[achievement.achievementTier] = (tierCounts[achievement.achievementTier] || 0) + 1;
+                // Only count completed achievements
+                if (!achievement.isCompleted || !achievement.achievementHrid) {
+                    continue;
+                }
+
+                // Look up achievement details to get tier
+                const achDetails = clientData.achievementDetailMap[achievement.achievementHrid];
+                if (achDetails?.tierHrid) {
+                    // Extract tier name from HRID: /achievement_tiers/veteran -> Veteran
+                    const tierName = achDetails.tierHrid.replace('/achievement_tiers/', '');
+                    const tierNameCapitalized = tierName.charAt(0).toUpperCase() + tierName.slice(1);
+                    tierCounts[tierNameCapitalized] = (tierCounts[tierNameCapitalized] || 0) + 1;
                 }
             }
 
-            // Check if each tier is complete (need to get total count from clientData)
-            if (clientData?.achievementDetailMap) {
-                const tierTotals = {};
-
-                for (const achData of Object.values(clientData.achievementDetailMap)) {
-                    if (achData.achievementTier) {
-                        tierTotals[achData.achievementTier] = (tierTotals[achData.achievementTier] || 0) + 1;
-                    }
+            // Count total achievements per tier from achievementDetailMap
+            const tierTotals = {};
+            for (const achData of Object.values(clientData.achievementDetailMap)) {
+                if (achData.tierHrid) {
+                    // Extract tier name from HRID: /achievement_tiers/veteran -> Veteran
+                    const tierName = achData.tierHrid.replace('/achievement_tiers/', '');
+                    const tierNameCapitalized = tierName.charAt(0).toUpperCase() + tierName.slice(1);
+                    tierTotals[tierNameCapitalized] = (tierTotals[tierNameCapitalized] || 0) + 1;
                 }
-
-                achievementTiers.forEach((tier, i) => {
-                    const have = tierCounts[tier] || 0;
-                    const total = tierTotals[tier] || 0;
-                    achievementFlags[i] = have > 0 && have === total ? '1' : '0';
-                });
             }
+
+            // Set flags: 1 if tier is complete (have === total), 0 otherwise
+            achievementTiers.forEach((tier, i) => {
+                const have = tierCounts[tier] || 0;
+                const total = tierTotals[tier] || 0;
+                achievementFlags[i] = have > 0 && have === total ? '1' : '0';
+            });
         }
 
         const achievements = achievementFlags.join('');
