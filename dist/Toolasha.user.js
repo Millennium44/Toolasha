@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.17
+// @version      0.5.18
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -3917,6 +3917,25 @@
          */
         clearErrors() {
             this.errorLog = [];
+        }
+
+        /**
+         * Clear cache and fetch fresh market data
+         * @returns {Promise<Object|null>} Fresh market data or null if failed
+         */
+        async clearCacheAndRefetch() {
+            console.log('[MarketAPI] 🔄 Clearing cache and fetching fresh data...');
+
+            // Clear storage cache
+            await storage.delete(this.CACHE_KEY_DATA, 'settings');
+            await storage.delete(this.CACHE_KEY_TIMESTAMP, 'settings');
+
+            // Clear in-memory state
+            this.marketData = null;
+            this.lastFetchTimestamp = null;
+
+            // Force fresh fetch
+            return await this.fetch(true);
         }
     }
 
@@ -11734,52 +11753,77 @@
                 }
 
                 const dataset = row.dataset;
-
-                if (!dataset.listingId) {
-                    continue;
-                }
-
-                const itemHrid = dataset.itemHrid;
-                const enhancementLevel = Number(dataset.enhancementLevel);
-                const isSell = dataset.isSell === 'true';
-                const price = Number(dataset.price);
-                const orderQuantity = Number(dataset.orderQuantity);
-                const filledQuantity = Number(dataset.filledQuantity);
-                const unclaimedCoinCount = Number(dataset.unclaimedCoinCount) || 0;
-                const unclaimedItemCount = Number(dataset.unclaimedItemCount) || 0;
+                const hasMatchedListing = !!dataset.listingId;
 
                 // Insert at index 4 (same as headers) to maintain alignment
                 const insertIndex = 4;
                 const insertBeforeCell = row.children[insertIndex] || null;
 
-                // Create Top Order Price cell
-                const topOrderCell = this.createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache);
-                row.insertBefore(topOrderCell, insertBeforeCell);
+                if (hasMatchedListing) {
+                    // Matched row - create cells with actual data
+                    const itemHrid = dataset.itemHrid;
+                    const enhancementLevel = Number(dataset.enhancementLevel);
+                    const isSell = dataset.isSell === 'true';
+                    const price = Number(dataset.price);
+                    const orderQuantity = Number(dataset.orderQuantity);
+                    const filledQuantity = Number(dataset.filledQuantity);
+                    const unclaimedCoinCount = Number(dataset.unclaimedCoinCount) || 0;
+                    const unclaimedItemCount = Number(dataset.unclaimedItemCount) || 0;
 
-                // Create Top Order Age cell (if setting enabled)
-                if (config.getSetting('market_showTopOrderAge')) {
-                    const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
-                    row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
-                }
+                    // Create Top Order Price cell
+                    const topOrderCell = this.createTopOrderPriceCell(
+                        itemHrid,
+                        enhancementLevel,
+                        isSell,
+                        price,
+                        priceCache
+                    );
+                    row.insertBefore(topOrderCell, insertBeforeCell);
 
-                // Create Total Price cell
-                const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
-                const totalPriceCell = this.createTotalPriceCell(
-                    itemHrid,
-                    isSell,
-                    price,
-                    orderQuantity,
-                    filledQuantity,
-                    unclaimedCoinCount,
-                    unclaimedItemCount
-                );
-                row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+                    // Create Top Order Age cell (if setting enabled)
+                    if (config.getSetting('market_showTopOrderAge')) {
+                        const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
+                        row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
+                    }
 
-                // Create Listed Age cell (if setting enabled)
-                if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
-                    const listedInsertIndex = currentInsertIndex + 1;
-                    const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
-                    row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                    // Create Total Price cell
+                    const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                    const totalPriceCell = this.createTotalPriceCell(
+                        itemHrid,
+                        isSell,
+                        price,
+                        orderQuantity,
+                        filledQuantity,
+                        unclaimedCoinCount,
+                        unclaimedItemCount
+                    );
+                    row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+
+                    // Create Listed Age cell (if setting enabled)
+                    if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
+                        const listedInsertIndex = currentInsertIndex + 1;
+                        const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
+                        row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                    }
+                } else {
+                    // Unmatched row - create placeholder cells to prevent column misalignment
+                    const topOrderCell = this.createPlaceholderCell();
+                    row.insertBefore(topOrderCell, insertBeforeCell);
+
+                    if (config.getSetting('market_showTopOrderAge')) {
+                        const topOrderAgeCell = this.createPlaceholderCell();
+                        row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
+                    }
+
+                    const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                    const totalPriceCell = this.createPlaceholderCell();
+                    row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+
+                    if (config.getSetting('market_showListingAge')) {
+                        const listedInsertIndex = currentInsertIndex + 1;
+                        const listedAgeCell = this.createPlaceholderCell();
+                        row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                    }
                 }
             }
         }
@@ -11971,6 +12015,24 @@
             // Format relative time
             span.textContent = formatRelativeTime(ageMs);
             span.style.color = '#AAAAAA'; // Gray for time display
+
+            cell.appendChild(span);
+            return cell;
+        }
+
+        /**
+         * Create placeholder cell for unmatched rows
+         * @returns {HTMLElement} Empty table cell element
+         */
+        createPlaceholderCell() {
+            const cell = document.createElement('td');
+            cell.classList.add('mwi-listing-price-cell');
+
+            const span = document.createElement('span');
+            span.classList.add('mwi-listing-price-value');
+            span.textContent = 'N/A';
+            span.style.color = '#666666'; // Gray for placeholder
+            span.style.fontSize = '0.9em';
 
             cell.appendChild(span);
             return cell;
@@ -42454,7 +42516,7 @@
         }
 
         /**
-         * Add utility buttons (Reset, Export, Import)
+         * Add utility buttons (Reset, Export, Import, Fetch Prices)
          * @param {HTMLElement} container - Container element
          */
         addUtilityButtons(container) {
@@ -42466,6 +42528,12 @@
             syncBtn.textContent = 'Copy Settings to All Characters';
             syncBtn.className = 'toolasha-utility-button toolasha-sync-button';
             syncBtn.addEventListener('click', () => this.handleSync());
+
+            // Fetch Latest Prices button
+            const fetchPricesBtn = document.createElement('button');
+            fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
+            fetchPricesBtn.className = 'toolasha-utility-button toolasha-fetch-prices-button';
+            fetchPricesBtn.addEventListener('click', () => this.handleFetchPrices(fetchPricesBtn));
 
             // Reset button
             const resetBtn = document.createElement('button');
@@ -42486,6 +42554,7 @@
             importBtn.addEventListener('click', () => this.handleImport());
 
             buttonsDiv.appendChild(syncBtn);
+            buttonsDiv.appendChild(fetchPricesBtn);
             buttonsDiv.appendChild(resetBtn);
             buttonsDiv.appendChild(exportBtn);
             buttonsDiv.appendChild(importBtn);
@@ -42701,6 +42770,66 @@
         }
 
         /**
+         * Handle fetch latest prices
+         * @param {HTMLElement} button - Button element for state updates
+         */
+        async handleFetchPrices(button) {
+            // Disable button and show loading state
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ Fetching...';
+
+            try {
+                // Clear cache and fetch fresh data
+                const result = await marketAPI.clearCacheAndRefetch();
+
+                if (result) {
+                    // Success - clear listing price display cache to force re-render
+                    document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
+                        table.classList.remove('mwi-listing-prices-set');
+                    });
+
+                    // Show success state
+                    button.textContent = '✅ Updated!';
+                    button.style.backgroundColor = '#00ff00';
+                    button.style.color = '#000';
+
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.style.backgroundColor = '';
+                        button.style.color = '';
+                        button.disabled = false;
+                    }, 2000);
+                } else {
+                    // Failed - show error state
+                    button.textContent = '❌ Failed';
+                    button.style.backgroundColor = '#ff0000';
+
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.style.backgroundColor = '';
+                        button.disabled = false;
+                    }, 3000);
+                }
+            } catch (error) {
+                console.error('[SettingsUI] Fetch prices failed:', error);
+
+                // Show error state
+                button.textContent = '❌ Error';
+                button.style.backgroundColor = '#ff0000';
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = '';
+                    button.disabled = false;
+                }, 3000);
+            }
+        }
+
+        /**
          * Handle reset to defaults
          */
         async handleReset() {
@@ -42899,7 +43028,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.17',
+            version: '0.5.18',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

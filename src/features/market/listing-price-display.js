@@ -485,52 +485,77 @@ class ListingPriceDisplay {
             }
 
             const dataset = row.dataset;
-
-            if (!dataset.listingId) {
-                continue;
-            }
-
-            const itemHrid = dataset.itemHrid;
-            const enhancementLevel = Number(dataset.enhancementLevel);
-            const isSell = dataset.isSell === 'true';
-            const price = Number(dataset.price);
-            const orderQuantity = Number(dataset.orderQuantity);
-            const filledQuantity = Number(dataset.filledQuantity);
-            const unclaimedCoinCount = Number(dataset.unclaimedCoinCount) || 0;
-            const unclaimedItemCount = Number(dataset.unclaimedItemCount) || 0;
+            const hasMatchedListing = !!dataset.listingId;
 
             // Insert at index 4 (same as headers) to maintain alignment
             const insertIndex = 4;
             const insertBeforeCell = row.children[insertIndex] || null;
 
-            // Create Top Order Price cell
-            const topOrderCell = this.createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache);
-            row.insertBefore(topOrderCell, insertBeforeCell);
+            if (hasMatchedListing) {
+                // Matched row - create cells with actual data
+                const itemHrid = dataset.itemHrid;
+                const enhancementLevel = Number(dataset.enhancementLevel);
+                const isSell = dataset.isSell === 'true';
+                const price = Number(dataset.price);
+                const orderQuantity = Number(dataset.orderQuantity);
+                const filledQuantity = Number(dataset.filledQuantity);
+                const unclaimedCoinCount = Number(dataset.unclaimedCoinCount) || 0;
+                const unclaimedItemCount = Number(dataset.unclaimedItemCount) || 0;
 
-            // Create Top Order Age cell (if setting enabled)
-            if (config.getSetting('market_showTopOrderAge')) {
-                const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
-                row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
-            }
+                // Create Top Order Price cell
+                const topOrderCell = this.createTopOrderPriceCell(
+                    itemHrid,
+                    enhancementLevel,
+                    isSell,
+                    price,
+                    priceCache
+                );
+                row.insertBefore(topOrderCell, insertBeforeCell);
 
-            // Create Total Price cell
-            const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
-            const totalPriceCell = this.createTotalPriceCell(
-                itemHrid,
-                isSell,
-                price,
-                orderQuantity,
-                filledQuantity,
-                unclaimedCoinCount,
-                unclaimedItemCount
-            );
-            row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+                // Create Top Order Age cell (if setting enabled)
+                if (config.getSetting('market_showTopOrderAge')) {
+                    const topOrderAgeCell = this.createTopOrderAgeCell(itemHrid, enhancementLevel, isSell);
+                    row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
+                }
 
-            // Create Listed Age cell (if setting enabled)
-            if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
-                const listedInsertIndex = currentInsertIndex + 1;
-                const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
-                row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                // Create Total Price cell
+                const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                const totalPriceCell = this.createTotalPriceCell(
+                    itemHrid,
+                    isSell,
+                    price,
+                    orderQuantity,
+                    filledQuantity,
+                    unclaimedCoinCount,
+                    unclaimedItemCount
+                );
+                row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+
+                // Create Listed Age cell (if setting enabled)
+                if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
+                    const listedInsertIndex = currentInsertIndex + 1;
+                    const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
+                    row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                }
+            } else {
+                // Unmatched row - create placeholder cells to prevent column misalignment
+                const topOrderCell = this.createPlaceholderCell();
+                row.insertBefore(topOrderCell, insertBeforeCell);
+
+                if (config.getSetting('market_showTopOrderAge')) {
+                    const topOrderAgeCell = this.createPlaceholderCell();
+                    row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
+                }
+
+                const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                const totalPriceCell = this.createPlaceholderCell();
+                row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
+
+                if (config.getSetting('market_showListingAge')) {
+                    const listedInsertIndex = currentInsertIndex + 1;
+                    const listedAgeCell = this.createPlaceholderCell();
+                    row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
+                }
             }
         }
     }
@@ -722,6 +747,24 @@ class ListingPriceDisplay {
         // Format relative time
         span.textContent = formatRelativeTime(ageMs);
         span.style.color = '#AAAAAA'; // Gray for time display
+
+        cell.appendChild(span);
+        return cell;
+    }
+
+    /**
+     * Create placeholder cell for unmatched rows
+     * @returns {HTMLElement} Empty table cell element
+     */
+    createPlaceholderCell() {
+        const cell = document.createElement('td');
+        cell.classList.add('mwi-listing-price-cell');
+
+        const span = document.createElement('span');
+        span.classList.add('mwi-listing-price-value');
+        span.textContent = 'N/A';
+        span.style.color = '#666666'; // Gray for placeholder
+        span.style.fontSize = '0.9em';
 
         cell.appendChild(span);
         return cell;

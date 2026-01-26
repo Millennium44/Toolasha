@@ -261,6 +261,25 @@ class MarketAPI {
     clearErrors() {
         this.errorLog = [];
     }
+
+    /**
+     * Clear cache and fetch fresh market data
+     * @returns {Promise<Object|null>} Fresh market data or null if failed
+     */
+    async clearCacheAndRefetch() {
+        console.log('[MarketAPI] 🔄 Clearing cache and fetching fresh data...');
+
+        // Clear storage cache
+        await storage.delete(this.CACHE_KEY_DATA, 'settings');
+        await storage.delete(this.CACHE_KEY_TIMESTAMP, 'settings');
+
+        // Clear in-memory state
+        this.marketData = null;
+        this.lastFetchTimestamp = null;
+
+        // Force fresh fetch
+        return await this.fetch(true);
+    }
 }
 
 // Create and export singleton instance

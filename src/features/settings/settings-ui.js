@@ -10,6 +10,7 @@ import { settingsGroups } from './settings-config.js';
 import settingsStorage from './settings-storage.js';
 import storage from '../../core/storage.js';
 import settingsCSS from './settings-styles.css?raw';
+import marketAPI from '../../api/marketplace.js';
 
 class SettingsUI {
     constructor() {
@@ -766,7 +767,7 @@ class SettingsUI {
     }
 
     /**
-     * Add utility buttons (Reset, Export, Import)
+     * Add utility buttons (Reset, Export, Import, Fetch Prices)
      * @param {HTMLElement} container - Container element
      */
     addUtilityButtons(container) {
@@ -778,6 +779,12 @@ class SettingsUI {
         syncBtn.textContent = 'Copy Settings to All Characters';
         syncBtn.className = 'toolasha-utility-button toolasha-sync-button';
         syncBtn.addEventListener('click', () => this.handleSync());
+
+        // Fetch Latest Prices button
+        const fetchPricesBtn = document.createElement('button');
+        fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
+        fetchPricesBtn.className = 'toolasha-utility-button toolasha-fetch-prices-button';
+        fetchPricesBtn.addEventListener('click', () => this.handleFetchPrices(fetchPricesBtn));
 
         // Reset button
         const resetBtn = document.createElement('button');
@@ -798,6 +805,7 @@ class SettingsUI {
         importBtn.addEventListener('click', () => this.handleImport());
 
         buttonsDiv.appendChild(syncBtn);
+        buttonsDiv.appendChild(fetchPricesBtn);
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
@@ -1009,6 +1017,66 @@ class SettingsUI {
             alert(`Settings successfully copied to ${result.count} character${result.count > 1 ? 's' : ''}!`);
         } else {
             alert(`Failed to sync settings: ${result.error || 'Unknown error'}`);
+        }
+    }
+
+    /**
+     * Handle fetch latest prices
+     * @param {HTMLElement} button - Button element for state updates
+     */
+    async handleFetchPrices(button) {
+        // Disable button and show loading state
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '⏳ Fetching...';
+
+        try {
+            // Clear cache and fetch fresh data
+            const result = await marketAPI.clearCacheAndRefetch();
+
+            if (result) {
+                // Success - clear listing price display cache to force re-render
+                document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
+                    table.classList.remove('mwi-listing-prices-set');
+                });
+
+                // Show success state
+                button.textContent = '✅ Updated!';
+                button.style.backgroundColor = '#00ff00';
+                button.style.color = '#000';
+
+                // Reset button after 2 seconds
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = '';
+                    button.style.color = '';
+                    button.disabled = false;
+                }, 2000);
+            } else {
+                // Failed - show error state
+                button.textContent = '❌ Failed';
+                button.style.backgroundColor = '#ff0000';
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = '';
+                    button.disabled = false;
+                }, 3000);
+            }
+        } catch (error) {
+            console.error('[SettingsUI] Fetch prices failed:', error);
+
+            // Show error state
+            button.textContent = '❌ Error';
+            button.style.backgroundColor = '#ff0000';
+
+            // Reset button after 3 seconds
+            setTimeout(() => {
+                button.textContent = originalText;
+                button.style.backgroundColor = '';
+                button.disabled = false;
+            }, 3000);
         }
     }
 
