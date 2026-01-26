@@ -6593,8 +6593,10 @@
         };
 
         // Calculate tea bonuses based on selection
-        const teaLevelBonus = teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
-        const teaSpeedBonus = teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
+        const teaLevelBonus =
+            teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
+        const teaSpeedBonus =
+            teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
 
         // Calculate house bonuses
         const houseSpeedBonus = houseLevel * 1.0; // 1% per level
@@ -16852,11 +16854,14 @@
                         // Update individual action's profit display
                         const action = actionsToCalculate[index];
                         if (action.divIndex !== undefined) {
-                            const profitDiv = document.querySelector(`.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`);
+                            const profitDiv = document.querySelector(
+                                `.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`
+                            );
                             if (profitDiv) {
-                                const profitColor = actionProfit >= 0
-                                    ? config.getSettingValue('color_profit', '#4ade80')
-                                    : config.getSettingValue('color_loss', '#f87171');
+                                const profitColor =
+                                    actionProfit >= 0
+                                        ? config.getSettingValue('color_profit', '#4ade80')
+                                        : config.getSettingValue('color_loss', '#f87171');
                                 const profitSign = actionProfit >= 0 ? '+' : '';
                                 profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatWithSeparator(Math.round(actionProfit))}</span>`;
                             }
@@ -16932,9 +16937,6 @@
             if (valuePerHour === null || !profitData.actionsPerHour) {
                 return null;
             }
-
-            // Get efficiency from profitData (gathering uses totalEfficiency, production uses efficiencyBonus)
-            profitData.totalEfficiency ?? profitData.efficiencyBonus ?? 0;
 
             // CRITICAL: Queue always displays ATTEMPTS, never item counts
             // - GATHERING: "Gather 726 times" = 726 attempts

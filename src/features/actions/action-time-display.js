@@ -1359,9 +1359,6 @@ class ActionTimeDisplay {
             return null;
         }
 
-        // Get efficiency from profitData (gathering uses totalEfficiency, production uses efficiencyBonus)
-        const efficiency = profitData.totalEfficiency ?? profitData.efficiencyBonus ?? 0;
-
         // CRITICAL: Queue always displays ATTEMPTS, never item counts
         // - GATHERING: "Gather 726 times" = 726 attempts
         // - PRODUCTION: "Produce 237 times" = 237 attempts
