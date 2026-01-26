@@ -192,16 +192,21 @@ function getManualParams() {
     };
 
     const houseLevel = getValue('enhanceSim_houseLevel', 8);
+
+    // Get tea selection from dropdown (replaces 3 separate checkboxes)
+    const teaSelection = getValue('enhanceSim_tea', 'ultra');
     const teas = {
-        enhancing: getValue('enhanceSim_enhancingTea', false),
-        superEnhancing: getValue('enhanceSim_superEnhancingTea', false),
-        ultraEnhancing: getValue('enhanceSim_ultraEnhancingTea', true),
+        enhancing: teaSelection === 'basic',
+        superEnhancing: teaSelection === 'super',
+        ultraEnhancing: teaSelection === 'ultra',
         blessed: getValue('enhanceSim_blessedTea', true),
     };
 
-    // Calculate tea bonuses
-    const teaLevelBonus = teas.ultraEnhancing ? 8 : teas.superEnhancing ? 6 : teas.enhancing ? 3 : 0;
-    const teaSpeedBonus = teas.ultraEnhancing ? 6 : teas.superEnhancing ? 4 : teas.enhancing ? 2 : 0;
+    // Calculate tea bonuses based on selection
+    const teaLevelBonus =
+        teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
+    const teaSpeedBonus =
+        teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
 
     // Calculate house bonuses
     const houseSpeedBonus = houseLevel * 1.0; // 1% per level

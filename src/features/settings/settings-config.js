@@ -309,7 +309,6 @@ export const settingsGroups = {
                 label: 'Enable Enhancement Tracker',
                 type: 'checkbox',
                 default: false,
-                requiresRefresh: true,
                 help: 'Track enhancement attempts, costs, and statistics',
             },
             enhancementTracker_showOnlyOnEnhancingScreen: {
@@ -522,7 +521,6 @@ export const settingsGroups = {
                 label: 'Track task reroll costs',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
             },
             taskMapIndex: {

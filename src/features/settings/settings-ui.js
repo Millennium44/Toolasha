@@ -256,6 +256,9 @@ class SettingsUI {
         card.className = 'toolasha-settings-card';
         card.id = 'toolasha-settings-content';
 
+        // Add search box at the top
+        this.addSearchBox(card);
+
         // Generate settings from config
         this.generateSettings(card);
 
@@ -485,10 +488,20 @@ class SettingsUI {
         div.dataset.settingId = settingId;
         div.dataset.type = settingDef.type || 'checkbox';
 
-        // Add dependency class and make parent settings collapsible
-        if (settingDef.dependencies && settingDef.dependencies.length > 0) {
+        // Add dependency class and store dependency info
+        if (settingDef.dependencies) {
             div.classList.add('has-dependency');
-            div.dataset.dependencies = settingDef.dependencies.join(',');
+
+            // Handle both array format (legacy, AND logic) and object format (supports OR logic)
+            if (Array.isArray(settingDef.dependencies)) {
+                // Legacy format: ['dep1', 'dep2'] means AND logic
+                div.dataset.dependencies = settingDef.dependencies.join(',');
+                div.dataset.dependencyMode = 'all'; // AND logic
+            } else if (typeof settingDef.dependencies === 'object') {
+                // New format: {mode: 'any', settings: ['dep1', 'dep2']}
+                div.dataset.dependencies = settingDef.dependencies.settings.join(',');
+                div.dataset.dependencyMode = settingDef.dependencies.mode || 'all'; // 'any' = OR, 'all' = AND
+            }
         }
 
         // Add not-implemented class for red text
@@ -643,6 +656,113 @@ class SettingsUI {
             default:
                 return `<span style="color: red;">Unknown type: ${type}</span>`;
         }
+    }
+
+    /**
+     * Add search box to filter settings
+     * @param {HTMLElement} container - Container element
+     */
+    addSearchBox(container) {
+        const searchContainer = document.createElement('div');
+        searchContainer.className = 'toolasha-search-container';
+        searchContainer.style.cssText = `
+            margin-bottom: 20px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        `;
+
+        // Search input
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'toolasha-search-input';
+        searchInput.placeholder = 'Search settings...';
+        searchInput.style.cssText = `
+            flex: 1;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-size: 14px;
+        `;
+
+        // Clear button
+        const clearButton = document.createElement('button');
+        clearButton.textContent = 'Clear';
+        clearButton.className = 'toolasha-search-clear';
+        clearButton.style.cssText = `
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+        clearButton.style.display = 'none'; // Hidden by default
+
+        // Filter function
+        const filterSettings = (query) => {
+            const lowerQuery = query.toLowerCase().trim();
+
+            // If query is empty, show everything
+            if (!lowerQuery) {
+                // Show all settings
+                document.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                    setting.style.display = 'flex';
+                });
+                // Show all groups
+                document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                    group.style.display = 'block';
+                });
+                clearButton.style.display = 'none';
+                return;
+            }
+
+            clearButton.style.display = 'block';
+
+            // Filter settings
+            document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                let visibleCount = 0;
+
+                group.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                    const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
+                    const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
+                    const searchText = (label + ' ' + help).toLowerCase();
+
+                    if (searchText.includes(lowerQuery)) {
+                        setting.style.display = 'flex';
+                        visibleCount++;
+                    } else {
+                        setting.style.display = 'none';
+                    }
+                });
+
+                // Hide group if no visible settings
+                if (visibleCount === 0) {
+                    group.style.display = 'none';
+                } else {
+                    group.style.display = 'block';
+                }
+            });
+        };
+
+        // Input event listener
+        searchInput.addEventListener('input', (e) => {
+            filterSettings(e.target.value);
+        });
+
+        // Clear button event listener
+        clearButton.addEventListener('click', () => {
+            searchInput.value = '';
+            filterSettings('');
+            searchInput.focus();
+        });
+
+        searchContainer.appendChild(searchInput);
+        searchContainer.appendChild(clearButton);
+        container.appendChild(searchContainer);
     }
 
     /**
@@ -827,14 +947,27 @@ class SettingsUI {
 
         settings.forEach((settingEl) => {
             const dependencies = settingEl.dataset.dependencies.split(',');
-            let enabled = true;
+            const mode = settingEl.dataset.dependencyMode || 'all'; // 'all' = AND, 'any' = OR
+            let enabled = false;
 
-            // Check if all dependencies are met
-            for (const depId of dependencies) {
-                const depInput = document.getElementById(depId);
-                if (depInput && depInput.type === 'checkbox' && !depInput.checked) {
-                    enabled = false;
-                    break;
+            if (mode === 'any') {
+                // OR logic: at least one dependency must be met
+                for (const depId of dependencies) {
+                    const depInput = document.getElementById(depId);
+                    if (depInput && depInput.type === 'checkbox' && depInput.checked) {
+                        enabled = true;
+                        break; // Found at least one enabled, that's enough
+                    }
+                }
+            } else {
+                // AND logic (default): all dependencies must be met
+                enabled = true; // Assume enabled, then check all
+                for (const depId of dependencies) {
+                    const depInput = document.getElementById(depId);
+                    if (depInput && depInput.type === 'checkbox' && !depInput.checked) {
+                        enabled = false;
+                        break; // Found one disabled, no need to check rest
+                    }
                 }
             }
 

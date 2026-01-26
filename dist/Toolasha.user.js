@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.14
+// @version      0.5.15
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -695,7 +695,6 @@
                     label: 'Enable Enhancement Tracker',
                     type: 'checkbox',
                     default: false,
-                    requiresRefresh: true,
                     help: 'Track enhancement attempts, costs, and statistics',
                 },
                 enhancementTracker_showOnlyOnEnhancingScreen: {
@@ -908,7 +907,6 @@
                     label: 'Track task reroll costs',
                     type: 'checkbox',
                     default: true,
-                    requiresRefresh: true,
                     help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
                 },
                 taskMapIndex: {
@@ -6584,16 +6582,19 @@
         };
 
         const houseLevel = getValue('enhanceSim_houseLevel', 8);
+
+        // Get tea selection from dropdown (replaces 3 separate checkboxes)
+        const teaSelection = getValue('enhanceSim_tea', 'ultra');
         const teas = {
-            enhancing: getValue('enhanceSim_enhancingTea', false),
-            superEnhancing: getValue('enhanceSim_superEnhancingTea', false),
-            ultraEnhancing: getValue('enhanceSim_ultraEnhancingTea', true),
+            enhancing: teaSelection === 'basic',
+            superEnhancing: teaSelection === 'super',
+            ultraEnhancing: teaSelection === 'ultra',
             blessed: getValue('enhanceSim_blessedTea', true),
         };
 
-        // Calculate tea bonuses
-        const teaLevelBonus = teas.ultraEnhancing ? 8 : teas.superEnhancing ? 6 : teas.enhancing ? 3 : 0;
-        const teaSpeedBonus = teas.ultraEnhancing ? 6 : teas.superEnhancing ? 4 : teas.enhancing ? 2 : 0;
+        // Calculate tea bonuses based on selection
+        const teaLevelBonus = teaSelection === 'ultra' ? 8 : teaSelection === 'super' ? 6 : teaSelection === 'basic' ? 3 : 0;
+        const teaSpeedBonus = teaSelection === 'ultra' ? 6 : teaSelection === 'super' ? 4 : teaSelection === 'basic' ? 2 : 0;
 
         // Calculate house bonuses
         const houseSpeedBonus = houseLevel * 1.0; // 1% per level
@@ -15676,13 +15677,8 @@
                         this.queueMenuObserver.disconnect();
 
                         // Queue DOM changed (reordering) - re-inject times
+                        // NOTE: Reconnection happens inside injectQueueTimes after async completes
                         this.injectQueueTimes(queueMenu);
-
-                        // Reconnect to continue watching
-                        this.queueMenuObserver.observe(queueMenu, {
-                            childList: true,
-                            subtree: true,
-                        });
                     });
 
                     this.queueMenuObserver.observe(queueMenu, {
@@ -16442,6 +16438,9 @@
          * @param {HTMLElement} queueMenu - Queue menu container element
          */
         injectQueueTimes(queueMenu) {
+            // Track if we need to reconnect observer at the end
+            let shouldReconnectObserver = false;
+
             try {
                 // Get all queued actions
                 const currentActions = dataManager.getCurrentActions();
@@ -16455,12 +16454,16 @@
                     return;
                 }
 
-                // Clear all existing time displays to prevent duplicates
+                // Clear all existing time and profit displays to prevent duplicates
                 queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
+                queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
                 const existingTotal = document.querySelector('#mwi-queue-total-time');
                 if (existingTotal) {
                     existingTotal.remove();
                 }
+
+                // Observer is already disconnected by callback - we'll reconnect in finally
+                shouldReconnectObserver = true;
 
                 let accumulatedTime = 0;
                 let hasInfinite = false;
@@ -16510,6 +16513,8 @@
                             const isInfinite = !currentAction.hasMaxCount || currentAction.actionHrid.includes('/combat/');
 
                             let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
+                            let count = 0; // Item/action count for profit calculation
+                            let actualAttempts = 0; // Actual attempts for profit calculation
 
                             if (isInfinite) {
                                 // Check for material limit on infinite actions
@@ -16535,7 +16540,8 @@
                                     if (materialLimit !== null) {
                                         // Material-limited infinite action - calculate time
                                         // NOTE: materialLimit is already attempts, not actions
-                                        const actualAttempts = materialLimit;
+                                        actualAttempts = materialLimit;
+                                        count = materialLimit; // For infinite actions, count = attempts
                                         const totalTime = actualAttempts * actionTime;
                                         accumulatedTime += totalTime;
                                         actionTimeSeconds = totalTime;
@@ -16545,7 +16551,7 @@
                                     hasInfinite = true;
                                 }
                             } else {
-                                const count = currentAction.maxCount - currentAction.currentCount;
+                                count = currentAction.maxCount - currentAction.currentCount;
                                 const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
                                 if (timeData) {
                                     const { actionTime, totalEfficiency } = timeData;
@@ -16556,7 +16562,7 @@
                                     const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
                                     // Calculate actual attempts needed
-                                    const actualAttempts = Math.ceil(count / avgActionsPerAttempt);
+                                    actualAttempts = Math.ceil(count / avgActionsPerAttempt);
                                     const totalTime = actualAttempts * actionTime;
                                     accumulatedTime += totalTime;
                                     actionTimeSeconds = totalTime;
@@ -16568,6 +16574,8 @@
                                 actionsToCalculate.push({
                                     actionHrid: currentAction.actionHrid,
                                     timeSeconds: actionTimeSeconds,
+                                    count: count,
+                                    actualAttempts: actualAttempts,
                                 });
                             }
                         }
@@ -16655,12 +16663,12 @@
                     // Calculate total time for this action
                     let totalTime;
                     let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
+                    let actualAttempts = 0; // Actual attempts for profit calculation
                     if (isTrulyInfinite) {
                         totalTime = Infinity;
                     } else {
                         // Calculate actual attempts needed
                         // NOTE: materialLimit returns attempts, but finite counts are items
-                        let actualAttempts;
                         if (materialLimit !== null) {
                             // Material-limited - count is already attempts
                             actualAttempts = count;
@@ -16681,6 +16689,9 @@
                         actionsToCalculate.push({
                             actionHrid: actionObj.actionHrid,
                             timeSeconds: actionTimeSeconds,
+                            count: count,
+                            actualAttempts: actualAttempts,
+                            divIndex: divIndex, // Store index to match back to DOM element
                         });
                     }
 
@@ -16725,6 +16736,26 @@
                         // Fallback: append to action div
                         actionDiv.appendChild(timeDiv);
                     }
+
+                    // Create empty profit div for this action (will be populated asynchronously)
+                    if (!isTrulyInfinite && actionTimeSeconds > 0) {
+                        const profitDiv = document.createElement('div');
+                        profitDiv.className = 'mwi-queue-action-profit';
+                        profitDiv.dataset.divIndex = divIndex;
+                        profitDiv.style.cssText = `
+                        color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                        font-size: 0.85em;
+                        margin-top: 2px;
+                    `;
+                        // Leave empty - will be filled by async calculation
+                        profitDiv.textContent = '';
+
+                        if (actionTextContainer) {
+                            actionTextContainer.appendChild(profitDiv);
+                        } else {
+                            actionDiv.appendChild(profitDiv);
+                        }
+                    }
                 }
 
                 // Add total time at bottom (includes current action + all queued)
@@ -16759,20 +16790,31 @@
 
                 // Calculate profit asynchronously (non-blocking)
                 if (actionsToCalculate.length > 0 && marketAPI.isLoaded()) {
-                    this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText);
+                    // Async will handle observer reconnection after updates complete
+                    shouldReconnectObserver = false;
+                    this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText, queueMenu);
                 }
             } catch (error) {
                 console.error('[MWI Tools] Error injecting queue times:', error);
+            } finally {
+                // Reconnect observer only if async didn't take over
+                if (shouldReconnectObserver && this.queueMenuObserver) {
+                    this.queueMenuObserver.observe(queueMenu, {
+                        childList: true,
+                        subtree: true,
+                    });
+                }
             }
         }
 
         /**
          * Calculate and display total profit asynchronously (non-blocking)
          * @param {HTMLElement} totalDiv - The total display div element
-         * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds} objects
+         * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds, count, actualAttempts, divIndex} objects
          * @param {string} baseText - Base text (time) to prepend
+         * @param {HTMLElement} queueMenu - Queue menu element to reconnect observer after updates
          */
-        async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText) {
+        async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu) {
             // Generate unique ID for this calculation to prevent race conditions
             const calculationId = Date.now() + Math.random();
             this.activeProfitCalculationId = calculationId;
@@ -16785,7 +16827,7 @@
                 const profitPromises = actionsToCalculate.map(
                     (action) =>
                         Promise.race([
-                            this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
+                            this.calculateProfitForAction(action),
                             new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500)),
                         ]).catch(() => null) // Convert rejections to null
                 );
@@ -16799,11 +16841,26 @@
                     return;
                 }
 
-                // Aggregate results
-                results.forEach((result) => {
-                    if (result.status === 'fulfilled' && result.value !== null) {
-                        totalProfit += result.value;
+                // Aggregate results and update individual action profit displays
+                results.forEach((result, index) => {
+                    const actionProfit = result.status === 'fulfilled' && result.value !== null ? result.value : null;
+
+                    if (actionProfit !== null) {
+                        totalProfit += actionProfit;
                         hasProfitData = true;
+
+                        // Update individual action's profit display
+                        const action = actionsToCalculate[index];
+                        if (action.divIndex !== undefined) {
+                            const profitDiv = document.querySelector(`.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`);
+                            if (profitDiv) {
+                                const profitColor = actionProfit >= 0
+                                    ? config.getSettingValue('color_profit', '#4ade80')
+                                    : config.getSettingValue('color_loss', '#f87171');
+                                const profitSign = actionProfit >= 0 ? '+' : '';
+                                profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatWithSeparator(Math.round(actionProfit))}</span>`;
+                            }
+                        }
                     }
                 });
 
@@ -16826,58 +16883,70 @@
                 }
             } catch (error) {
                 console.warn('[Action Time Display] Error calculating total profit:', error);
+            } finally {
+                // CRITICAL: Reconnect mutation observer after ALL DOM updates are complete
+                // This prevents infinite loop by ensuring observer only reconnects once all profit divs are updated
+                if (this.queueMenuObserver && queueMenu) {
+                    this.queueMenuObserver.observe(queueMenu, {
+                        childList: true,
+                        subtree: true,
+                    });
+                }
             }
         }
 
         /**
-         * Calculate profit or estimated value for a single action based on time spent
-         * @param {string} actionHrid - Action HRID
-         * @param {number} timeSeconds - Time spent on this action in seconds
+         * Calculate profit or estimated value for a single action based on action count
+         * @param {Object} action - Action object with {actionHrid, timeSeconds, count, actualAttempts}
          * @returns {Promise<number|null>} Total value (profit or revenue) or null if unavailable
          */
-        async calculateProfitForAction(actionHrid, timeSeconds) {
-            const actionDetails = dataManager.getActionDetails(actionHrid);
+        async calculateProfitForAction(action) {
+            const actionDetails = dataManager.getActionDetails(action.actionHrid);
             if (!actionDetails) {
                 return null;
             }
 
-            // Get value mode setting (profit or estimated_value)
             const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
 
-            // Calculate value per hour based on mode
-            let valuePerHour = null;
-
-            // Try gathering profit first (foraging, woodcutting, milking)
-            const gatheringProfit = await calculateGatheringProfit(actionHrid);
+            // Get profit data (already has profitPerHour and actionsPerHour calculated)
+            let profitData = null;
+            const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
             if (gatheringProfit) {
-                if (valueMode === 'estimated_value' && gatheringProfit.revenuePerHour !== undefined) {
-                    valuePerHour = gatheringProfit.revenuePerHour;
-                } else if (gatheringProfit.profitPerHour !== undefined) {
-                    valuePerHour = gatheringProfit.profitPerHour;
-                }
+                profitData = gatheringProfit;
             } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                // Try production profit (crafting, cooking, etc.)
-                const productionProfit = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
-                if (productionProfit) {
-                    if (valueMode === 'estimated_value') {
-                        // Calculate revenue: (items * priceAfterTax) + bonus revenue
-                        const revenuePerHour =
-                            productionProfit.totalItemsPerHour * productionProfit.priceAfterTax +
-                            (productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier;
-                        valuePerHour = revenuePerHour;
-                    } else if (productionProfit.profitPerHour !== undefined) {
-                        valuePerHour = productionProfit.profitPerHour;
-                    }
-                }
+                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
             }
 
-            // Calculate value based on time spent
-            if (valuePerHour !== null) {
-                const timeHours = timeSeconds / 3600;
-                return valuePerHour * timeHours;
+            if (!profitData) {
+                return null;
             }
 
-            return null;
+            // Get value per hour based on mode
+            let valuePerHour = null;
+            if (valueMode === 'estimated_value' && profitData.revenuePerHour !== undefined) {
+                valuePerHour = profitData.revenuePerHour;
+            } else if (profitData.profitPerHour !== undefined) {
+                valuePerHour = profitData.profitPerHour;
+            }
+
+            if (valuePerHour === null || !profitData.actionsPerHour) {
+                return null;
+            }
+
+            // Get efficiency from profitData (gathering uses totalEfficiency, production uses efficiencyBonus)
+            profitData.totalEfficiency ?? profitData.efficiencyBonus ?? 0;
+
+            // CRITICAL: Queue always displays ATTEMPTS, never item counts
+            // - GATHERING: "Gather 726 times" = 726 attempts
+            // - PRODUCTION: "Produce 237 times" = 237 attempts
+            // Use action.count directly for both - no efficiency division needed
+            const actualAttempts = action.count;
+
+            // Calculate total profit using EXACT same formula as task calculator
+            // Task uses: (profitPerHour / actionsPerHour) * quantity
+            // This ensures identical floating point results
+            const profitPerAction = valuePerHour / profitData.actionsPerHour;
+            return profitPerAction * actualAttempts;
         }
 
         /**
@@ -35717,12 +35786,14 @@
             const text = msg.textContent.trim();
 
             // Try American format: [M/D HH:MM:SS AM/PM] or [M/D HH:MM:SS] (24-hour)
-            let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+            // Use \s* to handle potential spacing variations
+            let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
             let isAmerican = true;
 
             if (!match) {
                 // Try international format: [DD-M HH:MM:SS] (24-hour)
-                match = text.match(/\[(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\]/);
+                // Use \s* to handle potential spacing variations in dungeon chat
+                match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
                 isAmerican = false;
             }
 
@@ -41643,6 +41714,9 @@
             card.className = 'toolasha-settings-card';
             card.id = 'toolasha-settings-content';
 
+            // Add search box at the top
+            this.addSearchBox(card);
+
             // Generate settings from config
             this.generateSettings(card);
 
@@ -41872,10 +41946,20 @@
             div.dataset.settingId = settingId;
             div.dataset.type = settingDef.type || 'checkbox';
 
-            // Add dependency class and make parent settings collapsible
-            if (settingDef.dependencies && settingDef.dependencies.length > 0) {
+            // Add dependency class and store dependency info
+            if (settingDef.dependencies) {
                 div.classList.add('has-dependency');
-                div.dataset.dependencies = settingDef.dependencies.join(',');
+
+                // Handle both array format (legacy, AND logic) and object format (supports OR logic)
+                if (Array.isArray(settingDef.dependencies)) {
+                    // Legacy format: ['dep1', 'dep2'] means AND logic
+                    div.dataset.dependencies = settingDef.dependencies.join(',');
+                    div.dataset.dependencyMode = 'all'; // AND logic
+                } else if (typeof settingDef.dependencies === 'object') {
+                    // New format: {mode: 'any', settings: ['dep1', 'dep2']}
+                    div.dataset.dependencies = settingDef.dependencies.settings.join(',');
+                    div.dataset.dependencyMode = settingDef.dependencies.mode || 'all'; // 'any' = OR, 'all' = AND
+                }
             }
 
             // Add not-implemented class for red text
@@ -42030,6 +42114,113 @@
                 default:
                     return `<span style="color: red;">Unknown type: ${type}</span>`;
             }
+        }
+
+        /**
+         * Add search box to filter settings
+         * @param {HTMLElement} container - Container element
+         */
+        addSearchBox(container) {
+            const searchContainer = document.createElement('div');
+            searchContainer.className = 'toolasha-search-container';
+            searchContainer.style.cssText = `
+            margin-bottom: 20px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        `;
+
+            // Search input
+            const searchInput = document.createElement('input');
+            searchInput.type = 'text';
+            searchInput.className = 'toolasha-search-input';
+            searchInput.placeholder = 'Search settings...';
+            searchInput.style.cssText = `
+            flex: 1;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-size: 14px;
+        `;
+
+            // Clear button
+            const clearButton = document.createElement('button');
+            clearButton.textContent = 'Clear';
+            clearButton.className = 'toolasha-search-clear';
+            clearButton.style.cssText = `
+            padding: 8px 16px;
+            background: #444;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+            clearButton.style.display = 'none'; // Hidden by default
+
+            // Filter function
+            const filterSettings = (query) => {
+                const lowerQuery = query.toLowerCase().trim();
+
+                // If query is empty, show everything
+                if (!lowerQuery) {
+                    // Show all settings
+                    document.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                        setting.style.display = 'flex';
+                    });
+                    // Show all groups
+                    document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                        group.style.display = 'block';
+                    });
+                    clearButton.style.display = 'none';
+                    return;
+                }
+
+                clearButton.style.display = 'block';
+
+                // Filter settings
+                document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
+                    let visibleCount = 0;
+
+                    group.querySelectorAll('.toolasha-setting').forEach((setting) => {
+                        const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
+                        const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
+                        const searchText = (label + ' ' + help).toLowerCase();
+
+                        if (searchText.includes(lowerQuery)) {
+                            setting.style.display = 'flex';
+                            visibleCount++;
+                        } else {
+                            setting.style.display = 'none';
+                        }
+                    });
+
+                    // Hide group if no visible settings
+                    if (visibleCount === 0) {
+                        group.style.display = 'none';
+                    } else {
+                        group.style.display = 'block';
+                    }
+                });
+            };
+
+            // Input event listener
+            searchInput.addEventListener('input', (e) => {
+                filterSettings(e.target.value);
+            });
+
+            // Clear button event listener
+            clearButton.addEventListener('click', () => {
+                searchInput.value = '';
+                filterSettings('');
+                searchInput.focus();
+            });
+
+            searchContainer.appendChild(searchInput);
+            searchContainer.appendChild(clearButton);
+            container.appendChild(searchContainer);
         }
 
         /**
@@ -42214,14 +42405,27 @@
 
             settings.forEach((settingEl) => {
                 const dependencies = settingEl.dataset.dependencies.split(',');
-                let enabled = true;
+                const mode = settingEl.dataset.dependencyMode || 'all'; // 'all' = AND, 'any' = OR
+                let enabled = false;
 
-                // Check if all dependencies are met
-                for (const depId of dependencies) {
-                    const depInput = document.getElementById(depId);
-                    if (depInput && depInput.type === 'checkbox' && !depInput.checked) {
-                        enabled = false;
-                        break;
+                if (mode === 'any') {
+                    // OR logic: at least one dependency must be met
+                    for (const depId of dependencies) {
+                        const depInput = document.getElementById(depId);
+                        if (depInput && depInput.type === 'checkbox' && depInput.checked) {
+                            enabled = true;
+                            break; // Found at least one enabled, that's enough
+                        }
+                    }
+                } else {
+                    // AND logic (default): all dependencies must be met
+                    enabled = true; // Assume enabled, then check all
+                    for (const depId of dependencies) {
+                        const depInput = document.getElementById(depId);
+                        if (depInput && depInput.type === 'checkbox' && !depInput.checked) {
+                            enabled = false;
+                            break; // Found one disabled, no need to check rest
+                        }
                     }
                 }
 
@@ -42465,7 +42669,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.14',
+            version: '0.5.15',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

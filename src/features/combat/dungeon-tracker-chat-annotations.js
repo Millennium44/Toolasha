@@ -441,12 +441,14 @@ class DungeonTrackerChatAnnotations {
         const text = msg.textContent.trim();
 
         // Try American format: [M/D HH:MM:SS AM/PM] or [M/D HH:MM:SS] (24-hour)
-        let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
+        // Use \s* to handle potential spacing variations
+        let match = text.match(/\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/);
         let isAmerican = true;
 
         if (!match) {
             // Try international format: [DD-M HH:MM:SS] (24-hour)
-            match = text.match(/\[(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\]/);
+            // Use \s* to handle potential spacing variations in dungeon chat
+            match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
             isAmerican = false;
         }
 

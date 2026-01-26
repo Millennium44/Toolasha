@@ -93,13 +93,8 @@ class ActionTimeDisplay {
                     this.queueMenuObserver.disconnect();
 
                     // Queue DOM changed (reordering) - re-inject times
+                    // NOTE: Reconnection happens inside injectQueueTimes after async completes
                     this.injectQueueTimes(queueMenu);
-
-                    // Reconnect to continue watching
-                    this.queueMenuObserver.observe(queueMenu, {
-                        childList: true,
-                        subtree: true,
-                    });
                 });
 
                 this.queueMenuObserver.observe(queueMenu, {
@@ -866,6 +861,9 @@ class ActionTimeDisplay {
      * @param {HTMLElement} queueMenu - Queue menu container element
      */
     injectQueueTimes(queueMenu) {
+        // Track if we need to reconnect observer at the end
+        let shouldReconnectObserver = false;
+
         try {
             // Get all queued actions
             const currentActions = dataManager.getCurrentActions();
@@ -879,12 +877,16 @@ class ActionTimeDisplay {
                 return;
             }
 
-            // Clear all existing time displays to prevent duplicates
+            // Clear all existing time and profit displays to prevent duplicates
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
+            queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
             const existingTotal = document.querySelector('#mwi-queue-total-time');
             if (existingTotal) {
                 existingTotal.remove();
             }
+
+            // Observer is already disconnected by callback - we'll reconnect in finally
+            shouldReconnectObserver = true;
 
             let accumulatedTime = 0;
             let hasInfinite = false;
@@ -934,6 +936,8 @@ class ActionTimeDisplay {
                         const isInfinite = !currentAction.hasMaxCount || currentAction.actionHrid.includes('/combat/');
 
                         let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
+                        let count = 0; // Item/action count for profit calculation
+                        let actualAttempts = 0; // Actual attempts for profit calculation
 
                         if (isInfinite) {
                             // Check for material limit on infinite actions
@@ -959,7 +963,8 @@ class ActionTimeDisplay {
                                 if (materialLimit !== null) {
                                     // Material-limited infinite action - calculate time
                                     // NOTE: materialLimit is already attempts, not actions
-                                    const actualAttempts = materialLimit;
+                                    actualAttempts = materialLimit;
+                                    count = materialLimit; // For infinite actions, count = attempts
                                     const totalTime = actualAttempts * actionTime;
                                     accumulatedTime += totalTime;
                                     actionTimeSeconds = totalTime;
@@ -969,7 +974,7 @@ class ActionTimeDisplay {
                                 hasInfinite = true;
                             }
                         } else {
-                            const count = currentAction.maxCount - currentAction.currentCount;
+                            count = currentAction.maxCount - currentAction.currentCount;
                             const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
                             if (timeData) {
                                 const { actionTime, totalEfficiency } = timeData;
@@ -980,7 +985,7 @@ class ActionTimeDisplay {
                                 const avgActionsPerAttempt = guaranteedActions + chanceForExtra / 100;
 
                                 // Calculate actual attempts needed
-                                const actualAttempts = Math.ceil(count / avgActionsPerAttempt);
+                                actualAttempts = Math.ceil(count / avgActionsPerAttempt);
                                 const totalTime = actualAttempts * actionTime;
                                 accumulatedTime += totalTime;
                                 actionTimeSeconds = totalTime;
@@ -992,6 +997,8 @@ class ActionTimeDisplay {
                             actionsToCalculate.push({
                                 actionHrid: currentAction.actionHrid,
                                 timeSeconds: actionTimeSeconds,
+                                count: count,
+                                actualAttempts: actualAttempts,
                             });
                         }
                     }
@@ -1079,12 +1086,12 @@ class ActionTimeDisplay {
                 // Calculate total time for this action
                 let totalTime;
                 let actionTimeSeconds = 0; // Time spent on this action (for profit calculation)
+                let actualAttempts = 0; // Actual attempts for profit calculation
                 if (isTrulyInfinite) {
                     totalTime = Infinity;
                 } else {
                     // Calculate actual attempts needed
                     // NOTE: materialLimit returns attempts, but finite counts are items
-                    let actualAttempts;
                     if (materialLimit !== null) {
                         // Material-limited - count is already attempts
                         actualAttempts = count;
@@ -1105,6 +1112,9 @@ class ActionTimeDisplay {
                     actionsToCalculate.push({
                         actionHrid: actionObj.actionHrid,
                         timeSeconds: actionTimeSeconds,
+                        count: count,
+                        actualAttempts: actualAttempts,
+                        divIndex: divIndex, // Store index to match back to DOM element
                     });
                 }
 
@@ -1149,6 +1159,26 @@ class ActionTimeDisplay {
                     // Fallback: append to action div
                     actionDiv.appendChild(timeDiv);
                 }
+
+                // Create empty profit div for this action (will be populated asynchronously)
+                if (!isTrulyInfinite && actionTimeSeconds > 0) {
+                    const profitDiv = document.createElement('div');
+                    profitDiv.className = 'mwi-queue-action-profit';
+                    profitDiv.dataset.divIndex = divIndex;
+                    profitDiv.style.cssText = `
+                        color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                        font-size: 0.85em;
+                        margin-top: 2px;
+                    `;
+                    // Leave empty - will be filled by async calculation
+                    profitDiv.textContent = '';
+
+                    if (actionTextContainer) {
+                        actionTextContainer.appendChild(profitDiv);
+                    } else {
+                        actionDiv.appendChild(profitDiv);
+                    }
+                }
             }
 
             // Add total time at bottom (includes current action + all queued)
@@ -1183,20 +1213,31 @@ class ActionTimeDisplay {
 
             // Calculate profit asynchronously (non-blocking)
             if (actionsToCalculate.length > 0 && marketAPI.isLoaded()) {
-                this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText);
+                // Async will handle observer reconnection after updates complete
+                shouldReconnectObserver = false;
+                this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText, queueMenu);
             }
         } catch (error) {
             console.error('[MWI Tools] Error injecting queue times:', error);
+        } finally {
+            // Reconnect observer only if async didn't take over
+            if (shouldReconnectObserver && this.queueMenuObserver) {
+                this.queueMenuObserver.observe(queueMenu, {
+                    childList: true,
+                    subtree: true,
+                });
+            }
         }
     }
 
     /**
      * Calculate and display total profit asynchronously (non-blocking)
      * @param {HTMLElement} totalDiv - The total display div element
-     * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds} objects
+     * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds, count, actualAttempts, divIndex} objects
      * @param {string} baseText - Base text (time) to prepend
+     * @param {HTMLElement} queueMenu - Queue menu element to reconnect observer after updates
      */
-    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText) {
+    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu) {
         // Generate unique ID for this calculation to prevent race conditions
         const calculationId = Date.now() + Math.random();
         this.activeProfitCalculationId = calculationId;
@@ -1209,7 +1250,7 @@ class ActionTimeDisplay {
             const profitPromises = actionsToCalculate.map(
                 (action) =>
                     Promise.race([
-                        this.calculateProfitForAction(action.actionHrid, action.timeSeconds),
+                        this.calculateProfitForAction(action),
                         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500)),
                     ]).catch(() => null) // Convert rejections to null
             );
@@ -1223,11 +1264,29 @@ class ActionTimeDisplay {
                 return;
             }
 
-            // Aggregate results
-            results.forEach((result) => {
-                if (result.status === 'fulfilled' && result.value !== null) {
-                    totalProfit += result.value;
+            // Aggregate results and update individual action profit displays
+            results.forEach((result, index) => {
+                const actionProfit = result.status === 'fulfilled' && result.value !== null ? result.value : null;
+
+                if (actionProfit !== null) {
+                    totalProfit += actionProfit;
                     hasProfitData = true;
+
+                    // Update individual action's profit display
+                    const action = actionsToCalculate[index];
+                    if (action.divIndex !== undefined) {
+                        const profitDiv = document.querySelector(
+                            `.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`
+                        );
+                        if (profitDiv) {
+                            const profitColor =
+                                actionProfit >= 0
+                                    ? config.getSettingValue('color_profit', '#4ade80')
+                                    : config.getSettingValue('color_loss', '#f87171');
+                            const profitSign = actionProfit >= 0 ? '+' : '';
+                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatWithSeparator(Math.round(actionProfit))}</span>`;
+                        }
+                    }
                 }
             });
 
@@ -1250,58 +1309,70 @@ class ActionTimeDisplay {
             }
         } catch (error) {
             console.warn('[Action Time Display] Error calculating total profit:', error);
+        } finally {
+            // CRITICAL: Reconnect mutation observer after ALL DOM updates are complete
+            // This prevents infinite loop by ensuring observer only reconnects once all profit divs are updated
+            if (this.queueMenuObserver && queueMenu) {
+                this.queueMenuObserver.observe(queueMenu, {
+                    childList: true,
+                    subtree: true,
+                });
+            }
         }
     }
 
     /**
-     * Calculate profit or estimated value for a single action based on time spent
-     * @param {string} actionHrid - Action HRID
-     * @param {number} timeSeconds - Time spent on this action in seconds
+     * Calculate profit or estimated value for a single action based on action count
+     * @param {Object} action - Action object with {actionHrid, timeSeconds, count, actualAttempts}
      * @returns {Promise<number|null>} Total value (profit or revenue) or null if unavailable
      */
-    async calculateProfitForAction(actionHrid, timeSeconds) {
-        const actionDetails = dataManager.getActionDetails(actionHrid);
+    async calculateProfitForAction(action) {
+        const actionDetails = dataManager.getActionDetails(action.actionHrid);
         if (!actionDetails) {
             return null;
         }
 
-        // Get value mode setting (profit or estimated_value)
         const valueMode = config.getSettingValue('actionQueue_valueMode', 'profit');
 
-        // Calculate value per hour based on mode
-        let valuePerHour = null;
-
-        // Try gathering profit first (foraging, woodcutting, milking)
-        const gatheringProfit = await calculateGatheringProfit(actionHrid);
+        // Get profit data (already has profitPerHour and actionsPerHour calculated)
+        let profitData = null;
+        const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
         if (gatheringProfit) {
-            if (valueMode === 'estimated_value' && gatheringProfit.revenuePerHour !== undefined) {
-                valuePerHour = gatheringProfit.revenuePerHour;
-            } else if (gatheringProfit.profitPerHour !== undefined) {
-                valuePerHour = gatheringProfit.profitPerHour;
-            }
+            profitData = gatheringProfit;
         } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-            // Try production profit (crafting, cooking, etc.)
-            const productionProfit = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
-            if (productionProfit) {
-                if (valueMode === 'estimated_value') {
-                    // Calculate revenue: (items * priceAfterTax) + bonus revenue
-                    const revenuePerHour =
-                        productionProfit.totalItemsPerHour * productionProfit.priceAfterTax +
-                        (productionProfit.bonusRevenue?.totalBonusRevenue || 0) * productionProfit.efficiencyMultiplier;
-                    valuePerHour = revenuePerHour;
-                } else if (productionProfit.profitPerHour !== undefined) {
-                    valuePerHour = productionProfit.profitPerHour;
-                }
-            }
+            profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
         }
 
-        // Calculate value based on time spent
-        if (valuePerHour !== null) {
-            const timeHours = timeSeconds / 3600;
-            return valuePerHour * timeHours;
+        if (!profitData) {
+            return null;
         }
 
-        return null;
+        // Get value per hour based on mode
+        let valuePerHour = null;
+        if (valueMode === 'estimated_value' && profitData.revenuePerHour !== undefined) {
+            valuePerHour = profitData.revenuePerHour;
+        } else if (profitData.profitPerHour !== undefined) {
+            valuePerHour = profitData.profitPerHour;
+        }
+
+        if (valuePerHour === null || !profitData.actionsPerHour) {
+            return null;
+        }
+
+        // Get efficiency from profitData (gathering uses totalEfficiency, production uses efficiencyBonus)
+        const efficiency = profitData.totalEfficiency ?? profitData.efficiencyBonus ?? 0;
+
+        // CRITICAL: Queue always displays ATTEMPTS, never item counts
+        // - GATHERING: "Gather 726 times" = 726 attempts
+        // - PRODUCTION: "Produce 237 times" = 237 attempts
+        // Use action.count directly for both - no efficiency division needed
+        const actualAttempts = action.count;
+
+        // Calculate total profit using EXACT same formula as task calculator
+        // Task uses: (profitPerHour / actionsPerHour) * quantity
+        // This ensures identical floating point results
+        const profitPerAction = valuePerHour / profitData.actionsPerHour;
+        return profitPerAction * actualAttempts;
     }
 
     /**
