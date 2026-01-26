@@ -58,15 +58,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             const decimals = output.itemsPerHour < 1 ? 2 : 1;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-
-            // Show processing percentage for processed items
-            if (output.isProcessed && output.processingChance) {
-                const processingPercent = formatPercentage(output.processingChance, 1);
-                line.textContent = `• ${output.name}: (${processingPercent}) ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
-            } else {
-                line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
-            }
-
+            line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
             baseOutputContent.appendChild(line);
         }
     }
@@ -142,6 +134,30 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     }
     if (rareFindSection) {
         revenueDiv.appendChild(rareFindSection);
+    }
+
+    // Processing Bonus subsection (Processing Tea conversions)
+    let processingSection = null;
+    if (profitData.processingConversions && profitData.processingConversions.length > 0) {
+        const processingContent = document.createElement('div');
+        for (const conversion of profitData.processingConversions) {
+            const line = document.createElement('div');
+            line.style.marginLeft = '8px';
+            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
+            processingContent.appendChild(line);
+        }
+
+        const processingRevenue = profitData.processingRevenueBonus || 0;
+        const processingChance = profitData.processingBonus || 0;
+        processingSection = createCollapsibleSection(
+            '',
+            `Processing Bonus: ${formatLargeNumber(Math.round(processingRevenue))}/hr (${formatPercentage(processingChance, 1)} proc)`,
+            null,
+            processingContent,
+            false,
+            1
+        );
+        revenueDiv.appendChild(processingSection);
     }
 
     // Costs Section
@@ -823,14 +839,7 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             const totalRevenueLine = output.revenuePerHour * hoursNeeded;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-
-            if (output.isProcessed && output.processingChance) {
-                const processingPercent = formatPercentage(output.processingChance, 1);
-                line.textContent = `• ${output.name}: (${processingPercent}) ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
-            } else {
-                line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
-            }
-
+            line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
             baseOutputContent.appendChild(line);
         }
     }
@@ -908,6 +917,32 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
     }
     if (rareFindSection) {
         revenueDiv.appendChild(rareFindSection);
+    }
+
+    // Processing Bonus subsection (Processing Tea conversions)
+    let processingSection = null;
+    if (profitData.processingConversions && profitData.processingConversions.length > 0) {
+        const processingContent = document.createElement('div');
+        for (const conversion of profitData.processingConversions) {
+            const totalConversions = conversion.conversionsPerHour * hoursNeeded;
+            const totalRevenueFromConversion = conversion.revenuePerHour * hoursNeeded;
+            const line = document.createElement('div');
+            line.style.marginLeft = '8px';
+            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
+            processingContent.appendChild(line);
+        }
+
+        const totalProcessingRevenue = (profitData.processingRevenueBonus || 0) * hoursNeeded;
+        const processingChance = profitData.processingBonus || 0;
+        processingSection = createCollapsibleSection(
+            '',
+            `Processing Bonus: ${formatLargeNumber(Math.round(totalProcessingRevenue))} (${formatPercentage(processingChance, 1)} proc)`,
+            null,
+            processingContent,
+            false,
+            1
+        );
+        revenueDiv.appendChild(processingSection);
     }
 
     // Costs Section

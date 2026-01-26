@@ -304,7 +304,7 @@ export async function calculateGatheringProfit(actionHrid) {
                 revenuePerHour: revenueFromConversion,
             });
 
-            // Store outputs (show both raw and processed)
+            // Store raw output only (processed items shown separately in Processing Bonus section)
             baseOutputs.push({
                 name: rawItemName,
                 itemsPerHour: rawItemsPerHour,
@@ -312,17 +312,6 @@ export async function calculateGatheringProfit(actionHrid) {
                 priceEach: rawPrice,
                 priceAfterTax: rawPriceAfterTax,
                 revenuePerHour: rawItemsPerHour * rawPrice,
-            });
-
-            baseOutputs.push({
-                name: processedItemName,
-                itemsPerHour: processedItemsPerHour,
-                dropRate: drop.dropRate * processingBonus,
-                priceEach: processedPrice,
-                priceAfterTax: processedPriceAfterTax,
-                revenuePerHour: processedItemsPerHour * processedPrice,
-                isProcessed: true, // Flag to show processing percentage
-                processingChance: processingBonus, // Store the processing chance (e.g., 0.15 for 15%)
             });
         } else {
             // No processing - simple calculation

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.15
+// @version      0.5.16
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -7857,7 +7857,7 @@
                     revenuePerHour: revenueFromConversion,
                 });
 
-                // Store outputs (show both raw and processed)
+                // Store raw output only (processed items shown separately in Processing Bonus section)
                 baseOutputs.push({
                     name: rawItemName,
                     itemsPerHour: rawItemsPerHour,
@@ -7865,17 +7865,6 @@
                     priceEach: rawPrice,
                     priceAfterTax: rawPriceAfterTax,
                     revenuePerHour: rawItemsPerHour * rawPrice,
-                });
-
-                baseOutputs.push({
-                    name: processedItemName,
-                    itemsPerHour: processedItemsPerHour,
-                    dropRate: drop.dropRate * processingBonus,
-                    priceEach: processedPrice,
-                    priceAfterTax: processedPriceAfterTax,
-                    revenuePerHour: processedItemsPerHour * processedPrice,
-                    isProcessed: true, // Flag to show processing percentage
-                    processingChance: processingBonus, // Store the processing chance (e.g., 0.15 for 15%)
                 });
             } else {
                 // No processing - simple calculation
@@ -13868,15 +13857,7 @@
                 const decimals = output.itemsPerHour < 1 ? 2 : 1;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-
-                // Show processing percentage for processed items
-                if (output.isProcessed && output.processingChance) {
-                    const processingPercent = formatPercentage(output.processingChance, 1);
-                    line.textContent = `• ${output.name}: (${processingPercent}) ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
-                } else {
-                    line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
-                }
-
+                line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
                 baseOutputContent.appendChild(line);
             }
         }
@@ -13952,6 +13933,30 @@
         }
         if (rareFindSection) {
             revenueDiv.appendChild(rareFindSection);
+        }
+
+        // Processing Bonus subsection (Processing Tea conversions)
+        let processingSection = null;
+        if (profitData.processingConversions && profitData.processingConversions.length > 0) {
+            const processingContent = document.createElement('div');
+            for (const conversion of profitData.processingConversions) {
+                const line = document.createElement('div');
+                line.style.marginLeft = '8px';
+                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
+                processingContent.appendChild(line);
+            }
+
+            const processingRevenue = profitData.processingRevenueBonus || 0;
+            const processingChance = profitData.processingBonus || 0;
+            processingSection = createCollapsibleSection(
+                '',
+                `Processing Bonus: ${formatLargeNumber(Math.round(processingRevenue))}/hr (${formatPercentage(processingChance, 1)} proc)`,
+                null,
+                processingContent,
+                false,
+                1
+            );
+            revenueDiv.appendChild(processingSection);
         }
 
         // Costs Section
@@ -14633,14 +14638,7 @@
                 const totalRevenueLine = output.revenuePerHour * hoursNeeded;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-
-                if (output.isProcessed && output.processingChance) {
-                    const processingPercent = formatPercentage(output.processingChance, 1);
-                    line.textContent = `• ${output.name}: (${processingPercent}) ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
-                } else {
-                    line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
-                }
-
+                line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
                 baseOutputContent.appendChild(line);
             }
         }
@@ -14718,6 +14716,32 @@
         }
         if (rareFindSection) {
             revenueDiv.appendChild(rareFindSection);
+        }
+
+        // Processing Bonus subsection (Processing Tea conversions)
+        let processingSection = null;
+        if (profitData.processingConversions && profitData.processingConversions.length > 0) {
+            const processingContent = document.createElement('div');
+            for (const conversion of profitData.processingConversions) {
+                const totalConversions = conversion.conversionsPerHour * hoursNeeded;
+                const totalRevenueFromConversion = conversion.revenuePerHour * hoursNeeded;
+                const line = document.createElement('div');
+                line.style.marginLeft = '8px';
+                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
+                processingContent.appendChild(line);
+            }
+
+            const totalProcessingRevenue = (profitData.processingRevenueBonus || 0) * hoursNeeded;
+            const processingChance = profitData.processingBonus || 0;
+            processingSection = createCollapsibleSection(
+                '',
+                `Processing Bonus: ${formatLargeNumber(Math.round(totalProcessingRevenue))} (${formatPercentage(processingChance, 1)} proc)`,
+                null,
+                processingContent,
+                false,
+                1
+            );
+            revenueDiv.appendChild(processingSection);
         }
 
         // Costs Section
@@ -25889,11 +25913,8 @@
                             const revenueForTask = output.revenuePerHour * hoursNeeded;
                             const dropRateText =
                                 output.dropRate < 1.0 ? ` (${formatPercentage(output.dropRate, 1)} drop)` : '';
-                            const processingText = output.isProcessed
-                                ? ` [${formatPercentage(output.processingChance, 1)} processed]`
-                                : '';
                             lines.push(
-                                `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}${processingText}</div>`
+                                `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}</div>`
                             );
                         }
                     }
@@ -42872,7 +42893,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.15',
+            version: '0.5.16',
 
             // Feature toggle API (for users to manage settings via console)
             features: {

@@ -3,7 +3,7 @@
  * Testing pure functions for formatting numbers and time
  */
 
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 import {
     numberFormatter,
     timeReadable,

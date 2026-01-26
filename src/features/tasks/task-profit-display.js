@@ -552,11 +552,8 @@ class TaskProfitDisplay {
                         const revenueForTask = output.revenuePerHour * hoursNeeded;
                         const dropRateText =
                             output.dropRate < 1.0 ? ` (${formatPercentage(output.dropRate, 1)} drop)` : '';
-                        const processingText = output.isProcessed
-                            ? ` [${formatPercentage(output.processingChance, 1)} processed]`
-                            : '';
                         lines.push(
-                            `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}${processingText}</div>`
+                            `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}</div>`
                         );
                     }
                 }
