@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.21
+// @version      0.5.22
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -27421,14 +27421,25 @@
         }
 
         /**
+         * Check if task is completed (has Claim Reward button)
+         */
+        isTaskCompleted(taskCard) {
+            const claimButton = taskCard.querySelector('button.Button_button__1Fe9z.Button_buy__3s24l');
+            return claimButton && claimButton.textContent.includes('Claim Reward');
+        }
+
+        /**
          * Get sort order for a task
          */
         getTaskOrder(taskCard) {
             const parsed = this.parseTaskCard(taskCard);
-            if (!parsed) return { skillOrder: 999, taskName: '', isCombat: false, monsterSortIndex: 999 };
+            if (!parsed) {
+                return { skillOrder: 999, taskName: '', isCombat: false, monsterSortIndex: 999, isCompleted: false };
+            }
 
             const skillOrder = this.TASK_ORDER[parsed.skillType] || 999;
             const isCombat = parsed.skillType === 'Defeat';
+            const isCompleted = this.isTaskCompleted(taskCard);
 
             // For combat tasks, get monster sort index from game data
             let monsterSortIndex = 999;
@@ -27449,6 +27460,7 @@
                 skillType: parsed.skillType,
                 isCombat,
                 monsterSortIndex,
+                isCompleted,
             };
         }
 
@@ -27476,19 +27488,24 @@
             const orderA = this.getTaskOrder(cardA);
             const orderB = this.getTaskOrder(cardB);
 
-            // First sort by skill type (combat vs non-combat)
+            // First: Sort by completion status (incomplete tasks first, completed tasks last)
+            if (orderA.isCompleted !== orderB.isCompleted) {
+                return orderA.isCompleted ? 1 : -1;
+            }
+
+            // Second: Sort by skill type (combat vs non-combat)
             if (orderA.skillOrder !== orderB.skillOrder) {
                 return orderA.skillOrder - orderB.skillOrder;
             }
 
-            // Within combat tasks, sort by zone progression (sortIndex)
+            // Third: Within combat tasks, sort by zone progression (sortIndex)
             if (orderA.isCombat && orderB.isCombat) {
                 if (orderA.monsterSortIndex !== orderB.monsterSortIndex) {
                     return orderA.monsterSortIndex - orderB.monsterSortIndex;
                 }
             }
 
-            // Within same skill type (or same zone for combat), sort alphabetically by task name
+            // Fourth: Within same skill type (or same zone for combat), sort alphabetically by task name
             return orderA.taskName.localeCompare(orderB.taskName);
         }
 
@@ -43080,7 +43097,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.21',
+            version: '0.5.22',
 
             // Feature toggle API (for users to manage settings via console)
             features: {
