@@ -335,25 +335,48 @@ class ActionTimeDisplay {
         // Re-apply CSS override on every update to prevent game's CSS from truncating text
         // ONLY for non-combat actions (combat needs normal width for HP/MP bars)
         // Use setProperty with 'important' to ensure we override game's styles
-        actionNameElement.style.setProperty('overflow', 'visible', 'important');
-        actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-        actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-        actionNameElement.style.setProperty('max-width', 'none', 'important');
-        actionNameElement.style.setProperty('width', 'auto', 'important');
-        actionNameElement.style.setProperty('min-width', 'max-content', 'important');
 
-        // Apply to entire parent chain (up to 5 levels)
-        let parent = actionNameElement.parentElement;
-        let levels = 0;
-        while (parent && levels < 5) {
-            parent.style.setProperty('overflow', 'visible', 'important');
-            parent.style.setProperty('text-overflow', 'clip', 'important');
-            parent.style.setProperty('white-space', 'nowrap', 'important');
-            parent.style.setProperty('max-width', 'none', 'important');
-            parent.style.setProperty('width', 'auto', 'important');
-            parent.style.setProperty('min-width', 'max-content', 'important');
-            parent = parent.parentElement;
-            levels++;
+        // Check if compact mode is enabled
+        const compactMode = config.getSettingValue('actions_compactActionBar', false);
+
+        if (compactMode) {
+            // COMPACT MODE: Cap container width, but don't truncate action name itself
+            // Truncation will be applied to stats span only
+            actionNameElement.style.setProperty('max-width', '800px', 'important');
+            actionNameElement.style.setProperty('overflow', 'visible', 'important');
+            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+
+            // Parents: Cap at reasonable width to prevent screen-spanning
+            let parent = actionNameElement.parentElement;
+            let levels = 0;
+            while (parent && levels < 5) {
+                parent.style.setProperty('max-width', '800px', 'important');
+                parent.style.setProperty('overflow', 'visible', 'important');
+                parent = parent.parentElement;
+                levels++;
+            }
+        } else {
+            // FULL WIDTH MODE (default): Expand to show all text
+            actionNameElement.style.setProperty('overflow', 'visible', 'important');
+            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
+            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+            actionNameElement.style.setProperty('max-width', 'none', 'important');
+            actionNameElement.style.setProperty('width', 'auto', 'important');
+            actionNameElement.style.setProperty('min-width', 'max-content', 'important');
+
+            // Apply to entire parent chain (up to 5 levels)
+            let parent = actionNameElement.parentElement;
+            let levels = 0;
+            while (parent && levels < 5) {
+                parent.style.setProperty('overflow', 'visible', 'important');
+                parent.style.setProperty('text-overflow', 'clip', 'important');
+                parent.style.setProperty('white-space', 'nowrap', 'important');
+                parent.style.setProperty('max-width', 'none', 'important');
+                parent.style.setProperty('width', 'auto', 'important');
+                parent.style.setProperty('min-width', 'max-content', 'important');
+                parent = parent.parentElement;
+                levels++;
+            }
         }
 
         // Get character data
@@ -633,10 +656,35 @@ class ActionTimeDisplay {
         // Clear any previous appended stats
         this.clearAppendedStats(actionNameElement);
 
+        // Get clean action name before appending stats
+        const cleanActionName = this.getCleanActionName(actionNameElement);
+
         // Create marker span for our additions
         const statsSpan = document.createElement('span');
         statsSpan.className = 'mwi-appended-stats';
-        statsSpan.style.cssText = `color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});`;
+
+        // Check if compact mode is enabled
+        const compactMode = config.getSettingValue('actions_compactActionBar', false);
+
+        if (compactMode) {
+            // COMPACT MODE: Truncate stats if too long
+            statsSpan.style.cssText = `
+                color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                display: inline-block;
+                max-width: 400px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                vertical-align: bottom;
+            `;
+            // Set full text as tooltip
+            const fullText = cleanActionName + ' ' + statsText;
+            statsSpan.setAttribute('title', fullText);
+        } else {
+            // FULL WIDTH MODE: Show all stats
+            statsSpan.style.cssText = `color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});`;
+        }
+
         statsSpan.textContent = ' ' + statsText;
 
         // Append to action name element

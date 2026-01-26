@@ -27,6 +27,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actions_compactActionBar: {
+                id: 'actions_compactActionBar',
+                label: 'Compact action bar (limit width, truncate long names)',
+                type: 'checkbox',
+                default: false,
+                dependencies: ['totalActionTime'],
+                help: 'Limits action bar width to prevent screen-spanning on wide monitors. Long action names will be truncated with "..." - hover to see full text.',
+            },
             actionPanel_totalTime: {
                 id: 'actionPanel_totalTime',
                 label: 'Action panel: Total time, times to reach target level, exp/hour',
