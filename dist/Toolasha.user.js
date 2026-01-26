@@ -33419,7 +33419,7 @@
 
         /**
          * Check if action queue is empty and send notification
-         * @param {Object} data - WebSocket data
+         * @param {Object} data - WebSocket data (unused, but kept for handler signature)
          */
         checkActionQueue(data) {
             if (!config.getSetting('notifiEmptyAction')) {
@@ -33430,11 +33430,9 @@
                 return;
             }
 
-            // Check if queue is empty
-            // endCharacterActions contains actions, filter for those not done (isDone === false)
-            const actions = data.endCharacterActions || [];
-            const activeActions = actions.filter((action) => action.isDone === false);
-            const isEmpty = activeActions.length === 0;
+            // Get current actions from dataManager (source of truth for all queued actions)
+            const allActions = dataManager.getCurrentActions();
+            const isEmpty = allActions.length === 0;
 
             // Only notify on transition from not-empty to empty
             if (isEmpty && !this.wasEmpty) {
