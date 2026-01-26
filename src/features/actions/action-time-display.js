@@ -340,21 +340,14 @@ class ActionTimeDisplay {
         const compactMode = config.getSettingValue('actions_compactActionBar', false);
 
         if (compactMode) {
-            // COMPACT MODE: Cap container width, but don't truncate action name itself
-            // Truncation will be applied to stats span only
+            // COMPACT MODE: Only modify action name element, NOT parents
+            // This prevents breaking the header layout (community buffs, profile, etc.)
             actionNameElement.style.setProperty('max-width', '800px', 'important');
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
+            actionNameElement.style.setProperty('overflow', 'hidden', 'important');
+            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
             actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
 
-            // Parents: Cap at reasonable width to prevent screen-spanning
-            let parent = actionNameElement.parentElement;
-            let levels = 0;
-            while (parent && levels < 5) {
-                parent.style.setProperty('max-width', '800px', 'important');
-                parent.style.setProperty('overflow', 'visible', 'important');
-                parent = parent.parentElement;
-                levels++;
-            }
+            // DO NOT modify parent containers - let game's CSS control header layout
         } else {
             // FULL WIDTH MODE (default): Expand to show all text
             actionNameElement.style.setProperty('overflow', 'visible', 'important');
