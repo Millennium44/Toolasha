@@ -175,13 +175,7 @@ class DungeonTrackerChatAnnotations {
             }
 
             if (label) {
-                // Mark as processed BEFORE inserting (matches working DRT script)
-                e.msg.dataset.processed = '1';
-
-                this.insertAnnotation(label, color, e.msg, false);
-
-                // Add cumulative average if this is a successful run
-                // Check that the NEXT key count (next) is not followed by fail/cancel
+                // Check if this is a successful run before inserting annotation
                 const nextNext = events[i + 2];
                 const nextRunWasCanceled = nextNext && (nextNext.type === 'fail' || nextNext.type === 'cancel');
                 const isSuccessfulRun = diff && dungeonName && dungeonName !== 'Unknown' && !nextRunWasCanceled;
@@ -199,6 +193,19 @@ class DungeonTrackerChatAnnotations {
                     const dungeonStats = this.cumulativeStatsByDungeon[dungeonName];
                     dungeonStats.runCount++;
                     dungeonStats.totalTime += diff;
+
+                    // Add run number to label for successful runs
+                    label = `Run #${dungeonStats.runCount}: ${label}`;
+                }
+
+                // Mark as processed BEFORE inserting (matches working DRT script)
+                e.msg.dataset.processed = '1';
+
+                this.insertAnnotation(label, color, e.msg, false);
+
+                // Add cumulative average if this is a successful run
+                if (isSuccessfulRun) {
+                    const dungeonStats = this.cumulativeStatsByDungeon[dungeonName];
 
                     // Calculate cumulative average (average of all runs up to this point)
                     const cumulativeAvg = Math.floor(dungeonStats.totalTime / dungeonStats.runCount);

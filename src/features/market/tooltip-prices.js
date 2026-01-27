@@ -8,6 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import profitCalculator from './profit-calculator.js';
+import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import expectedValueCalculator from './expected-value-calculator.js';
 import { calculateEnhancementPath, buildEnhancementTooltipHTML } from '../enhancement/tooltip-enhancement.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -202,10 +203,13 @@ class TooltipPrices {
         }
 
         // Check if profit calculator is enabled
-        // Only run for base items (enhancementLevel = 0), not enhanced items
-        // Enhanced items show their cost in the enhancement path section instead
-        if (config.getSetting('itemTooltip_profit') && enhancementLevel === 0) {
-            // Calculate and inject profit information
+        if (config.getSetting('itemTooltip_multiActionProfit')) {
+            // Multi-action profit display (craft + alchemy actions)
+            await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip);
+        } else if (config.getSetting('itemTooltip_profit') && enhancementLevel === 0) {
+            // Original single-action craft profit display
+            // Only run for base items (enhancementLevel = 0), not enhanced items
+            // Enhanced items show their cost in the enhancement path section instead
             const profitData = await profitCalculator.calculateProfit(itemHrid);
             if (profitData) {
                 this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
@@ -843,6 +847,109 @@ class TooltipPrices {
 
         // Insert at the end of the tooltip
         tooltipText.appendChild(gatheringDiv);
+    }
+
+    /**
+     * Inject multi-action profit display into tooltip
+     * Shows all profitable actions (craft, coinify, decompose, transmute) with best highlighted
+     * @param {Element} tooltipElement - Tooltip element
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     */
+    async injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip = false) {
+        // Find the tooltip text container
+        const tooltipText = isCollectionTooltip
+            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
+            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+
+        if (!tooltipText) {
+            return;
+        }
+
+        // Check if we already injected (prevent duplicates)
+        if (tooltipText.querySelector('.market-profit-injected')) {
+            return;
+        }
+
+        // Collect all profit data
+        const allProfits = [];
+
+        // Try craft profit (only for base items)
+        if (enhancementLevel === 0) {
+            const craftProfit = await profitCalculator.calculateProfit(itemHrid);
+            if (craftProfit) {
+                allProfits.push({
+                    actionType: 'craft',
+                    profitPerHour: craftProfit.profitPerHour,
+                    profitPerDay: craftProfit.profitPerDay,
+                    data: craftProfit,
+                });
+            }
+        }
+
+        // Try alchemy profits (coinify, decompose, transmute)
+        const alchemyProfits = alchemyProfitCalculator.calculateAllProfits(itemHrid, enhancementLevel);
+
+        if (alchemyProfits.coinify) {
+            allProfits.push(alchemyProfits.coinify);
+        }
+        if (alchemyProfits.decompose) {
+            allProfits.push(alchemyProfits.decompose);
+        }
+        if (alchemyProfits.transmute) {
+            allProfits.push(alchemyProfits.transmute);
+        }
+
+        // If no profitable actions found, return
+        if (allProfits.length === 0) {
+            return;
+        }
+
+        // Sort by profitPerHour descending
+        allProfits.sort((a, b) => b.profitPerHour - a.profitPerHour);
+
+        // Create profit display container
+        const profitDiv = dom.createStyledDiv(
+            { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
+            '',
+            'market-profit-injected'
+        );
+
+        // Build display
+        let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
+
+        // Best profit section
+        const best = allProfits[0];
+        const actionLabel = best.actionType.charAt(0).toUpperCase() + best.actionType.slice(1);
+        const profitColor = best.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
+
+        html += `<div style="font-weight: bold; margin-bottom: 4px;">BEST PROFIT: ${actionLabel}</div>`;
+        html += '<div style="font-size: 0.9em; margin-left: 8px;">';
+        html += `<div style="color: ${profitColor}; font-weight: bold;">${numberFormatter(best.profitPerHour)}/hr | ${formatKMB(best.profitPerDay)}/day</div>`;
+        html += '</div>';
+
+        // Other options (if more than one action)
+        if (allProfits.length > 1) {
+            html += '<div style="margin-top: 8px; font-size: 0.85em; color: ${config.COLOR_TEXT_SECONDARY};">';
+            html += '<div style="font-weight: 500; margin-bottom: 2px;">Other Options:</div>';
+            html += '<div style="margin-left: 8px;">';
+
+            for (let i = 1; i < allProfits.length; i++) {
+                const profit = allProfits[i];
+                const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
+                const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
+                html += `<div style="color: ${color};">• ${label}: ${numberFormatter(profit.profitPerHour)}/hr</div>`;
+            }
+
+            html += '</div>';
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        profitDiv.innerHTML = html;
+        tooltipText.appendChild(profitDiv);
     }
 
     /**

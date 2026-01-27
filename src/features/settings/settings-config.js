@@ -159,6 +159,14 @@ export const settingsGroups = {
                 dependencies: ['itemTooltip_profit'],
                 help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
+            itemTooltip_multiActionProfit: {
+                id: 'itemTooltip_multiActionProfit',
+                label: 'Show profit comparison for all item actions',
+                type: 'checkbox',
+                default: false,
+                dependencies: ['itemTooltip_prices'],
+                help: 'Displays best profit/hr highlighted, with other profitable actions (craft, coinify, decompose, transmute) summarized below',
+            },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',
