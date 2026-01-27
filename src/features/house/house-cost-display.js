@@ -5,13 +5,16 @@
 
 import houseCostCalculator from './house-cost-calculator.js';
 import config from '../../core/config.js';
-import { coinFormatter } from '../../utils/formatters.js';
+import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
+import dataManager from '../../core/data-manager.js';
 
 class HouseCostDisplay {
     constructor() {
         this.isActive = false;
         this.currentModalContent = null; // Track current modal to detect room switches
         this.isInitialized = false;
+        this.currentMaterialsTabs = []; // Track marketplace tabs
+        this.cleanupObserver = null; // Marketplace cleanup observer
     }
 
     /**
@@ -63,19 +66,8 @@ class HouseCostDisplay {
         }
 
         try {
-            const nextLevel = currentLevel + 1;
-            const costData = await houseCostCalculator.calculateLevelCost(houseRoomHrid, nextLevel);
-
-            // Augment each native cost item with market pricing
-            await this.augmentNativeCosts(costsSection, costData);
-
-            // Add total cost below native costs
-            this.addTotalCost(costsSection, costData);
-
-            // Add compact "To Level" section below
-            if (currentLevel < 7) {
-                await this.addCompactToLevel(costsSection, houseRoomHrid, currentLevel);
-            }
+            // Add "Cumulative to Level" section
+            await this.addCompactToLevel(costsSection, houseRoomHrid, currentLevel);
 
             // Mark this modal as processed
             this.currentModalContent = modalContent;
@@ -290,15 +282,15 @@ class HouseCostDisplay {
         `;
 
         // Add options
-        for (let level = currentLevel + 2; level <= 8; level++) {
+        for (let level = currentLevel + 1; level <= 8; level++) {
             const option = document.createElement('option');
             option.value = level;
             option.textContent = level;
             dropdown.appendChild(option);
         }
 
-        // Default to next level (currentLevel + 2)
-        const defaultLevel = currentLevel + 2;
+        // Default to next level (currentLevel + 1)
+        const defaultLevel = currentLevel + 1;
         dropdown.value = defaultLevel;
 
         headerRow.appendChild(label);
@@ -343,19 +335,17 @@ class HouseCostDisplay {
 
         const costData = await houseCostCalculator.calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel);
 
-        // Compact material list as a unified grid
+        // Materials list as vertical stack of single-line rows
         const materialsList = document.createElement('div');
         materialsList.style.cssText = `
-            display: grid;
-            grid-template-columns: auto auto auto auto auto;
-            align-items: center;
-            gap: 2px 8px;
-            line-height: 1.2;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         `;
 
         // Coins first
         if (costData.coins > 0) {
-            this.appendMaterialCells(materialsList, {
+            this.appendMaterialRow(materialsList, {
                 itemHrid: '/items/coin',
                 count: costData.coins,
                 totalValue: costData.coins,
@@ -364,7 +354,7 @@ class HouseCostDisplay {
 
         // Materials
         for (const material of costData.materials) {
-            this.appendMaterialCells(materialsList, material);
+            this.appendMaterialRow(materialsList, material);
         }
 
         container.appendChild(materialsList);
@@ -382,80 +372,391 @@ class HouseCostDisplay {
         `;
         totalDiv.textContent = `Total Market Value: ${coinFormatter(costData.totalValue)}`;
         container.appendChild(totalDiv);
+
+        // Add Missing Mats Marketplace button if any materials are missing
+        const missingMaterials = this.getMissingMaterials(costData);
+        if (missingMaterials.length > 0) {
+            const button = this.createMissingMaterialsButton(missingMaterials);
+            container.appendChild(button);
+        }
     }
 
     /**
-     * Append material cells directly to grid (5 cells per material)
-     * @param {Element} grid - The grid container
+     * Append material row as single-line compact format
+     * @param {Element} container - The container element
      * @param {Object} material - Material data
      */
-    appendMaterialCells(grid, material) {
+    appendMaterialRow(container, material) {
         const itemName = houseCostCalculator.getItemName(material.itemHrid);
         const inventoryCount = houseCostCalculator.getInventoryCount(material.itemHrid);
         const hasEnough = inventoryCount >= material.count;
         const amountNeeded = Math.max(0, material.count - inventoryCount);
         const isCoin = material.itemHrid === '/items/coin';
 
-        // Cell 1: Inventory / Required (right-aligned)
-        const countsSpan = document.createElement('span');
-        countsSpan.style.cssText = `
+        const row = document.createElement('div');
+        row.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.875rem;
+            line-height: 1.4;
+        `;
+
+        // [inv / req] - left side
+        const inventorySpan = document.createElement('span');
+        inventorySpan.style.cssText = `
             color: ${hasEnough ? 'white' : '#f87171'};
+            min-width: 120px;
             text-align: right;
         `;
-        countsSpan.textContent = `${coinFormatter(inventoryCount)} / ${coinFormatter(material.count)}`;
-        grid.appendChild(countsSpan);
+        inventorySpan.textContent = `${coinFormatter(inventoryCount)} / ${coinFormatter(material.count)}`;
+        row.appendChild(inventorySpan);
 
-        // Cell 2: Item name (left-aligned)
+        // [Badge] Material Name
         const nameSpan = document.createElement('span');
         nameSpan.style.cssText = `
             color: white;
-            text-align: left;
+            min-width: 140px;
         `;
         nameSpan.textContent = itemName;
-        grid.appendChild(nameSpan);
+        row.appendChild(nameSpan);
 
-        // Cell 3: @ price (left-aligned) - empty for coins
-        const priceSpan = document.createElement('span');
+        // @ price = total (skip for coins)
         if (!isCoin) {
-            priceSpan.style.cssText = `
-                color: ${config.SCRIPT_COLOR_SECONDARY};
-                font-size: 0.75rem;
-                text-align: left;
-            `;
-            priceSpan.textContent = `@ ${coinFormatter(material.marketPrice)}`;
-        }
-        grid.appendChild(priceSpan);
-
-        // Cell 4: = total (left-aligned) - show coin total for coins
-        const totalSpan = document.createElement('span');
-        if (isCoin) {
-            totalSpan.style.cssText = `
+            const pricingSpan = document.createElement('span');
+            pricingSpan.style.cssText = `
                 color: ${config.COLOR_ACCENT};
-                font-weight: bold;
-                font-size: 0.75rem;
-                text-align: left;
+                min-width: 180px;
             `;
-            totalSpan.textContent = `= ${coinFormatter(material.totalValue)}`;
+            pricingSpan.textContent = `@ ${coinFormatter(material.marketPrice)} = ${coinFormatter(material.totalValue)}`;
+            row.appendChild(pricingSpan);
         } else {
-            totalSpan.style.cssText = `
-                color: ${config.COLOR_ACCENT};
-                font-weight: bold;
-                font-size: 0.75rem;
-                text-align: left;
-            `;
-            totalSpan.textContent = `= ${coinFormatter(material.totalValue)}`;
+            // Empty spacer for coins
+            const spacer = document.createElement('span');
+            spacer.style.minWidth = '180px';
+            row.appendChild(spacer);
         }
-        grid.appendChild(totalSpan);
 
-        // Cell 5: Amount needed (right-aligned)
-        const neededSpan = document.createElement('span');
-        neededSpan.style.cssText = `
+        // Missing: X - right side
+        const missingSpan = document.createElement('span');
+        missingSpan.style.cssText = `
             color: ${hasEnough ? '#4ade80' : '#f87171'};
-            font-size: 0.75rem;
+            margin-left: auto;
             text-align: right;
         `;
-        neededSpan.textContent = coinFormatter(amountNeeded);
-        grid.appendChild(neededSpan);
+        missingSpan.textContent = `Missing: ${coinFormatter(amountNeeded)}`;
+        row.appendChild(missingSpan);
+
+        container.appendChild(row);
+    }
+
+    /**
+     * Get missing materials from cost data
+     * @param {Object} costData - Cost data from calculator
+     * @returns {Array} Array of missing materials in marketplace format
+     */
+    getMissingMaterials(costData) {
+        const gameData = dataManager.getInitClientData();
+        const inventory = dataManager.getInventory();
+        const missing = [];
+
+        // Process all materials (skip coins)
+        for (const material of costData.materials) {
+            const inventoryItem = inventory.find((i) => i.itemHrid === material.itemHrid);
+            const have = inventoryItem?.count || 0;
+            const missingAmount = Math.max(0, material.count - have);
+
+            // Only include if missing > 0
+            if (missingAmount > 0) {
+                const itemDetails = gameData.itemDetailMap[material.itemHrid];
+                if (itemDetails) {
+                    missing.push({
+                        itemHrid: material.itemHrid,
+                        itemName: itemDetails.name,
+                        missing: missingAmount,
+                        isTradeable: itemDetails.isTradable === true,
+                    });
+                }
+            }
+        }
+
+        return missing;
+    }
+
+    /**
+     * Create missing materials marketplace button
+     * @param {Array} missingMaterials - Array of missing material objects
+     * @returns {HTMLElement} Button element
+     */
+    createMissingMaterialsButton(missingMaterials) {
+        const button = document.createElement('button');
+        button.style.cssText = `
+            width: 100%;
+            padding: 10px 16px;
+            margin-top: 12px;
+            background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
+            color: #ffffff;
+            border: 1px solid rgba(91, 141, 239, 0.4);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        `;
+        button.textContent = 'Missing Mats Marketplace';
+
+        // Hover effects
+        button.addEventListener('mouseenter', () => {
+            button.style.background =
+                'linear-gradient(180deg, rgba(91, 141, 239, 0.35) 0%, rgba(91, 141, 239, 0.25) 100%)';
+            button.style.borderColor = 'rgba(91, 141, 239, 0.6)';
+            button.style.boxShadow = '0 3px 6px rgba(0, 0, 0, 0.3)';
+        });
+
+        button.addEventListener('mouseleave', () => {
+            button.style.background =
+                'linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%)';
+            button.style.borderColor = 'rgba(91, 141, 239, 0.4)';
+            button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+        });
+
+        // Click handler
+        button.addEventListener('click', async () => {
+            await this.handleMissingMaterialsClick(missingMaterials);
+        });
+
+        return button;
+    }
+
+    /**
+     * Handle missing materials button click
+     * @param {Array} missingMaterials - Array of missing material objects
+     */
+    async handleMissingMaterialsClick(missingMaterials) {
+        // Navigate to marketplace
+        const success = await this.navigateToMarketplace();
+        if (!success) {
+            console.error('[HouseCostDisplay] Failed to navigate to marketplace');
+            return;
+        }
+
+        // Wait for marketplace to settle
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        // Create custom tabs
+        this.createMissingMaterialTabs(missingMaterials);
+
+        // Setup cleanup observer if not already setup
+        if (!this.cleanupObserver) {
+            this.setupMarketplaceCleanupObserver();
+        }
+    }
+
+    /**
+     * Get game object via React fiber
+     * @returns {Object|null} Game component instance
+     */
+    getGameObject() {
+        const gamePageEl = document.querySelector('[class^="GamePage"]');
+        if (!gamePageEl) return null;
+
+        const fiberKey = Object.keys(gamePageEl).find((k) => k.startsWith('__reactFiber$'));
+        if (!fiberKey) return null;
+
+        return gamePageEl[fiberKey]?.return?.stateNode;
+    }
+
+    /**
+     * Navigate to marketplace for a specific item
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     */
+    goToMarketplace(itemHrid, enhancementLevel = 0) {
+        const game = this.getGameObject();
+        if (game?.handleGoToMarketplace) {
+            game.handleGoToMarketplace(itemHrid, enhancementLevel);
+        }
+    }
+
+    /**
+     * Navigate to marketplace by clicking navbar
+     * @returns {Promise<boolean>} True if successful
+     */
+    async navigateToMarketplace() {
+        // Find marketplace navbar button
+        const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
+        const marketplaceButton = Array.from(navButtons).find((nav) => {
+            const svg = nav.querySelector('svg[aria-label="navigationBar.marketplace"]');
+            return svg !== null;
+        });
+
+        if (!marketplaceButton) {
+            console.error('[HouseCostDisplay] Marketplace navbar button not found');
+            return false;
+        }
+
+        // Click button
+        marketplaceButton.click();
+
+        // Wait for marketplace to appear
+        return await this.waitForMarketplace();
+    }
+
+    /**
+     * Wait for marketplace panel to appear
+     * @returns {Promise<boolean>} True if marketplace appeared
+     */
+    async waitForMarketplace() {
+        const maxAttempts = 50;
+        const delayMs = 100;
+
+        for (let i = 0; i < maxAttempts; i++) {
+            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            if (tabsContainer) {
+                const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
+                    btn.textContent.includes('Market Listings')
+                );
+                if (hasMarketListings) {
+                    return true;
+                }
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+
+        console.error('[HouseCostDisplay] Marketplace did not open within timeout');
+        return false;
+    }
+
+    /**
+     * Create custom tabs for missing materials
+     * @param {Array} missingMaterials - Array of missing material objects
+     */
+    createMissingMaterialTabs(missingMaterials) {
+        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        if (!tabsContainer) {
+            console.error('[HouseCostDisplay] Tabs container not found');
+            return;
+        }
+
+        // Remove existing custom tabs
+        this.removeMissingMaterialTabs();
+
+        // Get reference tab
+        const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
+        if (!referenceTab) {
+            console.error('[HouseCostDisplay] Reference tab not found');
+            return;
+        }
+
+        // Enable flex wrapping
+        tabsContainer.style.flexWrap = 'wrap';
+
+        // Create tab for each missing material
+        this.currentMaterialsTabs = [];
+        for (const material of missingMaterials) {
+            const tab = this.createCustomTab(material, referenceTab);
+            tabsContainer.appendChild(tab);
+            this.currentMaterialsTabs.push(tab);
+        }
+    }
+
+    /**
+     * Create custom tab for a material
+     * @param {Object} material - Material object
+     * @param {HTMLElement} referenceTab - Reference tab to clone
+     * @returns {HTMLElement} Custom tab element
+     */
+    createCustomTab(material, referenceTab) {
+        const tab = referenceTab.cloneNode(true);
+
+        // Mark as custom tab
+        tab.setAttribute('data-mwi-custom-tab', 'true');
+        tab.setAttribute('data-item-hrid', material.itemHrid);
+
+        // Color coding
+        const statusColor = material.isTradeable ? '#ef4444' : '#888888';
+        const statusText = material.isTradeable ? `Missing: ${formatWithSeparator(material.missing)}` : 'Not Tradeable';
+
+        // Update badge
+        const badgeSpan = tab.querySelector('.TabsComponent_badge__1Du26');
+        if (badgeSpan) {
+            const titleCaseName = material.itemName
+                .split(' ')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+
+            badgeSpan.innerHTML = `
+                <div style="text-align: center;">
+                    <div>${titleCaseName}</div>
+                    <div style="font-size: 0.75em; color: ${statusColor};">
+                        ${statusText}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Gray out if not tradeable
+        if (!material.isTradeable) {
+            tab.style.opacity = '0.5';
+            tab.style.cursor = 'not-allowed';
+        }
+
+        // Remove selected state
+        tab.classList.remove('Mui-selected');
+        tab.setAttribute('aria-selected', 'false');
+        tab.setAttribute('tabindex', '-1');
+
+        // Click handler
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (!material.isTradeable) {
+                return;
+            }
+
+            this.goToMarketplace(material.itemHrid, 0);
+        });
+
+        return tab;
+    }
+
+    /**
+     * Remove all missing material tabs
+     */
+    removeMissingMaterialTabs() {
+        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
+        customTabs.forEach((tab) => tab.remove());
+        this.currentMaterialsTabs = [];
+    }
+
+    /**
+     * Setup marketplace cleanup observer
+     */
+    setupMarketplaceCleanupObserver() {
+        this.cleanupObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const removedNode of mutation.removedNodes) {
+                    if (removedNode.nodeType === Node.ELEMENT_NODE) {
+                        const hadTabsContainer = removedNode.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                        if (hadTabsContainer) {
+                            this.removeMissingMaterialTabs();
+                            console.log('[HouseCostDisplay] Marketplace closed, cleaned up tabs');
+                        }
+                    }
+                }
+            }
+        });
+
+        if (document.body) {
+            this.cleanupObserver.observe(document.body, {
+                childList: true,
+                subtree: true,
+            });
+        }
     }
 
     /**
@@ -501,6 +802,13 @@ class HouseCostDisplay {
         document.querySelectorAll('[class*="HousePanel_itemRequirements"]').forEach((grid) => {
             grid.style.gridTemplateColumns = '';
         });
+
+        // Clean up marketplace tabs and observer
+        this.removeMissingMaterialTabs();
+        if (this.cleanupObserver) {
+            this.cleanupObserver.disconnect();
+            this.cleanupObserver = null;
+        }
 
         this.currentModalContent = null;
         this.isActive = false;
