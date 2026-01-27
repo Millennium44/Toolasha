@@ -8,6 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { calculateProductionProfit } from '../actions/production-profit.js';
+import { calculateQueueProfitBreakdown } from '../../utils/profit-helpers.js';
 
 /**
  * Calculate Task Token value from Task Shop items
@@ -194,17 +195,25 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
     // Use pre-calculated profitPerAction from profit calculator
     const profitPerAction = profitData.profitPerAction;
     const hasMissingPrices = profitData.hasMissingPrices;
+    const efficiencyMultiplier = profitData.efficiencyMultiplier || 1;
+    const actualAttempts = Math.ceil(quantity / efficiencyMultiplier);
+    const queueBreakdown = calculateQueueProfitBreakdown({
+        profitPerHour: profitData.profitPerHour,
+        actionsPerHour: profitData.actionsPerHour,
+        actionCount: actualAttempts,
+    });
 
     return {
-        totalValue: hasMissingPrices ? null : profitPerAction * quantity,
+        totalValue: hasMissingPrices ? null : queueBreakdown.totalProfit,
         hasMissingPrices,
         breakdown: {
             actionHrid,
             quantity,
-            perAction: profitPerAction,
+            perAction: profitPerAction / efficiencyMultiplier,
         },
         // Include detailed data for expandable display
         details: {
+            profitPerHour: profitData.profitPerHour,
             actionsPerHour: profitData.actionsPerHour,
             baseOutputs: profitData.baseOutputs,
             bonusRevenue: profitData.bonusRevenue,
@@ -245,26 +254,30 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
     // Use pre-calculated profitPerAction from profit calculator
     const profitPerAction = profitData.profitPerAction;
     const hasMissingPrices = profitData.hasMissingPrices;
+    const efficiencyMultiplier = profitData.efficiencyMultiplier || 1;
+    const actualAttempts = Math.ceil(quantity / efficiencyMultiplier);
+    const queueBreakdown = calculateQueueProfitBreakdown({
+        profitPerHour: profitData.profitPerHour,
+        actionsPerHour: profitData.actionsPerHour,
+        actionCount: actualAttempts,
+    });
 
-    // Calculate per-action values for breakdown display
-    const revenuePerAction =
-        (profitData.itemsPerHour * profitData.priceAfterTax + profitData.gourmetBonusItems * profitData.priceAfterTax) /
-        profitData.actionsPerHour;
-    const costsPerAction =
-        (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) / profitData.actionsPerHour;
+    const revenuePerHour = (profitData.itemsPerHour + profitData.gourmetBonusItems) * profitData.priceAfterTax;
+    const costsPerHour = profitData.materialCostPerHour + profitData.totalTeaCostPerHour;
 
     return {
-        totalProfit: hasMissingPrices ? null : profitPerAction * quantity,
+        totalProfit: hasMissingPrices ? null : queueBreakdown.totalProfit,
         hasMissingPrices,
         breakdown: {
             actionHrid,
             quantity,
-            outputValue: revenuePerAction * quantity,
-            materialCost: costsPerAction * quantity,
-            perAction: profitPerAction,
+            outputValue: revenuePerHour * queueBreakdown.hoursNeeded,
+            materialCost: costsPerHour * queueBreakdown.hoursNeeded,
+            perAction: profitPerAction / efficiencyMultiplier,
         },
         // Include detailed data for expandable display
         details: {
+            profitPerHour: profitData.profitPerHour,
             materialCosts: profitData.materialCosts,
             teaCosts: profitData.teaCosts,
             baseOutputItems: profitData.itemsPerHour,
