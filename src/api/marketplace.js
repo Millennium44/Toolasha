@@ -166,9 +166,21 @@ class MarketAPI {
             return null;
         }
 
+        const normalizeMarketPriceValue = (value) => {
+            if (typeof value !== 'number') {
+                return null;
+            }
+
+            if (value < 0) {
+                return null;
+            }
+
+            return value;
+        };
+
         return {
-            ask: price.a || 0, // Sell price
-            bid: price.b || 0, // Buy price
+            ask: normalizeMarketPriceValue(price.a), // Sell price
+            bid: normalizeMarketPriceValue(price.b), // Buy price
         };
     }
 

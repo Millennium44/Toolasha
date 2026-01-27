@@ -3807,9 +3807,21 @@
                 return null;
             }
 
+            const normalizeMarketPriceValue = (value) => {
+                if (typeof value !== 'number') {
+                    return null;
+                }
+
+                if (value < 0) {
+                    return null;
+                }
+
+                return value;
+            };
+
             return {
-                ask: price.a || 0, // Sell price
-                bid: price.b || 0, // Buy price
+                ask: normalizeMarketPriceValue(price.a), // Sell price
+                bid: normalizeMarketPriceValue(price.b), // Buy price
             };
         }
 
@@ -5068,16 +5080,36 @@
             return priceData.ask || 0;
         }
 
+        const resolvePrice = (value) => {
+            if (typeof value !== 'number') {
+                return null;
+            }
+
+            if (value < 0) {
+                return null;
+            }
+
+            return value;
+        };
+
         // Return price based on mode
         switch (pricingMode) {
             case 'ask':
-                return priceData.ask || 0;
+                return resolvePrice(priceData.ask);
             case 'bid':
-                return priceData.bid || 0;
+                return resolvePrice(priceData.bid);
             case 'average':
-                return ((priceData.ask || 0) + (priceData.bid || 0)) / 2;
+                if (typeof priceData.ask !== 'number' || typeof priceData.bid !== 'number') {
+                    return null;
+                }
+
+                if (priceData.ask < 0 || priceData.bid < 0) {
+                    return null;
+                }
+
+                return (priceData.ask + priceData.bid) / 2;
             default:
-                return priceData.ask || 0;
+                return resolvePrice(priceData.ask);
         }
     }
 
@@ -5745,6 +5777,7 @@
 
         const bonusDrops = [];
         let totalBonusRevenue = 0;
+        let hasMissingPrices = false;
 
         // Process essence drops
         if (actionDetails.essenceDropTable && actionDetails.essenceDropTable.length > 0) {
@@ -5763,13 +5796,15 @@
 
                 // Get price: Check if openable container (use EV), otherwise market price
                 let itemPrice = 0;
+                let isMissingPrice = false;
                 if (itemDetails.isOpenable) {
                     // Use expected value for openable containers
                     itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
                 } else {
                     // Use market price for regular items
                     const price = marketAPI.getPrice(drop.itemHrid, 0);
-                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                    itemPrice = price?.bid ?? 0; // Use bid price (instant sell)
+                    isMissingPrice = price?.bid === null || price?.bid === undefined;
                 }
 
                 // Revenue per hour from this drop
@@ -5783,9 +5818,13 @@
                     priceEach: itemPrice,
                     revenuePerHour,
                     type: 'essence',
+                    missingPrice: isMissingPrice,
                 });
 
                 totalBonusRevenue += revenuePerHour;
+                if (isMissingPrice) {
+                    hasMissingPrices = true;
+                }
             }
         }
 
@@ -5806,13 +5845,15 @@
 
                 // Get price: Check if openable container (use EV), otherwise market price
                 let itemPrice = 0;
+                let isMissingPrice = false;
                 if (itemDetails.isOpenable) {
                     // Use expected value for openable containers
                     itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
                 } else {
                     // Use market price for regular items
                     const price = marketAPI.getPrice(drop.itemHrid, 0);
-                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                    itemPrice = price?.bid ?? 0; // Use bid price (instant sell)
+                    isMissingPrice = price?.bid === null || price?.bid === undefined;
                 }
 
                 // Revenue per hour from this drop
@@ -5826,9 +5867,13 @@
                     priceEach: itemPrice,
                     revenuePerHour,
                     type: 'rare_find',
+                    missingPrice: isMissingPrice,
                 });
 
                 totalBonusRevenue += revenuePerHour;
+                if (isMissingPrice) {
+                    hasMissingPrices = true;
+                }
             }
         }
 
@@ -5837,6 +5882,7 @@
             rareFindBonus, // Rare Find % from equipment + house rooms (combined)
             bonusDrops, // Array of all bonus drops with details
             totalBonusRevenue, // Total revenue/hour from all bonus drops
+            hasMissingPrices,
         };
     }
 
@@ -6036,7 +6082,9 @@
 
             // Get output price based on pricing mode setting
             // Uses 'profit' context with 'sell' side to get correct sell price
-            const outputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+            const rawOutputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+            const outputPriceMissing = rawOutputPrice === null;
+            const outputPrice = outputPriceMissing ? 0 : rawOutputPrice;
 
             // Apply market tax (2% tax on sales)
             const priceAfterTax = calculatePriceAfterTax(outputPrice);
@@ -6057,6 +6105,12 @@
 
             // Calculate bonus revenue from essence and rare find drops (before profit calculation)
             const bonusRevenue = calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap);
+
+            const hasMissingPrices =
+                outputPriceMissing ||
+                materialCosts.some((material) => material.missingPrice) ||
+                teaCosts.some((tea) => tea.missingPrice) ||
+                (bonusRevenue?.hasMissingPrices ?? false);
 
             // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
             const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
@@ -6090,6 +6144,7 @@
                 costPerItem,
                 itemPrice,
                 outputPrice, // Output price before tax (bid or ask based on mode)
+                outputPriceMissing,
                 priceAfterTax, // Output price after 2% tax (bid or ask based on mode)
                 revenuePerHour,
                 profitPerItem,
@@ -6097,6 +6152,7 @@
                 profitPerAction: calculateProfitPerAction(profitPerHour, actionsPerHour), // Profit per attempt
                 profitPerDay: calculateProfitPerDay(profitPerHour), // Profit per day
                 bonusRevenue, // Bonus revenue from essences and rare finds
+                hasMissingPrices,
                 totalEfficiency, // Total efficiency percentage
                 levelEfficiency, // Level advantage efficiency
                 houseEfficiency, // House room efficiency
@@ -6158,12 +6214,16 @@
 
                 if (itemDetails) {
                     // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                    let materialPrice =
-                        getItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' }) || 0;
+                    const materialPrice = getItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+                    const isPriceMissing = materialPrice === null;
+                    const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
                     // Special case: Coins have no market price but have face value of 1
-                    if (actionDetails.upgradeItemHrid === '/items/coin' && materialPrice === 0) {
-                        materialPrice = 1;
+                    let finalPrice = resolvedPrice;
+                    let isMissing = isPriceMissing;
+                    if (actionDetails.upgradeItemHrid === '/items/coin' && finalPrice === 0) {
+                        finalPrice = 1;
+                        isMissing = false;
                     }
 
                     // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
@@ -6174,8 +6234,9 @@
                         itemName: itemDetails.name,
                         baseAmount: 1,
                         amount: reducedAmount,
-                        askPrice: materialPrice,
-                        totalCost: materialPrice * reducedAmount,
+                        askPrice: finalPrice,
+                        totalCost: finalPrice * reducedAmount,
+                        missingPrice: isMissing,
                     });
                 }
             }
@@ -6196,11 +6257,16 @@
                     const reducedAmount = baseAmount * (1 - artisanBonus);
 
                     // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                    let materialPrice = getItemPrice(input.itemHrid, { context: 'profit', side: 'buy' }) || 0;
+                    const materialPrice = getItemPrice(input.itemHrid, { context: 'profit', side: 'buy' });
+                    const isPriceMissing = materialPrice === null;
+                    const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
                     // Special case: Coins have no market price but have face value of 1
-                    if (input.itemHrid === '/items/coin' && materialPrice === 0) {
-                        materialPrice = 1; // 1 coin = 1 gold value
+                    let finalPrice = resolvedPrice;
+                    let isMissing = isPriceMissing;
+                    if (input.itemHrid === '/items/coin' && finalPrice === 0) {
+                        finalPrice = 1; // 1 coin = 1 gold value
+                        isMissing = false;
                     }
 
                     costs.push({
@@ -6208,8 +6274,9 @@
                         itemName: itemDetails.name,
                         baseAmount: baseAmount,
                         amount: reducedAmount,
-                        askPrice: materialPrice,
-                        totalCost: materialPrice * reducedAmount,
+                        askPrice: finalPrice,
+                        totalCost: finalPrice * reducedAmount,
+                        missingPrice: isMissing,
                     });
                 }
             }
@@ -6337,7 +6404,9 @@
                 if (!itemDetails) continue;
 
                 // Get tea price based on pricing mode (uses 'profit' context with 'buy' side)
-                const teaPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' }) || 0;
+                const teaPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' });
+                const isPriceMissing = teaPrice === null;
+                const resolvedPrice = isPriceMissing ? 0 : teaPrice;
 
                 // Drink Concentration increases consumption rate
                 const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
@@ -6345,9 +6414,10 @@
                 costs.push({
                     itemHrid: drink.itemHrid,
                     itemName: itemDetails.name,
-                    pricePerDrink: teaPrice,
+                    pricePerDrink: resolvedPrice,
                     drinksPerHour: drinksPerHour,
-                    totalCost: teaPrice * drinksPerHour,
+                    totalCost: resolvedPrice * drinksPerHour,
+                    missingPrice: isPriceMissing,
                 });
             }
 
@@ -7770,17 +7840,20 @@
             if (!drink || !drink.itemHrid) {
                 continue;
             }
-            const drinkPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' }) || 0;
-            const costPerHour = drinkPrice * drinksPerHour;
+            const drinkPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' });
+            const isPriceMissing = drinkPrice === null;
+            const resolvedPrice = isPriceMissing ? 0 : drinkPrice;
+            const costPerHour = resolvedPrice * drinksPerHour;
             drinkCostPerHour += costPerHour;
 
             // Store individual drink cost details
             const drinkName = gameData.itemDetailMap[drink.itemHrid]?.name || 'Unknown';
             drinkCosts.push({
                 name: drinkName,
-                priceEach: drinkPrice,
+                priceEach: resolvedPrice,
                 drinksPerHour: drinksPerHour,
                 costPerHour: costPerHour,
+                missingPrice: isPriceMissing,
             });
         }
 
@@ -7836,7 +7909,9 @@
         const dropTable = actionDetail.dropTable;
 
         for (const drop of dropTable) {
-            const rawPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' }) || 0;
+            const rawPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
+            const rawPriceMissing = rawPrice === null;
+            const resolvedRawPrice = rawPriceMissing ? 0 : rawPrice;
             // Apply gathering quantity bonus to drop amounts
             const baseAvgAmount = (drop.minCount + drop.maxCount) / 2;
             const avgAmountPerAction = baseAvgAmount * (1 + totalGathering);
@@ -7868,21 +7943,23 @@
                 rawPerAction = processingBonus * rawLeftoverIfProcs + (1 - processingBonus) * rawIfNoProc;
 
                 // Revenue per hour = per-action × actionsPerHour × efficiency
-                const processedPrice = getItemPrice(processedItemHrid, { context: 'profit', side: 'sell' }) || 0;
+                const processedPrice = getItemPrice(processedItemHrid, { context: 'profit', side: 'sell' });
+                const processedPriceMissing = processedPrice === null;
+                const resolvedProcessedPrice = processedPriceMissing ? 0 : processedPrice;
 
                 const rawItemsPerHour = actionsPerHour * drop.dropRate * rawPerAction * efficiencyMultiplier;
                 const processedItemsPerHour = actionsPerHour * drop.dropRate * processedPerAction * efficiencyMultiplier;
 
-                revenuePerHour += rawItemsPerHour * rawPrice;
-                revenuePerHour += processedItemsPerHour * processedPrice;
+                revenuePerHour += rawItemsPerHour * resolvedRawPrice;
+                revenuePerHour += processedItemsPerHour * resolvedProcessedPrice;
 
                 // Track processing details
                 const rawItemName = gameData.itemDetailMap[drop.itemHrid]?.name || 'Unknown';
                 const processedItemName = gameData.itemDetailMap[processedItemHrid]?.name || 'Unknown';
 
                 // Value gain per conversion = cheese value - cost of milk used
-                const costOfMilkUsed = conversionRatio * rawPrice;
-                const valueGainPerConversion = processedPrice - costOfMilkUsed;
+                const costOfMilkUsed = conversionRatio * resolvedRawPrice;
+                const valueGainPerConversion = resolvedProcessedPrice - costOfMilkUsed;
                 const revenueFromConversion = processedItemsPerHour * valueGainPerConversion;
 
                 processingRevenueBonus += revenueFromConversion;
@@ -7892,6 +7969,7 @@
                     valueGain: valueGainPerConversion,
                     conversionsPerHour: processedItemsPerHour,
                     revenuePerHour: revenueFromConversion,
+                    missingPrice: rawPriceMissing || processedPriceMissing,
                 });
 
                 // Store combined raw + processed revenue (processing bonus shown separately as extra value)
@@ -7899,22 +7977,24 @@
                     name: rawItemName,
                     itemsPerHour: rawItemsPerHour,
                     dropRate: drop.dropRate,
-                    priceEach: rawPrice,
-                    revenuePerHour: rawItemsPerHour * rawPrice + processedItemsPerHour * processedPrice,
+                    priceEach: resolvedRawPrice,
+                    revenuePerHour: rawItemsPerHour * resolvedRawPrice + processedItemsPerHour * resolvedProcessedPrice,
+                    missingPrice: rawPriceMissing,
                 });
             } else {
                 // No processing - simple calculation
                 rawPerAction = avgAmountPerAction;
                 const rawItemsPerHour = actionsPerHour * drop.dropRate * rawPerAction * efficiencyMultiplier;
-                revenuePerHour += rawItemsPerHour * rawPrice;
+                revenuePerHour += rawItemsPerHour * resolvedRawPrice;
 
                 const itemName = gameData.itemDetailMap[drop.itemHrid]?.name || 'Unknown';
                 baseOutputs.push({
                     name: itemName,
                     itemsPerHour: rawItemsPerHour,
                     dropRate: drop.dropRate,
-                    priceEach: rawPrice,
-                    revenuePerHour: rawItemsPerHour * rawPrice,
+                    priceEach: resolvedRawPrice,
+                    revenuePerHour: rawItemsPerHour * resolvedRawPrice,
+                    missingPrice: rawPriceMissing,
                 });
             }
 
@@ -7926,13 +8006,14 @@
 
                 // Use weighted average price for gourmet bonus
                 if (processedItemHrid && processingBonus > 0) {
-                    const processedPrice = getItemPrice(processedItemHrid, { context: 'profit', side: 'sell' }) || 0;
+                    const processedPrice = getItemPrice(processedItemHrid, { context: 'profit', side: 'sell' });
+                    const resolvedProcessedPrice = processedPrice === null ? 0 : processedPrice;
                     const weightedPrice =
-                        (rawPerAction * rawPrice + processedPerAction * processedPrice) /
+                        (rawPerAction * resolvedRawPrice + processedPerAction * resolvedProcessedPrice) /
                         (rawPerAction + processedPerAction);
                     revenuePerHour += bonusItemsPerHour * weightedPrice;
                 } else {
-                    revenuePerHour += bonusItemsPerHour * rawPrice;
+                    revenuePerHour += bonusItemsPerHour * resolvedRawPrice;
                 }
             }
         }
@@ -7945,6 +8026,12 @@
 
         // Add bonus revenue to total revenue
         revenuePerHour += efficiencyBoostedBonusRevenue;
+
+        const hasMissingPrices =
+            drinkCosts.some((drink) => drink.missingPrice) ||
+            baseOutputs.some((output) => output.missingPrice) ||
+            processingConversions.some((conversion) => conversion.missingPrice) ||
+            (bonusRevenue?.hasMissingPrices ?? false);
 
         // Calculate market tax (2% of gross revenue)
         const marketTax = revenuePerHour * MARKET_TAX;
@@ -7969,6 +8056,7 @@
             processingRevenueBonus, // Extra revenue from Processing conversions
             processingConversions, // Array of conversion details {rawItem, processedItem, valueGain}
             gatheringQuantity: totalGathering, // Total gathering quantity bonus (as decimal) - renamed for display consistency
+            hasMissingPrices,
             details: {
                 levelEfficiency,
                 houseEfficiency,
@@ -13893,6 +13981,9 @@
      */
 
 
+    const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
+    const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
+
     /**
      * Display gathering profit calculation in panel
      * @param {HTMLElement} panel - Action panel element
@@ -13916,18 +14007,30 @@
         // Create top-level summary
         const profit = Math.round(profitData.profitPerHour);
         const profitPerDay = Math.round(profitData.profitPerDay);
+        const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
+        const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+        const processingMissing = profitData.processingConversions?.some((conversion) => conversion.missingPrice) || false;
+        const revenueMissing = baseMissing || bonusMissing || processingMissing;
+        const drinkCostsMissing = profitData.drinkCosts?.some((drink) => drink.missingPrice) || false;
+        const costsMissing = drinkCostsMissing || revenueMissing;
+        const marketTaxMissing = revenueMissing;
+        const netMissing = profitData.hasMissingPrices;
         // Revenue is now gross (pre-tax)
         const revenue = Math.round(profitData.revenuePerHour);
         const marketTax = Math.round(revenue * MARKET_TAX);
         const costs = Math.round(profitData.drinkCostPerHour + marketTax);
-        const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
+        const summary = formatMissingLabel(
+            netMissing,
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`
+        );
 
         // ===== Build Detailed Breakdown Content =====
         const detailsContent = document.createElement('div');
 
         // Revenue Section
         const revenueDiv = document.createElement('div');
-        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
+        const revenueLabel = formatMissingLabel(revenueMissing, `${formatLargeNumber(revenue)}/hr`);
+        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
         // Base Output subsection
         const baseOutputContent = document.createElement('div');
@@ -13936,15 +14039,17 @@
                 const decimals = output.itemsPerHour < 1 ? 2 : 1;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
+                const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
+                line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
                 baseOutputContent.appendChild(line);
             }
         }
 
         const baseRevenue = profitData.baseOutputs?.reduce((sum, o) => sum + o.revenuePerHour, 0) || 0;
+        const baseRevenueLabel = formatMissingLabel(baseMissing, formatLargeNumber(Math.round(baseRevenue)));
         const baseOutputSection = createCollapsibleSection(
             '',
-            `Base Output: ${formatLargeNumber(Math.round(baseRevenue))}/hr (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
+            `Base Output: ${baseRevenueLabel}/hr (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
             null,
             baseOutputContent,
             false,
@@ -13973,10 +14078,11 @@
             }
 
             const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour * efficiencyMultiplier, 0);
+            const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
             const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
             essenceSection = createCollapsibleSection(
                 '',
-                `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+                `Essence Drops: ${essenceRevenueLabel}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
                 null,
                 essenceContent,
                 false,
@@ -14000,10 +14106,11 @@
             }
 
             const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour * efficiencyMultiplier, 0);
+            const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
             const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
             rareFindSection = createCollapsibleSection(
                 '',
-                `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+                `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
                 null,
                 rareFindContent,
                 false,
@@ -14026,15 +14133,20 @@
             for (const conversion of profitData.processingConversions) {
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
+                const missingPriceNote = getMissingPriceIndicator(conversion.missingPrice);
+                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))}${missingPriceNote} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
                 processingContent.appendChild(line);
             }
 
             const processingRevenue = profitData.processingRevenueBonus || 0;
+            const processingRevenueLabel = formatMissingLabel(
+                processingMissing,
+                formatLargeNumber(Math.round(processingRevenue))
+            );
             const processingChance = profitData.processingBonus || 0;
             processingSection = createCollapsibleSection(
                 '',
-                `Processing Bonus: ${formatLargeNumber(Math.round(processingRevenue))}/hr (${formatPercentage(processingChance, 1)} proc)`,
+                `Processing Bonus: ${processingRevenueLabel}/hr (${formatPercentage(processingChance, 1)} proc)`,
                 null,
                 processingContent,
                 false,
@@ -14045,7 +14157,8 @@
 
         // Costs Section
         const costsDiv = document.createElement('div');
-        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(costs)}/hr</div>`;
+        const costsLabel = formatMissingLabel(costsMissing, `${formatLargeNumber(costs)}/hr`);
+        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
         // Drink Costs subsection
         const drinkCostsContent = document.createElement('div');
@@ -14053,15 +14166,17 @@
             for (const drink of profitData.drinkCosts) {
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${drink.name}: ${drink.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(drink.priceEach)} → ${formatLargeNumber(Math.round(drink.costPerHour))}/hr`;
+                const missingPriceNote = getMissingPriceIndicator(drink.missingPrice);
+                line.textContent = `• ${drink.name}: ${drink.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(drink.priceEach)}${missingPriceNote} → ${formatLargeNumber(Math.round(drink.costPerHour))}/hr`;
                 drinkCostsContent.appendChild(line);
             }
         }
 
         const drinkCount = profitData.drinkCosts?.length || 0;
+        const drinkCostsLabel = drinkCostsMissing ? '-- ⚠' : formatLargeNumber(Math.round(profitData.drinkCostPerHour));
         const drinkCostsSection = createCollapsibleSection(
             '',
-            `Drink Costs: ${formatLargeNumber(Math.round(profitData.drinkCostPerHour))}/hr (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
+            `Drink Costs: ${drinkCostsLabel}/hr (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
             null,
             drinkCostsContent,
             false,
@@ -14074,12 +14189,14 @@
         const marketTaxContent = document.createElement('div');
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(marketTax)}/hr`;
+        const marketTaxLabel = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
+        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
+        const marketTaxHeader = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
         const marketTaxSection = createCollapsibleSection(
             '',
-            `Market Tax: ${formatLargeNumber(marketTax)}/hr (2%)`,
+            `Market Tax: ${marketTaxHeader} (2%)`,
             null,
             marketTaxContent,
             false,
@@ -14152,14 +14269,16 @@
     `;
 
         // Add Net Profit line at top level (always visible when Profitability is expanded)
-        const profitColor = profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
+        const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
         const netProfitLine = document.createElement('div');
         netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-        netProfitLine.textContent = `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        netProfitLine.textContent = netMissing
+            ? 'Net Profit: -- ⚠'
+            : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
         topLevelContent.appendChild(netProfitLine);
 
         const detailedBreakdownSection = createCollapsibleSection(
@@ -14209,9 +14328,16 @@
 
         // Set up listener to update summary with total profit when input changes
         if (inputField && profitSummaryDiv) {
-            const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+            const baseSummary = formatMissingLabel(
+                netMissing,
+                `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+            );
 
             const updateSummary = (newValue) => {
+                if (netMissing) {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                    return;
+                }
                 const inputValue = inputField.value;
 
                 if (inputValue === '∞') {
@@ -14310,6 +14436,14 @@
         // Create top-level summary (bonus revenue now included in profitPerHour)
         const profit = Math.round(profitData.profitPerHour);
         const profitPerDay = Math.round(profitData.profitPerDay);
+        const outputMissing = profitData.outputPriceMissing || false;
+        const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+        const materialMissing = profitData.materialCosts?.some((material) => material.missingPrice) || false;
+        const teaMissing = profitData.teaCosts?.some((tea) => tea.missingPrice) || false;
+        const revenueMissing = outputMissing || bonusMissing;
+        const costsMissing = materialMissing || teaMissing || revenueMissing;
+        const marketTaxMissing = revenueMissing;
+        const netMissing = profitData.hasMissingPrices;
         const bonusRevenueTotal = profitData.bonusRevenue?.totalBonusRevenue || 0;
         // Use outputPrice (pre-tax) for revenue display
         const revenue = Math.round(
@@ -14320,26 +14454,31 @@
         // Calculate market tax (2% of revenue)
         const marketTax = Math.round(revenue * MARKET_TAX);
         const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
-        const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
+        const summary = netMissing
+            ? '-- ⚠'
+            : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
 
         // ===== Build Detailed Breakdown Content =====
         const detailsContent = document.createElement('div');
 
         // Revenue Section
         const revenueDiv = document.createElement('div');
-        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
+        const revenueLabel = revenueMissing ? '-- ⚠' : `${formatLargeNumber(revenue)}/hr`;
+        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
         // Base Output subsection
         const baseOutputContent = document.createElement('div');
         const baseOutputLine = document.createElement('div');
         baseOutputLine.style.marginLeft = '8px';
-        baseOutputLine.textContent = `• Base Output: ${profitData.itemsPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
+        const baseOutputMissingNote = getMissingPriceIndicator(profitData.outputPriceMissing);
+        baseOutputLine.textContent = `• Base Output: ${profitData.itemsPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
         baseOutputContent.appendChild(baseOutputLine);
 
         const baseRevenue = profitData.itemsPerHour * profitData.outputPrice;
+        const baseRevenueLabel = outputMissing ? '-- ⚠' : formatWithSeparator(Math.round(baseRevenue));
         const baseOutputSection = createCollapsibleSection(
             '',
-            `Base Output: ${formatWithSeparator(Math.round(baseRevenue))}/hr`,
+            `Base Output: ${baseRevenueLabel}/hr`,
             null,
             baseOutputContent,
             false,
@@ -14352,13 +14491,14 @@
             const gourmetContent = document.createElement('div');
             const gourmetLine = document.createElement('div');
             gourmetLine.style.marginLeft = '8px';
-            gourmetLine.textContent = `• Gourmet Bonus: ${profitData.gourmetBonusItems.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
+            gourmetLine.textContent = `• Gourmet Bonus: ${profitData.gourmetBonusItems.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
             gourmetContent.appendChild(gourmetLine);
 
             const gourmetRevenue = profitData.gourmetBonusItems * profitData.outputPrice;
+            const gourmetRevenueLabel = outputMissing ? '-- ⚠' : formatLargeNumber(Math.round(gourmetRevenue));
             gourmetSection = createCollapsibleSection(
                 '',
-                `Gourmet Bonus: ${formatLargeNumber(Math.round(gourmetRevenue))}/hr (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
+                `Gourmet Bonus: ${gourmetRevenueLabel}/hr (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
                 null,
                 gourmetContent,
                 false,
@@ -14390,10 +14530,11 @@
             }
 
             const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour, 0);
+            const essenceRevenueLabel = bonusMissing ? '-- ⚠' : formatLargeNumber(Math.round(essenceRevenue));
             const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
             essenceSection = createCollapsibleSection(
                 '',
-                `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+                `Essence Drops: ${essenceRevenueLabel}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
                 null,
                 essenceContent,
                 false,
@@ -14415,10 +14556,11 @@
             }
 
             const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour, 0);
+            const rareFindRevenueLabel = bonusMissing ? '-- ⚠' : formatLargeNumber(Math.round(rareFindRevenue));
             const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
             rareFindSection = createCollapsibleSection(
                 '',
-                `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+                `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
                 null,
                 rareFindContent,
                 false,
@@ -14435,7 +14577,8 @@
 
         // Costs Section
         const costsDiv = document.createElement('div');
-        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(costs)}/hr</div>`;
+        const costsLabel = costsMissing ? '-- ⚠' : `${formatLargeNumber(costs)}/hr`;
+        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
         // Material Costs subsection
         const materialCostsContent = document.createElement('div');
@@ -14457,16 +14600,21 @@
                     materialText += ` (${baseAmountPerHour.toFixed(1)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
                 }
 
-                materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
+                const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
+                materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
 
                 line.textContent = materialText;
                 materialCostsContent.appendChild(line);
             }
         }
 
+        const materialCostsLabel = formatMissingLabel(
+            materialMissing,
+            formatLargeNumber(Math.round(profitData.materialCostPerHour))
+        );
         const materialCostsSection = createCollapsibleSection(
             '',
-            `Material Costs: ${formatLargeNumber(Math.round(profitData.materialCostPerHour))}/hr (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
+            `Material Costs: ${materialCostsLabel}/hr (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
             null,
             materialCostsContent,
             false,
@@ -14480,15 +14628,17 @@
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
                 // Tea structure: { itemName, pricePerDrink, drinksPerHour, totalCost }
-                line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
+                const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
+                line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
                 teaCostsContent.appendChild(line);
             }
         }
 
         const teaCount = profitData.teaCosts?.length || 0;
+        const teaCostsLabel = formatMissingLabel(teaMissing, formatLargeNumber(Math.round(profitData.totalTeaCostPerHour)));
         const teaCostsSection = createCollapsibleSection(
             '',
-            `Drink Costs: ${formatLargeNumber(Math.round(profitData.totalTeaCostPerHour))}/hr (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
+            `Drink Costs: ${teaCostsLabel}/hr (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
             null,
             teaCostsContent,
             false,
@@ -14502,12 +14652,14 @@
         const marketTaxContent = document.createElement('div');
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(marketTax)}/hr`;
+        const marketTaxLabel = formatMissingLabel(marketTaxMissing, `${formatLargeNumber(marketTax)}/hr`);
+        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
+        const marketTaxHeader = formatMissingLabel(marketTaxMissing, `${formatLargeNumber(marketTax)}/hr`);
         const marketTaxSection = createCollapsibleSection(
             '',
-            `Market Tax: ${formatLargeNumber(marketTax)}/hr (2%)`,
+            `Market Tax: ${marketTaxHeader} (2%)`,
             null,
             marketTaxContent,
             false,
@@ -14592,14 +14744,16 @@
     `;
 
         // Add Net Profit line at top level (always visible when Profitability is expanded)
-        const profitColor = profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
+        const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
         const netProfitLine = document.createElement('div');
         netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-        netProfitLine.textContent = `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        netProfitLine.textContent = netMissing
+            ? 'Net Profit: -- ⚠'
+            : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
         topLevelContent.appendChild(netProfitLine);
 
         const detailedBreakdownSection = createCollapsibleSection(
@@ -14649,9 +14803,16 @@
 
         // Set up listener to update summary with total profit when input changes
         if (inputField && profitSummaryDiv) {
-            const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+            const baseSummary = formatMissingLabel(
+                netMissing,
+                `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+            );
 
             const updateSummary = (newValue) => {
+                if (netMissing) {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                    return;
+                }
                 const inputValue = inputField.value;
 
                 if (inputValue === '∞') {
@@ -14718,6 +14879,14 @@
         const hoursNeeded = queueBreakdown.hoursNeeded;
 
         // Calculate totals
+        const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
+        const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+        const processingMissing = profitData.processingConversions?.some((conversion) => conversion.missingPrice) || false;
+        const revenueMissing = baseMissing || bonusMissing || processingMissing;
+        const drinkCostsMissing = profitData.drinkCosts?.some((drink) => drink.missingPrice) || false;
+        const costsMissing = drinkCostsMissing || revenueMissing;
+        const marketTaxMissing = revenueMissing;
+        const netMissing = profitData.hasMissingPrices;
         const totalRevenue = Math.round(profitData.revenuePerHour * hoursNeeded);
         const totalMarketTax = Math.round(totalRevenue * MARKET_TAX);
         const totalDrinkCosts = Math.round(profitData.drinkCostPerHour * hoursNeeded);
@@ -14728,7 +14897,8 @@
 
         // Revenue Section
         const revenueDiv = document.createElement('div');
-        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(totalRevenue)}</div>`;
+        const revenueLabel = formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue));
+        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
         // Base Output subsection
         const baseOutputContent = document.createElement('div');
@@ -14738,15 +14908,17 @@
                 const totalRevenueLine = output.revenuePerHour * hoursNeeded;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
+                const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
+                line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
                 baseOutputContent.appendChild(line);
             }
         }
 
         const baseRevenue = profitData.baseOutputs?.reduce((sum, o) => sum + o.revenuePerHour * hoursNeeded, 0) || 0;
+        const baseRevenueLabel = formatMissingLabel(baseMissing, formatLargeNumber(Math.round(baseRevenue)));
         const baseOutputSection = createCollapsibleSection(
             '',
-            `Base Output: ${formatLargeNumber(Math.round(baseRevenue))} (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
+            `Base Output: ${baseRevenueLabel} (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
             null,
             baseOutputContent,
             false,
@@ -14778,10 +14950,11 @@
                 (sum, d) => sum + d.revenuePerHour * efficiencyMultiplier * hoursNeeded,
                 0
             );
+            const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
             const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
             essenceSection = createCollapsibleSection(
                 '',
-                `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+                `Essence Drops: ${essenceRevenueLabel} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
                 null,
                 essenceContent,
                 false,
@@ -14809,10 +14982,11 @@
                 (sum, d) => sum + d.revenuePerHour * efficiencyMultiplier * hoursNeeded,
                 0
             );
+            const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
             const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
             rareFindSection = createCollapsibleSection(
                 '',
-                `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+                `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
                 null,
                 rareFindContent,
                 false,
@@ -14837,7 +15011,8 @@
                 const totalRevenueFromConversion = conversion.revenuePerHour * hoursNeeded;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
+                const missingPriceNote = getMissingPriceIndicator(conversion.missingPrice);
+                line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))}${missingPriceNote} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
                 processingContent.appendChild(line);
             }
 
@@ -14845,7 +15020,7 @@
             const processingChance = profitData.processingBonus || 0;
             processingSection = createCollapsibleSection(
                 '',
-                `Processing Bonus: ${formatLargeNumber(Math.round(totalProcessingRevenue))} (${formatPercentage(processingChance, 1)} proc)`,
+                `Processing Bonus: ${formatMissingLabel(processingMissing, formatLargeNumber(Math.round(totalProcessingRevenue)))} (${formatPercentage(processingChance, 1)} proc)`,
                 null,
                 processingContent,
                 false,
@@ -14856,7 +15031,8 @@
 
         // Costs Section
         const costsDiv = document.createElement('div');
-        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(totalCosts)}</div>`;
+        const costsLabel = costsMissing ? '-- ⚠' : formatLargeNumber(totalCosts);
+        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
         // Drink Costs subsection
         const drinkCostsContent = document.createElement('div');
@@ -14866,15 +15042,17 @@
                 const totalCostLine = drink.costPerHour * hoursNeeded;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${drink.name}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(drink.priceEach)} → ${formatLargeNumber(Math.round(totalCostLine))}`;
+                const missingPriceNote = getMissingPriceIndicator(drink.missingPrice);
+                line.textContent = `• ${drink.name}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(drink.priceEach)}${missingPriceNote} → ${formatLargeNumber(Math.round(totalCostLine))}`;
                 drinkCostsContent.appendChild(line);
             }
         }
 
         const drinkCount = profitData.drinkCosts?.length || 0;
+        const drinkCostsLabel = drinkCostsMissing ? '-- ⚠' : formatLargeNumber(totalDrinkCosts);
         const drinkCostsSection = createCollapsibleSection(
             '',
-            `Drink Costs: ${formatLargeNumber(totalDrinkCosts)} (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
+            `Drink Costs: ${drinkCostsLabel} (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
             null,
             drinkCostsContent,
             false,
@@ -14887,12 +15065,14 @@
         const marketTaxContent = document.createElement('div');
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(totalMarketTax)}`;
+        const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
+        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
+        const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
         const marketTaxSection = createCollapsibleSection(
             '',
-            `Market Tax: ${formatLargeNumber(totalMarketTax)} (2%)`,
+            `Market Tax: ${marketTaxHeader} (2%)`,
             null,
             marketTaxContent,
             false,
@@ -14907,24 +15087,21 @@
 
         // Add Net Profit at top
         const topLevelContent = document.createElement('div');
-        const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+        const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
         const netProfitLine = document.createElement('div');
         netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-        netProfitLine.textContent = `Net Profit: ${formatLargeNumber(totalProfit)}`;
+        netProfitLine.textContent = netMissing ? 'Net Profit: -- ⚠' : `Net Profit: ${formatLargeNumber(totalProfit)}`;
         topLevelContent.appendChild(netProfitLine);
 
-        const actionsBreakdownSection = createCollapsibleSection(
-            '',
-            `Revenue: ${formatLargeNumber(totalRevenue)} | Costs: ${formatLargeNumber(totalCosts)}`,
-            null,
-            detailsContent,
-            false,
-            1
-        );
+        const actionsSummary = `Revenue: ${formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue))} | Costs: ${formatMissingLabel(
+        costsMissing,
+        formatLargeNumber(totalCosts)
+    )}`;
+        const actionsBreakdownSection = createCollapsibleSection('', actionsSummary, null, detailsContent, false, 1);
         topLevelContent.appendChild(actionsBreakdownSection);
 
         const mainSection = createCollapsibleSection(
@@ -14949,6 +15126,14 @@
     function buildProductionActionsBreakdown(profitData, actionsCount) {
         // Calculate actual attempts needed (input is desired output actions)
         const efficiencyMultiplier = profitData.efficiencyMultiplier;
+        const outputMissing = profitData.outputPriceMissing || false;
+        const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+        const materialMissing = profitData.materialCosts?.some((material) => material.missingPrice) || false;
+        const teaMissing = profitData.teaCosts?.some((tea) => tea.missingPrice) || false;
+        const revenueMissing = outputMissing || bonusMissing;
+        const costsMissing = materialMissing || teaMissing || revenueMissing;
+        const marketTaxMissing = revenueMissing;
+        const netMissing = profitData.hasMissingPrices;
         const actualAttempts = Math.ceil(actionsCount / efficiencyMultiplier);
         const queueBreakdown = calculateQueueProfitBreakdown({
             profitPerHour: profitData.profitPerHour,
@@ -14977,7 +15162,8 @@
 
         // Revenue Section
         const revenueDiv = document.createElement('div');
-        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(totalRevenue)}</div>`;
+        const revenueLabel = formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue));
+        revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
         // Base Output subsection
         const baseOutputContent = document.createElement('div');
@@ -14985,12 +15171,14 @@
         const totalBaseRevenue = totalBaseItems * profitData.outputPrice;
         const baseOutputLine = document.createElement('div');
         baseOutputLine.style.marginLeft = '8px';
-        baseOutputLine.textContent = `• Base Output: ${totalBaseItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(totalBaseRevenue))}`;
+        const baseOutputMissingNote = getMissingPriceIndicator(profitData.outputPriceMissing);
+        baseOutputLine.textContent = `• Base Output: ${totalBaseItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(totalBaseRevenue))}`;
         baseOutputContent.appendChild(baseOutputLine);
 
+        const baseOutputLabel = formatMissingLabel(outputMissing, formatLargeNumber(Math.round(totalBaseRevenue)));
         const baseOutputSection = createCollapsibleSection(
             '',
-            `Base Output: ${formatLargeNumber(Math.round(totalBaseRevenue))}`,
+            `Base Output: ${baseOutputLabel}`,
             null,
             baseOutputContent,
             false,
@@ -15005,12 +15193,16 @@
             const totalGourmetRevenue = totalGourmetItems * profitData.outputPrice;
             const gourmetLine = document.createElement('div');
             gourmetLine.style.marginLeft = '8px';
-            gourmetLine.textContent = `• Gourmet Bonus: ${totalGourmetItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(totalGourmetRevenue))}`;
+            gourmetLine.textContent = `• Gourmet Bonus: ${totalGourmetItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(totalGourmetRevenue))}`;
             gourmetContent.appendChild(gourmetLine);
 
+            const gourmetRevenueLabel = formatMissingLabel(
+                outputMissing,
+                formatLargeNumber(Math.round(totalGourmetRevenue))
+            );
             gourmetSection = createCollapsibleSection(
                 '',
-                `Gourmet Bonus: ${formatLargeNumber(Math.round(totalGourmetRevenue))} (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
+                `Gourmet Bonus: ${gourmetRevenueLabel} (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
                 null,
                 gourmetContent,
                 false,
@@ -15043,10 +15235,11 @@
             }
 
             const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour * hoursNeeded, 0);
+            const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
             const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
             essenceSection = createCollapsibleSection(
                 '',
-                `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+                `Essence Drops: ${essenceRevenueLabel} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
                 null,
                 essenceContent,
                 false,
@@ -15069,10 +15262,11 @@
             }
 
             const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour * hoursNeeded, 0);
+            const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
             const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
             rareFindSection = createCollapsibleSection(
                 '',
-                `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+                `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
                 null,
                 rareFindContent,
                 false,
@@ -15089,7 +15283,8 @@
 
         // Costs Section
         const costsDiv = document.createElement('div');
-        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(totalCosts)}</div>`;
+        const costsLabel = costsMissing ? '-- ⚠' : formatLargeNumber(totalCosts);
+        costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
         // Material Costs subsection
         const materialCostsContent = document.createElement('div');
@@ -15109,7 +15304,8 @@
                     materialText += ` (${baseTotalAmount.toFixed(1)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
                 }
 
-                materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))} → ${formatLargeNumber(Math.round(totalMaterialCost))}`;
+                const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
+                materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote} → ${formatLargeNumber(Math.round(totalMaterialCost))}`;
 
                 line.textContent = materialText;
                 materialCostsContent.appendChild(line);
@@ -15117,9 +15313,10 @@
         }
 
         const totalMaterialCost = profitData.materialCostPerHour * hoursNeeded;
+        const materialCostsLabel = formatMissingLabel(materialMissing, formatLargeNumber(Math.round(totalMaterialCost)));
         const materialCostsSection = createCollapsibleSection(
             '',
-            `Material Costs: ${formatLargeNumber(Math.round(totalMaterialCost))} (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
+            `Material Costs: ${materialCostsLabel} (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
             null,
             materialCostsContent,
             false,
@@ -15134,16 +15331,18 @@
                 const totalTeaCost = tea.totalCost * hoursNeeded;
                 const line = document.createElement('div');
                 line.style.marginLeft = '8px';
-                line.textContent = `• ${tea.itemName}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(Math.round(tea.pricePerDrink))} → ${formatLargeNumber(Math.round(totalTeaCost))}`;
+                const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
+                line.textContent = `• ${tea.itemName}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatLargeNumber(Math.round(totalTeaCost))}`;
                 teaCostsContent.appendChild(line);
             }
         }
 
         const totalTeaCost = profitData.totalTeaCostPerHour * hoursNeeded;
         const teaCount = profitData.teaCosts?.length || 0;
+        const teaCostsLabel = formatMissingLabel(teaMissing, formatLargeNumber(Math.round(totalTeaCost)));
         const teaCostsSection = createCollapsibleSection(
             '',
-            `Drink Costs: ${formatLargeNumber(Math.round(totalTeaCost))} (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
+            `Drink Costs: ${teaCostsLabel} (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
             null,
             teaCostsContent,
             false,
@@ -15157,12 +15356,14 @@
         const marketTaxContent = document.createElement('div');
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(totalMarketTax)}`;
+        const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
+        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
+        const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
         const marketTaxSection = createCollapsibleSection(
             '',
-            `Market Tax: ${formatLargeNumber(totalMarketTax)} (2%)`,
+            `Market Tax: ${marketTaxHeader} (2%)`,
             null,
             marketTaxContent,
             false,
@@ -15177,24 +15378,21 @@
 
         // Add Net Profit at top
         const topLevelContent = document.createElement('div');
-        const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+        const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
         const netProfitLine = document.createElement('div');
         netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-        netProfitLine.textContent = `Net Profit: ${formatLargeNumber(totalProfit)}`;
+        netProfitLine.textContent = netMissing ? 'Net Profit: -- ⚠' : `Net Profit: ${formatLargeNumber(totalProfit)}`;
         topLevelContent.appendChild(netProfitLine);
 
-        const actionsBreakdownSection = createCollapsibleSection(
-            '',
-            `Revenue: ${formatLargeNumber(totalRevenue)} | Costs: ${formatLargeNumber(totalCosts)}`,
-            null,
-            detailsContent,
-            false,
-            1
-        );
+        const actionsSummary = `Revenue: ${formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue))} | Costs: ${formatMissingLabel(
+        costsMissing,
+        formatLargeNumber(totalCosts)
+    )}`;
+        const actionsBreakdownSection = createCollapsibleSection('', actionsSummary, null, detailsContent, false, 1);
         topLevelContent.appendChild(actionsBreakdownSection);
 
         const mainSection = createCollapsibleSection(
@@ -19976,26 +20174,30 @@
 
             // Calculate profit/hr (for both gathering and production)
             let profitPerHour = null;
+            let hasMissingPrices = false;
             const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
             if (actionDetails) {
                 if (GATHERING_TYPES.includes(actionDetails.type)) {
                     const profitData = await calculateGatheringProfit(data.actionHrid);
                     profitPerHour = profitData?.profitPerHour || null;
+                    hasMissingPrices = profitData?.hasMissingPrices || false;
                 } else if (PRODUCTION_TYPES$1.includes(actionDetails.type)) {
                     const profitData = await calculateProductionProfit(data.actionHrid);
                     profitPerHour = profitData?.profitPerHour || null;
+                    hasMissingPrices = profitData?.hasMissingPrices || false;
                 }
             }
 
             // Store profit value for sorting and update shared sort manager
-            data.profitPerHour = profitPerHour;
-            actionPanelSort.updateProfit(actionPanel, profitPerHour);
+            const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
+            data.profitPerHour = resolvedProfitPerHour;
+            actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour);
 
             // Check if we should hide actions with negative profit (unless pinned)
             const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
             const isPinned = actionPanelSort.isPinned(data.actionHrid);
-            if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
+            if (hideNegativeProfit && resolvedProfitPerHour !== null && resolvedProfitPerHour < 0 && !isPinned) {
                 // Hide the entire action panel (unless it's pinned)
                 actionPanel.style.display = 'none';
                 return;
@@ -20027,10 +20229,12 @@
             let html = `<span style="color: ${canProduceColor};">Can produce: ${maxCrafts.toLocaleString()}</span>`;
 
             // Add profit/hr line if available
-            if (profitPerHour !== null) {
-                const profitColor = profitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
-                const profitSign = profitPerHour >= 0 ? '' : '-';
-                html += `<br><span style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}</span>`;
+            if (hasMissingPrices) {
+                html += `<br><span style="color: ${config.SCRIPT_COLOR_ALERT};">Profit/hr: -- ⚠</span>`;
+            } else if (resolvedProfitPerHour !== null) {
+                const profitColor = resolvedProfitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
+                html += `<br><span style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}</span>`;
             }
 
             // Add exp/hr line if available
@@ -26107,9 +26311,11 @@
 
         // Use pre-calculated profitPerAction from profit calculator
         const profitPerAction = profitData.profitPerAction;
+        const hasMissingPrices = profitData.hasMissingPrices;
 
         return {
-            totalValue: profitPerAction * quantity,
+            totalValue: hasMissingPrices ? null : profitPerAction * quantity,
+            hasMissingPrices,
             breakdown: {
                 actionHrid,
                 quantity,
@@ -26156,6 +26362,7 @@
 
         // Use pre-calculated profitPerAction from profit calculator
         const profitPerAction = profitData.profitPerAction;
+        const hasMissingPrices = profitData.hasMissingPrices;
 
         // Calculate per-action values for breakdown display
         const revenuePerAction =
@@ -26165,7 +26372,8 @@
             (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) / profitData.actionsPerHour;
 
         return {
-            totalProfit: profitPerAction * quantity,
+            totalProfit: hasMissingPrices ? null : profitPerAction * quantity,
+            hasMissingPrices,
             breakdown: {
                 actionHrid,
                 quantity,
@@ -26180,6 +26388,7 @@
                 baseOutputItems: profitData.itemsPerHour,
                 gourmetBonusItems: profitData.gourmetBonusItems,
                 priceEach: profitData.priceAfterTax,
+                outputPriceMissing: profitData.outputPriceMissing,
                 actionsPerHour: profitData.actionsPerHour,
                 itemsPerAction: profitData.itemsPerHour / profitData.actionsPerHour,
                 bonusRevenue: profitData.bonusRevenue, // Pass through bonus revenue data
@@ -26233,11 +26442,13 @@
 
         // Calculate total profit
         const actionValue = taskType === 'production' ? actionProfit.totalProfit : actionProfit.totalValue;
-        const totalProfit = rewardValue.total + actionValue;
+        const hasMissingPrices = actionProfit.hasMissingPrices;
+        const totalProfit = hasMissingPrices ? null : rewardValue.total + actionValue;
 
         return {
             type: taskType,
             totalProfit,
+            hasMissingPrices,
             rewards: rewardValue,
             action: actionProfit,
             taskInfo: taskInfo,
@@ -26788,7 +26999,8 @@
             cursor: pointer;
             user-select: none;
         `;
-            profitLine.innerHTML = `💰 ${numberFormatter(profitData.totalProfit)} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ▸`;
+            const totalProfitLabel = profitData.hasMissingPrices ? '-- ⚠' : numberFormatter(profitData.totalProfit);
+            profitLine.innerHTML = `💰 ${totalProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ▸`;
 
             // Create breakdown section (hidden by default)
             const breakdownSection = document.createElement('div');
@@ -26837,7 +27049,8 @@
                 e.stopPropagation();
                 const isHidden = breakdownSection.style.display === 'none';
                 breakdownSection.style.display = isHidden ? 'block' : 'none';
-                profitLine.innerHTML = `💰 ${numberFormatter(profitData.totalProfit)} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
+                const updatedProfitLabel = profitData.hasMissingPrices ? '-- ⚠' : numberFormatter(profitData.totalProfit);
+                profitLine.innerHTML = `💰 ${updatedProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
             };
 
             profitLine.addEventListener('click', profitLineListener);
@@ -26858,6 +27071,9 @@
          */
         buildBreakdownHTML(profitData) {
             const lines = [];
+            const showTotals = !profitData.hasMissingPrices;
+            const formatTotalValue = (value) => (showTotals ? numberFormatter(value) : '-- ⚠');
+            const formatPerActionValue = (value) => (showTotals ? numberFormatter(value.toFixed(0)) : '-- ⚠');
 
             lines.push('<div style="font-weight: bold; margin-bottom: 4px;">Task Profit Breakdown</div>');
             lines.push('<div style="border-bottom: 1px solid #555; margin-bottom: 4px;"></div>');
@@ -26900,7 +27116,7 @@
             if (profitData.type === 'gathering') {
                 // Gathering Value (expandable)
                 lines.push(
-                    `<div class="mwi-expandable-header" data-section="gathering" style="margin-left: 10px; cursor: pointer; user-select: none;">Gathering Value: ${numberFormatter(profitData.action.totalValue)} ▸</div>`
+                    `<div class="mwi-expandable-header" data-section="gathering" style="margin-left: 10px; cursor: pointer; user-select: none;">Gathering Value: ${formatTotalValue(profitData.action.totalValue)} ▸</div>`
                 );
                 lines.push(
                     `<div class="mwi-expandable-section" data-section="gathering" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
@@ -26925,8 +27141,9 @@
                             const revenueForTask = output.revenuePerHour * hoursNeeded;
                             const dropRateText =
                                 output.dropRate < 1.0 ? ` (${formatPercentage(output.dropRate, 1)} drop)` : '';
+                            const missingPriceNote = output.missingPrice ? ' ⚠' : '';
                             lines.push(
-                                `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}</div>`
+                                `<div>• ${output.name}: ${itemsForTask.toFixed(1)} items @ ${numberFormatter(Math.round(output.priceEach))}${missingPriceNote} = ${numberFormatter(Math.round(revenueForTask))}${dropRateText}</div>`
                             );
                         }
                     }
@@ -26941,7 +27158,7 @@
                         const totalBonusRevenue = bonusRevenue.totalBonusRevenue * hoursNeeded;
 
                         lines.push(
-                            `<div style="margin-top: 4px; color: #aaa;">Bonus Drops: ${numberFormatter(Math.round(totalBonusRevenue))}</div>`
+                            `<div style="margin-top: 4px; color: #aaa;">Bonus Drops: ${formatTotalValue(Math.round(totalBonusRevenue))}</div>`
                         );
 
                         // Group drops by type
@@ -26954,8 +27171,9 @@
                                 // drop.dropsPerHour doesn't include efficiency, so multiply by hoursNeeded only
                                 const dropsForTask = drop.dropsPerHour * hoursNeeded;
                                 const revenueForTask = drop.revenuePerHour * hoursNeeded;
+                                const missingPriceNote = drop.missingPrice ? ' ⚠' : '';
                                 lines.push(
-                                    `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                                    `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))}${missingPriceNote} = ${numberFormatter(Math.round(revenueForTask))}</div>`
                                 );
                             }
                         }
@@ -26966,8 +27184,9 @@
                                 // drop.dropsPerHour doesn't include efficiency, so multiply by hoursNeeded only
                                 const dropsForTask = drop.dropsPerHour * hoursNeeded;
                                 const revenueForTask = drop.revenuePerHour * hoursNeeded;
+                                const missingPriceNote = drop.missingPrice ? ' ⚠' : '';
                                 lines.push(
-                                    `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                                    `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))}${missingPriceNote} = ${numberFormatter(Math.round(revenueForTask))}</div>`
                                 );
                             }
                         }
@@ -26977,13 +27196,14 @@
                     if (details.processingConversions && details.processingConversions.length > 0) {
                         const processingBonus = details.processingRevenueBonus * hoursNeeded;
                         lines.push(
-                            `<div style="margin-top: 4px; color: #aaa;">Processing Bonus: ${numberFormatter(Math.round(processingBonus))}</div>`
+                            `<div style="margin-top: 4px; color: #aaa;">Processing Bonus: ${formatTotalValue(Math.round(processingBonus))}</div>`
                         );
                         for (const conversion of details.processingConversions) {
                             const conversionsForTask = conversion.conversionsPerHour * hoursNeeded;
                             const revenueForTask = conversion.revenuePerHour * hoursNeeded;
+                            const missingPriceNote = conversion.missingPrice ? ' ⚠' : '';
                             lines.push(
-                                `<div>• ${conversion.rawItem} → ${conversion.processedItem}: ${conversionsForTask.toFixed(1)} conversions, +${numberFormatter(Math.round(conversion.valueGain))} each = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                                `<div>• ${conversion.rawItem} → ${conversion.processedItem}: ${conversionsForTask.toFixed(1)} conversions, +${numberFormatter(Math.round(conversion.valueGain))}${missingPriceNote} each = ${numberFormatter(Math.round(revenueForTask))}</div>`
                             );
                         }
                     }
@@ -26991,12 +27211,12 @@
 
                 lines.push(`</div>`);
                 lines.push(
-                    `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`
+                    `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${formatPerActionValue(profitData.action.breakdown.perAction)} each)</div>`
                 );
             } else if (profitData.type === 'production') {
                 // Output Value (expandable)
                 lines.push(
-                    `<div class="mwi-expandable-header" data-section="output" style="margin-left: 10px; cursor: pointer; user-select: none;">Output Value: ${numberFormatter(profitData.action.breakdown.outputValue)} ▸</div>`
+                    `<div class="mwi-expandable-header" data-section="output" style="margin-left: 10px; cursor: pointer; user-select: none;">Output Value: ${formatTotalValue(profitData.action.breakdown.outputValue)} ▸</div>`
                 );
                 lines.push(
                     `<div class="mwi-expandable-section" data-section="output" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
@@ -27006,16 +27226,17 @@
                     const details = profitData.action.details;
                     const itemsPerAction = details.itemsPerAction || 1;
                     const totalItems = itemsPerAction * profitData.action.breakdown.quantity;
+                    const outputPriceNote = details.outputPriceMissing ? ' ⚠' : '';
 
                     lines.push(
-                        `<div>• Base Production: ${totalItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(totalItems * details.priceEach))}</div>`
+                        `<div>• Base Production: ${totalItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)}${outputPriceNote} = ${numberFormatter(Math.round(totalItems * details.priceEach))}</div>`
                     );
 
                     if (details.gourmetBonusItems > 0) {
                         const bonusItems =
                             (details.gourmetBonusItems / details.actionsPerHour) * profitData.action.breakdown.quantity;
                         lines.push(
-                            `<div>• Gourmet Bonus: ${bonusItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)} = ${numberFormatter(Math.round(bonusItems * details.priceEach))}</div>`
+                            `<div>• Gourmet Bonus: ${bonusItems.toFixed(1)} items @ ${numberFormatter(details.priceEach)}${outputPriceNote} = ${numberFormatter(Math.round(bonusItems * details.priceEach))}</div>`
                         );
                     }
                 }
@@ -27035,7 +27256,7 @@
                     const totalBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier * hoursNeeded;
 
                     lines.push(
-                        `<div class="mwi-expandable-header" data-section="bonus" style="margin-left: 10px; cursor: pointer; user-select: none;">Bonus Revenue: ${numberFormatter(totalBonusRevenue)} ▸</div>`
+                        `<div class="mwi-expandable-header" data-section="bonus" style="margin-left: 10px; cursor: pointer; user-select: none;">Bonus Revenue: ${formatTotalValue(totalBonusRevenue)} ▸</div>`
                     );
                     lines.push(
                         `<div class="mwi-expandable-section" data-section="bonus" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
@@ -27051,8 +27272,9 @@
                         for (const drop of essenceDrops) {
                             const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                             const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
+                            const missingPriceNote = drop.missingPrice ? ' ⚠' : '';
                             lines.push(
-                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))}${missingPriceNote} = ${numberFormatter(Math.round(revenueForTask))}</div>`
                             );
                         }
                     }
@@ -27065,8 +27287,9 @@
                         for (const drop of rareFindDrops) {
                             const dropsForTask = drop.dropsPerHour * efficiencyMultiplier * hoursNeeded;
                             const revenueForTask = drop.revenuePerHour * efficiencyMultiplier * hoursNeeded;
+                            const missingPriceNote = drop.missingPrice ? ' ⚠' : '';
                             lines.push(
-                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))} = ${numberFormatter(Math.round(revenueForTask))}</div>`
+                                `<div>• ${drop.itemName}: ${dropsForTask.toFixed(2)} drops @ ${numberFormatter(Math.round(drop.priceEach))}${missingPriceNote} = ${numberFormatter(Math.round(revenueForTask))}</div>`
                             );
                         }
                     }
@@ -27076,7 +27299,7 @@
 
                 // Material Cost (expandable)
                 lines.push(
-                    `<div class="mwi-expandable-header" data-section="materials" style="margin-left: 10px; cursor: pointer; user-select: none;">Material Cost: ${numberFormatter(profitData.action.breakdown.materialCost)} ▸</div>`
+                    `<div class="mwi-expandable-header" data-section="materials" style="margin-left: 10px; cursor: pointer; user-select: none;">Material Cost: ${formatTotalValue(profitData.action.breakdown.materialCost)} ▸</div>`
                 );
                 lines.push(
                     `<div class="mwi-expandable-section" data-section="materials" style="display: none; margin-left: 20px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
@@ -27089,8 +27312,9 @@
                     for (const mat of details.materialCosts) {
                         const totalAmount = mat.amount * actionsNeeded;
                         const totalCost = mat.totalCost * actionsNeeded;
+                        const missingPriceNote = mat.missingPrice ? ' ⚠' : '';
                         lines.push(
-                            `<div>• ${mat.itemName}: ${totalAmount.toFixed(1)} @ ${numberFormatter(Math.round(mat.askPrice))} = ${numberFormatter(Math.round(totalCost))}</div>`
+                            `<div>• ${mat.itemName}: ${totalAmount.toFixed(1)} @ ${numberFormatter(Math.round(mat.askPrice))}${missingPriceNote} = ${numberFormatter(Math.round(totalCost))}</div>`
                         );
                     }
 
@@ -27099,8 +27323,9 @@
                         for (const tea of details.teaCosts) {
                             const drinksNeeded = tea.drinksPerHour * hoursNeeded;
                             const totalCost = tea.totalCost * hoursNeeded;
+                            const missingPriceNote = tea.missingPrice ? ' ⚠' : '';
                             lines.push(
-                                `<div>• ${tea.itemName}: ${drinksNeeded.toFixed(1)} drinks @ ${numberFormatter(Math.round(tea.pricePerDrink))} = ${numberFormatter(Math.round(totalCost))}</div>`
+                                `<div>• ${tea.itemName}: ${drinksNeeded.toFixed(1)} drinks @ ${numberFormatter(Math.round(tea.pricePerDrink))}${missingPriceNote} = ${numberFormatter(Math.round(totalCost))}</div>`
                             );
                         }
                     }
@@ -27110,17 +27335,17 @@
 
                 // Net Production
                 lines.push(
-                    `<div style="margin-left: 10px;">Net Production: ${numberFormatter(profitData.action.totalProfit)}</div>`
+                    `<div style="margin-left: 10px;">Net Production: ${formatTotalValue(profitData.action.totalProfit)}</div>`
                 );
                 lines.push(
-                    `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${numberFormatter(profitData.action.breakdown.perAction.toFixed(0))} each)</div>`
+                    `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${profitData.action.breakdown.quantity}× @ ${formatPerActionValue(profitData.action.breakdown.perAction)} each)</div>`
                 );
             }
 
             // Total
             lines.push('<div style="border-top: 1px solid #555; margin-top: 6px; padding-top: 4px;"></div>');
             lines.push(
-                `<div style="font-weight: bold; color: ${config.COLOR_ACCENT};">Total Profit: ${numberFormatter(profitData.totalProfit)}</div>`
+                `<div style="font-weight: bold; color: ${config.COLOR_ACCENT};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
             );
 
             return lines.join('');

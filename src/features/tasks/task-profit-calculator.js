@@ -193,9 +193,11 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
 
     // Use pre-calculated profitPerAction from profit calculator
     const profitPerAction = profitData.profitPerAction;
+    const hasMissingPrices = profitData.hasMissingPrices;
 
     return {
-        totalValue: profitPerAction * quantity,
+        totalValue: hasMissingPrices ? null : profitPerAction * quantity,
+        hasMissingPrices,
         breakdown: {
             actionHrid,
             quantity,
@@ -242,6 +244,7 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
 
     // Use pre-calculated profitPerAction from profit calculator
     const profitPerAction = profitData.profitPerAction;
+    const hasMissingPrices = profitData.hasMissingPrices;
 
     // Calculate per-action values for breakdown display
     const revenuePerAction =
@@ -251,7 +254,8 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
         (profitData.materialCostPerHour + profitData.totalTeaCostPerHour) / profitData.actionsPerHour;
 
     return {
-        totalProfit: profitPerAction * quantity,
+        totalProfit: hasMissingPrices ? null : profitPerAction * quantity,
+        hasMissingPrices,
         breakdown: {
             actionHrid,
             quantity,
@@ -266,6 +270,7 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
             baseOutputItems: profitData.itemsPerHour,
             gourmetBonusItems: profitData.gourmetBonusItems,
             priceEach: profitData.priceAfterTax,
+            outputPriceMissing: profitData.outputPriceMissing,
             actionsPerHour: profitData.actionsPerHour,
             itemsPerAction: profitData.itemsPerHour / profitData.actionsPerHour,
             bonusRevenue: profitData.bonusRevenue, // Pass through bonus revenue data
@@ -319,11 +324,13 @@ export async function calculateTaskProfit(taskData) {
 
     // Calculate total profit
     const actionValue = taskType === 'production' ? actionProfit.totalProfit : actionProfit.totalValue;
-    const totalProfit = rewardValue.total + actionValue;
+    const hasMissingPrices = actionProfit.hasMissingPrices;
+    const totalProfit = hasMissingPrices ? null : rewardValue.total + actionValue;
 
     return {
         type: taskType,
         totalProfit,
+        hasMissingPrices,
         rewards: rewardValue,
         action: actionProfit,
         taskInfo: taskInfo,

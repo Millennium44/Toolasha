@@ -15,6 +15,9 @@ import { findActionInput, attachInputListeners } from '../../utils/action-panel-
 import { calculateQueueProfitBreakdown } from '../../utils/profit-helpers.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 
+const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
+export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
+
 /**
  * Display gathering profit calculation in panel
  * @param {HTMLElement} panel - Action panel element
@@ -38,18 +41,30 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     // Create top-level summary
     const profit = Math.round(profitData.profitPerHour);
     const profitPerDay = Math.round(profitData.profitPerDay);
+    const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
+    const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+    const processingMissing = profitData.processingConversions?.some((conversion) => conversion.missingPrice) || false;
+    const revenueMissing = baseMissing || bonusMissing || processingMissing;
+    const drinkCostsMissing = profitData.drinkCosts?.some((drink) => drink.missingPrice) || false;
+    const costsMissing = drinkCostsMissing || revenueMissing;
+    const marketTaxMissing = revenueMissing;
+    const netMissing = profitData.hasMissingPrices;
     // Revenue is now gross (pre-tax)
     const revenue = Math.round(profitData.revenuePerHour);
     const marketTax = Math.round(revenue * MARKET_TAX);
     const costs = Math.round(profitData.drinkCostPerHour + marketTax);
-    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
+    const summary = formatMissingLabel(
+        netMissing,
+        `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`
+    );
 
     // ===== Build Detailed Breakdown Content =====
     const detailsContent = document.createElement('div');
 
     // Revenue Section
     const revenueDiv = document.createElement('div');
-    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
+    const revenueLabel = formatMissingLabel(revenueMissing, `${formatLargeNumber(revenue)}/hr`);
+    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
     // Base Output subsection
     const baseOutputContent = document.createElement('div');
@@ -58,15 +73,17 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             const decimals = output.itemsPerHour < 1 ? 2 : 1;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
+            const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
+            line.textContent = `• ${output.name}: ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
             baseOutputContent.appendChild(line);
         }
     }
 
     const baseRevenue = profitData.baseOutputs?.reduce((sum, o) => sum + o.revenuePerHour, 0) || 0;
+    const baseRevenueLabel = formatMissingLabel(baseMissing, formatLargeNumber(Math.round(baseRevenue)));
     const baseOutputSection = createCollapsibleSection(
         '',
-        `Base Output: ${formatLargeNumber(Math.round(baseRevenue))}/hr (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
+        `Base Output: ${baseRevenueLabel}/hr (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
         null,
         baseOutputContent,
         false,
@@ -95,10 +112,11 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         }
 
         const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour * efficiencyMultiplier, 0);
+        const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
         const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
         essenceSection = createCollapsibleSection(
             '',
-            `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+            `Essence Drops: ${essenceRevenueLabel}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
             null,
             essenceContent,
             false,
@@ -122,10 +140,11 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         }
 
         const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour * efficiencyMultiplier, 0);
+        const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
         const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
             null,
             rareFindContent,
             false,
@@ -148,15 +167,20 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         for (const conversion of profitData.processingConversions) {
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
+            const missingPriceNote = getMissingPriceIndicator(conversion.missingPrice);
+            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${conversion.conversionsPerHour.toFixed(1)}/hr, +${formatWithSeparator(Math.round(conversion.valueGain))}${missingPriceNote} each → ${formatLargeNumber(Math.round(conversion.revenuePerHour))}/hr`;
             processingContent.appendChild(line);
         }
 
         const processingRevenue = profitData.processingRevenueBonus || 0;
+        const processingRevenueLabel = formatMissingLabel(
+            processingMissing,
+            formatLargeNumber(Math.round(processingRevenue))
+        );
         const processingChance = profitData.processingBonus || 0;
         processingSection = createCollapsibleSection(
             '',
-            `Processing Bonus: ${formatLargeNumber(Math.round(processingRevenue))}/hr (${formatPercentage(processingChance, 1)} proc)`,
+            `Processing Bonus: ${processingRevenueLabel}/hr (${formatPercentage(processingChance, 1)} proc)`,
             null,
             processingContent,
             false,
@@ -167,7 +191,8 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
 
     // Costs Section
     const costsDiv = document.createElement('div');
-    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(costs)}/hr</div>`;
+    const costsLabel = formatMissingLabel(costsMissing, `${formatLargeNumber(costs)}/hr`);
+    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
     // Drink Costs subsection
     const drinkCostsContent = document.createElement('div');
@@ -175,15 +200,17 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         for (const drink of profitData.drinkCosts) {
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${drink.name}: ${drink.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(drink.priceEach)} → ${formatLargeNumber(Math.round(drink.costPerHour))}/hr`;
+            const missingPriceNote = getMissingPriceIndicator(drink.missingPrice);
+            line.textContent = `• ${drink.name}: ${drink.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(drink.priceEach)}${missingPriceNote} → ${formatLargeNumber(Math.round(drink.costPerHour))}/hr`;
             drinkCostsContent.appendChild(line);
         }
     }
 
     const drinkCount = profitData.drinkCosts?.length || 0;
+    const drinkCostsLabel = drinkCostsMissing ? '-- ⚠' : formatLargeNumber(Math.round(profitData.drinkCostPerHour));
     const drinkCostsSection = createCollapsibleSection(
         '',
-        `Drink Costs: ${formatLargeNumber(Math.round(profitData.drinkCostPerHour))}/hr (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
+        `Drink Costs: ${drinkCostsLabel}/hr (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
         null,
         drinkCostsContent,
         false,
@@ -196,12 +223,14 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     const marketTaxContent = document.createElement('div');
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
-    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(marketTax)}/hr`;
+    const marketTaxLabel = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
+    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
+    const marketTaxHeader = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${formatLargeNumber(marketTax)}/hr (2%)`,
+        `Market Tax: ${marketTaxHeader} (2%)`,
         null,
         marketTaxContent,
         false,
@@ -274,14 +303,16 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     `;
 
     // Add Net Profit line at top level (always visible when Profitability is expanded)
-    const profitColor = profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
+    const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
     const netProfitLine = document.createElement('div');
     netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-    netProfitLine.textContent = `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    netProfitLine.textContent = netMissing
+        ? 'Net Profit: -- ⚠'
+        : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
     topLevelContent.appendChild(netProfitLine);
 
     const detailedBreakdownSection = createCollapsibleSection(
@@ -331,9 +362,16 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
 
     // Set up listener to update summary with total profit when input changes
     if (inputField && profitSummaryDiv) {
-        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        const baseSummary = formatMissingLabel(
+            netMissing,
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+        );
 
         const updateSummary = (newValue) => {
+            if (netMissing) {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                return;
+            }
             const inputValue = inputField.value;
 
             if (inputValue === '∞') {
@@ -432,6 +470,14 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     // Create top-level summary (bonus revenue now included in profitPerHour)
     const profit = Math.round(profitData.profitPerHour);
     const profitPerDay = Math.round(profitData.profitPerDay);
+    const outputMissing = profitData.outputPriceMissing || false;
+    const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+    const materialMissing = profitData.materialCosts?.some((material) => material.missingPrice) || false;
+    const teaMissing = profitData.teaCosts?.some((tea) => tea.missingPrice) || false;
+    const revenueMissing = outputMissing || bonusMissing;
+    const costsMissing = materialMissing || teaMissing || revenueMissing;
+    const marketTaxMissing = revenueMissing;
+    const netMissing = profitData.hasMissingPrices;
     const bonusRevenueTotal = profitData.bonusRevenue?.totalBonusRevenue || 0;
     // Use outputPrice (pre-tax) for revenue display
     const revenue = Math.round(
@@ -442,26 +488,31 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     // Calculate market tax (2% of revenue)
     const marketTax = Math.round(revenue * MARKET_TAX);
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
-    const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
+    const summary = netMissing
+        ? '-- ⚠'
+        : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
 
     // ===== Build Detailed Breakdown Content =====
     const detailsContent = document.createElement('div');
 
     // Revenue Section
     const revenueDiv = document.createElement('div');
-    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
+    const revenueLabel = revenueMissing ? '-- ⚠' : `${formatLargeNumber(revenue)}/hr`;
+    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
     // Base Output subsection
     const baseOutputContent = document.createElement('div');
     const baseOutputLine = document.createElement('div');
     baseOutputLine.style.marginLeft = '8px';
-    baseOutputLine.textContent = `• Base Output: ${profitData.itemsPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
+    const baseOutputMissingNote = getMissingPriceIndicator(profitData.outputPriceMissing);
+    baseOutputLine.textContent = `• Base Output: ${profitData.itemsPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
     baseOutputContent.appendChild(baseOutputLine);
 
     const baseRevenue = profitData.itemsPerHour * profitData.outputPrice;
+    const baseRevenueLabel = outputMissing ? '-- ⚠' : formatWithSeparator(Math.round(baseRevenue));
     const baseOutputSection = createCollapsibleSection(
         '',
-        `Base Output: ${formatWithSeparator(Math.round(baseRevenue))}/hr`,
+        `Base Output: ${baseRevenueLabel}/hr`,
         null,
         baseOutputContent,
         false,
@@ -474,13 +525,14 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         const gourmetContent = document.createElement('div');
         const gourmetLine = document.createElement('div');
         gourmetLine.style.marginLeft = '8px';
-        gourmetLine.textContent = `• Gourmet Bonus: ${profitData.gourmetBonusItems.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
+        gourmetLine.textContent = `• Gourmet Bonus: ${profitData.gourmetBonusItems.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(profitData.gourmetBonusItems * profitData.outputPrice))}/hr`;
         gourmetContent.appendChild(gourmetLine);
 
         const gourmetRevenue = profitData.gourmetBonusItems * profitData.outputPrice;
+        const gourmetRevenueLabel = outputMissing ? '-- ⚠' : formatLargeNumber(Math.round(gourmetRevenue));
         gourmetSection = createCollapsibleSection(
             '',
-            `Gourmet Bonus: ${formatLargeNumber(Math.round(gourmetRevenue))}/hr (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
+            `Gourmet Bonus: ${gourmetRevenueLabel}/hr (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
             null,
             gourmetContent,
             false,
@@ -512,10 +564,11 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         }
 
         const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour, 0);
+        const essenceRevenueLabel = bonusMissing ? '-- ⚠' : formatLargeNumber(Math.round(essenceRevenue));
         const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
         essenceSection = createCollapsibleSection(
             '',
-            `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+            `Essence Drops: ${essenceRevenueLabel}/hr (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
             null,
             essenceContent,
             false,
@@ -537,10 +590,11 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         }
 
         const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour, 0);
+        const rareFindRevenueLabel = bonusMissing ? '-- ⚠' : formatLargeNumber(Math.round(rareFindRevenue));
         const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
             null,
             rareFindContent,
             false,
@@ -557,7 +611,8 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
 
     // Costs Section
     const costsDiv = document.createElement('div');
-    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(costs)}/hr</div>`;
+    const costsLabel = costsMissing ? '-- ⚠' : `${formatLargeNumber(costs)}/hr`;
+    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
     // Material Costs subsection
     const materialCostsContent = document.createElement('div');
@@ -579,16 +634,21 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
                 materialText += ` (${baseAmountPerHour.toFixed(1)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
             }
 
-            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
+            const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
+            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
 
             line.textContent = materialText;
             materialCostsContent.appendChild(line);
         }
     }
 
+    const materialCostsLabel = formatMissingLabel(
+        materialMissing,
+        formatLargeNumber(Math.round(profitData.materialCostPerHour))
+    );
     const materialCostsSection = createCollapsibleSection(
         '',
-        `Material Costs: ${formatLargeNumber(Math.round(profitData.materialCostPerHour))}/hr (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
+        `Material Costs: ${materialCostsLabel}/hr (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
         null,
         materialCostsContent,
         false,
@@ -602,15 +662,17 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             // Tea structure: { itemName, pricePerDrink, drinksPerHour, totalCost }
-            line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
+            const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
+            line.textContent = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(1)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
             teaCostsContent.appendChild(line);
         }
     }
 
     const teaCount = profitData.teaCosts?.length || 0;
+    const teaCostsLabel = formatMissingLabel(teaMissing, formatLargeNumber(Math.round(profitData.totalTeaCostPerHour)));
     const teaCostsSection = createCollapsibleSection(
         '',
-        `Drink Costs: ${formatLargeNumber(Math.round(profitData.totalTeaCostPerHour))}/hr (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
+        `Drink Costs: ${teaCostsLabel}/hr (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
         null,
         teaCostsContent,
         false,
@@ -624,12 +686,14 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     const marketTaxContent = document.createElement('div');
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
-    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(marketTax)}/hr`;
+    const marketTaxLabel = formatMissingLabel(marketTaxMissing, `${formatLargeNumber(marketTax)}/hr`);
+    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
+    const marketTaxHeader = formatMissingLabel(marketTaxMissing, `${formatLargeNumber(marketTax)}/hr`);
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${formatLargeNumber(marketTax)}/hr (2%)`,
+        `Market Tax: ${marketTaxHeader} (2%)`,
         null,
         marketTaxContent,
         false,
@@ -714,14 +778,16 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     `;
 
     // Add Net Profit line at top level (always visible when Profitability is expanded)
-    const profitColor = profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
+    const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : profit >= 0 ? '#4ade80' : config.COLOR_LOSS; // green if positive, red if negative
     const netProfitLine = document.createElement('div');
     netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-    netProfitLine.textContent = `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    netProfitLine.textContent = netMissing
+        ? 'Net Profit: -- ⚠'
+        : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
     topLevelContent.appendChild(netProfitLine);
 
     const detailedBreakdownSection = createCollapsibleSection(
@@ -771,9 +837,16 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
 
     // Set up listener to update summary with total profit when input changes
     if (inputField && profitSummaryDiv) {
-        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        const baseSummary = formatMissingLabel(
+            netMissing,
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
+        );
 
         const updateSummary = (newValue) => {
+            if (netMissing) {
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                return;
+            }
             const inputValue = inputField.value;
 
             if (inputValue === '∞') {
@@ -840,6 +913,14 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
     const hoursNeeded = queueBreakdown.hoursNeeded;
 
     // Calculate totals
+    const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
+    const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+    const processingMissing = profitData.processingConversions?.some((conversion) => conversion.missingPrice) || false;
+    const revenueMissing = baseMissing || bonusMissing || processingMissing;
+    const drinkCostsMissing = profitData.drinkCosts?.some((drink) => drink.missingPrice) || false;
+    const costsMissing = drinkCostsMissing || revenueMissing;
+    const marketTaxMissing = revenueMissing;
+    const netMissing = profitData.hasMissingPrices;
     const totalRevenue = Math.round(profitData.revenuePerHour * hoursNeeded);
     const totalMarketTax = Math.round(totalRevenue * MARKET_TAX);
     const totalDrinkCosts = Math.round(profitData.drinkCostPerHour * hoursNeeded);
@@ -850,7 +931,8 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
 
     // Revenue Section
     const revenueDiv = document.createElement('div');
-    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(totalRevenue)}</div>`;
+    const revenueLabel = formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue));
+    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
     // Base Output subsection
     const baseOutputContent = document.createElement('div');
@@ -860,15 +942,17 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             const totalRevenueLine = output.revenuePerHour * hoursNeeded;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
+            const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
+            line.textContent = `• ${output.name}: ${totalItems.toFixed(1)} items @ ${formatWithSeparator(output.priceEach)}${missingPriceNote} each → ${formatLargeNumber(Math.round(totalRevenueLine))}`;
             baseOutputContent.appendChild(line);
         }
     }
 
     const baseRevenue = profitData.baseOutputs?.reduce((sum, o) => sum + o.revenuePerHour * hoursNeeded, 0) || 0;
+    const baseRevenueLabel = formatMissingLabel(baseMissing, formatLargeNumber(Math.round(baseRevenue)));
     const baseOutputSection = createCollapsibleSection(
         '',
-        `Base Output: ${formatLargeNumber(Math.round(baseRevenue))} (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
+        `Base Output: ${baseRevenueLabel} (${profitData.baseOutputs?.length || 0} item${profitData.baseOutputs?.length !== 1 ? 's' : ''})`,
         null,
         baseOutputContent,
         false,
@@ -900,10 +984,11 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             (sum, d) => sum + d.revenuePerHour * efficiencyMultiplier * hoursNeeded,
             0
         );
+        const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
         const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
         essenceSection = createCollapsibleSection(
             '',
-            `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+            `Essence Drops: ${essenceRevenueLabel} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
             null,
             essenceContent,
             false,
@@ -931,10 +1016,11 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             (sum, d) => sum + d.revenuePerHour * efficiencyMultiplier * hoursNeeded,
             0
         );
+        const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
         const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
             null,
             rareFindContent,
             false,
@@ -959,7 +1045,8 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             const totalRevenueFromConversion = conversion.revenuePerHour * hoursNeeded;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
+            const missingPriceNote = getMissingPriceIndicator(conversion.missingPrice);
+            line.textContent = `• ${conversion.rawItem} → ${conversion.processedItem}: ${totalConversions.toFixed(1)} conversions, +${formatWithSeparator(Math.round(conversion.valueGain))}${missingPriceNote} each → ${formatLargeNumber(Math.round(totalRevenueFromConversion))}`;
             processingContent.appendChild(line);
         }
 
@@ -967,7 +1054,7 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
         const processingChance = profitData.processingBonus || 0;
         processingSection = createCollapsibleSection(
             '',
-            `Processing Bonus: ${formatLargeNumber(Math.round(totalProcessingRevenue))} (${formatPercentage(processingChance, 1)} proc)`,
+            `Processing Bonus: ${formatMissingLabel(processingMissing, formatLargeNumber(Math.round(totalProcessingRevenue)))} (${formatPercentage(processingChance, 1)} proc)`,
             null,
             processingContent,
             false,
@@ -978,7 +1065,8 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
 
     // Costs Section
     const costsDiv = document.createElement('div');
-    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(totalCosts)}</div>`;
+    const costsLabel = costsMissing ? '-- ⚠' : formatLargeNumber(totalCosts);
+    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
     // Drink Costs subsection
     const drinkCostsContent = document.createElement('div');
@@ -988,15 +1076,17 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             const totalCostLine = drink.costPerHour * hoursNeeded;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${drink.name}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(drink.priceEach)} → ${formatLargeNumber(Math.round(totalCostLine))}`;
+            const missingPriceNote = getMissingPriceIndicator(drink.missingPrice);
+            line.textContent = `• ${drink.name}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(drink.priceEach)}${missingPriceNote} → ${formatLargeNumber(Math.round(totalCostLine))}`;
             drinkCostsContent.appendChild(line);
         }
     }
 
     const drinkCount = profitData.drinkCosts?.length || 0;
+    const drinkCostsLabel = drinkCostsMissing ? '-- ⚠' : formatLargeNumber(totalDrinkCosts);
     const drinkCostsSection = createCollapsibleSection(
         '',
-        `Drink Costs: ${formatLargeNumber(totalDrinkCosts)} (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
+        `Drink Costs: ${drinkCostsLabel} (${drinkCount} drink${drinkCount !== 1 ? 's' : ''})`,
         null,
         drinkCostsContent,
         false,
@@ -1009,12 +1099,14 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
     const marketTaxContent = document.createElement('div');
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
-    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(totalMarketTax)}`;
+    const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
+    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
+    const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${formatLargeNumber(totalMarketTax)} (2%)`,
+        `Market Tax: ${marketTaxHeader} (2%)`,
         null,
         marketTaxContent,
         false,
@@ -1029,24 +1121,21 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
 
     // Add Net Profit at top
     const topLevelContent = document.createElement('div');
-    const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+    const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
     const netProfitLine = document.createElement('div');
     netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-    netProfitLine.textContent = `Net Profit: ${formatLargeNumber(totalProfit)}`;
+    netProfitLine.textContent = netMissing ? 'Net Profit: -- ⚠' : `Net Profit: ${formatLargeNumber(totalProfit)}`;
     topLevelContent.appendChild(netProfitLine);
 
-    const actionsBreakdownSection = createCollapsibleSection(
-        '',
-        `Revenue: ${formatLargeNumber(totalRevenue)} | Costs: ${formatLargeNumber(totalCosts)}`,
-        null,
-        detailsContent,
-        false,
-        1
-    );
+    const actionsSummary = `Revenue: ${formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue))} | Costs: ${formatMissingLabel(
+        costsMissing,
+        formatLargeNumber(totalCosts)
+    )}`;
+    const actionsBreakdownSection = createCollapsibleSection('', actionsSummary, null, detailsContent, false, 1);
     topLevelContent.appendChild(actionsBreakdownSection);
 
     const mainSection = createCollapsibleSection(
@@ -1071,6 +1160,14 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
 function buildProductionActionsBreakdown(profitData, actionsCount) {
     // Calculate actual attempts needed (input is desired output actions)
     const efficiencyMultiplier = profitData.efficiencyMultiplier;
+    const outputMissing = profitData.outputPriceMissing || false;
+    const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
+    const materialMissing = profitData.materialCosts?.some((material) => material.missingPrice) || false;
+    const teaMissing = profitData.teaCosts?.some((tea) => tea.missingPrice) || false;
+    const revenueMissing = outputMissing || bonusMissing;
+    const costsMissing = materialMissing || teaMissing || revenueMissing;
+    const marketTaxMissing = revenueMissing;
+    const netMissing = profitData.hasMissingPrices;
     const actualAttempts = Math.ceil(actionsCount / efficiencyMultiplier);
     const queueBreakdown = calculateQueueProfitBreakdown({
         profitPerHour: profitData.profitPerHour,
@@ -1099,7 +1196,8 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
     // Revenue Section
     const revenueDiv = document.createElement('div');
-    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${formatLargeNumber(totalRevenue)}</div>`;
+    const revenueLabel = formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue));
+    revenueDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_PROFIT}; margin-bottom: 4px;">Revenue: ${revenueLabel}</div>`;
 
     // Base Output subsection
     const baseOutputContent = document.createElement('div');
@@ -1107,12 +1205,14 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
     const totalBaseRevenue = totalBaseItems * profitData.outputPrice;
     const baseOutputLine = document.createElement('div');
     baseOutputLine.style.marginLeft = '8px';
-    baseOutputLine.textContent = `• Base Output: ${totalBaseItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(totalBaseRevenue))}`;
+    const baseOutputMissingNote = getMissingPriceIndicator(profitData.outputPriceMissing);
+    baseOutputLine.textContent = `• Base Output: ${totalBaseItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(totalBaseRevenue))}`;
     baseOutputContent.appendChild(baseOutputLine);
 
+    const baseOutputLabel = formatMissingLabel(outputMissing, formatLargeNumber(Math.round(totalBaseRevenue)));
     const baseOutputSection = createCollapsibleSection(
         '',
-        `Base Output: ${formatLargeNumber(Math.round(totalBaseRevenue))}`,
+        `Base Output: ${baseOutputLabel}`,
         null,
         baseOutputContent,
         false,
@@ -1127,12 +1227,16 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         const totalGourmetRevenue = totalGourmetItems * profitData.outputPrice;
         const gourmetLine = document.createElement('div');
         gourmetLine.style.marginLeft = '8px';
-        gourmetLine.textContent = `• Gourmet Bonus: ${totalGourmetItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))} each → ${formatLargeNumber(Math.round(totalGourmetRevenue))}`;
+        gourmetLine.textContent = `• Gourmet Bonus: ${totalGourmetItems.toFixed(1)} items @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote} each → ${formatLargeNumber(Math.round(totalGourmetRevenue))}`;
         gourmetContent.appendChild(gourmetLine);
 
+        const gourmetRevenueLabel = formatMissingLabel(
+            outputMissing,
+            formatLargeNumber(Math.round(totalGourmetRevenue))
+        );
         gourmetSection = createCollapsibleSection(
             '',
-            `Gourmet Bonus: ${formatLargeNumber(Math.round(totalGourmetRevenue))} (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
+            `Gourmet Bonus: ${gourmetRevenueLabel} (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)`,
             null,
             gourmetContent,
             false,
@@ -1165,10 +1269,11 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         }
 
         const essenceRevenue = essenceDrops.reduce((sum, d) => sum + d.revenuePerHour * hoursNeeded, 0);
+        const essenceRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(essenceRevenue)));
         const essenceFindBonus = profitData.bonusRevenue?.essenceFindBonus || 0;
         essenceSection = createCollapsibleSection(
             '',
-            `Essence Drops: ${formatLargeNumber(Math.round(essenceRevenue))} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
+            `Essence Drops: ${essenceRevenueLabel} (${essenceDrops.length} item${essenceDrops.length !== 1 ? 's' : ''}, ${essenceFindBonus.toFixed(1)}% essence find)`,
             null,
             essenceContent,
             false,
@@ -1191,10 +1296,11 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         }
 
         const rareFindRevenue = rareFinds.reduce((sum, d) => sum + d.revenuePerHour * hoursNeeded, 0);
+        const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
         const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${formatLargeNumber(Math.round(rareFindRevenue))} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
             null,
             rareFindContent,
             false,
@@ -1211,7 +1317,8 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
     // Costs Section
     const costsDiv = document.createElement('div');
-    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${formatLargeNumber(totalCosts)}</div>`;
+    const costsLabel = costsMissing ? '-- ⚠' : formatLargeNumber(totalCosts);
+    costsDiv.innerHTML = `<div style="font-weight: 500; color: ${config.COLOR_TOOLTIP_LOSS}; margin-top: 12px; margin-bottom: 4px;">Costs: ${costsLabel}</div>`;
 
     // Material Costs subsection
     const materialCostsContent = document.createElement('div');
@@ -1231,7 +1338,8 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
                 materialText += ` (${baseTotalAmount.toFixed(1)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
             }
 
-            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))} → ${formatLargeNumber(Math.round(totalMaterialCost))}`;
+            const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
+            materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote} → ${formatLargeNumber(Math.round(totalMaterialCost))}`;
 
             line.textContent = materialText;
             materialCostsContent.appendChild(line);
@@ -1239,9 +1347,10 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
     }
 
     const totalMaterialCost = profitData.materialCostPerHour * hoursNeeded;
+    const materialCostsLabel = formatMissingLabel(materialMissing, formatLargeNumber(Math.round(totalMaterialCost)));
     const materialCostsSection = createCollapsibleSection(
         '',
-        `Material Costs: ${formatLargeNumber(Math.round(totalMaterialCost))} (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
+        `Material Costs: ${materialCostsLabel} (${profitData.materialCosts?.length || 0} material${profitData.materialCosts?.length !== 1 ? 's' : ''})`,
         null,
         materialCostsContent,
         false,
@@ -1256,16 +1365,18 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
             const totalTeaCost = tea.totalCost * hoursNeeded;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
-            line.textContent = `• ${tea.itemName}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(Math.round(tea.pricePerDrink))} → ${formatLargeNumber(Math.round(totalTeaCost))}`;
+            const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
+            line.textContent = `• ${tea.itemName}: ${totalDrinks.toFixed(1)} drinks @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote} → ${formatLargeNumber(Math.round(totalTeaCost))}`;
             teaCostsContent.appendChild(line);
         }
     }
 
     const totalTeaCost = profitData.totalTeaCostPerHour * hoursNeeded;
     const teaCount = profitData.teaCosts?.length || 0;
+    const teaCostsLabel = formatMissingLabel(teaMissing, formatLargeNumber(Math.round(totalTeaCost)));
     const teaCostsSection = createCollapsibleSection(
         '',
-        `Drink Costs: ${formatLargeNumber(Math.round(totalTeaCost))} (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
+        `Drink Costs: ${teaCostsLabel} (${teaCount} drink${teaCount !== 1 ? 's' : ''})`,
         null,
         teaCostsContent,
         false,
@@ -1279,12 +1390,14 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
     const marketTaxContent = document.createElement('div');
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
-    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${formatLargeNumber(totalMarketTax)}`;
+    const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
+    marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
+    const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${formatLargeNumber(totalMarketTax)} (2%)`,
+        `Market Tax: ${marketTaxHeader} (2%)`,
         null,
         marketTaxContent,
         false,
@@ -1299,24 +1412,21 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
     // Add Net Profit at top
     const topLevelContent = document.createElement('div');
-    const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+    const profitColor = netMissing ? config.SCRIPT_COLOR_ALERT : totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
     const netProfitLine = document.createElement('div');
     netProfitLine.style.cssText = `
         font-weight: 500;
         color: ${profitColor};
         margin-bottom: 8px;
     `;
-    netProfitLine.textContent = `Net Profit: ${formatLargeNumber(totalProfit)}`;
+    netProfitLine.textContent = netMissing ? 'Net Profit: -- ⚠' : `Net Profit: ${formatLargeNumber(totalProfit)}`;
     topLevelContent.appendChild(netProfitLine);
 
-    const actionsBreakdownSection = createCollapsibleSection(
-        '',
-        `Revenue: ${formatLargeNumber(totalRevenue)} | Costs: ${formatLargeNumber(totalCosts)}`,
-        null,
-        detailsContent,
-        false,
-        1
-    );
+    const actionsSummary = `Revenue: ${formatMissingLabel(revenueMissing, formatLargeNumber(totalRevenue))} | Costs: ${formatMissingLabel(
+        costsMissing,
+        formatLargeNumber(totalCosts)
+    )}`;
+    const actionsBreakdownSection = createCollapsibleSection('', actionsSummary, null, detailsContent, false, 1);
     topLevelContent.appendChild(actionsBreakdownSection);
 
     const mainSection = createCollapsibleSection(

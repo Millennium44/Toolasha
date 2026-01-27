@@ -217,7 +217,9 @@ class ProfitCalculator {
 
         // Get output price based on pricing mode setting
         // Uses 'profit' context with 'sell' side to get correct sell price
-        const outputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+        const rawOutputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+        const outputPriceMissing = rawOutputPrice === null;
+        const outputPrice = outputPriceMissing ? 0 : rawOutputPrice;
 
         // Apply market tax (2% tax on sales)
         const priceAfterTax = calculatePriceAfterTax(outputPrice);
@@ -238,6 +240,12 @@ class ProfitCalculator {
 
         // Calculate bonus revenue from essence and rare find drops (before profit calculation)
         const bonusRevenue = calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap);
+
+        const hasMissingPrices =
+            outputPriceMissing ||
+            materialCosts.some((material) => material.missingPrice) ||
+            teaCosts.some((tea) => tea.missingPrice) ||
+            (bonusRevenue?.hasMissingPrices ?? false);
 
         // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
         const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
@@ -271,6 +279,7 @@ class ProfitCalculator {
             costPerItem,
             itemPrice,
             outputPrice, // Output price before tax (bid or ask based on mode)
+            outputPriceMissing,
             priceAfterTax, // Output price after 2% tax (bid or ask based on mode)
             revenuePerHour,
             profitPerItem,
@@ -278,6 +287,7 @@ class ProfitCalculator {
             profitPerAction: calculateProfitPerAction(profitPerHour, actionsPerHour), // Profit per attempt
             profitPerDay: calculateProfitPerDay(profitPerHour), // Profit per day
             bonusRevenue, // Bonus revenue from essences and rare finds
+            hasMissingPrices,
             totalEfficiency, // Total efficiency percentage
             levelEfficiency, // Level advantage efficiency
             houseEfficiency, // House room efficiency
@@ -339,12 +349,16 @@ class ProfitCalculator {
 
             if (itemDetails) {
                 // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                let materialPrice =
-                    getItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' }) || 0;
+                const materialPrice = getItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+                const isPriceMissing = materialPrice === null;
+                const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
                 // Special case: Coins have no market price but have face value of 1
-                if (actionDetails.upgradeItemHrid === '/items/coin' && materialPrice === 0) {
-                    materialPrice = 1;
+                let finalPrice = resolvedPrice;
+                let isMissing = isPriceMissing;
+                if (actionDetails.upgradeItemHrid === '/items/coin' && finalPrice === 0) {
+                    finalPrice = 1;
+                    isMissing = false;
                 }
 
                 // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
@@ -355,8 +369,9 @@ class ProfitCalculator {
                     itemName: itemDetails.name,
                     baseAmount: 1,
                     amount: reducedAmount,
-                    askPrice: materialPrice,
-                    totalCost: materialPrice * reducedAmount,
+                    askPrice: finalPrice,
+                    totalCost: finalPrice * reducedAmount,
+                    missingPrice: isMissing,
                 });
             }
         }
@@ -377,11 +392,16 @@ class ProfitCalculator {
                 const reducedAmount = baseAmount * (1 - artisanBonus);
 
                 // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                let materialPrice = getItemPrice(input.itemHrid, { context: 'profit', side: 'buy' }) || 0;
+                const materialPrice = getItemPrice(input.itemHrid, { context: 'profit', side: 'buy' });
+                const isPriceMissing = materialPrice === null;
+                const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
                 // Special case: Coins have no market price but have face value of 1
-                if (input.itemHrid === '/items/coin' && materialPrice === 0) {
-                    materialPrice = 1; // 1 coin = 1 gold value
+                let finalPrice = resolvedPrice;
+                let isMissing = isPriceMissing;
+                if (input.itemHrid === '/items/coin' && finalPrice === 0) {
+                    finalPrice = 1; // 1 coin = 1 gold value
+                    isMissing = false;
                 }
 
                 costs.push({
@@ -389,8 +409,9 @@ class ProfitCalculator {
                     itemName: itemDetails.name,
                     baseAmount: baseAmount,
                     amount: reducedAmount,
-                    askPrice: materialPrice,
-                    totalCost: materialPrice * reducedAmount,
+                    askPrice: finalPrice,
+                    totalCost: finalPrice * reducedAmount,
+                    missingPrice: isMissing,
                 });
             }
         }
@@ -518,7 +539,9 @@ class ProfitCalculator {
             if (!itemDetails) continue;
 
             // Get tea price based on pricing mode (uses 'profit' context with 'buy' side)
-            const teaPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' }) || 0;
+            const teaPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' });
+            const isPriceMissing = teaPrice === null;
+            const resolvedPrice = isPriceMissing ? 0 : teaPrice;
 
             // Drink Concentration increases consumption rate
             const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
@@ -526,9 +549,10 @@ class ProfitCalculator {
             costs.push({
                 itemHrid: drink.itemHrid,
                 itemName: itemDetails.name,
-                pricePerDrink: teaPrice,
+                pricePerDrink: resolvedPrice,
                 drinksPerHour: drinksPerHour,
-                totalCost: teaPrice * drinksPerHour,
+                totalCost: resolvedPrice * drinksPerHour,
+                missingPrice: isPriceMissing,
             });
         }
 

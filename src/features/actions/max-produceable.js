@@ -360,26 +360,30 @@ class MaxProduceable {
 
         // Calculate profit/hr (for both gathering and production)
         let profitPerHour = null;
+        let hasMissingPrices = false;
         const actionDetails = dataManager.getActionDetails(data.actionHrid);
 
         if (actionDetails) {
             if (GATHERING_TYPES.includes(actionDetails.type)) {
                 const profitData = await calculateGatheringProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
+                hasMissingPrices = profitData?.hasMissingPrices || false;
             } else if (PRODUCTION_TYPES.includes(actionDetails.type)) {
                 const profitData = await calculateProductionProfit(data.actionHrid);
                 profitPerHour = profitData?.profitPerHour || null;
+                hasMissingPrices = profitData?.hasMissingPrices || false;
             }
         }
 
         // Store profit value for sorting and update shared sort manager
-        data.profitPerHour = profitPerHour;
-        actionPanelSort.updateProfit(actionPanel, profitPerHour);
+        const resolvedProfitPerHour = hasMissingPrices ? null : profitPerHour;
+        data.profitPerHour = resolvedProfitPerHour;
+        actionPanelSort.updateProfit(actionPanel, resolvedProfitPerHour);
 
         // Check if we should hide actions with negative profit (unless pinned)
         const hideNegativeProfit = config.getSetting('actionPanel_hideNegativeProfit');
         const isPinned = actionPanelSort.isPinned(data.actionHrid);
-        if (hideNegativeProfit && profitPerHour !== null && profitPerHour < 0 && !isPinned) {
+        if (hideNegativeProfit && resolvedProfitPerHour !== null && resolvedProfitPerHour < 0 && !isPinned) {
             // Hide the entire action panel (unless it's pinned)
             actionPanel.style.display = 'none';
             return;
@@ -411,10 +415,12 @@ class MaxProduceable {
         let html = `<span style="color: ${canProduceColor};">Can produce: ${maxCrafts.toLocaleString()}</span>`;
 
         // Add profit/hr line if available
-        if (profitPerHour !== null) {
-            const profitColor = profitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
-            const profitSign = profitPerHour >= 0 ? '' : '-';
-            html += `<br><span style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(profitPerHour))}</span>`;
+        if (hasMissingPrices) {
+            html += `<br><span style="color: ${config.SCRIPT_COLOR_ALERT};">Profit/hr: -- ⚠</span>`;
+        } else if (resolvedProfitPerHour !== null) {
+            const profitColor = resolvedProfitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
+            html += `<br><span style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}</span>`;
         }
 
         // Add exp/hr line if available

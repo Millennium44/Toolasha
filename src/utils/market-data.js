@@ -58,16 +58,36 @@ export function getItemPrice(itemHrid, options = {}) {
         return priceData.ask || 0;
     }
 
+    const resolvePrice = (value) => {
+        if (typeof value !== 'number') {
+            return null;
+        }
+
+        if (value < 0) {
+            return null;
+        }
+
+        return value;
+    };
+
     // Return price based on mode
     switch (pricingMode) {
         case 'ask':
-            return priceData.ask || 0;
+            return resolvePrice(priceData.ask);
         case 'bid':
-            return priceData.bid || 0;
+            return resolvePrice(priceData.bid);
         case 'average':
-            return ((priceData.ask || 0) + (priceData.bid || 0)) / 2;
+            if (typeof priceData.ask !== 'number' || typeof priceData.bid !== 'number') {
+                return null;
+            }
+
+            if (priceData.ask < 0 || priceData.bid < 0) {
+                return null;
+            }
+
+            return (priceData.ask + priceData.bid) / 2;
         default:
-            return priceData.ask || 0;
+            return resolvePrice(priceData.ask);
     }
 }
 
