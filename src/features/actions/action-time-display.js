@@ -477,12 +477,13 @@ class ActionTimeDisplay {
         if (!action.hasMaxCount) {
             // Get inventory and calculate Artisan bonus
             const inventory = dataManager.getInventory();
+            const inventoryLookup = this.buildInventoryLookup(inventory);
             const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
             const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
             const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
             // Calculate max actions based on materials
-            materialLimit = this.calculateMaterialLimit(actionDetails, inventory, artisanBonus, action);
+            materialLimit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action);
         }
 
         // Get queue size for display (total queued, doesn't change)
@@ -727,19 +728,56 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Build inventory lookup maps for fast material queries
+     * @param {Array} inventory - Character inventory items
+     * @returns {Object} Lookup maps by HRID and enhancement
+     */
+    buildInventoryLookup(inventory) {
+        const byHrid = {};
+        const byEnhancedKey = {};
+
+        if (!Array.isArray(inventory)) {
+            return { byHrid, byEnhancedKey };
+        }
+
+        for (const item of inventory) {
+            if (item.itemLocationHrid !== '/item_locations/inventory') {
+                continue;
+            }
+
+            const count = item.count || 0;
+            if (!count) {
+                continue;
+            }
+
+            byHrid[item.itemHrid] = (byHrid[item.itemHrid] || 0) + count;
+
+            const enhancementLevel = item.enhancementLevel || 0;
+            const enhancedKey = `${item.itemHrid}::${enhancementLevel}`;
+            byEnhancedKey[enhancedKey] = (byEnhancedKey[enhancedKey] || 0) + count;
+        }
+
+        return { byHrid, byEnhancedKey };
+    }
+
+    /**
      * Calculate maximum actions possible based on inventory materials
      * @param {Object} actionDetails - Action detail object
-     * @param {Array} inventory - Character inventory items
+     * @param {Object|Array} inventoryLookup - Inventory lookup maps or raw inventory array
      * @param {number} artisanBonus - Artisan material reduction (0-1 decimal)
      * @param {Object} actionObj - Character action object (for primaryItemHash)
      * @returns {number|null} Max actions possible, or null if unlimited/no materials required
      */
-    calculateMaterialLimit(actionDetails, inventory, artisanBonus, actionObj = null) {
-        if (!actionDetails || !inventory) {
+    calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj = null) {
+        if (!actionDetails || !inventoryLookup) {
             return null;
         }
 
         // Materials are consumed per queued action. Efficiency only affects time, not materials.
+
+        const lookup = Array.isArray(inventoryLookup) ? this.buildInventoryLookup(inventoryLookup) : inventoryLookup;
+        const byHrid = lookup?.byHrid || {};
+        const byEnhancedKey = lookup?.byEnhancedKey || {};
 
         // Check for primaryItemHash (ONLY for Alchemy actions: Coinify, Decompose, Transmute)
         // Crafting actions also have primaryItemHash but should use the standard input/upgrade logic
@@ -751,15 +789,8 @@ class ActionTimeDisplay {
                 const itemHrid = parts[2]; // Extract item HRID
                 const enhancementLevel = parts.length >= 4 ? parseInt(parts[3]) : 0;
 
-                // Find item in inventory
-                const inventoryItem = inventory.find(
-                    (item) =>
-                        item.itemHrid === itemHrid &&
-                        item.itemLocationHrid === '/item_locations/inventory' &&
-                        (item.enhancementLevel || 0) === enhancementLevel
-                );
-
-                const availableCount = inventoryItem?.count || 0;
+                const enhancedKey = `${itemHrid}::${enhancementLevel}`;
+                const availableCount = byEnhancedKey[enhancedKey] || 0;
 
                 // Get bulk multiplier from item details (how many items per action)
                 const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -785,13 +816,7 @@ class ActionTimeDisplay {
         // Check input items (affected by Artisan Tea)
         if (hasInputItems) {
             for (const inputItem of actionDetails.inputItems) {
-                // Find item in inventory
-                const inventoryItem = inventory.find(
-                    (item) =>
-                        item.itemHrid === inputItem.itemHrid && item.itemLocationHrid === '/item_locations/inventory'
-                );
-
-                const availableCount = inventoryItem?.count || 0;
+                const availableCount = byHrid[inputItem.itemHrid] || 0;
 
                 // Apply Artisan reduction to required materials
                 const requiredPerAction = inputItem.count * (1 - artisanBonus);
@@ -805,11 +830,7 @@ class ActionTimeDisplay {
 
         // Check upgrade item (NOT affected by Artisan Tea)
         if (hasUpgradeItem) {
-            const inventoryItem = inventory.find(
-                (item) => item.itemHrid === hasUpgradeItem && item.itemLocationHrid === '/item_locations/inventory'
-            );
-
-            const availableCount = inventoryItem?.count || 0;
+            const availableCount = byHrid[hasUpgradeItem] || 0;
 
             // Upgrade items are consumed per queued action
             minLimit = Math.min(minLimit, availableCount);
@@ -915,6 +936,8 @@ class ActionTimeDisplay {
                 return;
             }
 
+            const inventoryLookup = this.buildInventoryLookup(dataManager.getInventory());
+
             // Clear all existing time and profit displays to prevent duplicates
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
             queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
@@ -993,7 +1016,6 @@ class ActionTimeDisplay {
 
                     if (isInfinite) {
                         // Check for material limit on infinite actions
-                        const inventory = dataManager.getInventory();
                         const equipment = dataManager.getEquipment();
                         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
                         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
@@ -1006,7 +1028,7 @@ class ActionTimeDisplay {
                             const { actionTime, totalEfficiency } = timeData;
                             const materialLimit = this.calculateMaterialLimit(
                                 actionDetails,
-                                inventory,
+                                inventoryLookup,
                                 artisanBonus,
                                 currentAction
                             );
@@ -1100,14 +1122,18 @@ class ActionTimeDisplay {
                 // Calculate material limit for infinite actions
                 let materialLimit = null;
                 if (isInfinite) {
-                    const inventory = dataManager.getInventory();
                     const equipment = dataManager.getEquipment();
                     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
                     const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
                     const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
                     const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
-                    materialLimit = this.calculateMaterialLimit(actionDetails, inventory, artisanBonus, actionObj);
+                    materialLimit = this.calculateMaterialLimit(
+                        actionDetails,
+                        inventoryLookup,
+                        artisanBonus,
+                        actionObj
+                    );
                 }
 
                 // Determine if truly infinite (no material limit)
