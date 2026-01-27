@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha
 // @namespace    http://tampermonkey.net/
-// @version      0.5.26
+// @version      0.5.27
 // @downloadURL  https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.user.js
 // @updateURL    https://greasyfork.org/scripts/562662-toolasha/code/Toolasha.meta.js
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
@@ -3656,7 +3656,7 @@
             this.API_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
 
             // Cache settings
-            this.CACHE_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
+            this.CACHE_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds
             this.CACHE_KEY_DATA = 'MWITools_marketAPI_json';
             this.CACHE_KEY_TIMESTAMP = 'MWITools_marketAPI_timestamp';
 
@@ -44418,7 +44418,7 @@
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
         targetWindow.Toolasha = {
-            version: '0.5.26',
+            version: '0.5.27',
 
             // Feature toggle API (for users to manage settings via console)
             features: {
