@@ -14,6 +14,7 @@ import webSocketHook from '../../core/websocket.js';
 import marketAPI from '../../api/marketplace.js';
 import estimatedListingAge from './estimated-listing-age.js';
 import { coinFormatter, formatRelativeTime } from '../../utils/formatters.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 class ListingPriceDisplay {
     constructor() {
@@ -713,9 +714,9 @@ class ListingPriceDisplay {
             }
         } else {
             // For active listings, calculate remaining value
-            // Calculate tax (0.82 for cowbells, 0.98 for others, 1.0 for buy orders)
-            const tax = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.82 : 0.98) : 1.0;
-            totalPrice = (orderQuantity - filledQuantity) * Math.floor(price * tax);
+            // Calculate tax rate (0.18 for cowbells, 0.02 for others, 0.0 for buy orders)
+            const taxRate = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02) : 0;
+            totalPrice = (orderQuantity - filledQuantity) * Math.floor(calculatePriceAfterTax(price, taxRate));
         }
 
         // Format and color code

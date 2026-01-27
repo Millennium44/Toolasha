@@ -5150,449 +5150,6 @@
     }
 
     /**
-     * Expected Value Calculator Module
-     * Calculates expected value for openable containers
-     */
-
-
-    /**
-     * ExpectedValueCalculator class handles EV calculations for openable containers
-     */
-    class ExpectedValueCalculator {
-        constructor() {
-            // Constants
-            this.MARKET_TAX = 0.02; // 2% marketplace tax
-            this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
-
-            // Cache for container EVs
-            this.containerCache = new Map();
-
-            // Special item HRIDs
-            this.COIN_HRID = '/items/coin';
-            this.COWBELL_HRID = '/items/cowbell';
-            this.COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
-
-            // Dungeon token HRIDs
-            this.DUNGEON_TOKENS = [
-                '/items/chimerical_token',
-                '/items/sinister_token',
-                '/items/enchanted_token',
-                '/items/pirate_token',
-            ];
-
-            // Flag to track if initialized
-            this.isInitialized = false;
-
-            // Retry handler reference for cleanup
-            this.retryHandler = null;
-        }
-
-        /**
-         * Initialize the calculator
-         * Pre-calculates all openable containers with nested convergence
-         */
-        async initialize() {
-            if (!dataManager.getInitClientData()) {
-                // Init data not yet available - set up retry on next character update
-                if (!this.retryHandler) {
-                    this.retryHandler = () => {
-                        this.initialize(); // Retry initialization
-                    };
-                    dataManager.on('character_initialized', this.retryHandler);
-                }
-                return false;
-            }
-
-            // Data is available - remove retry handler if it exists
-            if (this.retryHandler) {
-                dataManager.off('character_initialized', this.retryHandler);
-                this.retryHandler = null;
-            }
-
-            // Wait for market data to load
-            if (!marketAPI.isLoaded()) {
-                await marketAPI.fetch(true); // Force fresh fetch on init
-            }
-
-            // Calculate all containers with 4-iteration convergence for nesting
-            this.calculateNestedContainers();
-
-            this.isInitialized = true;
-
-            // Notify listeners that calculator is ready
-            dataManager.emit('expected_value_initialized', { timestamp: Date.now() });
-
-            return true;
-        }
-
-        /**
-         * Calculate all containers with nested convergence
-         * Iterates 4 times to resolve nested container values
-         */
-        calculateNestedContainers() {
-            const initData = dataManager.getInitClientData();
-            if (!initData || !initData.openableLootDropMap) {
-                return;
-            }
-
-            // Get all openable container HRIDs
-            const containerHrids = Object.keys(initData.openableLootDropMap);
-
-            // Iterate 4 times for convergence (handles nesting depth)
-            for (let iteration = 0; iteration < this.CONVERGENCE_ITERATIONS; iteration++) {
-                for (const containerHrid of containerHrids) {
-                    // Calculate and cache EV for this container (pass cached initData)
-                    const ev = this.calculateSingleContainer(containerHrid, initData);
-                    if (ev !== null) {
-                        this.containerCache.set(containerHrid, ev);
-                    }
-                }
-            }
-        }
-
-        /**
-         * Calculate expected value for a single container
-         * @param {string} containerHrid - Container item HRID
-         * @param {Object} initData - Cached game data (optional, will fetch if not provided)
-         * @returns {number|null} Expected value or null if unavailable
-         */
-        calculateSingleContainer(containerHrid, initData = null) {
-            // Use cached data if provided, otherwise fetch
-            if (!initData) {
-                initData = dataManager.getInitClientData();
-            }
-            if (!initData || !initData.openableLootDropMap) {
-                return null;
-            }
-
-            // Get drop table for this container
-            const dropTable = initData.openableLootDropMap[containerHrid];
-            if (!dropTable || dropTable.length === 0) {
-                return null;
-            }
-
-            let totalExpectedValue = 0;
-
-            // Calculate expected value for each drop
-            for (const drop of dropTable) {
-                const itemHrid = drop.itemHrid;
-                const dropRate = drop.dropRate || 0;
-                const minCount = drop.minCount || 0;
-                const maxCount = drop.maxCount || 0;
-
-                // Skip invalid drops
-                if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) {
-                    continue;
-                }
-
-                // Calculate average drop count
-                const avgCount = (minCount + maxCount) / 2;
-
-                // Get price for this drop
-                const price = this.getDropPrice(itemHrid);
-
-                if (price === null) {
-                    continue; // Skip drops with missing data
-                }
-
-                // Check if item is tradeable (for tax calculation)
-                const itemDetails = dataManager.getItemDetails(itemHrid);
-                const canBeSold = itemDetails?.tradeable !== false;
-                const taxFactor = canBeSold ? 1 - this.MARKET_TAX : 1.0;
-
-                // Calculate expected value: avgCount × dropRate × price × taxFactor
-                const dropValue = avgCount * dropRate * price * taxFactor;
-                totalExpectedValue += dropValue;
-            }
-
-            return totalExpectedValue;
-        }
-
-        /**
-         * Get price for a drop item
-         * Handles special cases (Coin, Cowbell, Dungeon Tokens, nested containers)
-         * @param {string} itemHrid - Item HRID
-         * @returns {number|null} Price or null if unavailable
-         */
-        getDropPrice(itemHrid) {
-            // Special case: Coin (face value = 1)
-            if (itemHrid === this.COIN_HRID) {
-                return 1;
-            }
-
-            // Special case: Cowbell (use bag price ÷ 10, with 18% tax)
-            if (itemHrid === this.COWBELL_HRID) {
-                // Get Cowbell Bag price using profit context (sell side - you're selling the bag)
-                const bagValue = getItemPrice(this.COWBELL_BAG_HRID, { context: 'profit', side: 'sell' }) || 0;
-
-                if (bagValue > 0) {
-                    // Apply 18% market tax (Cowbell Bag only), then divide by 10
-                    return (bagValue * 0.82) / 10;
-                }
-                return null; // No bag price available
-            }
-
-            // Special case: Dungeon Tokens (calculate value from shop items)
-            if (this.DUNGEON_TOKENS.includes(itemHrid)) {
-                return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', 'expectedValue_respectPricingMode');
-            }
-
-            // Check if this is a nested container (use cached EV)
-            if (this.containerCache.has(itemHrid)) {
-                return this.containerCache.get(itemHrid);
-            }
-
-            // Regular market item - get price based on pricing mode (sell side - you're selling drops)
-            const dropPrice = getItemPrice(itemHrid, { enhancementLevel: 0, context: 'profit', side: 'sell' });
-            return dropPrice > 0 ? dropPrice : null;
-        }
-
-        /**
-         * Calculate expected value for an openable container
-         * @param {string} itemHrid - Container item HRID
-         * @returns {Object|null} EV data or null
-         */
-        calculateExpectedValue(itemHrid) {
-            if (!this.isInitialized) {
-                console.warn('[ExpectedValueCalculator] Not initialized');
-                return null;
-            }
-
-            // Get item details
-            const itemDetails = dataManager.getItemDetails(itemHrid);
-            if (!itemDetails) {
-                return null;
-            }
-
-            // Verify this is an openable container
-            if (!itemDetails.isOpenable) {
-                return null; // Not an openable container
-            }
-
-            // Get detailed drop breakdown (calculates with fresh market prices)
-            const drops = this.getDropBreakdown(itemHrid);
-
-            // Calculate total expected value from fresh drop data
-            const expectedReturn = drops.reduce((sum, drop) => sum + drop.expectedValue, 0);
-
-            return {
-                itemName: itemDetails.name,
-                itemHrid,
-                expectedValue: expectedReturn,
-                drops,
-            };
-        }
-
-        /**
-         * Get cached expected value for a container (for use by other modules)
-         * @param {string} itemHrid - Container item HRID
-         * @returns {number|null} Cached EV or null
-         */
-        getCachedValue(itemHrid) {
-            return this.containerCache.get(itemHrid) || null;
-        }
-
-        /**
-         * Get detailed drop breakdown for display
-         * @param {string} containerHrid - Container HRID
-         * @returns {Array} Array of drop objects
-         */
-        getDropBreakdown(containerHrid) {
-            const initData = dataManager.getInitClientData();
-            if (!initData || !initData.openableLootDropMap) {
-                return [];
-            }
-
-            const dropTable = initData.openableLootDropMap[containerHrid];
-            if (!dropTable) {
-                return [];
-            }
-
-            const drops = [];
-
-            for (const drop of dropTable) {
-                const itemHrid = drop.itemHrid;
-                const dropRate = drop.dropRate || 0;
-                const minCount = drop.minCount || 0;
-                const maxCount = drop.maxCount || 0;
-
-                if (dropRate <= 0) {
-                    continue;
-                }
-
-                // Get item details
-                const itemDetails = dataManager.getItemDetails(itemHrid);
-                if (!itemDetails) {
-                    continue;
-                }
-
-                // Calculate average count
-                const avgCount = (minCount + maxCount) / 2;
-
-                // Get price
-                const price = this.getDropPrice(itemHrid);
-
-                // Calculate expected value for this drop
-                const itemCanBeSold = itemDetails.tradeable !== false;
-                const taxFactor = itemCanBeSold ? 1 - this.MARKET_TAX : 1.0;
-                const dropValue = price !== null ? avgCount * dropRate * price * taxFactor : 0;
-
-                drops.push({
-                    itemHrid,
-                    itemName: itemDetails.name,
-                    dropRate,
-                    avgCount,
-                    priceEach: price || 0,
-                    expectedValue: dropValue,
-                    hasPriceData: price !== null,
-                });
-            }
-
-            // Sort by expected value (highest first)
-            drops.sort((a, b) => b.expectedValue - a.expectedValue);
-
-            return drops;
-        }
-
-        /**
-         * Invalidate cache (call when market data refreshes)
-         */
-        invalidateCache() {
-            this.containerCache.clear();
-            this.isInitialized = false;
-
-            // Re-initialize if data is available
-            if (dataManager.getInitClientData() && marketAPI.isLoaded()) {
-                this.initialize();
-            }
-        }
-    }
-
-    // Create and export singleton instance
-    const expectedValueCalculator = new ExpectedValueCalculator();
-
-    /**
-     * Bonus Revenue Calculator Utility
-     * Calculates revenue from essence and rare find drops
-     * Shared by both gathering and production profit calculators
-     */
-
-
-    /**
-     * Calculate bonus revenue from essence and rare find drops
-     * @param {Object} actionDetails - Action details from game data
-     * @param {number} actionsPerHour - Base actions per hour (efficiency not applied)
-     * @param {Map} characterEquipment - Equipment map
-     * @param {Object} itemDetailMap - Item details map
-     * @returns {Object} Bonus revenue data with essence and rare find drops
-     */
-    function calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap) {
-        // Get Essence Find bonus from equipment
-        const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap);
-
-        // Get Rare Find bonus from BOTH equipment and house rooms
-        const equipmentRareFindBonus = parseRareFindBonus(characterEquipment, actionDetails.type, itemDetailMap);
-        const houseRareFindBonus = calculateHouseRareFind();
-        const rareFindBonus = equipmentRareFindBonus + houseRareFindBonus;
-
-        const bonusDrops = [];
-        let totalBonusRevenue = 0;
-
-        // Process essence drops
-        if (actionDetails.essenceDropTable && actionDetails.essenceDropTable.length > 0) {
-            for (const drop of actionDetails.essenceDropTable) {
-                const itemDetails = itemDetailMap[drop.itemHrid];
-                if (!itemDetails) continue;
-
-                // Calculate average drop count
-                const avgCount = (drop.minCount + drop.maxCount) / 2;
-
-                // Apply Essence Find multiplier to drop rate
-                const finalDropRate = drop.dropRate * (1 + essenceFindBonus / 100);
-
-                // Expected drops per hour
-                const dropsPerHour = actionsPerHour * finalDropRate * avgCount;
-
-                // Get price: Check if openable container (use EV), otherwise market price
-                let itemPrice = 0;
-                if (itemDetails.isOpenable) {
-                    // Use expected value for openable containers
-                    itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
-                } else {
-                    // Use market price for regular items
-                    const price = marketAPI.getPrice(drop.itemHrid, 0);
-                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
-                }
-
-                // Revenue per hour from this drop
-                const revenuePerHour = dropsPerHour * itemPrice;
-
-                bonusDrops.push({
-                    itemHrid: drop.itemHrid,
-                    itemName: itemDetails.name,
-                    dropRate: finalDropRate,
-                    dropsPerHour,
-                    priceEach: itemPrice,
-                    revenuePerHour,
-                    type: 'essence',
-                });
-
-                totalBonusRevenue += revenuePerHour;
-            }
-        }
-
-        // Process rare find drops
-        if (actionDetails.rareDropTable && actionDetails.rareDropTable.length > 0) {
-            for (const drop of actionDetails.rareDropTable) {
-                const itemDetails = itemDetailMap[drop.itemHrid];
-                if (!itemDetails) continue;
-
-                // Calculate average drop count
-                const avgCount = (drop.minCount + drop.maxCount) / 2;
-
-                // Apply Rare Find multiplier to drop rate
-                const finalDropRate = drop.dropRate * (1 + rareFindBonus / 100);
-
-                // Expected drops per hour
-                const dropsPerHour = actionsPerHour * finalDropRate * avgCount;
-
-                // Get price: Check if openable container (use EV), otherwise market price
-                let itemPrice = 0;
-                if (itemDetails.isOpenable) {
-                    // Use expected value for openable containers
-                    itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
-                } else {
-                    // Use market price for regular items
-                    const price = marketAPI.getPrice(drop.itemHrid, 0);
-                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
-                }
-
-                // Revenue per hour from this drop
-                const revenuePerHour = dropsPerHour * itemPrice;
-
-                bonusDrops.push({
-                    itemHrid: drop.itemHrid,
-                    itemName: itemDetails.name,
-                    dropRate: finalDropRate,
-                    dropsPerHour,
-                    priceEach: itemPrice,
-                    revenuePerHour,
-                    type: 'rare_find',
-                });
-
-                totalBonusRevenue += revenuePerHour;
-            }
-        }
-
-        return {
-            essenceFindBonus, // Essence Find % from equipment
-            rareFindBonus, // Rare Find % from equipment + house rooms (combined)
-            bonusDrops, // Array of all bonus drops with details
-            totalBonusRevenue, // Total revenue/hour from all bonus drops
-        };
-    }
-
-    /**
      * Profit Calculation Constants
      * Shared constants used across profit calculators
      */
@@ -5771,13 +5328,14 @@
     /**
      * Calculate price after marketplace tax
      * @param {number} price - Price before tax
-     * @returns {number} Price after 2% tax deduction
+     * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.02 for 2%)
+     * @returns {number} Price after tax deduction
      *
      * @example
      * calculatePriceAfterTax(100) // Returns 98
      */
-    function calculatePriceAfterTax(price) {
-        return price * (1 - MARKET_TAX);
+    function calculatePriceAfterTax(price, taxRate = MARKET_TAX) {
+        return price * (1 - taxRate);
     }
 
     // ============ Composite Calculations ============
@@ -5833,6 +5391,452 @@
             actionsPerHour,
             actionCount,
             valueMode,
+        };
+    }
+
+    /**
+     * Expected Value Calculator Module
+     * Calculates expected value for openable containers
+     */
+
+
+    /**
+     * ExpectedValueCalculator class handles EV calculations for openable containers
+     */
+    class ExpectedValueCalculator {
+        constructor() {
+            // Constants
+            this.MARKET_TAX = 0.02; // 2% marketplace tax
+            this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
+
+            // Cache for container EVs
+            this.containerCache = new Map();
+
+            // Special item HRIDs
+            this.COIN_HRID = '/items/coin';
+            this.COWBELL_HRID = '/items/cowbell';
+            this.COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
+
+            // Dungeon token HRIDs
+            this.DUNGEON_TOKENS = [
+                '/items/chimerical_token',
+                '/items/sinister_token',
+                '/items/enchanted_token',
+                '/items/pirate_token',
+            ];
+
+            // Flag to track if initialized
+            this.isInitialized = false;
+
+            // Retry handler reference for cleanup
+            this.retryHandler = null;
+        }
+
+        /**
+         * Initialize the calculator
+         * Pre-calculates all openable containers with nested convergence
+         */
+        async initialize() {
+            if (!dataManager.getInitClientData()) {
+                // Init data not yet available - set up retry on next character update
+                if (!this.retryHandler) {
+                    this.retryHandler = () => {
+                        this.initialize(); // Retry initialization
+                    };
+                    dataManager.on('character_initialized', this.retryHandler);
+                }
+                return false;
+            }
+
+            // Data is available - remove retry handler if it exists
+            if (this.retryHandler) {
+                dataManager.off('character_initialized', this.retryHandler);
+                this.retryHandler = null;
+            }
+
+            // Wait for market data to load
+            if (!marketAPI.isLoaded()) {
+                await marketAPI.fetch(true); // Force fresh fetch on init
+            }
+
+            // Calculate all containers with 4-iteration convergence for nesting
+            this.calculateNestedContainers();
+
+            this.isInitialized = true;
+
+            // Notify listeners that calculator is ready
+            dataManager.emit('expected_value_initialized', { timestamp: Date.now() });
+
+            return true;
+        }
+
+        /**
+         * Calculate all containers with nested convergence
+         * Iterates 4 times to resolve nested container values
+         */
+        calculateNestedContainers() {
+            const initData = dataManager.getInitClientData();
+            if (!initData || !initData.openableLootDropMap) {
+                return;
+            }
+
+            // Get all openable container HRIDs
+            const containerHrids = Object.keys(initData.openableLootDropMap);
+
+            // Iterate 4 times for convergence (handles nesting depth)
+            for (let iteration = 0; iteration < this.CONVERGENCE_ITERATIONS; iteration++) {
+                for (const containerHrid of containerHrids) {
+                    // Calculate and cache EV for this container (pass cached initData)
+                    const ev = this.calculateSingleContainer(containerHrid, initData);
+                    if (ev !== null) {
+                        this.containerCache.set(containerHrid, ev);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Calculate expected value for a single container
+         * @param {string} containerHrid - Container item HRID
+         * @param {Object} initData - Cached game data (optional, will fetch if not provided)
+         * @returns {number|null} Expected value or null if unavailable
+         */
+        calculateSingleContainer(containerHrid, initData = null) {
+            // Use cached data if provided, otherwise fetch
+            if (!initData) {
+                initData = dataManager.getInitClientData();
+            }
+            if (!initData || !initData.openableLootDropMap) {
+                return null;
+            }
+
+            // Get drop table for this container
+            const dropTable = initData.openableLootDropMap[containerHrid];
+            if (!dropTable || dropTable.length === 0) {
+                return null;
+            }
+
+            let totalExpectedValue = 0;
+
+            // Calculate expected value for each drop
+            for (const drop of dropTable) {
+                const itemHrid = drop.itemHrid;
+                const dropRate = drop.dropRate || 0;
+                const minCount = drop.minCount || 0;
+                const maxCount = drop.maxCount || 0;
+
+                // Skip invalid drops
+                if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) {
+                    continue;
+                }
+
+                // Calculate average drop count
+                const avgCount = (minCount + maxCount) / 2;
+
+                // Get price for this drop
+                const price = this.getDropPrice(itemHrid);
+
+                if (price === null) {
+                    continue; // Skip drops with missing data
+                }
+
+                // Check if item is tradeable (for tax calculation)
+                const itemDetails = dataManager.getItemDetails(itemHrid);
+                const canBeSold = itemDetails?.tradeable !== false;
+                const dropValue = canBeSold
+                    ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                    : avgCount * dropRate * price;
+                totalExpectedValue += dropValue;
+            }
+
+            return totalExpectedValue;
+        }
+
+        /**
+         * Get price for a drop item
+         * Handles special cases (Coin, Cowbell, Dungeon Tokens, nested containers)
+         * @param {string} itemHrid - Item HRID
+         * @returns {number|null} Price or null if unavailable
+         */
+        getDropPrice(itemHrid) {
+            // Special case: Coin (face value = 1)
+            if (itemHrid === this.COIN_HRID) {
+                return 1;
+            }
+
+            // Special case: Cowbell (use bag price ÷ 10, with 18% tax)
+            if (itemHrid === this.COWBELL_HRID) {
+                // Get Cowbell Bag price using profit context (sell side - you're selling the bag)
+                const bagValue = getItemPrice(this.COWBELL_BAG_HRID, { context: 'profit', side: 'sell' }) || 0;
+
+                if (bagValue > 0) {
+                    // Apply 18% market tax (Cowbell Bag only), then divide by 10
+                    return calculatePriceAfterTax(bagValue, 0.18) / 10;
+                }
+                return null; // No bag price available
+            }
+
+            // Special case: Dungeon Tokens (calculate value from shop items)
+            if (this.DUNGEON_TOKENS.includes(itemHrid)) {
+                return calculateDungeonTokenValue(itemHrid, 'profitCalc_pricingMode', 'expectedValue_respectPricingMode');
+            }
+
+            // Check if this is a nested container (use cached EV)
+            if (this.containerCache.has(itemHrid)) {
+                return this.containerCache.get(itemHrid);
+            }
+
+            // Regular market item - get price based on pricing mode (sell side - you're selling drops)
+            const dropPrice = getItemPrice(itemHrid, { enhancementLevel: 0, context: 'profit', side: 'sell' });
+            return dropPrice > 0 ? dropPrice : null;
+        }
+
+        /**
+         * Calculate expected value for an openable container
+         * @param {string} itemHrid - Container item HRID
+         * @returns {Object|null} EV data or null
+         */
+        calculateExpectedValue(itemHrid) {
+            if (!this.isInitialized) {
+                console.warn('[ExpectedValueCalculator] Not initialized');
+                return null;
+            }
+
+            // Get item details
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            if (!itemDetails) {
+                return null;
+            }
+
+            // Verify this is an openable container
+            if (!itemDetails.isOpenable) {
+                return null; // Not an openable container
+            }
+
+            // Get detailed drop breakdown (calculates with fresh market prices)
+            const drops = this.getDropBreakdown(itemHrid);
+
+            // Calculate total expected value from fresh drop data
+            const expectedReturn = drops.reduce((sum, drop) => sum + drop.expectedValue, 0);
+
+            return {
+                itemName: itemDetails.name,
+                itemHrid,
+                expectedValue: expectedReturn,
+                drops,
+            };
+        }
+
+        /**
+         * Get cached expected value for a container (for use by other modules)
+         * @param {string} itemHrid - Container item HRID
+         * @returns {number|null} Cached EV or null
+         */
+        getCachedValue(itemHrid) {
+            return this.containerCache.get(itemHrid) || null;
+        }
+
+        /**
+         * Get detailed drop breakdown for display
+         * @param {string} containerHrid - Container HRID
+         * @returns {Array} Array of drop objects
+         */
+        getDropBreakdown(containerHrid) {
+            const initData = dataManager.getInitClientData();
+            if (!initData || !initData.openableLootDropMap) {
+                return [];
+            }
+
+            const dropTable = initData.openableLootDropMap[containerHrid];
+            if (!dropTable) {
+                return [];
+            }
+
+            const drops = [];
+
+            for (const drop of dropTable) {
+                const itemHrid = drop.itemHrid;
+                const dropRate = drop.dropRate || 0;
+                const minCount = drop.minCount || 0;
+                const maxCount = drop.maxCount || 0;
+
+                if (dropRate <= 0) {
+                    continue;
+                }
+
+                // Get item details
+                const itemDetails = dataManager.getItemDetails(itemHrid);
+                if (!itemDetails) {
+                    continue;
+                }
+
+                // Calculate average count
+                const avgCount = (minCount + maxCount) / 2;
+
+                // Get price
+                const price = this.getDropPrice(itemHrid);
+
+                // Calculate expected value for this drop
+                const itemCanBeSold = itemDetails.tradeable !== false;
+                const dropValue =
+                    price !== null
+                        ? itemCanBeSold
+                            ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                            : avgCount * dropRate * price
+                        : 0;
+
+                drops.push({
+                    itemHrid,
+                    itemName: itemDetails.name,
+                    dropRate,
+                    avgCount,
+                    priceEach: price || 0,
+                    expectedValue: dropValue,
+                    hasPriceData: price !== null,
+                });
+            }
+
+            // Sort by expected value (highest first)
+            drops.sort((a, b) => b.expectedValue - a.expectedValue);
+
+            return drops;
+        }
+
+        /**
+         * Invalidate cache (call when market data refreshes)
+         */
+        invalidateCache() {
+            this.containerCache.clear();
+            this.isInitialized = false;
+
+            // Re-initialize if data is available
+            if (dataManager.getInitClientData() && marketAPI.isLoaded()) {
+                this.initialize();
+            }
+        }
+    }
+
+    // Create and export singleton instance
+    const expectedValueCalculator = new ExpectedValueCalculator();
+
+    /**
+     * Bonus Revenue Calculator Utility
+     * Calculates revenue from essence and rare find drops
+     * Shared by both gathering and production profit calculators
+     */
+
+
+    /**
+     * Calculate bonus revenue from essence and rare find drops
+     * @param {Object} actionDetails - Action details from game data
+     * @param {number} actionsPerHour - Base actions per hour (efficiency not applied)
+     * @param {Map} characterEquipment - Equipment map
+     * @param {Object} itemDetailMap - Item details map
+     * @returns {Object} Bonus revenue data with essence and rare find drops
+     */
+    function calculateBonusRevenue(actionDetails, actionsPerHour, characterEquipment, itemDetailMap) {
+        // Get Essence Find bonus from equipment
+        const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap);
+
+        // Get Rare Find bonus from BOTH equipment and house rooms
+        const equipmentRareFindBonus = parseRareFindBonus(characterEquipment, actionDetails.type, itemDetailMap);
+        const houseRareFindBonus = calculateHouseRareFind();
+        const rareFindBonus = equipmentRareFindBonus + houseRareFindBonus;
+
+        const bonusDrops = [];
+        let totalBonusRevenue = 0;
+
+        // Process essence drops
+        if (actionDetails.essenceDropTable && actionDetails.essenceDropTable.length > 0) {
+            for (const drop of actionDetails.essenceDropTable) {
+                const itemDetails = itemDetailMap[drop.itemHrid];
+                if (!itemDetails) continue;
+
+                // Calculate average drop count
+                const avgCount = (drop.minCount + drop.maxCount) / 2;
+
+                // Apply Essence Find multiplier to drop rate
+                const finalDropRate = drop.dropRate * (1 + essenceFindBonus / 100);
+
+                // Expected drops per hour
+                const dropsPerHour = actionsPerHour * finalDropRate * avgCount;
+
+                // Get price: Check if openable container (use EV), otherwise market price
+                let itemPrice = 0;
+                if (itemDetails.isOpenable) {
+                    // Use expected value for openable containers
+                    itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
+                } else {
+                    // Use market price for regular items
+                    const price = marketAPI.getPrice(drop.itemHrid, 0);
+                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                }
+
+                // Revenue per hour from this drop
+                const revenuePerHour = dropsPerHour * itemPrice;
+
+                bonusDrops.push({
+                    itemHrid: drop.itemHrid,
+                    itemName: itemDetails.name,
+                    dropRate: finalDropRate,
+                    dropsPerHour,
+                    priceEach: itemPrice,
+                    revenuePerHour,
+                    type: 'essence',
+                });
+
+                totalBonusRevenue += revenuePerHour;
+            }
+        }
+
+        // Process rare find drops
+        if (actionDetails.rareDropTable && actionDetails.rareDropTable.length > 0) {
+            for (const drop of actionDetails.rareDropTable) {
+                const itemDetails = itemDetailMap[drop.itemHrid];
+                if (!itemDetails) continue;
+
+                // Calculate average drop count
+                const avgCount = (drop.minCount + drop.maxCount) / 2;
+
+                // Apply Rare Find multiplier to drop rate
+                const finalDropRate = drop.dropRate * (1 + rareFindBonus / 100);
+
+                // Expected drops per hour
+                const dropsPerHour = actionsPerHour * finalDropRate * avgCount;
+
+                // Get price: Check if openable container (use EV), otherwise market price
+                let itemPrice = 0;
+                if (itemDetails.isOpenable) {
+                    // Use expected value for openable containers
+                    itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
+                } else {
+                    // Use market price for regular items
+                    const price = marketAPI.getPrice(drop.itemHrid, 0);
+                    itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                }
+
+                // Revenue per hour from this drop
+                const revenuePerHour = dropsPerHour * itemPrice;
+
+                bonusDrops.push({
+                    itemHrid: drop.itemHrid,
+                    itemName: itemDetails.name,
+                    dropRate: finalDropRate,
+                    dropsPerHour,
+                    priceEach: itemPrice,
+                    revenuePerHour,
+                    type: 'rare_find',
+                });
+
+                totalBonusRevenue += revenuePerHour;
+            }
+        }
+
+        return {
+            essenceFindBonus, // Essence Find % from equipment
+            rareFindBonus, // Rare Find % from equipment + house rooms (combined)
+            bonusDrops, // Array of all bonus drops with details
+            totalBonusRevenue, // Total revenue/hour from all bonus drops
         };
     }
 
@@ -5999,7 +6003,7 @@
             const timeBreakdown = this.calculateTimeBreakdown(baseTime, equipmentSpeedBonus);
 
             // Actions per hour (base rate without efficiency)
-            const actionsPerHour = 3600 / actionTime;
+            const actionsPerHour = calculateActionsPerHour(actionTime);
 
             // Get output amount (how many items per action)
             // Use 'count' field from action output
@@ -6273,7 +6277,7 @@
                     baseTime: baseTime,
                     steps: steps,
                     finalTime: finalTime,
-                    actionsPerHour: 3600 / finalTime,
+                    actionsPerHour: calculateActionsPerHour(finalTime),
                 };
             }
 
@@ -6282,7 +6286,7 @@
                 baseTime: baseTime,
                 steps: [],
                 finalTime: baseTime,
-                actionsPerHour: 3600 / baseTime,
+                actionsPerHour: calculateActionsPerHour(baseTime),
             };
         }
 
@@ -11995,9 +11999,9 @@
                 }
             } else {
                 // For active listings, calculate remaining value
-                // Calculate tax (0.82 for cowbells, 0.98 for others, 1.0 for buy orders)
-                const tax = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.82 : 0.98) : 1.0;
-                totalPrice = (orderQuantity - filledQuantity) * Math.floor(price * tax);
+                // Calculate tax rate (0.18 for cowbells, 0.02 for others, 0.0 for buy orders)
+                const taxRate = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02) : 0;
+                totalPrice = (orderQuantity - filledQuantity) * Math.floor(calculatePriceAfterTax(price, taxRate));
             }
 
             // Format and color code
@@ -17793,7 +17797,7 @@
         const { actionTime, totalEfficiency } = stats;
 
         // Calculate actions per hour (base rate)
-        const baseActionsPerHour = 3600 / actionTime;
+        const baseActionsPerHour = calculateActionsPerHour(actionTime);
 
         // Calculate average actions per attempt from efficiency
         // Efficiency gives guaranteed repeats + chance for extra
@@ -17979,10 +17983,10 @@
                     speedLines.push(`Base: ${baseTime.toFixed(2)}s → ${timeAfterEquipment.toFixed(2)}s`);
                     if (speedBonus > 0) {
                         speedLines.push(
-                            `Speed: +${formatPercentage(speedBonus, 1)} | ${(3600 / timeAfterEquipment).toFixed(0)}/hr`
+                            `Speed: +${formatPercentage(speedBonus, 1)} | ${calculateActionsPerHour(timeAfterEquipment).toFixed(0)}/hr`
                         );
                     } else {
-                        speedLines.push(`${(3600 / timeAfterEquipment).toFixed(0)}/hr`);
+                        speedLines.push(`${calculateActionsPerHour(timeAfterEquipment).toFixed(0)}/hr`);
                     }
 
                     // Add speed breakdown
@@ -18017,7 +18021,7 @@
                             `<span style="font-weight: 500;">Task Speed (multiplicative): +${taskSpeedBonus.toFixed(1)}%</span>`
                         );
                         speedLines.push(
-                            `${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${(3600 / actionTime).toFixed(0)}/hr`
+                            `${timeAfterEquipment.toFixed(2)}s → ${actionTime.toFixed(2)}s | ${calculateActionsPerHour(actionTime).toFixed(0)}/hr`
                         );
 
                         // Find equipped task badge for details
@@ -18048,7 +18052,7 @@
                     // Add Efficiency breakdown
                     speedLines.push(''); // Empty line
                     speedLines.push(
-                        `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round((3600 / actionTime) * efficiencyMultiplier)}/hr)</span>`
+                        `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Efficiency: +${totalEfficiency.toFixed(1)}% → Output: ×${efficiencyMultiplier.toFixed(2)} (${Math.round(calculateActionsPerHour(actionTime) * efficiencyMultiplier)}/hr)</span>`
                     );
 
                     // Detailed efficiency breakdown
@@ -18169,7 +18173,9 @@
                     });
 
                     // Create initial summary for Action Speed & Time
-                    const actionsPerHourWithEfficiency = Math.round((3600 / actionTime) * efficiencyMultiplier);
+                    const actionsPerHourWithEfficiency = Math.round(
+                        calculateActionsPerHour(actionTime) * efficiencyMultiplier
+                    );
                     const initialSummary = `${actionsPerHourWithEfficiency}/hr | Total time: 0s`;
 
                     speedSection = createCollapsibleSection(
@@ -18835,7 +18841,8 @@
 
                 // Calculate rates using shared utility (includes efficiency)
                 const expData = calculateExpPerHour(actionDetails.hrid);
-                const xpPerHour = expData?.expPerHour || (actionsNeeded > 0 ? (3600 / actionTime) * modifiedXP : 0);
+                const xpPerHour =
+                    expData?.expPerHour || (actionsNeeded > 0 ? calculateActionsPerHour(actionTime) * modifiedXP : 0);
                 const xpPerDay = xpPerHour * 24;
 
                 // Calculate daily level progress
@@ -40270,7 +40277,7 @@
                     const priceData = marketAPI.getPrice(result.itemHrid, 0);
                     if (priceData) {
                         const price = priceType === 'ask' ? priceData.ask : priceData.bid;
-                        totalValue += price * result.amount * 0.98; // 2% market tax
+                        totalValue += calculatePriceAfterTax(price * result.amount); // 2% market tax
                     }
                 }
             }
@@ -40283,7 +40290,7 @@
             const essencePriceData = marketAPI.getPrice('/items/enhancing_essence', 0);
             if (essencePriceData) {
                 const essencePrice = priceType === 'ask' ? essencePriceData.ask : essencePriceData.bid;
-                totalValue += essencePrice * essenceAmount * 0.98; // 2% market tax
+                totalValue += calculatePriceAfterTax(essencePrice * essenceAmount); // 2% market tax
             }
 
             return totalValue;
@@ -40499,7 +40506,7 @@
 
                     // Apply market tax (2% fee)
                     if (drop.itemHrid !== '/items/coin') {
-                        income *= 0.98;
+                        income = calculatePriceAfterTax(income);
                     }
 
                     return sum + income;
@@ -40511,23 +40518,29 @@
                 // Calculate profit per second (accounting for efficiency)
                 const profitPerSecond = (netProfitPerAttempt * (1 + data.efficiency)) / data.actionTime;
 
+                const gameData = dataManager.getInitClientData();
+                const equipment = dataManager.getEquipment();
+                const drinkConcentration =
+                    gameData && equipment ? getDrinkConcentration(equipment, gameData.itemDetailMap) : 0;
+                const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
+
                 // Calculate tea cost per second
                 let teaCostPerSecond = 0;
-                if (data.consumables.length > 0 && data.teaDuration > 0) {
+                if (data.consumables.length > 0) {
                     const totalTeaCost = data.consumables.reduce((sum, consumable) => {
                         const price = buyType === 'ask' ? consumable.ask : consumable.bid;
                         return sum + price;
                     }, 0);
-                    teaCostPerSecond = totalTeaCost / data.teaDuration;
+                    teaCostPerSecond = (totalTeaCost * drinksPerHour) / SECONDS_PER_HOUR;
                 }
 
                 // Final profit accounting for tea costs
                 const finalProfitPerSecond = profitPerSecond - teaCostPerSecond;
                 const profitPerHour = finalProfitPerSecond * 3600;
-                const profitPerDay = finalProfitPerSecond * 86400;
+                const profitPerDay = calculateProfitPerDay(profitPerHour);
 
                 // Calculate actions per hour
-                const actionsPerHour = (3600 / data.actionTime) * (1 + data.efficiency);
+                const actionsPerHour = calculateActionsPerHour(data.actionTime) * (1 + data.efficiency);
 
                 // Build detailed requirement costs breakdown
                 const requirementCosts = data.requirements.map((req) => {
@@ -40586,7 +40599,8 @@
                     }
 
                     // Apply market tax for non-coin items
-                    const revenueAfterTax = drop.itemHrid !== '/items/coin' ? revenuePerAttempt * 0.98 : revenuePerAttempt;
+                    const revenueAfterTax =
+                        drop.itemHrid !== '/items/coin' ? calculatePriceAfterTax(revenuePerAttempt) : revenuePerAttempt;
                     const revenuePerHour = revenueAfterTax * actionsPerHour;
 
                     return {
@@ -40616,7 +40630,6 @@
                 // Build consumable costs breakdown
                 const consumableCosts = data.consumables.map((c) => {
                     const price = buyType === 'ask' ? c.ask : c.bid;
-                    const drinksPerHour = data.teaDuration > 0 ? 3600 / data.teaDuration : 0;
                     const costPerHour = price * drinksPerHour;
 
                     return {

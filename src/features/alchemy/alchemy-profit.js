@@ -11,9 +11,16 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 import { parseTeaEfficiency, getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { stackAdditive } from '../../utils/efficiency.js';
+import {
+    calculateActionsPerHour,
+    calculatePriceAfterTax,
+    calculateProfitPerDay,
+    calculateDrinksPerHour,
+} from '../../utils/profit-helpers.js';
 
 class AlchemyProfit {
     constructor() {
@@ -673,7 +680,7 @@ class AlchemyProfit {
                 const priceData = marketAPI.getPrice(result.itemHrid, 0);
                 if (priceData) {
                     const price = priceType === 'ask' ? priceData.ask : priceData.bid;
-                    totalValue += price * result.amount * 0.98; // 2% market tax
+                    totalValue += calculatePriceAfterTax(price * result.amount); // 2% market tax
                 }
             }
         }
@@ -686,7 +693,7 @@ class AlchemyProfit {
         const essencePriceData = marketAPI.getPrice('/items/enhancing_essence', 0);
         if (essencePriceData) {
             const essencePrice = priceType === 'ask' ? essencePriceData.ask : essencePriceData.bid;
-            totalValue += essencePrice * essenceAmount * 0.98; // 2% market tax
+            totalValue += calculatePriceAfterTax(essencePrice * essenceAmount); // 2% market tax
         }
 
         return totalValue;
@@ -902,7 +909,7 @@ class AlchemyProfit {
 
                 // Apply market tax (2% fee)
                 if (drop.itemHrid !== '/items/coin') {
-                    income *= 0.98;
+                    income = calculatePriceAfterTax(income);
                 }
 
                 return sum + income;
@@ -914,23 +921,29 @@ class AlchemyProfit {
             // Calculate profit per second (accounting for efficiency)
             const profitPerSecond = (netProfitPerAttempt * (1 + data.efficiency)) / data.actionTime;
 
+            const gameData = dataManager.getInitClientData();
+            const equipment = dataManager.getEquipment();
+            const drinkConcentration =
+                gameData && equipment ? getDrinkConcentration(equipment, gameData.itemDetailMap) : 0;
+            const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
+
             // Calculate tea cost per second
             let teaCostPerSecond = 0;
-            if (data.consumables.length > 0 && data.teaDuration > 0) {
+            if (data.consumables.length > 0) {
                 const totalTeaCost = data.consumables.reduce((sum, consumable) => {
                     const price = buyType === 'ask' ? consumable.ask : consumable.bid;
                     return sum + price;
                 }, 0);
-                teaCostPerSecond = totalTeaCost / data.teaDuration;
+                teaCostPerSecond = (totalTeaCost * drinksPerHour) / SECONDS_PER_HOUR;
             }
 
             // Final profit accounting for tea costs
             const finalProfitPerSecond = profitPerSecond - teaCostPerSecond;
             const profitPerHour = finalProfitPerSecond * 3600;
-            const profitPerDay = finalProfitPerSecond * 86400;
+            const profitPerDay = calculateProfitPerDay(profitPerHour);
 
             // Calculate actions per hour
-            const actionsPerHour = (3600 / data.actionTime) * (1 + data.efficiency);
+            const actionsPerHour = calculateActionsPerHour(data.actionTime) * (1 + data.efficiency);
 
             // Build detailed requirement costs breakdown
             const requirementCosts = data.requirements.map((req) => {
@@ -989,7 +1002,8 @@ class AlchemyProfit {
                 }
 
                 // Apply market tax for non-coin items
-                const revenueAfterTax = drop.itemHrid !== '/items/coin' ? revenuePerAttempt * 0.98 : revenuePerAttempt;
+                const revenueAfterTax =
+                    drop.itemHrid !== '/items/coin' ? calculatePriceAfterTax(revenuePerAttempt) : revenuePerAttempt;
                 const revenuePerHour = revenueAfterTax * actionsPerHour;
 
                 return {
@@ -1019,7 +1033,6 @@ class AlchemyProfit {
             // Build consumable costs breakdown
             const consumableCosts = data.consumables.map((c) => {
                 const price = buyType === 'ask' ? c.ask : c.bid;
-                const drinksPerHour = data.teaDuration > 0 ? 3600 / data.teaDuration : 0;
                 const costPerHour = price * drinksPerHour;
 
                 return {

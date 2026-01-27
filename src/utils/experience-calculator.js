@@ -12,6 +12,7 @@
 import dataManager from '../core/data-manager.js';
 import { calculateActionStats } from './action-calculator.js';
 import { calculateExperienceMultiplier } from './experience-parser.js';
+import { calculateActionsPerHour } from './profit-helpers.js';
 
 /**
  * Calculate experience per hour for an action
@@ -61,7 +62,7 @@ export function calculateExpPerHour(actionHrid) {
     const { actionTime, totalEfficiency } = stats;
 
     // Calculate actions per hour (base rate)
-    const baseActionsPerHour = 3600 / actionTime;
+    const baseActionsPerHour = calculateActionsPerHour(actionTime);
 
     // Calculate average actions per attempt from efficiency
     // Efficiency gives guaranteed repeats + chance for extra

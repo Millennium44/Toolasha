@@ -20,6 +20,7 @@ import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
+    calculateActionsPerHour,
     calculatePriceAfterTax,
     calculateProfitPerAction,
     calculateProfitPerDay,
@@ -183,7 +184,7 @@ class ProfitCalculator {
         const timeBreakdown = this.calculateTimeBreakdown(baseTime, equipmentSpeedBonus);
 
         // Actions per hour (base rate without efficiency)
-        const actionsPerHour = 3600 / actionTime;
+        const actionsPerHour = calculateActionsPerHour(actionTime);
 
         // Get output amount (how many items per action)
         // Use 'count' field from action output
@@ -457,7 +458,7 @@ class ProfitCalculator {
                 baseTime: baseTime,
                 steps: steps,
                 finalTime: finalTime,
-                actionsPerHour: 3600 / finalTime,
+                actionsPerHour: calculateActionsPerHour(finalTime),
             };
         }
 
@@ -466,7 +467,7 @@ class ProfitCalculator {
             baseTime: baseTime,
             steps: [],
             finalTime: baseTime,
-            actionsPerHour: 3600 / baseTime,
+            actionsPerHour: calculateActionsPerHour(baseTime),
         };
     }
 

@@ -16,6 +16,7 @@ import {
     calculatePriceAfterTax,
     calculateQueueProfitBreakdown,
 } from './profit-helpers.js';
+import { MARKET_TAX } from './profit-constants.js';
 
 // ============ Rate Conversion Tests ============
 
@@ -176,6 +177,17 @@ describe('calculatePriceAfterTax', () => {
         expect(calculatePriceAfterTax(100)).toBe(98);
         expect(calculatePriceAfterTax(1000)).toBe(980);
         expect(calculatePriceAfterTax(50)).toBe(49);
+    });
+
+    test('uses default MARKET_TAX when taxRate omitted', () => {
+        const price = 123;
+        expect(calculatePriceAfterTax(price)).toBe(price * (1 - MARKET_TAX));
+    });
+
+    test('supports custom tax rate overrides', () => {
+        const price = 200;
+        expect(calculatePriceAfterTax(price, 0.18)).toBe(164);
+        expect(calculatePriceAfterTax(price, 0.18)).not.toBe(calculatePriceAfterTax(price));
     });
 
     test('handles zero price', () => {
