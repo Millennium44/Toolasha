@@ -28,6 +28,7 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
 
     const bonusDrops = [];
     let totalBonusRevenue = 0;
+    let hasMissingPrices = false;
 
     // Process essence drops
     if (actionDetails.essenceDropTable && actionDetails.essenceDropTable.length > 0) {
@@ -46,13 +47,15 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
 
             // Get price: Check if openable container (use EV), otherwise market price
             let itemPrice = 0;
+            let isMissingPrice = false;
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers
                 itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
             } else {
                 // Use market price for regular items
                 const price = marketAPI.getPrice(drop.itemHrid, 0);
-                itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                itemPrice = price?.bid ?? 0; // Use bid price (instant sell)
+                isMissingPrice = price?.bid === null || price?.bid === undefined;
             }
 
             // Revenue per hour from this drop
@@ -66,9 +69,13 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 priceEach: itemPrice,
                 revenuePerHour,
                 type: 'essence',
+                missingPrice: isMissingPrice,
             });
 
             totalBonusRevenue += revenuePerHour;
+            if (isMissingPrice) {
+                hasMissingPrices = true;
+            }
         }
     }
 
@@ -89,13 +96,15 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
 
             // Get price: Check if openable container (use EV), otherwise market price
             let itemPrice = 0;
+            let isMissingPrice = false;
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers
                 itemPrice = expectedValueCalculator.getCachedValue(drop.itemHrid) || 0;
             } else {
                 // Use market price for regular items
                 const price = marketAPI.getPrice(drop.itemHrid, 0);
-                itemPrice = price?.bid || 0; // Use bid price (instant sell)
+                itemPrice = price?.bid ?? 0; // Use bid price (instant sell)
+                isMissingPrice = price?.bid === null || price?.bid === undefined;
             }
 
             // Revenue per hour from this drop
@@ -109,9 +118,13 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
                 priceEach: itemPrice,
                 revenuePerHour,
                 type: 'rare_find',
+                missingPrice: isMissingPrice,
             });
 
             totalBonusRevenue += revenuePerHour;
+            if (isMissingPrice) {
+                hasMissingPrices = true;
+            }
         }
     }
 
@@ -120,5 +133,6 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
         rareFindBonus, // Rare Find % from equipment + house rooms (combined)
         bonusDrops, // Array of all bonus drops with details
         totalBonusRevenue, // Total revenue/hour from all bonus drops
+        hasMissingPrices,
     };
 }
