@@ -21814,8 +21814,8 @@
                 return;
             }
 
-            // Use mooket API to open order book (works without inventory requirement)
-            window.mwi?.game?.handleGoToMarketplace(material.itemHrid, 0);
+            // Use game API to open order book (works without inventory requirement)
+            mwi.game?.handleGoToMarketplace(material.itemHrid, 0);
         });
 
         return tab;
