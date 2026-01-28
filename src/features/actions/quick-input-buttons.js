@@ -295,6 +295,9 @@ class QuickInputButtons {
                 if (efficiencyBreakdown.equipmentEfficiency > 0) {
                     speedLines.push(`  - Equipment: +${efficiencyBreakdown.equipmentEfficiency.toFixed(1)}%`);
                 }
+                if (efficiencyBreakdown.achievementEfficiency > 0) {
+                    speedLines.push(`  - Achievement: +${efficiencyBreakdown.achievementEfficiency.toFixed(1)}%`);
+                }
                 // Break out individual teas - show BASE efficiency on main line, DC as sub-line
                 if (efficiencyBreakdown.teaBreakdown && efficiencyBreakdown.teaBreakdown.length > 0) {
                     for (const tea of efficiencyBreakdown.teaBreakdown) {
@@ -582,6 +585,7 @@ class QuickInputButtons {
                     teaEfficiency: 0,
                     teaBreakdown: [],
                     communityEfficiency: 0,
+                    achievementEfficiency: 0,
                     skillLevel: 1,
                     baseRequirement: 1,
                     actionLevelBonus: 0,
@@ -1098,6 +1102,11 @@ class QuickInputButtons {
                 // Tea/Coffee
                 if (xpData.breakdown.consumableWisdom > 0) {
                     lines.push(`    • Wisdom Tea: +${xpData.breakdown.consumableWisdom.toFixed(1)}%`);
+                }
+
+                // Achievement wisdom
+                if (xpData.breakdown.achievementWisdom > 0) {
+                    lines.push(`    • Achievement: +${xpData.breakdown.achievementWisdom.toFixed(1)}%`);
                 }
             }
 

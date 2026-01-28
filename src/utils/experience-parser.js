@@ -221,8 +221,9 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
     const houseWisdom = parseHouseRoomWisdom();
     const communityWisdom = parseCommunityBuffWisdom();
     const consumableWisdom = parseConsumableWisdom(activeDrinks, itemDetailMap, drinkConcentration);
+    const achievementWisdom = dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/wisdom') * 100;
 
-    const totalWisdom = equipmentWisdom + houseWisdom + communityWisdom + consumableWisdom;
+    const totalWisdom = equipmentWisdom + houseWisdom + communityWisdom + consumableWisdom + achievementWisdom;
 
     // Parse charm experience (skill-specific) - now returns object with total and breakdown
     const charmData = parseCharmExperience(equipment, skillHrid, itemDetailMap);
@@ -242,6 +243,7 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
             houseWisdom,
             communityWisdom,
             consumableWisdom,
+            achievementWisdom,
             charmExperience,
         },
     };

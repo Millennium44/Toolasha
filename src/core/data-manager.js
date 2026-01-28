@@ -37,6 +37,12 @@ class DataManager {
         // Event listeners
         this.eventListeners = new Map();
 
+        // Achievement buff cache (action type → buff type → flat boost)
+        this.achievementBuffCache = {
+            source: null,
+            byActionType: new Map(),
+        };
+
         // Retry interval for loading static game data
         this.loadRetryInterval = null;
 
@@ -571,6 +577,44 @@ class DataManager {
         }
 
         return this.characterData.achievementActionTypeBuffsMap[actionTypeHrid] || {};
+    }
+
+    /**
+     * Get achievement buff flat boost for an action type and buff type
+     * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/foraging")
+     * @param {string} buffTypeHrid - Buff type HRID (e.g., "/buff_types/wisdom")
+     * @returns {number} Flat boost value (decimal) or 0 if not found
+     */
+    getAchievementBuffFlatBoost(actionTypeHrid, buffTypeHrid) {
+        const achievementMap = this.characterData?.achievementActionTypeBuffsMap;
+        if (!achievementMap) {
+            return 0;
+        }
+
+        if (this.achievementBuffCache.source !== achievementMap) {
+            this.achievementBuffCache = {
+                source: achievementMap,
+                byActionType: new Map(),
+            };
+        }
+
+        const actionCache = this.achievementBuffCache.byActionType.get(actionTypeHrid) || new Map();
+        if (actionCache.has(buffTypeHrid)) {
+            return actionCache.get(buffTypeHrid);
+        }
+
+        const achievementBuffs = achievementMap[actionTypeHrid];
+        if (!Array.isArray(achievementBuffs)) {
+            actionCache.set(buffTypeHrid, 0);
+            this.achievementBuffCache.byActionType.set(actionTypeHrid, actionCache);
+            return 0;
+        }
+
+        const buff = achievementBuffs.find((entry) => entry?.typeHrid === buffTypeHrid);
+        const flatBoost = buff?.flatBoost || 0;
+        actionCache.set(buffTypeHrid, flatBoost);
+        this.achievementBuffCache.byActionType.set(actionTypeHrid, actionCache);
+        return flatBoost;
     }
 
     /**

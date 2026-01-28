@@ -86,6 +86,9 @@ function getWisdomBuff() {
             });
         }
 
+        // 5. Achievement Buffs
+        totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
+
         // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
         return totalFlatBoost;
     } catch {
@@ -218,6 +221,10 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
                 }
             });
         }
+
+        // Add achievement buffs
+        toolBonus +=
+            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
 
         // Check for blessed tea
         let hasBlessed = false;

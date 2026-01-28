@@ -6,6 +6,7 @@
 
 import marketAPI from '../api/marketplace.js';
 import expectedValueCalculator from '../features/market/expected-value-calculator.js';
+import dataManager from '../core/data-manager.js';
 import { parseEssenceFindBonus, parseRareFindBonus } from './equipment-parser.js';
 import { calculateHouseRareFind } from './house-efficiency.js';
 
@@ -24,7 +25,14 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
     // Get Rare Find bonus from BOTH equipment and house rooms
     const equipmentRareFindBonus = parseRareFindBonus(characterEquipment, actionDetails.type, itemDetailMap);
     const houseRareFindBonus = calculateHouseRareFind();
-    const rareFindBonus = equipmentRareFindBonus + houseRareFindBonus;
+    const achievementRareFindBonus =
+        dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
+    const rareFindBonus = equipmentRareFindBonus + houseRareFindBonus + achievementRareFindBonus;
+    const rareFindBreakdown = {
+        equipment: equipmentRareFindBonus,
+        house: houseRareFindBonus,
+        achievement: achievementRareFindBonus,
+    };
 
     const bonusDrops = [];
     let totalBonusRevenue = 0;
@@ -138,7 +146,8 @@ export function calculateBonusRevenue(actionDetails, actionsPerHour, characterEq
 
     return {
         essenceFindBonus, // Essence Find % from equipment
-        rareFindBonus, // Rare Find % from equipment + house rooms (combined)
+        rareFindBonus, // Rare Find % from equipment + house rooms + achievements (combined)
+        rareFindBreakdown,
         bonusDrops, // Array of all bonus drops with details
         totalBonusRevenue, // Total revenue/hour from all bonus drops
         hasMissingPrices,

@@ -97,6 +97,8 @@ export function calculateActionStats(actionDetails, options = {}) {
         const levelEfficiency = Math.max(0, effectiveLevel - effectiveRequirement);
         const houseEfficiency = calculateHouseEfficiency(actionDetails.type);
         const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap);
+        const achievementEfficiency =
+            dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
 
         // Calculate tea efficiency
         let teaEfficiency;
@@ -141,7 +143,8 @@ export function calculateActionStats(actionDetails, options = {}) {
             houseEfficiency,
             equipmentEfficiency,
             teaEfficiency,
-            communityEfficiency
+            communityEfficiency,
+            achievementEfficiency
         );
 
         // Build result object
@@ -159,6 +162,7 @@ export function calculateActionStats(actionDetails, options = {}) {
                 teaEfficiency,
                 teaBreakdown,
                 communityEfficiency,
+                achievementEfficiency,
                 skillLevel,
                 baseRequirement,
                 actionLevelBonus,

@@ -587,9 +587,13 @@ function formatEnhancementDisplay(
             `<div style="color: #ffaa55;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}%</div>`
         );
 
-        // Show house room breakdown if available
-        if (params.houseRareFindBonus > 0) {
-            const equipmentRareFind = params.rareFindBonus - params.houseRareFindBonus;
+        // Show breakdown if available
+        const achievementRareFind = params.achievementRareFindBonus || 0;
+        if (params.houseRareFindBonus > 0 || achievementRareFind > 0) {
+            const equipmentRareFind = Math.max(
+                0,
+                params.rareFindBonus - params.houseRareFindBonus - achievementRareFind
+            );
             if (equipmentRareFind > 0) {
                 lines.push(
                     `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentRareFind.toFixed(1)}%</div>`
@@ -598,6 +602,11 @@ function formatEnhancementDisplay(
             lines.push(
                 `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms:</span> +${params.houseRareFindBonus.toFixed(1)}%</div>`
             );
+            if (achievementRareFind > 0) {
+                lines.push(
+                    `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementRareFind.toFixed(1)}%</div>`
+                );
+            }
         }
     }
     if (params.experienceBonus > 0) {
@@ -605,11 +614,15 @@ function formatEnhancementDisplay(
             `<div style="color: #ffdd88;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}%</div>`
         );
 
-        // Show breakdown: equipment + house wisdom + tea wisdom + community wisdom
+        // Show breakdown: equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
         const teaWisdom = params.teaWisdomBonus || 0;
         const houseWisdom = params.houseWisdomBonus || 0;
         const communityWisdom = params.communityWisdomBonus || 0;
-        const equipmentExperience = params.experienceBonus - houseWisdom - teaWisdom - communityWisdom;
+        const achievementWisdom = params.achievementWisdomBonus || 0;
+        const equipmentExperience = Math.max(
+            0,
+            params.experienceBonus - houseWisdom - teaWisdom - communityWisdom - achievementWisdom
+        );
 
         if (equipmentExperience > 0) {
             lines.push(
@@ -630,6 +643,11 @@ function formatEnhancementDisplay(
         if (teaWisdom > 0) {
             lines.push(
                 `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Wisdom Tea:</span> +${teaWisdom.toFixed(1)}%</div>`
+            );
+        }
+        if (achievementWisdom > 0) {
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementWisdom.toFixed(1)}%</div>`
             );
         }
     }

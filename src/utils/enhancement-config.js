@@ -128,6 +128,11 @@ function getAutoDetectedParams() {
     // Formula: 20% base + 0.5% per level (same as other community buffs)
     const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
 
+    const achievementWisdomBonus =
+        dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+    const achievementRareFindBonus =
+        dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/rare_find') * 100;
+
     // Calculate total success rate bonus
     // Equipment + house + (check for other sources)
     const houseSuccessBonus = houseLevel * 0.05; // 0.05% per level for success
@@ -140,8 +145,9 @@ function getAutoDetectedParams() {
     const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus;
 
     // Calculate total experience bonus
-    // Equipment + house wisdom + tea wisdom + community wisdom
-    const totalExperienceBonus = gear.experienceBonus + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus;
+    // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
+    const totalExperienceBonus =
+        gear.experienceBonus + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
 
     // Calculate guzzling bonus multiplier (1.0 at level 0, scales with drink concentration)
     const guzzlingBonus = 1 + drinkConcentration / 100;
@@ -152,7 +158,7 @@ function getAutoDetectedParams() {
         houseLevel: houseLevel,
         toolBonus: totalSuccessBonus, // Tool + house combined
         speedBonus: totalSpeedBonus, // Speed + house + community + tea combined
-        rareFindBonus: gear.rareFindBonus + houseRareFindBonus, // Rare find (equipment + all house rooms)
+        rareFindBonus: gear.rareFindBonus + houseRareFindBonus + achievementRareFindBonus, // Rare find (equipment + house rooms + achievements)
         experienceBonus: totalExperienceBonus, // Experience (equipment + house + tea + community wisdom)
         guzzlingBonus: guzzlingBonus, // Drink concentration multiplier for blessed tea
         teas: teas,
@@ -167,10 +173,12 @@ function getAutoDetectedParams() {
         communitySpeedBonus: communitySpeedBonus, // For display
         communityWisdomLevel: communityWisdomLevel, // For display
         communityWisdomBonus: communityWisdomBonus, // For display
+        achievementWisdomBonus: achievementWisdomBonus, // For display
         teaSpeedBonus: teaSpeedBonus, // For display
         teaWisdomBonus: teaWisdomBonus, // For display
         drinkConcentration: drinkConcentration, // For display
         houseRareFindBonus: houseRareFindBonus, // For display
+        achievementRareFindBonus: achievementRareFindBonus, // For display
         houseWisdomBonus: houseWisdomBonus, // For display
         equipmentRareFind: gear.rareFindBonus, // For display
         equipmentExperience: gear.experienceBonus, // For display

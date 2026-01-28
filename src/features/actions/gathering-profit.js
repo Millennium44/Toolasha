@@ -170,16 +170,7 @@ export async function calculateGatheringProfit(actionHrid) {
         communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
 
         // Get Achievement buffs for this action type (Beginner tier: +2% Gathering Quantity)
-        const achievementBuffs = dataManager.getAchievementBuffs(actionDetail.type);
-
-        // achievementBuffs is an array of buff objects
-        // Find the gathering buff (typeHrid: "/buff_types/gathering") and get its flatBoost value
-        if (Array.isArray(achievementBuffs)) {
-            const gatheringBuff = achievementBuffs.find((buff) => buff.typeHrid === '/buff_types/gathering');
-            achievementGathering = gatheringBuff?.flatBoost || 0;
-        } else {
-            achievementGathering = 0;
-        }
+        achievementGathering = dataManager.getAchievementBuffFlatBoost(actionDetail.type, '/buff_types/gathering');
 
         // Stack all bonuses additively
         totalGathering = gatheringTea + communityGathering + achievementGathering;
@@ -244,9 +235,17 @@ export async function calculateGatheringProfit(actionHrid) {
 
     // Calculate equipment efficiency bonus (uses equipment-parser utility)
     const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetail.type, gameData.itemDetailMap);
+    const achievementEfficiency =
+        dataManager.getAchievementBuffFlatBoost(actionDetail.type, '/buff_types/efficiency') * 100;
 
     // Total efficiency (all additive)
-    const totalEfficiency = stackAdditive(levelEfficiency, houseEfficiency, teaEfficiency, equipmentEfficiency);
+    const totalEfficiency = stackAdditive(
+        levelEfficiency,
+        houseEfficiency,
+        teaEfficiency,
+        equipmentEfficiency,
+        achievementEfficiency
+    );
 
     // Calculate efficiency multiplier (matches production profit calculator pattern)
     // Efficiency "repeats the action" - we apply it to item outputs, not action rate
@@ -450,6 +449,7 @@ export async function calculateGatheringProfit(actionHrid) {
             houseEfficiency,
             teaEfficiency,
             equipmentEfficiency,
+            achievementEfficiency,
             gourmetBonus,
             communityBuffQuantity: communityGathering, // Community Buff component (as decimal)
             gatheringTeaBonus: gatheringTea, // Gathering Tea component (as decimal)
@@ -494,6 +494,9 @@ export function formatProfitDisplay(profitData) {
     }
     if (profitData.details.equipmentEfficiency > 0) {
         effParts.push(`${profitData.details.equipmentEfficiency.toFixed(1)}% equip`);
+    }
+    if (profitData.details.achievementEfficiency > 0) {
+        effParts.push(`${profitData.details.achievementEfficiency.toFixed(1)}% achievement`);
     }
     if (profitData.details.gourmetBonus > 0) {
         effParts.push(`${profitData.details.gourmetBonus.toFixed(1)}% gourmet`);
@@ -581,7 +584,25 @@ export function formatProfitDisplay(profitData) {
             bonusParts.push(`${profitData.bonusRevenue.essenceFindBonus.toFixed(1)}% essence find`);
         }
         if (profitData.bonusRevenue.rareFindBonus > 0) {
-            bonusParts.push(`${profitData.bonusRevenue.rareFindBonus.toFixed(1)}% rare find`);
+            const rareFindBreakdown = profitData.bonusRevenue.rareFindBreakdown || {};
+            const rareFindParts = [];
+            if (rareFindBreakdown.equipment > 0) {
+                rareFindParts.push(`${rareFindBreakdown.equipment.toFixed(1)}% equip`);
+            }
+            if (rareFindBreakdown.house > 0) {
+                rareFindParts.push(`${rareFindBreakdown.house.toFixed(1)}% house`);
+            }
+            if (rareFindBreakdown.achievement > 0) {
+                rareFindParts.push(`${rareFindBreakdown.achievement.toFixed(1)}% achievement`);
+            }
+
+            if (rareFindParts.length > 0) {
+                bonusParts.push(
+                    `${profitData.bonusRevenue.rareFindBonus.toFixed(1)}% rare find (${rareFindParts.join(', ')})`
+                );
+            } else {
+                bonusParts.push(`${profitData.bonusRevenue.rareFindBonus.toFixed(1)}% rare find`);
+            }
         }
 
         if (bonusParts.length > 0) {

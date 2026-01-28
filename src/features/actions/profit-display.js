@@ -36,6 +36,27 @@ export const getBonusDropTotalsForActions = (drop, actionsCount, actionsPerHour)
         totalRevenue: revenuePerAction * actionsCount,
     };
 };
+const formatRareFindBonusSummary = (bonusRevenue) => {
+    const rareFindBonus = bonusRevenue?.rareFindBonus || 0;
+    return `${rareFindBonus.toFixed(1)}% rare find`;
+};
+
+const getRareFindBreakdownParts = (bonusRevenue) => {
+    const breakdown = bonusRevenue?.rareFindBreakdown || {};
+    const parts = [];
+
+    if (breakdown.equipment > 0) {
+        parts.push(`${breakdown.equipment.toFixed(1)}% equip`);
+    }
+    if (breakdown.house > 0) {
+        parts.push(`${breakdown.house.toFixed(1)}% house`);
+    }
+    if (breakdown.achievement > 0) {
+        parts.push(`${breakdown.achievement.toFixed(1)}% achievement`);
+    }
+
+    return parts;
+};
 
 /**
  * Display gathering profit calculation in panel
@@ -218,10 +239,10 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             0
         );
         const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
-        const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
+        const rareFindSummary = formatRareFindBonusSummary(profitData.bonusRevenue);
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindSummary})`,
             null,
             rareFindContent,
             false,
@@ -310,6 +331,9 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     if (profitData.details.equipmentEfficiency > 0) {
         effParts.push(`${profitData.details.equipmentEfficiency.toFixed(1)}% equip`);
     }
+    if (profitData.details.achievementEfficiency > 0) {
+        effParts.push(`${profitData.details.achievementEfficiency.toFixed(1)}% achievement`);
+    }
 
     if (effParts.length > 0) {
         modifierLines.push(
@@ -334,6 +358,18 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         }
         modifierLines.push(
             `<div style="margin-left: 8px;">• Gathering Quantity: +${(profitData.gatheringQuantity * 100).toFixed(1)}% (${gatheringParts.join(', ')})</div>`
+        );
+    }
+
+    const gatheringRareFindParts = getRareFindBreakdownParts(profitData.bonusRevenue);
+    if (gatheringRareFindParts.length > 0) {
+        if (modifierLines.length === 0) {
+            modifierLines.push(
+                `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+            );
+        }
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Rare Find: +${(profitData.bonusRevenue?.rareFindBonus || 0).toFixed(1)}% (${gatheringRareFindParts.join(', ')})</div>`
         );
     }
 
@@ -638,10 +674,10 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             0
         );
         const rareFindRevenueLabel = bonusMissing ? '-- ⚠' : formatLargeNumber(Math.round(rareFindRevenue));
-        const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
+        const rareFindSummary = formatRareFindBonusSummary(profitData.bonusRevenue);
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel}/hr (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindSummary})`,
             null,
             rareFindContent,
             false,
@@ -775,6 +811,9 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     if (profitData.communityEfficiency > 0) {
         effParts.push(`${profitData.communityEfficiency.toFixed(1)}% community`);
     }
+    if (profitData.achievementEfficiency > 0) {
+        effParts.push(`${profitData.achievementEfficiency.toFixed(1)}% achievement`);
+    }
 
     if (effParts.length > 0) {
         modifierLines.push(
@@ -782,6 +821,18 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         );
         modifierLines.push(
             `<div style="margin-left: 8px;">• Efficiency: +${profitData.totalEfficiency.toFixed(1)}% (${effParts.join(', ')})</div>`
+        );
+    }
+
+    const productionRareFindParts = getRareFindBreakdownParts(profitData.bonusRevenue);
+    if (productionRareFindParts.length > 0) {
+        if (modifierLines.length === 0) {
+            modifierLines.push(
+                `<div style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Modifiers:</div>`
+            );
+        }
+        modifierLines.push(
+            `<div style="margin-left: 8px;">• Rare Find: +${(profitData.bonusRevenue?.rareFindBonus || 0).toFixed(1)}% (${productionRareFindParts.join(', ')})</div>`
         );
     }
 
@@ -1138,10 +1189,10 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
             return sum + getBonusDropTotalsForActions(drop, actionsCount, profitData.actionsPerHour).totalRevenue;
         }, 0);
         const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
-        const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
+        const rareFindSummary = formatRareFindBonusSummary(profitData.bonusRevenue);
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindSummary})`,
             null,
             rareFindContent,
             false,
@@ -1382,10 +1433,10 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
             return sum + revenuePerAction * actionsCount;
         }, 0);
         const rareFindRevenueLabel = formatMissingLabel(bonusMissing, formatLargeNumber(Math.round(rareFindRevenue)));
-        const rareFindBonus = profitData.bonusRevenue?.rareFindBonus || 0;
+        const rareFindSummary = formatRareFindBonusSummary(profitData.bonusRevenue);
         rareFindSection = createCollapsibleSection(
             '',
-            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindBonus.toFixed(1)}% rare find)`,
+            `Rare Finds: ${rareFindRevenueLabel} (${rareFinds.length} item${rareFinds.length !== 1 ? 's' : ''}, ${rareFindSummary})`,
             null,
             rareFindContent,
             false,
