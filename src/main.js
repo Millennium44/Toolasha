@@ -12,6 +12,7 @@ import featureRegistry from './core/feature-registry.js';
 import networkAlert from './features/market/network-alert.js';
 import * as combatSimIntegration from './features/combat/combat-sim-integration.js';
 import settingsUI from './features/settings/settings-ui.js';
+import { setupScrollTooltipDismissal } from './utils/dom.js';
 
 /**
  * Detect if running on Combat Simulator page
@@ -37,6 +38,9 @@ if (isCombatSimulatorPage()) {
 
     // CRITICAL: Start centralized DOM observer SECOND, before features initialize
     domObserver.start();
+
+    // Set up scroll listener to dismiss stuck tooltips
+    setupScrollTooltipDismissal();
 
     // Initialize network alert (must be early, before market features)
     networkAlert.initialize();
