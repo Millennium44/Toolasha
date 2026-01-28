@@ -22013,6 +22013,8 @@
     let inventoryUpdateHandler = null;
     let storedActionHrid = null;
     let storedNumActions = 0;
+    let buyModalObserverUnregister = null;
+    let activeMissingQuantity = null;
 
     /**
      * Production action types (where button should appear)
@@ -22057,6 +22059,7 @@
     function initialize$1() {
         console.log('[MissingMats] Initializing missing materials button feature');
         setupMarketplaceCleanupObserver();
+        setupBuyModalObserver();
 
         // Watch for action panels appearing
         domObserverUnregister = domObserver.onClass(
@@ -22085,6 +22088,12 @@
         if (cleanupObserver) {
             cleanupObserver.disconnect();
             cleanupObserver = null;
+        }
+
+        // Unregister buy modal observer
+        if (buyModalObserverUnregister) {
+            buyModalObserverUnregister();
+            buyModalObserverUnregister = null;
         }
 
         // Remove any existing custom tabs
@@ -22388,6 +22397,14 @@
             tabsContainer.style.flexWrap = 'wrap';
         }
 
+        // Add click listeners to regular tabs to clear active quantity
+        const regularTabs = tabsContainer.querySelectorAll('button:not([data-mwi-custom-tab])');
+        regularTabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+                activeMissingQuantity = null;
+            });
+        });
+
         // Create tab for each missing material
         currentMaterialsTabs = [];
         for (const material of missingMaterials) {
@@ -22526,6 +22543,7 @@
         // Mark as custom tab for later identification
         tab.setAttribute('data-mwi-custom-tab', 'true');
         tab.setAttribute('data-item-hrid', material.itemHrid);
+        tab.setAttribute('data-missing-quantity', material.missing.toString());
 
         // Color coding:
         // - Red: Missing materials (missing > 0)
@@ -22585,6 +22603,9 @@
                 return;
             }
 
+            // Store the missing quantity for auto-fill when buy modal opens
+            activeMissingQuantity = material.missing;
+
             // Navigate to marketplace using game API
             goToMarketplace(material.itemHrid, 0);
         });
@@ -22609,6 +22630,7 @@
         // Clear stored context
         storedActionHrid = null;
         storedNumActions = 0;
+        activeMissingQuantity = null;
     }
 
     /**
@@ -22640,6 +22662,59 @@
                 subtree: true,
             });
         }
+    }
+
+    /**
+     * Setup buy modal observer
+     * Watches for buy modals appearing and auto-fills quantity if from missing materials tab
+     */
+    function setupBuyModalObserver() {
+        buyModalObserverUnregister = domObserver.onClass(
+            'MissingMaterialsButton-BuyModal',
+            'Modal_modalContainer',
+            (modal) => {
+                handleBuyModal(modal);
+            }
+        );
+    }
+
+    /**
+     * Handle buy modal appearance
+     * Auto-fills quantity if we have an active missing quantity
+     * @param {HTMLElement} modal - Modal container element
+     */
+    function handleBuyModal(modal) {
+        // Check if we have an active missing quantity to fill
+        if (!activeMissingQuantity || activeMissingQuantity <= 0) {
+            return;
+        }
+
+        // Check if this is a "Buy Now" modal
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
+        if (!header) {
+            return;
+        }
+
+        const headerText = header.textContent.trim();
+        if (!headerText.includes('Buy Now') && !headerText.includes('立即购买')) {
+            return;
+        }
+
+        // Find the quantity input
+        const quantityInput = modal.querySelector('input[type="number"]');
+        if (!quantityInput) {
+            return;
+        }
+
+        // Set the quantity value
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeInputValueSetter.call(quantityInput, activeMissingQuantity.toString());
+
+        // Trigger input event to notify React
+        const inputEvent = new Event('input', { bubbles: true });
+        quantityInput.dispatchEvent(inputEvent);
+
+        console.log('[MissingMats] Auto-filled quantity:', activeMissingQuantity);
     }
 
     var missingMaterialsButton = {
