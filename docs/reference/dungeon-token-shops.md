@@ -16,26 +16,27 @@
 
 ```json
 {
-  "hrid": "/shop_items/acrobats_ribbon",
-  "category": "/shop_categories/dungeon",
-  "itemHrid": "/items/acrobats_ribbon",
-  "costs": [
-    {
-      "itemHrid": "/items/sinister_token",
-      "count": 2000
-    }
-  ],
-  "sortIndex": 44
+    "hrid": "/shop_items/acrobats_ribbon",
+    "category": "/shop_categories/dungeon",
+    "itemHrid": "/items/acrobats_ribbon",
+    "costs": [
+        {
+            "itemHrid": "/items/sinister_token",
+            "count": 2000
+        }
+    ],
+    "sortIndex": 44
 }
 ```
 
 **Key Fields:**
+
 - `hrid`: Unique shop item identifier
 - `category`: Shop category (dungeon items use `/shop_categories/dungeon`)
 - `itemHrid`: The actual item being purchased
 - `costs`: Array of cost objects (typically 1 entry for dungeon shops)
-  - `costs[0].itemHrid`: Currency item (e.g., `/items/sinister_token`)
-  - `costs[0].count`: Amount of currency required
+    - `costs[0].itemHrid`: Currency item (e.g., `/items/sinister_token`)
+    - `costs[0].count`: Amount of currency required
 - `sortIndex`: In-game display order
 
 ---
@@ -43,6 +44,7 @@
 ## Complete Dungeon Token Shop Data
 
 ### CHIMERICAL TOKEN (`/items/chimerical_token`)
+
 ```
 sortIndex  Item                           Cost
 0          chimerical_essence             1
@@ -55,6 +57,7 @@ sortIndex  Item                           Cost
 ```
 
 ### SINISTER TOKEN (`/items/sinister_token`)
+
 ```
 sortIndex  Item                           Cost
 43         sinister_essence               1
@@ -66,6 +69,7 @@ sortIndex  Item                           Cost
 ```
 
 ### ENCHANTED TOKEN (`/items/enchanted_token`)
+
 ```
 sortIndex  Item                           Cost
 enchanted_essence              1
@@ -78,6 +82,7 @@ enchanted_cloak                27,000
 ```
 
 ### PIRATE TOKEN (`/items/pirate_token`)
+
 ```
 sortIndex  Item                           Cost
 pirate_essence                 1
@@ -93,17 +98,20 @@ kraken_fang                    3,000
 
 ## jq Query Commands
 
-### Get all items for a specific token:
+### Get all items for a specific token
+
 ```bash
 jq '.shopItemDetailMap | to_entries | map(select(.value.costs[0].itemHrid == "/items/sinister_token")) | sort_by(.value.sortIndex)' /Users/kennydean/Downloads/MWI/Monster_Stats/init_client_data_new.json
 ```
 
-### Get formatted list with item names and costs:
+### Get formatted list with item names and costs
+
 ```bash
 jq -r '.shopItemDetailMap | to_entries | map(select(.value.costs[0].itemHrid == "/items/sinister_token")) | sort_by(.value.sortIndex) | .[] | [(.value.itemHrid | sub(".*/"; "")), .value.costs[0].count] | @tsv' /Users/kennydean/Downloads/MWI/Monster_Stats/init_client_data_new.json
 ```
 
-### Get all dungeon token types:
+### Get all dungeon token types
+
 ```bash
 jq '.shopItemDetailMap | to_entries | map(.value.costs[0].itemHrid) | unique | .[] | select(contains("_token"))' /Users/kennydean/Downloads/MWI/Monster_Stats/init_client_data_new.json
 ```
@@ -112,9 +120,10 @@ jq '.shopItemDetailMap | to_entries | map(.value.costs[0].itemHrid) | unique | .
 
 ## Implementation Patterns
 
-### For Currency Page Generation (already implemented in generate_item_pages.py):
+### For Currency Page Generation (already implemented in generate_item_pages.py)
 
 **Dungeon Token Info Map:**
+
 ```python
 dungeon_info = {
     'chimerical': {
@@ -140,20 +149,22 @@ dungeon_info = {
 }
 ```
 
-### For JavaScript/Userscript Implementation:
+### For JavaScript/Userscript Implementation
 
 **Access via dataManager:**
+
 ```javascript
 const gameData = dataManager.getInitClientData();
 const shopItems = gameData.shopItemDetailMap;
 
 // Get all items purchasable with Sinister Tokens
 const sinisterShop = Object.values(shopItems)
-    .filter(item => item.costs[0]?.itemHrid === '/items/sinister_token')
+    .filter((item) => item.costs[0]?.itemHrid === '/items/sinister_token')
     .sort((a, b) => a.sortIndex - b.sortIndex);
 ```
 
 **Get item details:**
+
 ```javascript
 const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
 ```
@@ -165,23 +176,23 @@ const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
 1. **Essence Items:** Every dungeon token shop has an "essence" item for 1 token (used for crafting)
 
 2. **Price Tiers:**
-   - Essences: 1 token
-   - Mid-tier materials: 600-3,000 tokens
-   - High-tier equipment: 27,000-35,000 tokens
+    - Essences: 1 token
+    - Mid-tier materials: 600-3,000 tokens
+    - High-tier equipment: 27,000-35,000 tokens
 
 3. **Dungeon Association:**
-   - Token drop source: Dungeon chests (100% drop rate, 250-500 base + 5% chance for bonus)
-   - Shop category: All dungeon items use `/shop_categories/dungeon`
+    - Token drop source: Dungeon chests (100% drop rate, 250-500 base + 5% chance for bonus)
+    - Shop category: All dungeon items use `/shop_categories/dungeon`
 
 4. **sortIndex Pattern:**
-   - Chimerical: Low indices (not in 40s range)
-   - Sinister: 43-48
-   - Enchanted: Unknown (need to check)
-   - Pirate: Unknown (need to check)
+    - Chimerical: Low indices (not in 40s range)
+    - Sinister: 43-48
+    - Enchanted: Unknown (need to check)
+    - Pirate: Unknown (need to check)
 
 5. **Wiki Naming:**
-   - Item names drop apostrophes: "Acrobat's Ribbon" → "Acrobats Ribbon"
-   - Use `get_item_wiki_name()` helper for correct wiki links
+    - Item names drop apostrophes: "Acrobat's Ribbon" → "Acrobats Ribbon"
+    - Use `get_item_wiki_name()` helper for correct wiki links
 
 ---
 
@@ -198,16 +209,16 @@ const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
 ## Related Files
 
 - **Wiki Generator:** `/Users/kennydean/Downloads/MWI/Wiki/generate_item_pages.py`
-  - Function: `generate_currency_page()` (handles dungeon token pages)
-  - Lines: 3255-3400 (approximate)
+    - Function: `generate_currency_page()` (handles dungeon token pages)
+    - Lines: 3255-3400 (approximate)
 
 - **Game Data:** `/Users/kennydean/Downloads/MWI/Monster_Stats/init_client_data_new.json`
-  - `shopItemDetailMap`: All shop items
-  - `itemDetailMap`: Item details (names, descriptions, stats)
-  - `openableLootDropMap`: Chest drop rates for tokens
+    - `shopItemDetailMap`: All shop items
+    - `itemDetailMap`: Item details (names, descriptions, stats)
+    - `openableLootDropMap`: Chest drop rates for tokens
 
 - **Toolasha Data Manager:** `/Users/kennydean/Downloads/MWI/Toolasha/src/core/data-manager.js`
-  - Use `getInitClientData()` to access game data at runtime
+    - Use `getInitClientData()` to access game data at runtime
 
 ---
 

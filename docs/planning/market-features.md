@@ -1,7 +1,9 @@
 # Market Features Implementation Plan
+
 ## Ranged Way Idle → Toolasha Integration
 
 **Status Overview:**
+
 - ✅ **Feature 1: Visible Item Count** - IMPLEMENTED & WORKING
 - ❌ **Feature 2: Total Listing Funds** - NOT YET IMPLEMENTED (future)
 - ✅ **Feature 3: Individual Listing Price Display** - IMPLEMENTED & WORKING
@@ -18,15 +20,17 @@ This document provides detailed implementation specifications for porting market
 **Description:** Display inventory counts on market item tiles/cards, showing how many of each item you own.
 
 **Technical Implementation:**
+
 - **DOM Target:** Market item cards/tiles (likely class contains `MarketItem` or similar)
 - **Data Source:** `dataManager.getInventory()` for inventory items
 - **Equipped Items:** `dataManager.getEquipment()` for currently equipped gear
 - **Update Triggers:**
-  - `items_updated` event from dataManager
-  - `market_item_order_books_updated` WebSocket event
-  - DOM observer when market UI opens
+    - `items_updated` event from dataManager
+    - `market_item_order_books_updated` WebSocket event
+    - DOM observer when market UI opens
 
 **Display Logic:**
+
 ```javascript
 // For each market item tile:
 // 1. Get itemHrid from tile
@@ -37,6 +41,7 @@ This document provides detailed implementation specifications for porting market
 ```
 
 **CSS Styling:**
+
 - Position: absolute top-right corner of item tile
 - Background: semi-transparent badge (e.g., `rgba(0,0,0,0.8)`)
 - Font: Small, bold, white text
@@ -44,6 +49,7 @@ This document provides detailed implementation specifications for porting market
 - Z-index: Layer above item image
 
 **Settings:**
+
 ```javascript
 market_visibleItemCount: {
     id: 'market_visibleItemCount',
@@ -78,6 +84,7 @@ market_visibleItemCountIncludeEquipped: {
 **File Location:** `src/features/market/item-count-display.js`
 
 **Module Structure:**
+
 ```javascript
 class ItemCountDisplay {
     constructor() {
@@ -85,15 +92,26 @@ class ItemCountDisplay {
         this.unregisterObserver = null;
     }
 
-    initialize() { /* setup observer, event listeners */ }
-    injectCountDisplay(marketTile) { /* add count badge */ }
-    updateCount(marketTile) { /* recalculate and update */ }
-    updateAllCounts() { /* bulk update */ }
-    disable() { /* cleanup */ }
+    initialize() {
+        /* setup observer, event listeners */
+    }
+    injectCountDisplay(marketTile) {
+        /* add count badge */
+    }
+    updateCount(marketTile) {
+        /* recalculate and update */
+    }
+    updateAllCounts() {
+        /* bulk update */
+    }
+    disable() {
+        /* cleanup */
+    }
 }
 ```
 
 **Edge Cases:**
+
 - Handle items with multiple enhancement levels (sum all levels)
 - Handle stackable vs non-stackable items
 - Market UI lazy loading (items added as you scroll)
@@ -106,12 +124,14 @@ class ItemCountDisplay {
 **Description:** Display aggregate summary showing total coins locked in buy orders, expected revenue from sell orders, and unclaimed coins.
 
 **Technical Implementation (from RWI lines 1728-1792):**
+
 - **Data Source:** `market_listings_updated` WebSocket event + `init_character_data`
 - **Display Approach:** Clone existing coin stack UI elements (NOT a custom box)
 - **DOM Target:** `.MarketplacePanel_marketplacePanel` container
 - **Coin Stack Element:** `.MarketplacePanel_coinStack` (game's existing coin display)
 
 **Calculations:**
+
 ```javascript
 totalUnclaimedCoins = sum(listing.unclaimedCoinCount)
 totalPrepaidCoins = sum(listing.coinsAvailable)  // Coins locked in buy orders
@@ -121,6 +141,7 @@ totalSellResultCoins = sum for sell listings:
 ```
 
 **Display Layout (2x2 Grid using absolute positioning):**
+
 ```
 [Current Coins]      [Prepaid Coins]
 [Unclaimed Coins]    [Sell Result Coins]
@@ -133,32 +154,37 @@ Position coordinates (rem):
 ```
 
 **Implementation Details:**
+
 ```javascript
 // Clone the existing coin stack element 3 times
-const currentCoinNode = marketplacePanelNode.querySelector(".MarketplacePanel_coinStack__1l0UD");
+const currentCoinNode = marketplacePanelNode.querySelector('.MarketplacePanel_coinStack__1l0UD');
 const totalUnclaimedCoinsNode = currentCoinNode.cloneNode(true);
 const totalPrepaidCoinsNode = currentCoinNode.cloneNode(true);
 const totalSellResultCoinsNode = currentCoinNode.cloneNode(true);
 
 // Update count text (.Item_count__1HVvv)
-totalUnclaimedCoinsNode.querySelector(".Item_count__1HVvv").textContent = formatItemCount(totalUnclaimedCoins, precision);
+totalUnclaimedCoinsNode.querySelector('.Item_count__1HVvv').textContent = formatItemCount(
+    totalUnclaimedCoins,
+    precision
+);
 
 // Update label text (.Item_name__2C42x) with blue color
-totalUnclaimedCoinsNode.querySelector(".Item_name__2C42x").textContent = "Unclaimed";
-totalUnclaimedCoinsNode.querySelector(".Item_name__2C42x").style.color = "#66CCFF";
+totalUnclaimedCoinsNode.querySelector('.Item_name__2C42x').textContent = 'Unclaimed';
+totalUnclaimedCoinsNode.querySelector('.Item_name__2C42x').style.color = '#66CCFF';
 
 // Position using absolute positioning
-totalUnclaimedCoinsNode.style.left = "0rem";
-totalUnclaimedCoinsNode.style.top = "1.5rem";
+totalUnclaimedCoinsNode.style.left = '0rem';
+totalUnclaimedCoinsNode.style.top = '1.5rem';
 
 // Add tracking class
-totalUnclaimedCoinsNode.classList.add("RangedWayIdleTotalListingFunds");
+totalUnclaimedCoinsNode.classList.add('RangedWayIdleTotalListingFunds');
 
 // Insert into DOM
 marketplacePanelNode.insertBefore(totalUnclaimedCoinsNode, currentCoinNode.nextSibling);
 ```
 
 **Settings:**
+
 ```javascript
 market_totalListingFunds: {
     id: 'market_totalListingFunds',
@@ -183,6 +209,7 @@ market_totalListingFundsPrecision: {
 **File Location:** `src/features/market/listing-funds-summary.js`
 
 **Module Structure:**
+
 ```javascript
 class ListingFundsSummary {
     constructor() {
@@ -220,6 +247,7 @@ class ListingFundsSummary {
 ```
 
 **WebSocket Event Fields:**
+
 ```javascript
 // init_character_data event:
 {
@@ -248,6 +276,7 @@ class ListingFundsSummary {
 ```
 
 **Edge Cases:**
+
 - Cowbell listings use 0.82 tax rate (vs 0.98 for other items)
 - Cancelled listings: Remove from tracking (status check)
 - Fully claimed listings: Remove when unclaimedItemCount and unclaimedCoinCount both zero
@@ -263,17 +292,20 @@ class ListingFundsSummary {
 **Description:** Show price per unit and total value for each active listing in your listings panel.
 
 **Technical Implementation:**
+
 - **DOM Target:** Listing rows in "My Listings" panel
 - **Data Source:** Same `market_listings_updated` WebSocket data
 - **Display:** Inject price text into each listing row
 
 **Display Format:**
+
 ```
 [Item Icon] Iron Bar x50
            12,345 each → 617,250 total
 ```
 
 **Settings:**
+
 ```javascript
 market_showListingPrices: {
     id: 'market_showListingPrices',
@@ -298,6 +330,7 @@ market_listingPricePrecision: {
 **File Location:** `src/features/market/listing-price-display.js`
 
 **Module Structure:**
+
 ```javascript
 class ListingPriceDisplay {
     constructor() {
@@ -305,20 +338,32 @@ class ListingPriceDisplay {
         this.unregisterObserver = null;
     }
 
-    initialize() { /* WebSocket listener, DOM observer */ }
-    injectPriceDisplay(listingRow, listingData) { /* add price text */ }
-    updatePrice(listingRow, listingData) { /* recalculate */ }
-    updateAllPrices() { /* bulk update */ }
-    disable() { /* cleanup */ }
+    initialize() {
+        /* WebSocket listener, DOM observer */
+    }
+    injectPriceDisplay(listingRow, listingData) {
+        /* add price text */
+    }
+    updatePrice(listingRow, listingData) {
+        /* recalculate */
+    }
+    updateAllPrices() {
+        /* bulk update */
+    }
+    disable() {
+        /* cleanup */
+    }
 }
 ```
 
 **CSS Styling:**
+
 - Font size: slightly smaller than item name
 - Color: different colors for buy (blue) vs sell (green) orders
 - Format: Use formatWithSeparator for thousand separators
 
 **Edge Cases:**
+
 - Partially filled listings (show remaining quantity × price)
 - Very large numbers (use KMB formatting option)
 - Listings completing mid-view (update in real-time)
@@ -330,27 +375,33 @@ class ListingPriceDisplay {
 **Description:** Show relative time ("3h ago") instead of absolute timestamp ("2:30 PM") for listing creation times.
 
 **Technical Implementation:**
+
 - **Data Source:** Listing timestamp from WebSocket data
 - **Calculation:**
-  ```javascript
-  const ageMs = Date.now() - listing.timestamp;
-  const formatted = formatRelativeTime(ageMs);
-  // Examples: "5m", "2h 30m", "3d 12h", "14d"
-  ```
+
+    ```javascript
+    const ageMs = Date.now() - listing.timestamp;
+    const formatted = formatRelativeTime(ageMs);
+    // Examples: "5m", "2h 30m", "3d 12h", "14d"
+    ```
+
 - **Update Frequency:** Every 1 minute (setInterval)
 
 **Display Format:**
+
 ```
 Created: 3h 45m ago    (vs. "Created: 2:30 PM")
 ```
 
 **Time Format Rules:**
+
 - < 1 hour: "Xm" (minutes only)
 - 1-24 hours: "Xh Ym" (hours and minutes)
 - 1-7 days: "Xd Yh" (days and hours)
 - > 7 days: "Xd" (days only)
 
 **Settings:**
+
 ```javascript
 market_showListingLifespan: {
     id: 'market_showListingLifespan',
@@ -365,11 +416,13 @@ market_showListingLifespan: {
 **File Location:** `src/features/market/listing-price-display.js` (extend existing module)
 
 **Implementation:**
+
 - Add to existing ListingPriceDisplay module
 - Create `formatRelativeTime(ageMs)` utility function
 - Add periodic update timer (clear on disable)
 
 **Utility Function:**
+
 ```javascript
 function formatRelativeTime(ageMs) {
     const minutes = Math.floor(ageMs / 60000);
@@ -384,6 +437,7 @@ function formatRelativeTime(ageMs) {
 ```
 
 **Edge Cases:**
+
 - Very new listings (< 1 minute): Show "Just now"
 - Very old listings (> 30 days): Show "30+ days"
 - Timezone handling (use UTC timestamps)
@@ -424,6 +478,7 @@ Add to `src/core/feature-registry.js`:
 ## Testing Checklist
 
 **✅ FEATURE 1 (Item Count Display) - TESTED & WORKING:**
+
 - [x] Settings appear in Toolasha settings panel
 - [x] Settings persist after page refresh
 - [x] Feature works on initial page load
@@ -437,6 +492,7 @@ Add to `src/core/feature-registry.js`:
 - [x] Tested with 0 items, 1 item, many items, equipped items, enhanced items
 
 **✅ FEATURE 3 (Listing Price Display) - TESTED & WORKING:**
+
 - [x] Settings appear in Toolasha settings panel
 - [x] Settings persist after page refresh
 - [x] Feature works on initial page load
@@ -452,6 +508,7 @@ Add to `src/core/feature-registry.js`:
 - [x] Tested with very large numbers, partially filled listings
 
 **❌ FEATURE 2 (Listing Funds Summary) - NOT YET IMPLEMENTED:**
+
 - [ ] Settings appear in Toolasha settings panel
 - [ ] Settings persist after page refresh
 - [ ] Feature works on initial page load
@@ -464,6 +521,7 @@ Add to `src/core/feature-registry.js`:
 - [ ] Test with no listings, buy orders, sell orders, mixed, filled/unclaimed
 
 **❌ FEATURE 4 (Lifespan Display) - NOT YET IMPLEMENTED:**
+
 - [ ] Settings appear in Toolasha settings panel
 - [ ] Settings persist after page refresh
 - [ ] Feature works on initial page load
@@ -480,6 +538,7 @@ Add to `src/core/feature-registry.js`:
 ## Dependencies & Imports
 
 **Required Imports:**
+
 ```javascript
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
@@ -489,6 +548,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 ```
 
 **WebSocket Events Used:**
+
 - `market_listings_updated`: Listing changes (create, fill, cancel)
 - `market_item_order_books_updated`: Order book updates (affects item count display)
 - `items_updated`: Inventory changes
@@ -498,6 +558,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 ## Performance Considerations
 
 **Optimization Strategies:**
+
 1. **Debounce Updates:** Don't update on every keystroke/inventory change
 2. **Lazy Loading:** Only inject displays for visible elements
 3. **Cached Calculations:** Store computed totals, only recalc on data change
@@ -505,6 +566,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 5. **Cleanup:** Remove event listeners and DOM elements on disable
 
 **Memory Management:**
+
 - Use WeakMap for element references where possible
 - Clear stale references when DOM elements are removed
 - Limit storage of historical data (don't store all order book history)
@@ -514,9 +576,8 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 ## Implementation Order
 
 **✅ Completed:**
+
 1. ✅ Feature #1: Visible Item Count in Market (`item-count-display.js`)
 2. ✅ Feature #3: Individual Listing Price Display (`listing-price-display.js`)
 
-**📋 Remaining:**
-3. ❌ Feature #2: Total Listing Funds Summary (easiest, high value - marked for future implementation)
-4. ❌ Feature #4: Listing Lifespan Display (quick enhancement to #3 - marked for future implementation)
+**📋 Remaining:** 3. ❌ Feature #2: Total Listing Funds Summary (easiest, high value - marked for future implementation) 4. ❌ Feature #4: Listing Lifespan Display (quick enhancement to #3 - marked for future implementation)

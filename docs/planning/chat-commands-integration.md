@@ -6,6 +6,7 @@
 ## Overview
 
 Add chat commands for quick navigation:
+
 - `/item <name>` - Opens Item Dictionary
 - `/wiki <name>` - Opens wiki page in new tab
 - `/market <name>` - Opens marketplace for item
@@ -24,12 +25,11 @@ Add chat commands for quick navigation:
 
 ```javascript
 // CURRENT: Direct localStorage (wrong)
-const initClientData = JSON.parse(
-    LZString.decompressFromUTF16(localStorage.getItem('initClientData'))
-);
+const initClientData = JSON.parse(LZString.decompressFromUTF16(localStorage.getItem('initClientData')));
 
 // CURRENT: Brittle selector (breaks on updates)
-const CHAT_INPUT_SELECTOR = '#root > div > div > div.GamePage_gamePanel__3uNKN > div.GamePage_contentPanel__Zx4FH > div.GamePage_middlePanel__uDts7 > div.GamePage_chatPanel__mVaVt > div > div.Chat_chatInputContainer__2euR8 > form > input';
+const CHAT_INPUT_SELECTOR =
+    '#root > div > div > div.GamePage_gamePanel__3uNKN > div.GamePage_contentPanel__Zx4FH > div.GamePage_middlePanel__uDts7 > div.GamePage_chatPanel__mVaVt > div > div.Chat_chatInputContainer__2euR8 > form > input';
 
 // CURRENT: Global pollution
 window.MWI_GAME_CORE = core;
@@ -41,9 +41,11 @@ window.GAME_COMMAND_DATA = itemData;
 ### File Structure
 
 **New Files:**
+
 - `src/features/chat/chat-commands.js` - Main module
 
 **Modified Files:**
+
 - `src/features/settings/settings-config.js` - Add settings
 - `src/core/feature-registry.js` - Register feature
 - `userscript-header.txt` - Version bump
@@ -168,7 +170,7 @@ class ChatCommands {
 
         this.itemData = {
             itemNameToHrid: {},
-            itemHridToName: {}
+            itemHridToName: {},
         };
 
         for (const [hrid, item] of Object.entries(initClientData.itemDetailMap)) {
@@ -188,7 +190,7 @@ class ChatCommands {
             const el = document.querySelector('[class*="GamePage_gamePage"]');
             if (!el) return;
 
-            const k = Object.keys(el).find(k => k.startsWith("__reactFiber$"));
+            const k = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
             if (!k) return;
 
             let f = el[k];
@@ -214,7 +216,7 @@ class ChatCommands {
                 this.chatInput = input;
                 return;
             }
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 200));
         }
         console.warn('[Chat Commands] Chat input not found');
     }
@@ -307,7 +309,7 @@ class ChatCommands {
 
         // Fuzzy match
         const allNames = Object.keys(this.itemData.itemNameToHrid);
-        const matches = allNames.filter(name => name.includes(lowerName));
+        const matches = allNames.filter((name) => name.includes(lowerName));
 
         if (matches.length === 1) {
             const hrid = this.itemData.itemNameToHrid[matches[0]];
@@ -320,8 +322,9 @@ class ChatCommands {
         }
 
         // Best effort normalization
-        return itemName.split(' ')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        return itemName
+            .split(' ')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
             .join('_');
     }
 
@@ -381,10 +384,7 @@ class ChatCommands {
      * Clear chat input (React-compatible)
      */
     clearChatInput(inputElement) {
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype,
-            "value"
-        ).set;
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
         nativeInputValueSetter.call(inputElement, '');
         inputElement.dispatchEvent(new Event('input', { bubbles: true }));
@@ -403,79 +403,89 @@ export default chatCommands;
 ### Phase 1: Core Enhancements
 
 1. **Command Aliases**
-   ```javascript
-   '/i' → '/item'
-   '/w' → '/wiki'
-   '/m' → '/market'
-   ```
+
+    ```javascript
+    '/i' → '/item'
+    '/w' → '/wiki'
+    '/m' → '/market'
+    ```
 
 2. **Help Command**
-   ```javascript
-   /help or /?
-   Shows: Available commands, aliases, usage examples
-   ```
+
+    ```javascript
+    /help or /?
+    Shows: Available commands, aliases, usage examples
+    ```
 
 3. **In-Chat Feedback**
-   ```javascript
-   Success: "Opening marketplace for Radiant Fiber..."
-   Error: "Item not found. Did you mean: Radiant Fabric?"
-   ```
+
+    ```javascript
+    Success: 'Opening marketplace for Radiant Fiber...';
+    Error: 'Item not found. Did you mean: Radiant Fabric?';
+    ```
 
 ### Phase 2: Advanced Features
 
-4. **Command Registration System**
-   ```javascript
-   // Extensibility for other Toolasha features
-   chatCommands.register('/export', handleExport, {
-       description: 'Export combat data',
-       requiresProfile: true
-   });
-   ```
+1. **Command Registration System**
 
-5. **Command History**
-   - Up/down arrows to cycle through previous commands
-   - Stored in Toolasha storage (persists across sessions)
-   - Max 50 commands
+    ```javascript
+    // Extensibility for other Toolasha features
+    chatCommands.register('/export', handleExport, {
+        description: 'Export combat data',
+        requiresProfile: true,
+    });
+    ```
 
-6. **Real-Time Validation**
-   - Show suggestions as you type
-   - "radiant f" → Shows: "Radiant Fiber, Radiant Fabric"
+2. **Command History**
+    - Up/down arrows to cycle through previous commands
+    - Stored in Toolasha storage (persists across sessions)
+    - Max 50 commands
 
-7. **Performance Caching**
-   ```javascript
-   // LRU cache for recently searched items (50 item limit)
-   const itemLookupCache = new Map();
-   ```
+3. **Real-Time Validation**
+    - Show suggestions as you type
+    - "radiant f" → Shows: "Radiant Fiber, Radiant Fabric"
+
+4. **Performance Caching**
+
+    ```javascript
+    // LRU cache for recently searched items (50 item limit)
+    const itemLookupCache = new Map();
+    ```
 
 ### Phase 3: Power User Features
 
-8. **Bookmark System**
-   ```javascript
-   /bookmark add radiant fiber
-   /bookmark list
-   /b radiant → Quick access
-   ```
+1. **Bookmark System**
 
-9. **Extended Commands**
-   ```javascript
-   /ability <name> - Open ability dictionary
-   /action <name> - Navigate to gathering/production
-   /monster <name> - Open monster info
-   ```
+    ```javascript
+    /bookmark add radiant fiber
+    /bookmark list
+    /b radiant → Quick access
+    ```
 
-10. **Typo Handling**
+2. **Extended Commands**
+
+    ```javascript
+    /ability <name> - Open ability dictionary
+    /action <name> - Navigate to gathering/production
+    /monster <name> - Open monster info
+    ```
+
+3. **Typo Handling**
+
     ```javascript
     // Levenshtein distance algorithm
     "radint fiber" → "Did you mean: Radiant Fiber?"
     ```
 
-11. **HRID Support (Advanced)**
+4. **HRID Support (Advanced)**
+
     ```javascript
     /item /items/radiant_fiber
     // Skip name lookup, use HRID directly
     ```
 
-12. **Recent Items**
+5. **Recent Items**
+
     ```javascript
     /recent - Shows last 5 searched items
     // Persists across sessions
@@ -509,13 +519,13 @@ export default chatCommands;
 
 ## Risks & Mitigations
 
-| Risk | Mitigation |
-|------|------------|
+| Risk                        | Mitigation                              |
+| --------------------------- | --------------------------------------- |
 | Chat input selector changes | Use partial matching `[class*="Chat_"]` |
-| React Fiber access breaks | Try/catch with graceful degradation |
-| Game core API changes | Null checks, try/catch on method calls |
-| Performance issues | Cache item lookups (LRU, max 50 items) |
-| Memory leaks | Remove event listeners in disable() |
+| React Fiber access breaks   | Try/catch with graceful degradation     |
+| Game core API changes       | Null checks, try/catch on method calls  |
+| Performance issues          | Cache item lookups (LRU, max 50 items)  |
+| Memory leaks                | Remove event listeners in disable()     |
 
 ## Estimated Effort
 

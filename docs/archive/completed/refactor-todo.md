@@ -1,10 +1,12 @@
 # Toolasha Refactoring TODO
 
 ## ✅ COMPLETED: Priority 3: Reduce MutationObserver Usage (Performance Optimization)
+
 **Completed:** January 14, 2026
 **Details:** See `PRIORITY_3_COMPLETED.md`
 
 **Summary:**
+
 - ✅ Migrated `quick-input-buttons.js` to centralized observer
 - ✅ Migrated `enhancement-ui.js` to centralized observer
 - ✅ Migrated `settings-ui.js` to centralized observer
@@ -15,9 +17,11 @@
 ## Priority 4: Extract Shared Action Calculation Logic
 
 ### Current State
+
 Two massive UI files with ~400-500 lines of duplicated calculation logic:
 
 **quick-input-buttons.js (1,181 lines):**
+
 - Lines 100-573: Action time/efficiency calculation
 - Lines 500-570: `getTotalEfficiency()` method (duplicated)
 - Equipment speed/efficiency parsing
@@ -26,6 +30,7 @@ Two massive UI files with ~400-500 lines of duplicated calculation logic:
 - Action Level bonus calculation
 
 **action-time-display.js (950 lines):**
+
 - Lines 536-700: Action time calculation (near-identical to quick-input)
 - Same equipment parsing
 - Same tea parsing
@@ -33,7 +38,9 @@ Two massive UI files with ~400-500 lines of duplicated calculation logic:
 - Same efficiency stacking logic
 
 ### Duplication Examples
+
 Both files import and call:
+
 ```javascript
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 import { parseTeaEfficiency, getDrinkConcentration, parseActionLevelBonus } from '../../utils/tea-parser.js';
@@ -42,6 +49,7 @@ import { stackAdditive } from '../../utils/efficiency.js';
 ```
 
 Both files have methods that do the same thing:
+
 - Calculate action time with speed bonuses
 - Calculate total efficiency (level + house + equipment + tea + community)
 - Apply efficiency to action calculations
@@ -52,6 +60,7 @@ Both files have methods that do the same thing:
 **Create:** `utils/action-calculator.js`
 
 **Extract shared logic:**
+
 ```javascript
 /**
  * Calculate complete action statistics
@@ -79,6 +88,7 @@ export function calculateTotalEfficiency(actionDetails, options) {
 ```
 
 **Refactor:**
+
 1. Create `utils/action-calculator.js`
 2. Move shared calculation logic from both files
 3. Update quick-input-buttons.js to import from action-calculator
@@ -86,6 +96,7 @@ export function calculateTotalEfficiency(actionDetails, options) {
 5. Run build and test extensively
 
 **⚠️ CAUTION:**
+
 - These are **high-traffic, user-facing features**
 - Action time display appears on every action panel
 - Quick input buttons handle Max button calculations
@@ -93,17 +104,19 @@ export function calculateTotalEfficiency(actionDetails, options) {
 - Thorough testing required
 
 **Test Plan:**
+
 1. Test action time display for multiple action types
 2. Test quick input buttons (hour presets, Max button)
 3. Test efficiency calculations with:
-   - Different skill levels
-   - Various house levels
-   - Active teas (Efficiency Tea, skill teas)
-   - Community buffs
+    - Different skill levels
+    - Various house levels
+    - Active teas (Efficiency Tea, skill teas)
+    - Community buffs
 4. Verify XP calculations in quick-input collapsible section
 5. Test with edge cases (level 1, max level, no equipment)
 
 **Files Affected:**
+
 - `src/utils/action-calculator.js` (NEW)
 - `src/features/actions/quick-input-buttons.js` (refactor)
 - `src/features/actions/action-time-display.js` (refactor)
@@ -117,6 +130,7 @@ export function calculateTotalEfficiency(actionDetails, options) {
 ## Notes
 
 Both priorities require careful implementation due to:
+
 - **Priority 3:** DOM observation is critical for script functionality
 - **Priority 4:** Action calculations are used constantly by users
 

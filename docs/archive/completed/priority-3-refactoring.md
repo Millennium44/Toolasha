@@ -14,14 +14,17 @@ Successfully migrated 3 files from individual MutationObservers to the centraliz
 ## Changes Made
 
 ### Phase 1: ✅ quick-input-buttons.js
+
 **Lines Changed:** 55-93 (observer creation) → 56-71 (centralized registration)
 
 **Before:**
+
 - Created own MutationObserver watching document.body
 - 39 lines of observer boilerplate
 - Watched for `SkillActionDetail_skillActionDetail` class
 
 **After:**
+
 - Uses `domObserver.onClass()` registration
 - 16 lines (58% reduction)
 - Same functionality, cleaner code
@@ -32,14 +35,17 @@ Successfully migrated 3 files from individual MutationObservers to the centraliz
 ---
 
 ### Phase 2: ✅ enhancement-ui.js
+
 **Lines Changed:** 96-128 (observer creation) → 97-119 (centralized registration)
 
 **Before:**
+
 - Created own MutationObserver for enhancing screen detection
 - 33 lines of observer boilerplate
 - Watched for `SkillActionDetail_enhancingComponent` class
 
 **After:**
+
 - Uses `domObserver.onClass()` with debouncing
 - 23 lines (30% reduction)
 - Added debouncing (100ms) to reduce callback frequency
@@ -50,14 +56,17 @@ Successfully migrated 3 files from individual MutationObservers to the centraliz
 ---
 
 ### Phase 3: ✅ settings-ui.js
+
 **Lines Changed:** 50-100 (observer creation) → 50-69 (centralized registration)
 
 **Before:**
+
 - Created own MutationObserver for settings panel detection
 - 51 lines of observer boilerplate
 - Complex fallback logic for game panel vs body
 
 **After:**
+
 - Uses `domObserver.onClass()` with debouncing
 - 20 lines (61% reduction)
 - Centralized observer handles fallback automatically
@@ -70,14 +79,16 @@ Successfully migrated 3 files from individual MutationObservers to the centraliz
 ## Code Improvements
 
 ### Lines Saved
-| File | Before | After | Saved | % Reduction |
-|------|--------|-------|-------|-------------|
-| quick-input-buttons.js | 39 lines | 16 lines | 23 lines | 58% |
-| enhancement-ui.js | 33 lines | 23 lines | 10 lines | 30% |
-| settings-ui.js | 51 lines | 20 lines | 31 lines | 61% |
-| **Total** | **123 lines** | **59 lines** | **64 lines** | **52%** |
+
+| File                   | Before        | After        | Saved        | % Reduction |
+| ---------------------- | ------------- | ------------ | ------------ | ----------- |
+| quick-input-buttons.js | 39 lines      | 16 lines     | 23 lines     | 58%         |
+| enhancement-ui.js      | 33 lines      | 23 lines     | 10 lines     | 30%         |
+| settings-ui.js         | 51 lines      | 20 lines     | 31 lines     | 61%         |
+| **Total**              | **123 lines** | **59 lines** | **64 lines** | **52%**     |
 
 ### Observer Count Reduction
+
 - **Before:** 11 independent MutationObservers watching document.body
 - **After:** 8 independent observers (3 migrated to centralized system)
 - **Reduction:** 27% fewer independent observers
@@ -87,6 +98,7 @@ Successfully migrated 3 files from individual MutationObservers to the centraliz
 ## Pattern Changes
 
 ### Old Pattern (Individual Observer)
+
 ```javascript
 class MyFeature {
     constructor() {
@@ -115,7 +127,7 @@ class MyFeature {
 
             this.observer.observe(document.body, {
                 childList: true,
-                subtree: true
+                subtree: true,
             });
         };
 
@@ -125,6 +137,7 @@ class MyFeature {
 ```
 
 ### New Pattern (Centralized Observer)
+
 ```javascript
 import domObserver from '../../core/dom-observer.js';
 
@@ -151,24 +164,28 @@ class MyFeature {
 ## Benefits Achieved
 
 ### Performance
+
 - ✅ 27% reduction in independent MutationObservers
 - ✅ Less redundant DOM traversal (single observer instead of multiple)
 - ✅ Better browser optimization with centralized system
 - ✅ Debouncing reduces callback frequency for enhancement and settings
 
 ### Code Quality
+
 - ✅ 52% reduction in observer boilerplate code
 - ✅ Consistent pattern across all migrated features
 - ✅ Cleaner, more readable code
 - ✅ Proper cleanup via unregister functions
 
 ### Maintainability
+
 - ✅ Centralized debugging via `domObserver.getStats()`
 - ✅ All observer handlers in one place
 - ✅ Easier to add new observers in the future
 - ✅ Reduced code duplication
 
 ### Developer Experience
+
 - ✅ Can inspect all handlers: `domObserver.getStats()`
 - ✅ Clear naming convention (feature name in registration)
 - ✅ Centralized error handling
@@ -179,33 +196,35 @@ class MyFeature {
 ## Files Modified
 
 1. **src/features/actions/quick-input-buttons.js**
-   - Added import: `domObserver`
-   - Changed: `this.observer` → `this.unregisterObserver`
-   - Replaced: `startObserving()` method (39 lines → 16 lines)
+    - Added import: `domObserver`
+    - Changed: `this.observer` → `this.unregisterObserver`
+    - Replaced: `startObserving()` method (39 lines → 16 lines)
 
 2. **src/features/enhancement/enhancement-ui.js**
-   - Added import: `domObserver`
-   - Changed: `this.screenObserver` → `this.unregisterScreenObserver`
-   - Replaced: `setupScreenObserver()` method (33 lines → 23 lines)
-   - Added: Debouncing with 100ms delay
+    - Added import: `domObserver`
+    - Changed: `this.screenObserver` → `this.unregisterScreenObserver`
+    - Replaced: `setupScreenObserver()` method (33 lines → 23 lines)
+    - Added: Debouncing with 100ms delay
 
 3. **src/features/settings/settings-ui.js**
-   - Added import: `domObserver`
-   - Changed: `this.settingsObserver` → `this.unregisterSettingsObserver`
-   - Replaced: `observeSettingsPanel()` method (51 lines → 20 lines)
-   - Added: Debouncing with 100ms delay
+    - Added import: `domObserver`
+    - Changed: `this.settingsObserver` → `this.unregisterSettingsObserver`
+    - Replaced: `observeSettingsPanel()` method (51 lines → 20 lines)
+    - Added: Debouncing with 100ms delay
 
 ---
 
 ## Testing Checklist
 
 ### Build Verification
+
 - [x] Phase 1 build succeeds
 - [x] Phase 2 build succeeds
 - [x] Phase 3 build succeeds
 - [x] Final build succeeds
 
 ### Runtime Testing (User to verify)
+
 - [ ] Quick input buttons appear on action panels
 - [ ] Enhancement tracker shows/hides based on screen
 - [ ] Settings tab appears in game settings panel
@@ -214,9 +233,10 @@ class MyFeature {
 - [ ] All features work as before
 
 ### Performance Verification
+
 ```javascript
 // Browser console check:
-domObserver.getStats()
+domObserver.getStats();
 // Should show:
 // - QuickInputButtons registered
 // - EnhancementUI-ScreenDetection registered
@@ -228,6 +248,7 @@ domObserver.getStats()
 ## Remaining Observers (Not Migrated)
 
 **Kept as specialized observers:**
+
 - `action-time-display.js` - TWO observers with disconnect/reconnect logic
 - Other files - Short-lived cleanup observers or specialized use cases
 
@@ -247,6 +268,7 @@ domObserver.getStats()
 ## Rollback Plan
 
 Each phase can be independently reverted if issues occur:
+
 1. Restore file from git history
 2. Run `npm run build`
 3. Test in-game

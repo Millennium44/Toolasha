@@ -9,6 +9,7 @@
 ## Overview
 
 Performance mode allows users experiencing lag to disable memory-intensive features with a single checkbox. Features are:
+
 1. Prevented from initializing if mode is already enabled (startup optimization)
 2. Disabled at runtime if user enables mode while script is running (cleanup)
 
@@ -33,10 +34,12 @@ Based on Mands' implementation, these are the heavy features:
 ## Files to Modify
 
 ### 1. **src/features/settings/settings-config.js**
+
 - Add `lowMemoryMode` setting to `general` group
 - Location: After `networkAlert` setting (line 16)
 
 ### 2. **src/core/feature-registry.js**
+
 - Add `LOW_MEMORY_DISABLED_FEATURES` constant
 - Add `isLowMemoryModeEnabled()` helper
 - Add `shouldSkipFeatureInLowMemory()` check function
@@ -45,6 +48,7 @@ Based on Mands' implementation, these are the heavy features:
 - Export `disableFeaturesByKey` in default export
 
 ### 3. **src/features/settings/settings-ui.js**
+
 - Add performance banner UI element
 - Add performance chip (toolbar button)
 - Add `updatePerformanceBanner()` method
@@ -54,10 +58,12 @@ Based on Mands' implementation, these are the heavy features:
 - Update `handleSettingChange()` to update banner/chip when mode changes
 
 ### 4. **src/features/settings/settings-styles.css**
+
 - Add `.toolasha-performance-banner` styles
 - Add `.toolasha-settings-chip.active` styles (if not exists)
 
 ### 5. **src/main.js**
+
 - Add `lowMemoryMode` change listener after config initialization
 - Listener calls `featureRegistry.disableFeaturesByKey()` when enabled
 
@@ -100,7 +106,7 @@ const LOW_MEMORY_DISABLED_FEATURES = new Set([
     'enhancementTracker',
     'networth',
     'inventoryBadgePrices',
-    'skillRemainingXP'
+    'skillRemainingXP',
 ]);
 
 /**
@@ -177,10 +183,10 @@ export default {
     setupCharacterSwitchHandler,
     checkFeatureHealth,
     retryFailedFeatures,
-    disableFeaturesByKey,  // ADD THIS LINE
+    disableFeaturesByKey, // ADD THIS LINE
     getFeature,
     getAllFeatures,
-    getFeaturesByCategory
+    getFeaturesByCategory,
 };
 ```
 
@@ -211,7 +217,7 @@ constructor() {
 ```javascript
 // Toolbar and performance banner
 this.addToolbar(card);
-this.addPerformanceBanner(card);  // ADD THIS LINE
+this.addPerformanceBanner(card); // ADD THIS LINE
 
 // Generate settings from config
 this.generateSettings(card);
@@ -284,7 +290,7 @@ this.filterMeta.className = 'toolasha-settings-meta';
 
 left.appendChild(search);
 left.appendChild(enabledOnly);
-left.appendChild(this.performanceChip);  // ADD THIS LINE
+left.appendChild(this.performanceChip); // ADD THIS LINE
 left.appendChild(this.filterMeta);
 ```
 
@@ -295,7 +301,7 @@ toolbar.appendChild(left);
 toolbar.appendChild(right);
 container.appendChild(toolbar);
 
-this.updatePerformanceChip();  // ADD THIS LINE
+this.updatePerformanceChip(); // ADD THIS LINE
 this.updateFilterMeta(0, 0);
 ```
 
@@ -368,7 +374,7 @@ config.onSettingChange('lowMemoryMode', (enabled) => {
             'enhancementTracker',
             'networth',
             'inventoryBadgePrices',
-            'skillRemainingXP'
+            'skillRemainingXP',
         ]);
     }
 });
@@ -382,7 +388,8 @@ config.applyColorSettings();
 
 All target features must have `disable()` methods. Verify these exist:
 
-### ✅ Already Implemented:
+### ✅ Already Implemented
+
 1. **market_showEstimatedListingAge** - `src/features/market/estimated-listing-age.js` has `disable()`
 2. **dungeonTracker** - `src/features/combat/dungeon-tracker.js` has `disable()`
 3. **enhancementTracker** - `src/features/enhancement/enhancement-tracker.js` has `disable()`
@@ -390,7 +397,8 @@ All target features must have `disable()` methods. Verify these exist:
 5. **skillRemainingXP** - Need to check
 6. **inventoryBadgePrices** - Need to check
 
-### ⚠️ May Need Implementation:
+### ⚠️ May Need Implementation
+
 - **skillRemainingXP** (`src/features/skills/remaining-xp.js`)
 - **inventoryBadgePrices** (`src/features/inventory/inventory-badge-prices.js`)
 
@@ -398,26 +406,30 @@ All target features must have `disable()` methods. Verify these exist:
 
 ## Testing Checklist
 
-### Initialization Testing:
+### Initialization Testing
+
 - [ ] Enable performance mode in settings
 - [ ] Refresh browser
 - [ ] Verify heavy features do NOT initialize (check console logs)
 - [ ] Verify UI banner appears at top of settings
 
-### Runtime Testing:
+### Runtime Testing
+
 - [ ] Start with performance mode OFF
 - [ ] Let all features load normally
 - [ ] Enable performance mode via checkbox
 - [ ] Verify banner appears
 - [ ] Verify features are disabled (check DOM elements removed)
 
-### Toolbar Testing:
+### Toolbar Testing
+
 - [ ] Performance chip shows "Performance mode: OFF" initially
 - [ ] Click chip → toggles to ON, banner appears
 - [ ] Click chip again → toggles to OFF, banner hides
 - [ ] Verify chip has gold highlight when active
 
-### Feature-Specific Testing:
+### Feature-Specific Testing
+
 - [ ] **Market listing age**: Ages should disappear when disabled
 - [ ] **Dungeon tracker**: UI panel should disappear
 - [ ] **Enhancement tracker**: Tracker panel should disappear
@@ -425,7 +437,8 @@ All target features must have `disable()` methods. Verify these exist:
 - [ ] **Inventory badges**: Price badges should disappear
 - [ ] **Remaining XP**: XP text under skill bars should disappear
 
-### Edge Cases:
+### Edge Cases
+
 - [ ] Enable mode → refresh → disable mode → verify features re-enable
 - [ ] Character switch with mode enabled → verify mode persists
 - [ ] Fast toggle (on/off/on) → verify no errors
@@ -435,11 +448,13 @@ All target features must have `disable()` methods. Verify these exist:
 ## Performance Impact
 
 **Expected Improvements** (with performance mode ON):
+
 - **Memory**: ~30-50% reduction (no IndexedDB caching, fewer DOM observers)
 - **CPU**: ~20-30% reduction (no continuous calculations for networth/XP)
 - **Startup**: ~10-15% faster (6 fewer features to initialize)
 
 **Most Impactful Disables**:
+
 1. `market_showEstimatedListingAge` - IndexedDB writes on every market data update
 2. `enhancementTracker` - IndexedDB writes on every enhancement attempt
 3. `networth` - Continuous inventory value calculations
@@ -464,16 +479,19 @@ All target features must have `disable()` methods. Verify these exist:
 ## Alternative Approaches Considered
 
 ### 1. Individual Feature Toggles
+
 - **Pros**: More granular control
 - **Cons**: Overwhelming for average user, doesn't solve "my game is slow" problem
 - **Decision**: Rejected - single toggle is better UX
 
 ### 2. Auto-Detection
+
 - **Pros**: Could detect low-end devices automatically
 - **Cons**: Hard to reliably detect, users prefer explicit control
 - **Decision**: Rejected - manual toggle is safer
 
 ### 3. Performance Levels (Low/Medium/High)
+
 - **Pros**: Could offer tiered optimization
 - **Cons**: Complex to implement, hard to communicate differences
 - **Decision**: Rejected - binary on/off is clearer

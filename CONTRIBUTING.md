@@ -73,13 +73,15 @@ Thank you for your interest in contributing to Toolasha! This guide will help yo
     - Save
 
 3. **Test in-game**
-    - Visit https://www.milkywayidle.com/game
+    - Visit <https://www.milkywayidle.com/game>
     - Your changes should be active
 
 4. **Development mode** (auto-rebuild on save)
+
     ```bash
     npm run dev
     ```
+
     After each change, refresh the game page to see updates
 
 ### Running Tests

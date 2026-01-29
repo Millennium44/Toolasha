@@ -1,24 +1,27 @@
 # Task Reroll System Investigation Guide
 
 ## Overview
+
 This document guides you through investigating the task reroll cost tracking system in Milky Way Idle.
 
 ## Known Information
 
 ### Reroll Cost Behavior
+
 - **Initial Costs:**
-  - Gold: 10,000
-  - Cowbells: 1
+    - Gold: 10,000
+    - Cowbells: 1
 
 - **Cost Progression (Exponential Doubling):**
-  - Gold: 10k → 20k → 40k → 80k → 160k → 320k...
-  - Cowbells: 1 → 2 → 4 → 8 → 16 → 32...
+    - Gold: 10k → 20k → 40k → 80k → 160k → 320k...
+    - Cowbells: 1 → 2 → 4 → 8 → 16 → 32...
 
 ### Reroll UI Flow
+
 1. Click "Reroll" button on task card
 2. Two payment options appear on the right side:
-   - "Pay X Cowbells"
-   - "Pay X Gold"
+    - "Pay X Cowbells"
+    - "Pay X Gold"
 3. Click one option to reroll the task
 4. Task changes, but **profit does NOT automatically update**
 5. Each subsequent reroll increases the cost (doubles)
@@ -28,6 +31,7 @@ This document guides you through investigating the task reroll cost tracking sys
 ### Tool 1: Built-in Diagnostic (Recommended)
 
 **Setup:**
+
 ```javascript
 // 1. Build and install MWI Tools
 npm run build
@@ -44,6 +48,7 @@ MWITools.diagnostics.stopTaskRerollDiagnostic()
 ```
 
 **What It Captures:**
+
 - All WebSocket messages containing "task", "reroll", or "cowbell"
 - DOM elements related to reroll UI
 - Button clicks and state changes before/after
@@ -52,49 +57,52 @@ MWITools.diagnostics.stopTaskRerollDiagnostic()
 ### Tool 2: Manual WebSocket Inspection
 
 **Steps:**
+
 1. Open browser DevTools (F12)
 2. Go to Network tab
 3. Filter: WS (WebSocket)
 4. Select the MWI WebSocket connection
 5. Monitor Messages tab while performing rerolls
 6. Look for messages containing:
-   - "task"
-   - "reroll"
-   - "cowbell"
-   - Cost values (10000, 20000, etc.)
+    - "task"
+    - "reroll"
+    - "cowbell"
+    - Cost values (10000, 20000, etc.)
 
 ### Tool 3: DOM Inspection
 
 **Steps:**
+
 1. Open a task that can be rerolled
 2. Right-click "Reroll" button → Inspect Element
 3. Note the button's structure:
-   - Class names
-   - Parent container classes
-   - Data attributes
+    - Class names
+    - Parent container classes
+    - Data attributes
 4. Click Reroll and inspect the payment option elements:
-   - How are costs displayed?
-   - What changes when you select an option?
-   - Are costs stored in data attributes or just text?
+    - How are costs displayed?
+    - What changes when you select an option?
+    - Are costs stored in data attributes or just text?
 
 ### Tool 4: Browser Console Queries
 
 **Useful Queries:**
+
 ```javascript
 // Find all task-related elements
-document.querySelectorAll('[class*="Task"]')
+document.querySelectorAll('[class*="Task"]');
 
 // Find reroll buttons
-Array.from(document.querySelectorAll('button'))
-  .filter(btn => btn.textContent.toLowerCase().includes('reroll'))
+Array.from(document.querySelectorAll('button')).filter((btn) => btn.textContent.toLowerCase().includes('reroll'));
 
 // Find cowbell/gold cost displays
-Array.from(document.querySelectorAll('*'))
-  .filter(el => el.textContent.match(/Cowbell|Gold/) && el.textContent.match(/\d+/))
+Array.from(document.querySelectorAll('*')).filter(
+    (el) => el.textContent.match(/Cowbell|Gold/) && el.textContent.match(/\d+/)
+);
 
 // Check for task data in game state
-window.gameState // or similar global objects
-localStorage // check for task-related keys
+window.gameState; // or similar global objects
+localStorage; // check for task-related keys
 ```
 
 ## Information to Gather
@@ -102,39 +110,40 @@ localStorage // check for task-related keys
 ### Critical Questions
 
 1. **Where is reroll cost stored?**
-   - [ ] WebSocket message field?
-   - [ ] Local state in React component?
-   - [ ] DOM data attribute?
-   - [ ] Browser localStorage?
-   - [ ] Not stored (calculated each time)?
+    - [ ] WebSocket message field?
+    - [ ] Local state in React component?
+    - [ ] DOM data attribute?
+    - [ ] Browser localStorage?
+    - [ ] Not stored (calculated each time)?
 
 2. **How is cost progression tracked?**
-   - [ ] Server tracks reroll count per task?
-   - [ ] Client tracks reroll count locally?
-   - [ ] Cost is in a data field we can read?
-   - [ ] Must be calculated from some counter?
+    - [ ] Server tracks reroll count per task?
+    - [ ] Client tracks reroll count locally?
+    - [ ] Cost is in a data field we can read?
+    - [ ] Must be calculated from some counter?
 
 3. **What triggers cost updates?**
-   - [ ] WebSocket message after reroll?
-   - [ ] React state update?
-   - [ ] DOM mutation?
-   - [ ] No update needed (calculated on-demand)?
+    - [ ] WebSocket message after reroll?
+    - [ ] React state update?
+    - [ ] DOM mutation?
+    - [ ] No update needed (calculated on-demand)?
 
 4. **Task identification:**
-   - [ ] How are tasks uniquely identified?
-   - [ ] Task HRID?
-   - [ ] Task slot index?
-   - [ ] Something else?
+    - [ ] How are tasks uniquely identified?
+    - [ ] Task HRID?
+    - [ ] Task slot index?
+    - [ ] Something else?
 
 5. **Cost reset behavior:**
-   - [ ] When do costs reset to initial values?
-   - [ ] New task assignment?
-   - [ ] Task completion?
-   - [ ] Daily reset?
+    - [ ] When do costs reset to initial values?
+    - [ ] New task assignment?
+    - [ ] Task completion?
+    - [ ] Daily reset?
 
 ### Data Structures to Look For
 
 **WebSocket Messages:**
+
 ```javascript
 // Example structure to look for:
 {
@@ -150,6 +159,7 @@ localStorage // check for task-related keys
 ```
 
 **DOM Attributes:**
+
 ```html
 <!-- Example structures to look for -->
 <button data-task-id="..." data-reroll-count="2">Reroll</button>
@@ -157,18 +167,20 @@ localStorage // check for task-related keys
 ```
 
 **Game State Objects:**
+
 ```javascript
 // Check these in console:
-window.gameState?.tasks
-window.gameState?.characterTasks
-window.gameState?.rerollCosts
-localStorage.getItem('tasks')
-localStorage.getItem('rerollData')
+window.gameState?.tasks;
+window.gameState?.characterTasks;
+window.gameState?.rerollCosts;
+localStorage.getItem('tasks');
+localStorage.getItem('rerollData');
 ```
 
 ## Investigation Checklist
 
 ### Phase 1: WebSocket Analysis
+
 - [ ] Start diagnostic tool
 - [ ] Accept a new task (capture initial state)
 - [ ] Click Reroll button (capture reroll UI appearance)
@@ -179,19 +191,22 @@ localStorage.getItem('rerollData')
 - [ ] Stop diagnostic and review all captured messages
 
 ### Phase 2: DOM Analysis
+
 - [ ] Inspect Reroll button structure
 - [ ] Inspect payment option elements
-- [ ] Check for data-* attributes
+- [ ] Check for data-\* attributes
 - [ ] Check for hidden input fields
 - [ ] Monitor DOM changes during reroll
 
 ### Phase 3: State Analysis
+
 - [ ] Check localStorage for task data
 - [ ] Check window.gameState (or similar)
 - [ ] Check React DevTools if available
 - [ ] Look for task-related global variables
 
 ### Phase 4: Cost Calculation Testing
+
 - [ ] Perform 10 consecutive rerolls
 - [ ] Document cost at each step
 - [ ] Verify doubling pattern
@@ -224,17 +239,20 @@ Once investigation is complete:
 
 ### Investigation Date: [DATE]
 
-#### WebSocket Messages Found:
+#### WebSocket Messages Found
+
 ```
 [Paste relevant WebSocket messages here]
 ```
 
-#### DOM Structure:
+#### DOM Structure
+
 ```
 [Paste relevant DOM structure here]
 ```
 
-#### Cost Progression Observed:
+#### Cost Progression Observed
+
 ```
 Reroll 1: Gold=_____, Cowbell=_____
 Reroll 2: Gold=_____, Cowbell=_____
@@ -242,12 +260,14 @@ Reroll 3: Gold=_____, Cowbell=_____
 ...
 ```
 
-#### Key Findings:
+#### Key Findings
+
 -
 -
 -
 
-#### Proposed Implementation:
+#### Proposed Implementation
+
 -
 -
 -

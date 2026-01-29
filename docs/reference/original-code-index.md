@@ -348,8 +348,8 @@ This document provides a detailed breakdown of all major functions in MWITools-2
 
 **Supported Simulators:**
 
-- Amvoidguy's simulator (https://amvoidguy.github.io/MWICombatSimulatorTest/)
-- Shykai's simulator (https://shykai.github.io/MWICombatSimulatorTest/dist/)
+- Amvoidguy's simulator (<https://amvoidguy.github.io/MWICombatSimulatorTest/>)
+- Shykai's simulator (<https://shykai.github.io/MWICombatSimulatorTest/dist/>)
 
 ---
 
@@ -511,9 +511,9 @@ This document provides a detailed breakdown of all major functions in MWITools-2
 
 ### External Resources
 
-- Enhancelate algorithm: https://doh-nuts.github.io/Enhancelator/
-- Build score system: https://greasyfork.org/scripts/511240
-- Group export: https://greasyfork.org/scripts/507255
+- Enhancelate algorithm: <https://doh-nuts.github.io/Enhancelator/>
+- Build score system: <https://greasyfork.org/scripts/511240>
+- Group export: <https://greasyfork.org/scripts/507255>
 
 ---
 

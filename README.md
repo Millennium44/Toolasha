@@ -252,7 +252,7 @@ Toolasha/
 
 ## 📋 Next Steps
 
-### Phase C: Core Infrastructure ✅ COMPLETE!
+### Phase C: Core Infrastructure ✅ COMPLETE
 
 - [x] `storage.js` - Storage wrapper ✅
 - [x] `config.js` - Settings and constants ✅
@@ -261,7 +261,7 @@ Toolasha/
 
 **All core infrastructure is now in place!** Features can now access game data, settings, and real-time updates.
 
-### Phase 2: Utilities ✅ COMPLETE!
+### Phase 2: Utilities ✅ COMPLETE
 
 - [x] `dom.js` - DOM manipulation helpers ✅
 - [x] `efficiency.js` - Buff and efficiency calculators ✅
@@ -270,7 +270,7 @@ Toolasha/
 
 ### Phase 3: Feature Modules
 
-#### Market System ✅ COMPLETE!
+#### Market System ✅ COMPLETE
 
 - **marketplace.js** - Market price API client ✅
     - `marketAPI.fetch(forceFetch)` - Fetch market data (with caching)
@@ -336,7 +336,7 @@ The profit calculator accounts for:
 
 All efficiency sources are automatically detected from character data - no manual configuration needed!
 
-#### Action Panel Enhancements ✅ PARTIAL!
+#### Action Panel Enhancements ✅ PARTIAL
 
 - **panel-observer.js** - Action panel detection and MutationObserver ✅
     - Detects when skill action panels appear

@@ -9,11 +9,13 @@
 ## Usage
 
 ### Start Diagnostic
+
 ```javascript
-MWITools.diagnostics.startTaskRerollDiagnostic()
+MWITools.diagnostics.startTaskRerollDiagnostic();
 ```
 
 ### Perform Actions
+
 1. Open a task that can be rerolled
 2. Click the "Reroll" button
 3. Select "Pay X Gold" or "Pay X Cowbells"
@@ -21,8 +23,9 @@ MWITools.diagnostics.startTaskRerollDiagnostic()
 5. Try different tasks
 
 ### Stop and View Results
+
 ```javascript
-MWITools.diagnostics.stopTaskRerollDiagnostic()
+MWITools.diagnostics.stopTaskRerollDiagnostic();
 ```
 
 ## What It Will Show
@@ -35,15 +38,17 @@ MWITools.diagnostics.stopTaskRerollDiagnostic()
 ## Results Export
 
 Results are saved to:
+
 ```javascript
-window.__taskRerollDiagnosticResults
+window.__taskRerollDiagnosticResults;
 ```
 
 Access individual parts:
+
 ```javascript
-window.__taskRerollDiagnosticResults.messages     // WebSocket messages
-window.__taskRerollDiagnosticResults.rerollCosts  // Cost tracking
-window.__taskRerollDiagnosticResults.uiElements   // UI elements found
+window.__taskRerollDiagnosticResults.messages; // WebSocket messages
+window.__taskRerollDiagnosticResults.rerollCosts; // Cost tracking
+window.__taskRerollDiagnosticResults.uiElements; // UI elements found
 ```
 
 ## Alternative: Manual Console Logging
@@ -53,18 +58,20 @@ If the diagnostic doesn't work, try this in console while performing rerolls:
 ```javascript
 // Log all WebSocket messages
 const originalSend = WebSocket.prototype.send;
-WebSocket.prototype.send = function(...args) {
+WebSocket.prototype.send = function (...args) {
     console.log('[WS Send]', args[0]);
     return originalSend.apply(this, args);
 };
 
 // Log all DOM mutations
-new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-        mutation.addedNodes.forEach(node => {
-            if (node.textContent?.includes('Reroll') ||
+new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+            if (
+                node.textContent?.includes('Reroll') ||
                 node.textContent?.includes('Cowbell') ||
-                node.textContent?.includes('Gold')) {
+                node.textContent?.includes('Gold')
+            ) {
                 console.log('[DOM Added]', node.textContent, node);
             }
         });
@@ -75,15 +82,18 @@ new MutationObserver(mutations => {
 ## Troubleshooting
 
 **No WebSocket messages captured:**
+
 - Reroll data may not use WebSocket
 - Check browser Network tab → WS filter
 - Look for HTTP requests instead
 
 **No button clicks captured:**
+
 - Make sure you click buttons WHILE diagnostic is running
 - Try starting diagnostic before opening task panel
 
 **No UI elements found:**
+
 - Reroll UI may use different class names
 - Open task panel WHILE diagnostic is running
 - Check browser console for "Found task/reroll element" logs

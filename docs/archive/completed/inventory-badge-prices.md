@@ -9,57 +9,66 @@ Added an independent badge price display feature that shows ask/bid prices on in
 ## Implementation Details
 
 ### Files Created
+
 - `/Users/kennydean/Downloads/MWI/Toolasha/src/features/inventory/inventory-badge-prices.js` (606 lines)
 
 ### Files Modified
+
 1. `/Users/kennydean/Downloads/MWI/Toolasha/src/features/settings/settings-config.js`
-   - Added `invBadgePrices` setting (checkbox, default: false)
-   - Added `invBadgePrices_type` setting (dropdown: None/Ask/Bid, default: Ask)
+    - Added `invBadgePrices` setting (checkbox, default: false)
+    - Added `invBadgePrices_type` setting (dropdown: None/Ask/Bid, default: Ask)
 
 2. `/Users/kennydean/Downloads/MWI/Toolasha/src/core/config.js`
-   - Added `inventoryBadgePrices` feature to registry
+    - Added `inventoryBadgePrices` feature to registry
 
 3. `/Users/kennydean/Downloads/MWI/Toolasha/src/core/feature-registry.js`
-   - Imported and initialized the new feature
+    - Imported and initialized the new feature
 
 ## How It Works
 
 ### User Interface
+
 When enabled, the feature adds UI controls above the inventory:
+
 ```
 Badge Prices: [Ask] [Bid] [None]
 ```
 
 Users can click buttons to toggle between:
+
 - **Ask**: Shows ask price (buying/replacement cost) on each stack
 - **Bid**: Shows bid price (selling/quick liquidation value) on each stack
 - **None**: Hides all badges
 
 ### Badge Display
+
 - **Position**: Top-left corner of item icon (2px, 2px)
 - **Styling**:
-  - Uses script accent color (green by default)
-  - Small font (0.7rem)
-  - Bold weight
-  - Text shadow for readability
+    - Uses script accent color (green by default)
+    - Small font (0.7rem)
+    - Bold weight
+    - Text shadow for readability
 - **Format**: KMB format (e.g., "1.23M" instead of "1,234,567")
 
 ### Pricing Logic
+
 The feature uses the same comprehensive pricing system as inventory sorting:
 
 1. **Trainee items**: Uses vendor price for charms, 0 for others
 2. **Openable containers**: Uses expected value if available
 3. **Enhanced equipment**:
-   - Uses enhancement cost for high-level items (+13 and above by default)
-   - Falls back to market price with enhancement cost fill-in
+    - Uses enhancement cost for high-level items (+13 and above by default)
+    - Falls back to market price with enhancement cost fill-in
 4. **Unenhanced equipment**: Uses market price or crafting cost
 5. **Regular items**: Uses market prices
 
 ### Settings Location
+
 - **Main Toggle**: Settings → Economy & Inventory → "Show price badges on item icons"
 - **Price Type**: Settings → Economy & Inventory → "Badge price type to display"
 
 ### Independence from Sorting
+
 - Works with sorting disabled
 - Has its own UI controls
 - Maintains separate state (saved to `toolasha_inventory_badge_prices` localStorage key)
@@ -77,33 +86,35 @@ The feature uses the same comprehensive pricing system as inventory sorting:
 ## Testing Instructions
 
 1. **Enable the Feature**:
-   - Open Toolasha settings
-   - Navigate to "Economy & Inventory" section
-   - Check "Show price badges on item icons"
-   - Select "Ask" or "Bid" from the dropdown
+    - Open Toolasha settings
+    - Navigate to "Economy & Inventory" section
+    - Check "Show price badges on item icons"
+    - Select "Ask" or "Bid" from the dropdown
 
 2. **Open Inventory**:
-   - You should see badge price controls above the inventory grid
-   - Badges should appear on all items (except currencies)
+    - You should see badge price controls above the inventory grid
+    - Badges should appear on all items (except currencies)
 
 3. **Toggle Price Types**:
-   - Click "Ask", "Bid", or "None" buttons
-   - Badges should update immediately
-   - Selection should persist across inventory close/reopen
+    - Click "Ask", "Bid", or "None" buttons
+    - Badges should update immediately
+    - Selection should persist across inventory close/reopen
 
 4. **Verify Pricing**:
-   - Check that prices match market values
-   - Enhanced equipment should show reasonable costs
-   - Openable containers should show EV values
+    - Check that prices match market values
+    - Enhanced equipment should show reasonable costs
+    - Openable containers should show EV values
 
 ## Differences from MWI Tools
 
 **MWI Tools Implementation**:
+
 - Badge display is tied to sorting functionality
 - Only shows badges when actively sorting by Ask/Bid
 - Badges disappear when "None" sorting is selected
 
 **Toolasha Implementation (Option A)**:
+
 - Badge display is completely independent
 - Can show badges without enabling sorting
 - User explicitly chooses price type (Ask/Bid/None)
@@ -118,6 +129,7 @@ The feature uses the same comprehensive pricing system as inventory sorting:
 - [ ] Integration with sorting feature (auto-sync price type)
 
 ## Version
+
 - **Added in**: v0.4.927
 - **Build Status**: ✅ Successful (480ms)
 - **Lines of Code**: 606

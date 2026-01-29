@@ -14,18 +14,21 @@ Two features from MWI Tools Extended that enhance action planning:
 ### How It Works in MWI-E
 
 **The game shows:**
+
 ```
 Gather Flax: [100] actions
 Outputs: 1.3 - 3.9 Flax
 ```
 
 **MWI-E adds below the output:**
+
 ```
 Outputs: 1.3 - 3.9 Flax
          130.0 - 390.0    ← Gold colored, shows total from 100 actions
 ```
 
 **Calculation:**
+
 ```javascript
 // User typed "100" in the input box
 const amount = 100;
@@ -43,12 +46,14 @@ const expectedMax = maxOutput × amount × dropRate;  // 3.9 × 100 × 1.0 = 390
 ```
 
 **For items with drop rates:**
+
 ```
 Outputs: 1 Star Fragment ~3%
          3.0              ← Shows expected total accounting for 3% drop rate
 ```
 
 **MWI-E Implementation Details:**
+
 - Creates styled clone elements below each output
 - Color-coded: gold (#FFD700) for regular drops, purple (#9D4EDD) for essences
 - Text shadow for visual emphasis
@@ -64,6 +69,7 @@ Outputs: 1 Star Fragment ~3%
 **Location:** New module `/src/features/actions/output-totals.js`
 
 **Why This Fits:**
+
 - Enhances existing game UI without replacing it
 - Provides immediate visual feedback as user types
 - Helps with planning ("I need 500 Flax, so I'll queue 150 actions")
@@ -72,6 +78,7 @@ Outputs: 1 Star Fragment ~3%
 **Implementation Approach:**
 
 1. **Add Setting:**
+
 ```javascript
 // settings-config.js
 actionPanel_outputTotals: {
@@ -83,7 +90,8 @@ actionPanel_outputTotals: {
 }
 ```
 
-2. **Architecture:**
+1. **Architecture:**
+
 ```javascript
 // output-totals.js
 
@@ -148,7 +156,7 @@ class OutputTotals {
         const amount = parseFloat(inputBox.value);
 
         // Remove existing totals
-        detailPanel.querySelectorAll('.mwi-output-total').forEach(el => el.remove());
+        detailPanel.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
 
         // No amount entered - nothing to calculate
         if (isNaN(amount) || amount <= 0) {
@@ -177,7 +185,7 @@ class OutputTotals {
         // Find all drop elements within this section
         const dropElements = section.querySelectorAll('[class*="SkillActionDetail_drop"]');
 
-        dropElements.forEach(dropElement => {
+        dropElements.forEach((dropElement) => {
             // Find the output text (e.g., "1.3 - 3.9")
             const outputText = this.extractOutputText(dropElement);
 
@@ -290,7 +298,7 @@ class OutputTotals {
         }
 
         // Remove all injected elements
-        document.querySelectorAll('.mwi-output-total').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
     }
 }
 
@@ -298,7 +306,8 @@ const outputTotals = new OutputTotals();
 export default outputTotals;
 ```
 
-3. **Integration:**
+1. **Integration:**
+
 ```javascript
 // main.js
 import outputTotals from './features/actions/output-totals.js';
@@ -307,7 +316,8 @@ import outputTotals from './features/actions/output-totals.js';
 outputTotals.initialize();
 ```
 
-4. **Visual Example (Toolasha Style):**
+1. **Visual Example (Toolasha Style):**
+
 ```
 ┌──────────────────────────────────┐
 │ Foraging: Flax                   │
@@ -324,10 +334,11 @@ outputTotals.initialize();
 ```
 
 **Design Rationale:**
+
 - **Color scheme:**
-  - Regular outputs: `config.COLOR_INFO` (blue) - matches Toolasha's info color
-  - Essences: Purple (#9D4EDD) - matches MWI-E, essence drops are special
-  - Rares: `config.COLOR_WARNING` (orange/yellow) - indicates rare items
+    - Regular outputs: `config.COLOR_INFO` (blue) - matches Toolasha's info color
+    - Essences: Purple (#9D4EDD) - matches MWI-E, essence drops are special
+    - Rares: `config.COLOR_WARNING` (orange/yellow) - indicates rare items
 - **Minimal styling:** No text shadows or heavy effects (simpler than MWI-E)
 - **Compact:** Single line below each output
 - **Responsive:** Updates immediately as user types
@@ -339,9 +350,10 @@ outputTotals.initialize();
 ### How It Works in MWI-E
 
 **Calculation:**
+
 ```javascript
 // For each crafting recipe
-const maxCraftsPerInput = action.inputItems.map(input => {
+const maxCraftsPerInput = action.inputItems.map((input) => {
     const invCount = getItemCountFromInv(input.itemHrid);
     return Math.floor(invCount / input.count);
 });
@@ -356,6 +368,7 @@ if (action.upgradeItemHrid) {
 ```
 
 **Display:**
+
 ```
 Can produce: 12  ← Gold if > 0, red if = 0
 ```
@@ -395,13 +408,9 @@ class MaxProduceable {
 
     setupObserver() {
         // Watch for skill action panels (in skill screen, not detail modal)
-        this.unregisterObserver = domObserver.onClass(
-            'MaxProduceable',
-            'SkillAction_skillAction',
-            (actionPanel) => {
-                this.injectMaxProduceable(actionPanel);
-            }
-        );
+        this.unregisterObserver = domObserver.onClass('MaxProduceable', 'SkillAction_skillAction', (actionPanel) => {
+            this.injectMaxProduceable(actionPanel);
+        });
     }
 
     injectMaxProduceable(actionPanel) {
@@ -439,7 +448,7 @@ class MaxProduceable {
         // Store reference
         this.actionElements.set(actionPanel, {
             actionHrid: actionHrid,
-            displayElement: display
+            displayElement: display,
         });
 
         // Initial update
@@ -476,10 +485,9 @@ class MaxProduceable {
         }
 
         // Calculate max crafts per input
-        const maxCraftsPerInput = actionDetails.inputItems.map(input => {
-            const invItem = inventory.find(item =>
-                item.itemHrid === input.itemHrid &&
-                item.itemLocationHrid === '/item_locations/inventory'
+        const maxCraftsPerInput = actionDetails.inputItems.map((input) => {
+            const invItem = inventory.find(
+                (item) => item.itemHrid === input.itemHrid && item.itemLocationHrid === '/item_locations/inventory'
             );
 
             const invCount = invItem?.count || 0;
@@ -490,9 +498,10 @@ class MaxProduceable {
 
         // Check upgrade item
         if (actionDetails.upgradeItemHrid) {
-            const upgradeItem = inventory.find(item =>
-                item.itemHrid === actionDetails.upgradeItemHrid &&
-                item.itemLocationHrid === '/item_locations/inventory'
+            const upgradeItem = inventory.find(
+                (item) =>
+                    item.itemHrid === actionDetails.upgradeItemHrid &&
+                    item.itemLocationHrid === '/item_locations/inventory'
             );
 
             const upgradeCount = upgradeItem?.count || 0;
@@ -550,7 +559,7 @@ class MaxProduceable {
             clearInterval(this.updateTimer);
         }
 
-        document.querySelectorAll('.mwi-max-produceable').forEach(el => el.remove());
+        document.querySelectorAll('.mwi-max-produceable').forEach((el) => el.remove());
         this.actionElements.clear();
     }
 }
@@ -560,6 +569,7 @@ export default maxProduceable;
 ```
 
 **Setting:**
+
 ```javascript
 // settings-config.js
 actionPanel_maxProduceable: {
@@ -576,29 +586,35 @@ actionPanel_maxProduceable: {
 ## Implementation Complexity
 
 ### Feature 1: Output Totals Display
+
 **Complexity:** Medium
 
 **Estimated Effort:**
+
 - Setting configuration: 5 minutes
 - DOM observation setup: 30 minutes
 - Output parsing and calculation: 45 minutes
 - Display creation and styling: 30 minutes
 - Testing with various action types: 30 minutes
-**Total:** ~2.5 hours
+  **Total:** ~2.5 hours
 
 **Key Challenges:**
+
 - Finding the correct input box element (class names may vary)
 - Parsing output formats (ranges vs single values)
 - Handling drop rates correctly
 - Avoiding conflicts with game updates
 
 ### Feature 2: Max Produceable Display
+
 **Complexity:** Medium
 
 **Estimated Effort:**
+
 - Same as previous proposal: ~2.5 hours
 
 **Key Challenges:**
+
 - Extracting action HRID from skill panels
 - Handling inventory updates efficiently
 - Performance with many actions visible
@@ -608,25 +624,27 @@ actionPanel_maxProduceable: {
 ## Recommended Implementation Order
 
 1. **Feature 1 first (Output Totals):**
-   - More immediate user feedback (responds to typing)
-   - Simpler state management (no periodic updates needed)
-   - Visible in the action detail panel users already interact with
+    - More immediate user feedback (responds to typing)
+    - Simpler state management (no periodic updates needed)
+    - Visible in the action detail panel users already interact with
 
 2. **Feature 2 second (Max Produceable):**
-   - Requires periodic updates and inventory monitoring
-   - Can learn from patterns established in Feature 1
+    - Requires periodic updates and inventory monitoring
+    - Can learn from patterns established in Feature 1
 
 ---
 
 ## User Experience Benefits
 
-### Output Totals Display:
+### Output Totals Display
+
 - **Instant feedback:** See total outputs as you type the quantity
 - **Planning:** "I need 500 Flax, so 150 actions should do it"
 - **No mental math:** Automatic calculation with drop rates
 - **Visual clarity:** Color-coded by output type
 
-### Max Produceable Display:
+### Max Produceable Display
+
 - **Inventory awareness:** Know what you can craft immediately
 - **Material bottlenecks:** Red = missing materials, yellow = low stock
 - **Batch planning:** See max batch size at a glance
@@ -636,6 +654,7 @@ actionPanel_maxProduceable: {
 ## Success Criteria
 
 ### Feature 1: Output Totals Display
+
 - ✅ Updates immediately when user types in input box
 - ✅ Correctly calculates ranges (min-max)
 - ✅ Accounts for drop rates properly
@@ -644,6 +663,7 @@ actionPanel_maxProduceable: {
 - ✅ Removes totals when input is cleared
 
 ### Feature 2: Max Produceable Display
+
 - ✅ Accurate inventory calculations
 - ✅ Handles all input materials + upgrade items
 - ✅ Color coding identifies bottlenecks

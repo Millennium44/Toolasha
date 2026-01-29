@@ -15,8 +15,12 @@ npm run dev          # Alias for watch
 
 npm run lint         # Check for code issues (errors fail, warnings don't)
 npm run lint:fix     # Auto-fix linting issues
-npm run format       # Format code with Prettier
+npm run format       # Format code and markdown with Prettier
 npm run format:check # Check formatting without changes
+
+npm run lint:md        # Check markdown formatting
+npm run lint:md:fix    # Auto-fix markdown issues
+npm run lint:md:links  # Check for broken links in markdown
 
 npm run version:sync  # Sync version from package.json → userscript-header.txt
 npm run version:patch # Bump patch version (0.5.9 → 0.5.10)
@@ -26,7 +30,7 @@ npm run version:major # Bump major version (0.5.9 → 1.0.0)
 
 **Testing:** Vitest with 143 tests covering utility modules (formatters, efficiency, enhancement-multipliers). Tests run automatically on commit and in CI.
 
-**Manual testing:** Install `dist/Toolasha.user.js` in Tampermonkey, visit https://www.milkywayidle.com/game
+**Manual testing:** Install `dist/Toolasha.user.js` in Tampermonkey, visit <https://www.milkywayidle.com/game>
 
 **Pre-commit hooks:** ESLint, Prettier, tests, and build run automatically on commit.
 

@@ -3,6 +3,7 @@
 ## Problem Statement
 
 For enhancement levels +13 and above, market prices are unreliable due to:
+
 - Thin markets (low trading volume)
 - Price manipulation / panic selling
 - Inaccurate representation of actual investment
@@ -106,7 +107,11 @@ export async function calculateItemValue(item, pricingMode = 'ask') {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
                         networthCache.set(itemHrid, enhancementLevel, itemValue);
                     } else {
-                        console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
+                        console.warn(
+                            '[Networth] Enhancement calculation failed for:',
+                            itemHrid,
+                            '+' + enhancementLevel
+                        );
                         itemValue = getMarketPrice(itemHrid, 0, pricingMode);
                     }
                 }
@@ -165,6 +170,7 @@ if (enhancementLevel >= 13) {
 **Cons:** If market is fundamentally unreliable for +13, why use it at all? Adds complexity for minimal benefit.
 
 **Additional settings required:**
+
 ```javascript
 networth_highEnhancementThreshold: {
     id: 'networth_highEnhancementThreshold',
@@ -188,6 +194,7 @@ networth_highEnhancementThreshold: {
 **Recommended:** Option A (Always use cost for +13 and above)
 
 **Reasoning:**
+
 - Market data is fundamentally unreliable at these enhancement levels
 - Enhancement cost represents actual player investment
 - Simpler implementation, fewer settings

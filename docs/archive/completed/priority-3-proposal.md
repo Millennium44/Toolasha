@@ -13,6 +13,7 @@
 ✅ Other features (ability-book-calculator, gathering-stats, etc.) - Already using centralized system
 
 **Need migration (3 files):**
+
 1. ❌ `quick-input-buttons.js` - Own observer watching for action panels
 2. ❌ `enhancement-ui.js` - Own observer watching for enhancement UI
 3. ❌ `settings-ui.js` - Own observer watching for settings panel
@@ -28,12 +29,15 @@
 ## Implementation Strategy
 
 ### Phase 1: Migrate `quick-input-buttons.js`
+
 **Current behavior (lines 55-93):**
+
 - Creates own MutationObserver watching document.body
 - Looks for `SkillActionDetail_skillActionDetail` class
 - Calls `injectButtons()` when found
 
 **Migration approach:**
+
 ```javascript
 // BEFORE (lines 55-93)
 this.observer = new MutationObserver((mutations) => {
@@ -45,16 +49,13 @@ this.observer = new MutationObserver((mutations) => {
 });
 
 // AFTER
-this.unregister = domObserver.onClass(
-    'QuickInputButtons',
-    'SkillActionDetail_skillActionDetail',
-    (panel) => {
-        this.injectButtons(panel);
-    }
-);
+this.unregister = domObserver.onClass('QuickInputButtons', 'SkillActionDetail_skillActionDetail', (panel) => {
+    this.injectButtons(panel);
+});
 ```
 
 **Changes required:**
+
 1. Import `domObserver` from `../../core/dom-observer.js`
 2. Replace `startObserving()` method with registration call
 3. Store unregister function for cleanup
@@ -62,6 +63,7 @@ this.unregister = domObserver.onClass(
 5. Keep existing panel scanning logic intact
 
 **Risk level:** LOW
+
 - Centralized observer already handles the same DOM watching
 - No behavior changes, just different triggering mechanism
 - Easy to rollback if issues occur
@@ -69,7 +71,9 @@ this.unregister = domObserver.onClass(
 ---
 
 ### Phase 2: Migrate `enhancement-ui.js`
+
 **Current behavior:**
+
 - Creates own MutationObserver for enhancement UI detection
 - Watches for specific enhancement-related class names
 
@@ -77,19 +81,23 @@ this.unregister = domObserver.onClass(
 Similar to Phase 1, replace with `domObserver.onClass()` registration
 
 **Changes required:**
+
 1. Import `domObserver`
 2. Identify target class names for enhancement UI
 3. Replace observer creation with `domObserver.onClass()`
 4. Store unregister function
 
 **Risk level:** LOW
+
 - Similar pattern to quick-input-buttons
 - Well-defined target elements
 
 ---
 
 ### Phase 3: Migrate `settings-ui.js`
+
 **Current behavior:**
+
 - Creates own MutationObserver for settings panel detection
 - Watches for settings tab/panel appearance
 
@@ -97,12 +105,14 @@ Similar to Phase 1, replace with `domObserver.onClass()` registration
 Replace with `domObserver.onClass()` for settings-related elements
 
 **Changes required:**
+
 1. Import `domObserver`
 2. Identify settings panel class names
 3. Replace observer with centralized registration
 4. Store unregister function
 
 **Risk level:** LOW
+
 - Settings panel has well-defined structure
 - Less frequent DOM changes than action panels
 
@@ -111,11 +121,14 @@ Replace with `domObserver.onClass()` for settings-related elements
 ## Files to Keep as Specialized Observers
 
 ### `action-time-display.js` - TWO observers (Keep)
+
 **Reasons to keep:**
+
 1. **Queue Menu Observer (line 82):** Requires disconnect/reconnect logic when action queue is reordered
 2. **Action Name Observer (line 151):** Watches specific element for changes, needs precise control
 
 **Justification:**
+
 - Specialized behavior not suited for centralized system
 - Disconnect/reconnect pattern is intentional optimization
 - Low frequency operations (only during user actions)
@@ -124,9 +137,10 @@ Replace with `domObserver.onClass()` for settings-related elements
 
 ## Testing Strategy
 
-### For Each Migration:
+### For Each Migration
 
 **1. Functional Testing:**
+
 - [ ] Feature initializes without errors
 - [ ] UI elements appear correctly
 - [ ] All buttons/inputs work as expected
@@ -134,20 +148,23 @@ Replace with `domObserver.onClass()` for settings-related elements
 - [ ] No missing injections
 
 **2. Performance Verification:**
+
 - [ ] No console errors about observer
 - [ ] Check `domObserver.getStats()` shows handler registered
 - [ ] Verify no memory leaks (handlers cleaned up properly)
 
 **3. Edge Cases:**
+
 - [ ] Test with rapid panel opening/closing
 - [ ] Test with multiple panels open simultaneously
 - [ ] Test after page refresh
 - [ ] Test with feature disabled/re-enabled
 
 **4. Browser Console Check:**
+
 ```javascript
 // Should show all registered handlers
-domObserver.getStats()
+domObserver.getStats();
 ```
 
 ---
@@ -166,18 +183,21 @@ Each migration is isolated and can be reverted independently:
 ## Expected Benefits
 
 **Performance:**
+
 - Reduce from ~8-11 independent observers to 1 centralized observer + 2 specialized
 - ~73-82% reduction in observer count
 - Less redundant DOM traversal
 - Better browser optimization (single observer)
 
 **Maintainability:**
+
 - Consistent pattern across features
 - Centralized debugging (all handlers in one place)
 - Easier to add debouncing if needed
 - Cleaner code (less boilerplate)
 
 **Developer Experience:**
+
 - `domObserver.getStats()` shows all active handlers
 - Centralized error handling
 - Easier to track observer-related issues

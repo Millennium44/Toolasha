@@ -3,11 +3,13 @@
 ## Current Behavior
 
 **Equipment category has special restrictions:**
+
 - Only charms get price badges
 - All other equipment (weapons, armor, etc.) excluded
 - Equipment category cannot be sorted by price (always "None" order)
 
 **Code location:** `src/features/inventory/inventory-sort.js`
+
 - Lines 324-340: Charm-only filter
 - Line 266: Sorting disabled for Equipment category
 
@@ -20,6 +22,7 @@
 **Option 2 (Recommended): Full Feature Enablement**
 
 1. **Remove charm filter** (lines 324-340):
+
 ```javascript
 // DELETE THIS BLOCK:
 if (isEquipmentCategory) {
@@ -34,7 +37,8 @@ if (isEquipmentCategory) {
 }
 ```
 
-2. **Enable sorting** (line 266):
+1. **Enable sorting** (line 266):
+
 ```javascript
 // BEFORE:
 const shouldSort = !isEquipmentCategory;
@@ -53,6 +57,7 @@ const shouldSort = true;
 ## Performance Impact
 
 **Negligible:**
+
 - Market lookups already cached
 - Equipment category = 10-20 items max
 - Badge rendering is lightweight
@@ -62,6 +67,7 @@ const shouldSort = true;
 **Total:** Remove ~16 lines + change 1 line = minimal
 
 **Files Modified:**
+
 - `src/features/inventory/inventory-sort.js` only
 
 ---

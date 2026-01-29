@@ -34,7 +34,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ## Table of Contents - Major Functional Areas
 
 ### 1. Core System & Configuration
+
 **Lines: 1-264, 5225-5256**
+
 - Settings management (settingsMap with 30+ options)
 - Color customization (SCRIPT_COLOR_MAIN, SCRIPT_COLOR_TOOLTIP)
 - Locale detection (isZH, isZHInGameSetting)
@@ -43,6 +45,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Equipment checking system
 
 **Key Functions:**
+
 - `saveSettings()` - Save user preferences
 - `readSettings()` - Load user preferences
 - `checkEquipment()` - Validate equipped items for notifications
@@ -51,13 +54,16 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 2. Data Management & WebSocket Hooking
+
 **Lines: 2048-2448**
+
 - WebSocket message interception
 - Game data extraction and processing
 - InitClientData decompression (LZ-string)
 - Translation system (EN/ZH name mappings)
 
 **Key Functions:**
+
 - `hookWS()` - Intercepts WebSocket messages
 - `handleMessage(message)` - Processes game state updates
 - `decompressInitClientData(compressedData)` - LZ-string decompression
@@ -66,6 +72,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `getActionEnNameFromZhName(zhName)` - Action name translation
 
 **Message Types Handled:**
+
 - `init_character_data` - Player data
 - `init_client_data` - Game data
 - `actions_updated` - Action queue changes
@@ -79,13 +86,16 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 3. Market System & API Integration
+
 **Lines: 2702-2792, 3601-3710, 4349-4503**
+
 - Market API fetching (milkywayidle.com/game_data/marketplace.json)
 - Price data validation and caching
 - Market filters (level, skill requirements, location)
 - Inventory sorting (by ask/bid price)
 
 **Key Functions:**
+
 - `fetchMarketJSON(forceFetch)` - Fetch market data with caching
 - `validateMarketJsonFetch(jsonStr, isSave)` - Validate API response
 - `addInvSortButton(invElem)` - Add sort buttons to inventory
@@ -95,6 +105,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `getWeightedMarketPrice(marketPrices, ratio)` - Calculate weighted average price
 
 **Market Filter Types:**
+
 - Level range filtering
 - Skill requirement filtering
 - Item location filtering (inventory/equipped)
@@ -102,7 +113,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 4. Networth & Build Score System
+
 **Lines: 2448-3065, 2794-3048**
+
 - Total networth calculation (inventory + equipment + market listings)
 - Build score algorithm (by Ratatatata)
 - House upgrade cost calculation
@@ -111,6 +124,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Profile analysis for other players
 
 **Key Functions:**
+
 - `calculateNetworth()` - Calculate player networth
 - `getSelfBuildScores(equippedNetworth)` - Calculate build scores
 - `calculateAbilityScore()` - Value of learned abilities
@@ -121,6 +135,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `getBuildScoreByProfile(profile)` - Calculate from profile data
 
 **Score Components:**
+
 - House Score: Battle-related room upgrades
 - Ability Score: Combat ability books (in millions)
 - Equipment Score: Current equipment value (in millions)
@@ -128,7 +143,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 5. Action Panel Enhancements
+
 **Lines: 3757-4021, 3066-3121**
+
 - Total action time display
 - Quick input buttons (50, 100, 500, 1k, 10k, 100k, 1m, ∞)
 - Experience per hour calculation
@@ -136,6 +153,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Efficiency buff integration
 
 **Key Functions:**
+
 - `handleActionPanel(panel)` - Main action panel handler
 - `calculateTotalTime()` - Calculate total action time
 - `showTotalActionTime()` - Display in top-left corner
@@ -144,6 +162,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `reactInputTriggerHack(inputElem, value)` - Trigger React onChange
 
 **Features:**
+
 - Estimated completion time
 - Actions needed to reach target level
 - XP/hour display
@@ -152,7 +171,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 6. Tooltip System
+
 **Lines: 3122-3560**
+
 - Enhanced item tooltips
 - Market price display on hover
 - Enhancement cost information
@@ -160,6 +181,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Production profit calculations
 
 **Key Functions:**
+
 - `tooltipObserver` - MutationObserver for tooltips
 - `handleTooltipItem(tooltip)` - Process item tooltips
 - `getToolsSpeedBuffByActionHrid(actionHrid)` - Tool speed bonuses
@@ -169,6 +191,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `fixOverflow(tooltip)` - Ensure tooltip visibility
 
 **Tooltip Enhancements:**
+
 - Market prices (ask/bid)
 - Enhancement level with costs
 - Consumable buffs and duration
@@ -179,7 +202,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 7. Enhancement System & Optimization
+
 **Lines: 4927-5165, 5057-5225**
+
 - Enhancement cost calculation
 - Best enhancement strategy finder (Enhancelate algorithm)
 - Markov chain analysis for success rates
@@ -187,6 +212,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Base item production cost calculation
 
 **Key Functions:**
+
 - `findBestEnhanceStrat(input_data)` - Find optimal enhancement path
 - `Enhancelate(input_data, protect_at)` - Markov chain simulation
 - `getCosts(hrid, price_data)` - Calculate enhancement material costs
@@ -196,6 +222,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `handleItemTooltipWithEnhancementLevel(tooltip)` - Enhancement tooltip
 
 **Features:**
+
 - Optimal protection item usage
 - Total cost calculation (materials + time)
 - Success rate analysis
@@ -203,6 +230,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Action time per enhancement
 
 **Customizable Parameters (input_data):**
+
 - `enhancing_level` - Player Enhancing skill level
 - `laboratory_level` - House room level
 - `enhancer_bonus` - Tool bonus percentage
@@ -213,7 +241,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 8. Combat Statistics & DPS Tracking
+
 **Lines: 5380-5808**
+
 - Real-time DPS calculation per player
 - Hit chance tables vs each monster
 - Damage breakdown by source (abilities, auto-attacks)
@@ -222,12 +252,14 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Player aura skill detection
 
 **Key Functions:**
+
 - `getStatisticsDom()` - Create DPS panel DOM
 - `updateStatisticsPanel()` - Update combat statistics
 - `calculateHitChance(accuracy, evasion)` - Hit chance formula
 - Event listeners for panel dragging (mouse/touch)
 
 **Features:**
+
 - Real-time DPS per player with color-coded bars
 - Damage breakdown (auto-attack vs abilities)
 - Hit chance % vs each enemy (by combat style)
@@ -237,6 +269,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Chart.js pie chart visualization
 
 **Data Tracked:**
+
 - `monstersHP` - Current monster HP
 - `damageByPlayer` - Total damage per player
 - `damageByAttackType` - Auto vs ability damage
@@ -246,7 +279,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 9. Battle Summary & Loot Tracking
+
 **Lines: 4118-4270**
+
 - Combat encounter summaries
 - Loot tracking with drop rates
 - Combat time and kill count
@@ -254,10 +289,12 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Average experience per encounter
 
 **Key Functions:**
+
 - `handleBattleSummary(message)` - Process battle results
 - Display in collapsible panel below combat zone
 
 **Summary Components:**
+
 - Total combat time
 - Number of encounters/kills
 - Loot obtained with quantities
@@ -268,7 +305,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 10. Combat Simulator Integration
+
 **Lines: 5810-6308**
+
 - Data export for combat simulators (Amvoidguy, Shykai)
 - Group export functionality
 - Character profile construction
@@ -277,6 +316,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Profile storage and retrieval
 
 **Key Functions:**
+
 - `addImportButtonForAmvoidguy()` - Add import button to simulator
 - `importDataForAmvoidguy(button)` - Import player data
 - `constructGroupExportObj()` - Export party data
@@ -286,6 +326,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `handleResultForAmvoidguy()` - Process simulation output
 
 **Export Data:**
+
 - Player levels (all skills)
 - Equipment with enhancement levels
 - Food/drink slots
@@ -297,7 +338,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 11. Mooneycalc Integration
+
 **Lines: 6308-6706**
+
 - XP calculator integration
 - Skill level projection
 - Multi-skill XP calculation
@@ -305,6 +348,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Real-time XP rate tracking
 
 **Key Functions:**
+
 - `addImportButtonForMooneycalc()` - Add import button
 - `calculateAfterDays()` - Project levels after X days
 - `calculateTill()` - Calculate days to target level
@@ -313,7 +357,9 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 12. UI Enhancements
+
 **Lines: 4271-4349, 4504-4558, 4558-4675, 4675-4761**
+
 - Item level display on icons
 - Task card monitoring
 - Combat map indexing
@@ -322,6 +368,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - Navigation shortcuts
 
 **Key Functions:**
+
 - `addItemLevels()` - Show item level on icons
 - `handleTaskCard()` - Task monitoring display
 - `addIndexToMaps()` - Add map indices
@@ -332,26 +379,32 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ---
 
 ### 13. Action Queue Management
+
 **Lines: 4761-4853**
+
 - Action queue time calculation
 - Multi-action planning
 - Efficiency integration
 - Queue completion estimates
 
 **Key Functions:**
+
 - `handleActionQueueMenue(added)` - Monitor queue changes
 - `handleActionQueueMenueCalculateTime(added)` - Calculate queue time
 
 ---
 
 ### 14. Utility Functions
+
 **Lines: 3099-3121, 3710-3752, 4062-4083, 4840-4853**
+
 - Number formatting with localization
 - Time formatting (seconds to readable)
 - Text extraction from DOM elements
 - React input manipulation
 
 **Key Functions:**
+
 - `numberFormatter(num, digits)` - Format large numbers (K/M/B)
 - `timeReadable(sec)` - Convert seconds to HH:MM:SS
 - `getOriTextFromElement(elem)` - Extract original text
@@ -362,12 +415,14 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ## Technical Architecture
 
 ### Dependencies
+
 - **mathjs** (v12.4.2) - Matrix operations for Enhancelate
 - **Chart.js** (v3.7.0) - DPS visualization
 - **chartjs-plugin-datalabels** (v2.0.0) - Chart labels
 - **lz-string** (v1.5.0) - Data decompression
 
 ### Browser APIs Used
+
 - **GM_addStyle** - Custom CSS injection
 - **GM.xmlHttpRequest** / **GM_xmlhttpRequest** - Market API fetching
 - **GM_notification** - Desktop notifications
@@ -378,6 +433,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 ### Key Data Structures
 
 **Global Variables:**
+
 - `initData_actionDetailMap` - All game actions
 - `initData_itemDetailMap` - All items
 - `initData_characterData` - Player data
@@ -389,6 +445,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 - `currentEquipmentMap` - Equipped items
 
 **Storage Keys:**
+
 - `profile_export_list` - Stored player profiles
 - `script_dpsPanel_isExpanded` - UI state
 - `script_settings` - User preferences
@@ -467,30 +524,35 @@ mwi-tools/
 ## Refactoring Priorities
 
 ### Phase 1: Core Infrastructure
+
 1. Extract configuration and settings system
 2. Separate WebSocket hooking logic
 3. Create data manager for game state
 4. Build IndexedDB storage wrapper with async operations
 
 ### Phase 2: Utility Separation
+
 1. Number/time formatters
 2. Translation system
 3. DOM helpers
 4. Efficiency calculators
 
 ### Phase 3: Feature Modules
+
 1. Market system (API + UI)
 2. Networth/build score
 3. Action panel enhancements
 4. Tooltip system
 
 ### Phase 4: Complex Systems
+
 1. Enhancement optimizer (Enhancelate)
 2. Combat statistics
 3. Combat simulator integration
 4. Battle summaries
 
 ### Phase 5: Polish & Testing
+
 1. UI components consolidation
 2. Performance optimization
 3. Unit tests
@@ -502,12 +564,14 @@ mwi-tools/
 ## Performance Considerations
 
 ### Current Bottlenecks
+
 1. **Tooltip Observer** - Fires on every tooltip (use debouncing)
 2. **Market API Fetching** - 10-minute cache, but could be optimized
 3. **Enhancement Calculations** - Matrix operations are expensive
 4. **Real-time DPS Tracking** - Updates every battle message
 
 ### Optimization Opportunities
+
 1. Lazy-load heavy modules (Chart.js, mathjs)
 2. Debounce tooltip calculations
 3. Cache enhancement strategy results
@@ -519,18 +583,21 @@ mwi-tools/
 ## Testing Strategy
 
 ### Unit Tests
+
 - Utility functions (formatters, calculators)
 - Enhancement algorithm
 - Market price calculations
 - Efficiency calculations
 
 ### Integration Tests
+
 - WebSocket message handling
 - Market API integration
 - Tooltip system
 - Combat statistics
 
 ### E2E Tests
+
 - Full user workflow scenarios
 - Settings persistence
 - Multi-feature interactions
@@ -540,6 +607,7 @@ mwi-tools/
 ## Documentation Requirements
 
 Each module should include:
+
 1. Purpose and scope
 2. Dependencies
 3. Public API documentation
@@ -563,11 +631,11 @@ Each module should include:
 
 ## References
 
-- Original script: https://greasyfork.org/scripts/494467
-- Enhancelate algorithm: https://doh-nuts.github.io/Enhancelator/
-- Build score: Ratatatata (https://greasyfork.org/scripts/511240)
+- Original script: <https://greasyfork.org/scripts/494467>
+- Enhancelate algorithm: <https://doh-nuts.github.io/Enhancelator/>
+- Build score: Ratatatata (<https://greasyfork.org/scripts/511240>)
 - Combat statistics: ponchain, Stella, Truth_Light
-- Group export: Ratatatata (https://greasyfork.org/scripts/507255)
+- Group export: Ratatatata (<https://greasyfork.org/scripts/507255>)
 
 ---
 

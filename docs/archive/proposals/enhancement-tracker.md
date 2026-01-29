@@ -9,6 +9,7 @@
 ## Current State Analysis
 
 ### Existing Features ✅
+
 - **Draggable panel** with header-based drag functionality
 - **Session navigation** (◀/▶ buttons to switch between sessions)
 - **Cost details collapsible** (expandable material costs section)
@@ -17,6 +18,7 @@
 - **Styled UI** matching Ultimate Enhancement Tracker aesthetics
 
 ### Current Limitations ❌
+
 1. **Not collapsible** - Entire panel cannot be minimized/collapsed
 2. **Left-side positioning** - Fixed at `left: 50px` (user wants right side)
 3. **No persistent position** - Position resets on page reload
@@ -33,6 +35,7 @@
 **Implementation:**
 
 #### A. Add Collapse Button to Header
+
 ```javascript
 // New button in header (next to 🗑️ clear button)
 const collapseButton = document.createElement('button');
@@ -42,6 +45,7 @@ collapseButton.id = 'enhancementCollapseButton';
 ```
 
 #### B. Track Collapsed State
+
 ```javascript
 constructor() {
     // ... existing properties
@@ -50,6 +54,7 @@ constructor() {
 ```
 
 #### C. Toggle Functionality
+
 ```javascript
 toggleCollapse() {
     this.isCollapsed = !this.isCollapsed;
@@ -76,13 +81,16 @@ toggleCollapse() {
 ```
 
 #### D. Collapsed State Display
+
 When collapsed, show compact summary:
+
 - Item name + target level (+15)
 - Current level progress badge
 - Success count / Total attempts
 - Status indicator (🟢 tracking / ✅ completed)
 
 **Benefits:**
+
 - Quick glance at progress without full panel
 - Reduces screen clutter during long enhancement sessions
 - Easy toggle with single click
@@ -96,6 +104,7 @@ When collapsed, show compact summary:
 **Implementation:**
 
 #### A. Update Default Position
+
 ```javascript
 // Current (LEFT side):
 top: '50px',
@@ -108,6 +117,7 @@ left: 'auto',     // Override left
 ```
 
 #### B. Adjust Drag Behavior
+
 Dragging logic needs update to handle `right` positioning:
 
 ```javascript
@@ -149,6 +159,7 @@ makeDraggable(header) {
 ```
 
 **Benefits:**
+
 - More natural for right-handed users
 - Keeps panel away from left sidebar (game's skill menu)
 - Reduces overlap with game's primary UI elements
@@ -162,6 +173,7 @@ makeDraggable(header) {
 **Implementation:**
 
 #### A. Save State to LocalStorage
+
 ```javascript
 saveUIState() {
     const state = {
@@ -179,6 +191,7 @@ saveUIState() {
 ```
 
 #### B. Load State on Initialization
+
 ```javascript
 loadUIState() {
     const savedState = localStorage.getItem('toolasha_enhancementUI_state');
@@ -196,6 +209,7 @@ loadUIState() {
 ```
 
 #### C. Apply Saved State
+
 ```javascript
 createFloatingUI() {
     // ... create panel ...
@@ -226,6 +240,7 @@ createFloatingUI() {
 ```
 
 **Benefits:**
+
 - User's preferred position persists across sessions
 - Collapsed state remembered
 - Better UX (no need to reposition every reload)
@@ -244,6 +259,7 @@ createFloatingUI() {
 ## Visual Mockup
 
 ### Expanded State (Right Side)
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                                    [Enhancement Tracker ▼◀▶🗑️]│
@@ -263,6 +279,7 @@ createFloatingUI() {
 ```
 
 ### Collapsed State (Right Side)
+
 ```
 ┌───────────────────────────────┐
 │ [Enhancement Tracker ▶◀▶🗑️]   │
@@ -276,23 +293,27 @@ createFloatingUI() {
 ## Implementation Steps
 
 ### Phase 1: Right-Side Positioning
+
 1. ✅ Update default position from `left: 50px` to `right: 50px`
 2. ✅ Fix drag behavior to handle right-side positioning
 3. ✅ Test drag-and-drop functionality
 
 ### Phase 2: Collapsibility
+
 1. ✅ Add collapse button to header
 2. ✅ Implement toggle functionality
 3. ✅ Create collapsed state UI (compact summary)
 4. ✅ Add smooth transition animation (CSS)
 
 ### Phase 3: State Persistence
+
 1. ✅ Implement `saveUIState()` and `loadUIState()`
 2. ✅ Call save on drag end, collapse toggle
 3. ✅ Apply saved state on panel creation
 4. ✅ Add migration for users with no saved state (use new defaults)
 
 ### Phase 4: Testing & Polish
+
 1. ✅ Test dragging from right side to left side
 2. ✅ Test collapsed/expanded state persistence
 3. ✅ Verify auto-refresh works in collapsed state
@@ -306,6 +327,7 @@ createFloatingUI() {
 **None** - All changes are backward compatible.
 
 **Migration:**
+
 - Existing users: Panel will appear on right side on first load after update
 - Position can be dragged to left side if preferred
 - No data loss or session corruption
@@ -315,9 +337,11 @@ createFloatingUI() {
 ## Code Changes Summary
 
 **Files Modified:**
+
 1. `src/features/enhancement/enhancement-ui.js` (primary changes)
 
 **Approximate Line Changes:**
+
 - +150 lines (new collapse functionality)
 - +80 lines (state persistence)
 - ~30 lines modified (positioning changes)
@@ -329,12 +353,14 @@ createFloatingUI() {
 ## Benefits Summary
 
 ### User Experience
+
 - ✅ **Less cluttered screen** - Collapsible when not actively monitoring
 - ✅ **Better positioning** - Right side keeps panel away from game UI
 - ✅ **Persistent preferences** - Position and state remembered
 - ✅ **Quick monitoring** - Collapsed state shows key stats at a glance
 
 ### Technical
+
 - ✅ **Backward compatible** - No breaking changes
 - ✅ **Clean implementation** - Reuses existing drag/state patterns
 - ✅ **Minimal performance impact** - LocalStorage is fast, no new intervals
@@ -344,18 +370,21 @@ createFloatingUI() {
 ## Alternative Considerations
 
 ### Alternative 1: Dockable Panel
+
 **Idea:** Allow docking to screen edges (snap-to-edge behavior)
 **Pros:** Professional feel, prevents accidental off-screen positioning
 **Cons:** More complex implementation, may feel restrictive
 **Decision:** Defer to Phase 2 (after core collapsibility is proven)
 
 ### Alternative 2: Minimize to Icon
+
 **Idea:** Collapse to small icon in corner (like chat widgets)
 **Pros:** Maximum space savings
 **Cons:** Loses at-a-glance stats, harder to re-open quickly
 **Decision:** Rejected - compact summary provides better UX
 
 ### Alternative 3: Settings Integration
+
 **Idea:** Add "Default Position" option in settings (Left/Right/Custom)
 **Pros:** User choice from settings panel
 **Cons:** Adds complexity, drag-to-position is more intuitive
@@ -377,23 +406,23 @@ createFloatingUI() {
 ## Questions for User
 
 1. **Collapsed State Content:** Should collapsed state show:
-   - A) Current level + progress (as proposed)
-   - B) Just item name + minimize indicator
-   - C) Custom compact view (specify what you want)
+    - A) Current level + progress (as proposed)
+    - B) Just item name + minimize indicator
+    - C) Custom compact view (specify what you want)
 
 2. **Default State:** Should panel start:
-   - A) Expanded (show all stats)
-   - B) Collapsed (show compact summary)
+    - A) Expanded (show all stats)
+    - B) Collapsed (show compact summary)
 
 3. **Collapse Button Position:** Where should collapse button be?
-   - A) Header right (next to 🗑️ button) ← **Recommended**
-   - B) Header left (next to title)
-   - C) Bottom of panel
+    - A) Header right (next to 🗑️ button) ← **Recommended**
+    - B) Header left (next to title)
+    - C) Bottom of panel
 
 4. **Animation:** Should collapse/expand be:
-   - A) Instant (no animation)
-   - B) Smooth slide (0.2s transition) ← **Recommended**
-   - C) Fade (opacity transition)
+    - A) Instant (no animation)
+    - B) Smooth slide (0.2s transition) ← **Recommended**
+    - C) Fade (opacity transition)
 
 ---
 
