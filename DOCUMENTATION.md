@@ -52,6 +52,7 @@ Historical documentation and completed work:
 
 - [Priority 3 Refactoring](docs/archive/completed/priority-3-refactoring.md)
 - [Refactoring Summary](docs/archive/completed/refactoring-summary.md)
+- [Modularization Plan](docs/archive/completed/modularization-plan.txt)
 - [Test Handler Fix](docs/archive/completed/test-handler-fix.md)
 - [Script Accent Color Changes](docs/archive/completed/script-accent-color-changes.md)
 - [Dungeon Tracker Enhancements](docs/archive/completed/dungeon-tracker-enhancements.md)
@@ -62,6 +63,8 @@ Historical documentation and completed work:
 
 - [Dungeon Timer Investigation](docs/archive/investigations/dungeon-timer-investigation.md) - Deferred
 - [Dungeon Tracker Deep Comparison](docs/archive/investigations/dungeon-tracker-deep-comparison.md)
+- [Listing Price Display Analysis](docs/archive/investigations/listing-price-display-analysis.txt)
+- [Console Log After Test](docs/archive/investigations/console-log-after-test.txt)
 
 ### Old Proposals
 
