@@ -10,7 +10,6 @@ npm test             # Run test suite (143 tests)
 npm run test:watch   # Watch mode for tests
 
 npm run build        # Build userscript → dist/Toolasha.user.js
-npm run build:check  # Build and verify dist is in sync with source
 npm run watch        # Watch mode (auto-rebuild on changes)
 npm run dev          # Alias for watch
 
@@ -29,7 +28,9 @@ npm run version:major # Bump major version (0.5.9 → 1.0.0)
 
 **Manual testing:** Install `dist/Toolasha.user.js` in Tampermonkey, visit https://www.milkywayidle.com/game
 
-**Pre-commit hooks:** ESLint, Prettier, tests, and auto-rebuild run automatically on commit.
+**Pre-commit hooks:** ESLint, Prettier, tests, and build run automatically on commit.
+
+**Releases:** When PRs are merged to `main`, GitHub Actions automatically bumps the patch version (if not manually bumped) and creates a release with the built userscript.
 
 ## Project Structure
 

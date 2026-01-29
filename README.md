@@ -56,9 +56,6 @@ npm run format
 # Build the userscript
 npm run build
 
-# Build and verify it's up-to-date (useful before pushing)
-npm run build:check
-
 # Watch mode (auto-rebuild)
 npm run dev
 ```
@@ -86,7 +83,6 @@ npm run version:major   # 0.5.09 → 1.0.0  (breaking changes)
 - `userscript-header.txt` - Auto-synced on commit
 - `README.md` - Auto-synced on commit (badge & footer)
 - `src/main.js` - Auto-synced on commit (Toolasha.version)
-- `dist/Toolasha.user.js` - Auto-generated on build
 
 **Safety nets:**
 
@@ -101,9 +97,8 @@ This project uses **Husky** to automatically run checks before each commit:
 - ✅ ESLint checks for errors (warnings won't block)
 - ✅ Prettier formats your code automatically
 - ✅ **Tests** - All tests run automatically before commit
+- ✅ **Build** - Verifies the userscript builds successfully
 - ✅ **Version sync** - When you edit `package.json`, version auto-syncs to `userscript-header.txt`
-- ✅ **Automatic rebuild** - When you commit source changes, the userscript is automatically rebuilt
-- ✅ **Auto-stage files** - Updated `dist/Toolasha.user.js` and `userscript-header.txt` are automatically staged
 - ✅ Only runs on files you're committing (fast!)
 
 **No setup needed** - hooks install automatically when you run `npm install`.
@@ -113,9 +108,8 @@ This project uses **Husky** to automatically run checks before each commit:
 - When you commit changes to `src/**/*.js` files:
     1. ESLint checks for errors
     2. Prettier formats the code
-    3. **Tests run** (all 143 tests must pass)
-    4. Userscript is automatically rebuilt
-    5. All updated files are staged automatically
+    3. Tests run (all 143 tests must pass)
+    4. Build runs to verify compilation
 - When you commit changes to `package.json`, the version is synced to `userscript-header.txt`
 
 ### CI/CD
@@ -126,14 +120,23 @@ GitHub Actions runs on every push and PR:
 - Formatting checks (Prettier)
 - **Test suite** - All 143 tests must pass
 - Build verification
-- **Build sync verification** - Ensures `dist/Toolasha.user.js` is up-to-date with source code
 - **Version sync verification** - Ensures all version numbers match across files
 
 **Test Suite:** The CI workflow runs the full test suite (143 tests across formatters, efficiency, and enhancement multipliers). All tests must pass before the build proceeds.
 
-**Build Sync Check:** The CI workflow rebuilds the userscript and verifies that the committed `dist/Toolasha.user.js` matches the source code. If someone bypasses the pre-commit hook (e.g., `git commit --no-verify`) or manually edits the dist file, the CI build will fail with a clear error message.
-
 **Version Sync Check:** The CI workflow verifies that the version in `userscript-header.txt` matches `package.json`. This catches manual edits that bypass the sync script.
+
+### Releases
+
+When PRs are merged to `main`, GitHub Actions automatically:
+
+1. **Checks if version was bumped** - Compares version in the commit vs previous commit
+2. **Auto-bumps patch version** - If version wasn't manually bumped, increments patch (e.g., 0.5.31 → 0.5.32)
+3. **Creates a GitHub Release** - Tags the version and uploads `dist/Toolasha.user.js` as a release asset
+
+**Manual version bumps:** For minor or major releases, bump the version in your PR using `npm run version:minor` or `npm run version:major`. The release workflow will detect the manual bump and skip auto-bumping.
+
+**Download:** Users can download the latest userscript from the [Releases page](../../releases).
 
 ### Code Style
 
@@ -171,7 +174,7 @@ Toolasha/
 │       ├── efficiency.js         ✅ Game mechanics
 │       └── selectors.js          ✅ DOM selector constants
 ├── tests/                         # Test files
-├── dist/                          # Built userscript (gitignored)
+├── dist/                          # Built userscript (gitignored, published via GitHub Releases)
 ├── package.json                   # NPM configuration
 ├── rollup.config.js              # Build configuration
 └── userscript-header.txt         # Userscript metadata
