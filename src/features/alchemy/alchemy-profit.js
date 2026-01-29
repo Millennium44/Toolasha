@@ -278,8 +278,8 @@ class AlchemyProfit {
             }
 
             // Get achievement buffs (Adept tier: +2% efficiency per tier)
-            const achievementBuffs = dataManager.getAchievementBuffs(actionTypeHrid);
-            const achievementEfficiency = (achievementBuffs.efficiency || 0) * 100; // Convert to percentage
+            const achievementEfficiency =
+                dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/efficiency') * 100;
 
             // Stack all efficiency bonuses additively
             const totalEfficiency = stackAdditive(
@@ -336,8 +336,8 @@ class AlchemyProfit {
             }
 
             // Get achievement rare find bonus (Veteran tier: +2%)
-            const achievementBuffs = dataManager.getAchievementBuffs(actionTypeHrid);
-            const achievementRareFind = (achievementBuffs.rareFind || 0) * 100; // Convert to percentage
+            const achievementRareFind =
+                dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/rare_find') * 100;
 
             const total = equipmentRareFind + achievementRareFind;
 

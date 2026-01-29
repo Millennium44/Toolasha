@@ -441,8 +441,10 @@ class ActionTimeDisplay {
             const communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
 
             // Achievement buffs
-            const achievementBuffs = dataManager.getAchievementBuffs(actionDetails.type);
-            const achievementGathering = achievementBuffs.gatheringQuantity || 0;
+            const achievementGathering = dataManager.getAchievementBuffFlatBoost(
+                actionDetails.type,
+                '/buff_types/gathering'
+            );
 
             // Total gathering bonus (all additive)
             const totalGathering = gatheringTea + communityGathering + achievementGathering;

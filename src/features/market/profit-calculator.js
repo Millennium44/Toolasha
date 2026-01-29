@@ -155,6 +155,9 @@ class ProfitCalculator {
         // Calculate tea efficiency bonus
         const teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
 
+        const achievementEfficiency =
+            dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
+
         // Calculate artisan material cost reduction
         const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
@@ -170,7 +173,12 @@ class ProfitCalculator {
 
         // Total efficiency bonus (all sources additive)
         const totalEfficiency =
-            levelEfficiency + houseEfficiency + equipmentEfficiency + teaEfficiency + communityEfficiency;
+            levelEfficiency +
+            houseEfficiency +
+            equipmentEfficiency +
+            teaEfficiency +
+            communityEfficiency +
+            achievementEfficiency;
 
         // Calculate equipment speed bonus
         const equipmentSpeedBonus = parseEquipmentSpeedBonuses(characterEquipment, actionDetails.type, itemDetailMap);
@@ -295,6 +303,7 @@ class ProfitCalculator {
             equipmentEfficiency, // Equipment efficiency
             teaEfficiency, // Tea buff efficiency
             communityEfficiency, // Community buff efficiency
+            achievementEfficiency, // Achievement buff efficiency
             actionLevelBonus, // Action Level bonus from teas (e.g., Artisan Tea)
             artisanBonus, // Artisan material cost reduction
             gourmetBonus, // Gourmet bonus item chance
