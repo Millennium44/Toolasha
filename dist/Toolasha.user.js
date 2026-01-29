@@ -9427,6 +9427,98 @@
     }
 
     /**
+     * Dismiss all open MUI tooltips by dispatching mouseleave events
+     * Useful when DOM elements are reordered (e.g., sorting action panels)
+     * which can cause tooltips to get "stuck" since no natural mouseleave fires
+     */
+    function dismissTooltips() {
+        const tooltips = document.querySelectorAll('.MuiTooltip-popper');
+        tooltips.forEach((tooltip) => {
+            // Find the element that triggered this tooltip and dispatch mouseleave
+            // MUI tooltips listen for mouseleave on the trigger element
+            const triggerId = tooltip.id?.replace('-tooltip', '');
+            if (triggerId) {
+                const trigger = document.querySelector(`[aria-describedby="${tooltip.id}"]`);
+                if (trigger) {
+                    if (trigger.matches(':hover')) {
+                        return;
+                    }
+                    trigger.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+                    trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+                }
+            }
+        });
+    }
+
+    /**
+     * Set up scroll listener to dismiss tooltips when scrolling
+     * Prevents tooltips from getting stuck when scrolling quickly
+     * @returns {Function} Cleanup function to remove the listener
+     */
+    function setupScrollTooltipDismissal() {
+        let scrollTimeout = null;
+        let lastUserScrollTime = 0;
+        const USER_SCROLL_WINDOW_MS = 200;
+
+        const markUserScroll = () => {
+            lastUserScrollTime = Date.now();
+        };
+
+        const handleUserKeyScroll = (event) => {
+            const key = event.key;
+            if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'PageUp' || key === 'PageDown' || key === ' ') {
+                markUserScroll();
+            }
+        };
+
+        const handleScroll = (event) => {
+            const target = event.target;
+            if (target?.closest?.('.MuiTooltip-tooltip, .MuiTooltip-popper')) {
+                return;
+            }
+
+            if (Date.now() - lastUserScrollTime > USER_SCROLL_WINDOW_MS) {
+                return;
+            }
+
+            // Early exit: skip if no tooltips are visible
+            if (!document.querySelector('.MuiTooltip-popper')) {
+                return;
+            }
+
+            // Debounce: only dismiss after scrolling stops for 50ms
+            // This prevents excessive calls during continuous scrolling
+            if (scrollTimeout) {
+                clearTimeout(scrollTimeout);
+            }
+            scrollTimeout = setTimeout(() => {
+                dismissTooltips();
+                scrollTimeout = null;
+            }, 50);
+        };
+
+        // Listen on document with capture to catch all scroll events
+        // (including scrolls in nested containers)
+        document.addEventListener('scroll', handleScroll, { capture: true, passive: true });
+
+        // Track user-driven scrolling intent
+        document.addEventListener('wheel', markUserScroll, { capture: true, passive: true });
+        document.addEventListener('touchmove', markUserScroll, { capture: true, passive: true });
+        document.addEventListener('keydown', handleUserKeyScroll, { capture: true });
+
+        // Return cleanup function
+        return () => {
+            document.removeEventListener('scroll', handleScroll, { capture: true });
+            document.removeEventListener('wheel', markUserScroll, { capture: true });
+            document.removeEventListener('touchmove', markUserScroll, { capture: true });
+            document.removeEventListener('keydown', handleUserKeyScroll, { capture: true });
+            if (scrollTimeout) {
+                clearTimeout(scrollTimeout);
+            }
+        };
+    }
+
+    /**
      * Fix tooltip overflow to ensure it stays within viewport
      * @param {Element} tooltipElement - The tooltip popper element
      */
@@ -9507,6 +9599,8 @@
         getOriginalText,
         addStyles,
         removeStyles,
+        dismissTooltips,
+        setupScrollTooltipDismissal,
         fixTooltipOverflow,
     };
 
@@ -20598,6 +20692,16 @@
                     originalIndex: containerMap.get(container).length,
                     actionHrid: data.actionHrid,
                 });
+            }
+
+            // Dismiss any open tooltips before reordering (prevents stuck tooltips)
+            // Only dismiss if a tooltip exists and its trigger is not hovered
+            const openTooltip = document.querySelector('.MuiTooltip-popper');
+            if (openTooltip) {
+                const trigger = document.querySelector(`[aria-describedby="${openTooltip.id}"]`);
+                if (!trigger || !trigger.matches(':hover')) {
+                    dismissTooltips();
+                }
             }
 
             // Sort and reorder each container
@@ -45360,6 +45464,9 @@
 
         // CRITICAL: Start centralized DOM observer SECOND, before features initialize
         domObserver.start();
+
+        // Set up scroll listener to dismiss stuck tooltips
+        setupScrollTooltipDismissal();
 
         // Initialize network alert (must be early, before market features)
         networkAlert.initialize();

@@ -8,6 +8,7 @@
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import { dismissTooltips } from '../../utils/dom.js';
 
 class ActionPanelSort {
     constructor() {
@@ -174,6 +175,16 @@ class ActionPanelSort {
                 originalIndex: containerMap.get(container).length,
                 actionHrid: data.actionHrid,
             });
+        }
+
+        // Dismiss any open tooltips before reordering (prevents stuck tooltips)
+        // Only dismiss if a tooltip exists and its trigger is not hovered
+        const openTooltip = document.querySelector('.MuiTooltip-popper');
+        if (openTooltip) {
+            const trigger = document.querySelector(`[aria-describedby="${openTooltip.id}"]`);
+            if (!trigger || !trigger.matches(':hover')) {
+                dismissTooltips();
+            }
         }
 
         // Sort and reorder each container
