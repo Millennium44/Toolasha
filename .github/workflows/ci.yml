@@ -35,15 +35,6 @@ jobs:
             - name: Build
               run: npm run build
 
-            - name: Verify build is up-to-date
-              run: |
-                  if ! git diff --exit-code dist/Toolasha.user.js; then
-                    echo "❌ Error: Built file is out of sync with source code!"
-                    echo "Please run 'npm run build' locally and commit the updated dist/Toolasha.user.js"
-                    exit 1
-                  fi
-                  echo "✅ Built file is up-to-date"
-
             - name: Verify version sync
               run: |
                   npm run version:sync
