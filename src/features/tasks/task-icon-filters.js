@@ -14,12 +14,15 @@
  */
 
 import { GAME } from '../../utils/selectors.js';
+import config from '../../core/config.js';
 
 class TaskIconFilters {
     constructor() {
         this.filterIcons = new Map(); // Map of filter ID -> DOM element
         this.currentCounts = new Map(); // Map of filter ID -> task count
         this.taskListObserver = null;
+        this.filterBar = null; // Reference to filter bar DOM element
+        this.settingChangeHandler = null; // Handler for setting changes
 
         // Dungeon configuration matching game data
         this.dungeonConfig = {
@@ -52,6 +55,14 @@ class TaskIconFilters {
     initialize() {
         console.log('[TaskIconFilters] Initializing task icon filters');
         // Note: Filter bar is added by task-sorter.js when task panel appears
+
+        // Listen for taskIconsDungeons setting changes
+        this.settingChangeHandler = (enabled) => {
+            if (this.filterBar) {
+                this.filterBar.style.display = enabled ? 'flex' : 'none';
+            }
+        };
+        config.onSettingChange('taskIconsDungeons', this.settingChangeHandler);
     }
 
     /**
@@ -60,16 +71,25 @@ class TaskIconFilters {
     cleanup() {
         console.log('[TaskIconFilters] Cleaning up task icon filters');
 
+        // Remove setting change listener
+        if (this.settingChangeHandler) {
+            config.offSettingChange('taskIconsDungeons', this.settingChangeHandler);
+            this.settingChangeHandler = null;
+        }
+
         // Disconnect task list observer
         if (this.taskListObserver) {
             this.taskListObserver.disconnect();
             this.taskListObserver = null;
         }
 
-        // Remove all filter icons from DOM
-        this.filterIcons.forEach((element) => {
-            element.remove();
-        });
+        // Remove filter bar from DOM
+        if (this.filterBar) {
+            this.filterBar.remove();
+            this.filterBar = null;
+        }
+
+        // Clear maps
         this.filterIcons.clear();
         this.currentCounts.clear();
     }
@@ -96,12 +116,15 @@ class TaskIconFilters {
         }
 
         // Create container for filter icons
-        const filterBar = document.createElement('div');
-        filterBar.setAttribute('data-mwi-task-filters', 'true');
-        filterBar.style.display = 'flex';
-        filterBar.style.gap = '8px';
-        filterBar.style.alignItems = 'center';
-        filterBar.style.marginLeft = '8px';
+        this.filterBar = document.createElement('div');
+        this.filterBar.setAttribute('data-mwi-task-filters', 'true');
+        this.filterBar.style.gap = '8px';
+        this.filterBar.style.alignItems = 'center';
+        this.filterBar.style.marginLeft = '8px';
+
+        // Check if taskIconsDungeons setting is enabled
+        const isEnabled = config.isFeatureEnabled('taskIconsDungeons');
+        this.filterBar.style.display = isEnabled ? 'flex' : 'none';
 
         // Create battle icon
         const battleIcon = this.createFilterIcon(
@@ -110,7 +133,7 @@ class TaskIconFilters {
             '/static/media/misc_sprite.426c5d78.svg#combat',
             () => this.getBattleFilterEnabled()
         );
-        filterBar.appendChild(battleIcon);
+        this.filterBar.appendChild(battleIcon);
         this.filterIcons.set('battle', battleIcon);
 
         // Create dungeon icons
@@ -121,16 +144,16 @@ class TaskIconFilters {
                 `/static/media/actions_sprite.e6388cbc.svg#${dungeon.spriteId}`,
                 () => this.getDungeonFilterEnabled(hrid)
             );
-            filterBar.appendChild(dungeonIcon);
+            this.filterBar.appendChild(dungeonIcon);
             this.filterIcons.set(dungeon.id, dungeonIcon);
         });
 
         // Insert filter bar after the task sort button (if it exists)
         const sortButton = headerElement.querySelector('[data-mwi-task-sort]');
         if (sortButton) {
-            sortButton.parentNode.insertBefore(filterBar, sortButton.nextSibling);
+            sortButton.parentNode.insertBefore(this.filterBar, sortButton.nextSibling);
         } else {
-            headerElement.appendChild(filterBar);
+            headerElement.appendChild(this.filterBar);
         }
 
         // Initial count update

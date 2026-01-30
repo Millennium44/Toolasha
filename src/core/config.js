@@ -427,6 +427,11 @@ class Config {
             if (key === 'useOrangeAsMainColor') {
                 this.applyColorSettings();
             }
+
+            // Trigger registered callbacks for this setting
+            if (this.settingChangeCallbacks[key]) {
+                this.settingChangeCallbacks[key](value);
+            }
         }
     }
 
@@ -459,6 +464,15 @@ class Config {
      */
     onSettingChange(key, callback) {
         this.settingChangeCallbacks[key] = callback;
+    }
+
+    /**
+     * Unregister a callback for a specific setting change
+     * @param {string} key - Setting key to stop watching
+     * @param {Function} _callback - Callback function to remove (unused, kept for API consistency)
+     */
+    offSettingChange(key, _callback) {
+        delete this.settingChangeCallbacks[key];
     }
 
     /**

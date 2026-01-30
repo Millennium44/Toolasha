@@ -216,9 +216,10 @@ class DungeonTokenTooltips {
         html += '<th style="text-align: right; padding: 2px 4px;">Gold/Token</th>';
         html += '</tr>';
 
-        shopItems.forEach((item, index) => {
-            // Highlight the best value (first item after sorting)
-            const isBestValue = index === 0;
+        shopItems.forEach((item) => {
+            // Highlight all items with the best gold/token value
+            const bestGoldPerToken = shopItems[0].goldPerToken;
+            const isBestValue = item.goldPerToken === bestGoldPerToken;
             const rowStyle = isBestValue ? 'background-color: rgba(4, 120, 87, 0.2);' : '';
 
             html += `<tr style="${rowStyle}">`;
