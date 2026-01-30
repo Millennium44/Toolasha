@@ -205,3 +205,7 @@ Key rules enforced (see `eslint.config.js` for full list):
 - `no-eval: error` - No eval()
 - `prefer-const: warn` - Use const when not reassigned
 - `no-duplicate-imports: error` - No duplicate imports
+
+## Commit message rules
+
+- For commits that will result in a new release the commit message should just be "release <version>"
