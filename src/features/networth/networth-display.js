@@ -68,7 +68,46 @@ class NetworthHeaderDisplay {
         totalLevelElem.insertAdjacentElement('afterend', this.container);
 
         // Initial render with loading state
-        this.container.textContent = 'Gold: Loading...';
+        this.renderGoldDisplay('Loading...');
+    }
+
+    /**
+     * Render gold display with icon and value
+     * @param {string} value - Formatted value text
+     */
+    renderGoldDisplay(value) {
+        this.container.innerHTML = '';
+
+        // Create wrapper for icon + text
+        const wrapper = document.createElement('span');
+        wrapper.style.cssText = `
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        `;
+
+        // Create SVG icon using game's sprite
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '16');
+        svg.setAttribute('height', '16');
+        svg.style.cssText = `
+            vertical-align: middle;
+            fill: currentColor;
+        `;
+
+        // Create use element to reference coin sprite
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '/static/media/items_sprite.328d6606.svg#coin');
+        svg.appendChild(use);
+
+        // Create text span
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `Gold: ${value}`;
+
+        // Assemble
+        wrapper.appendChild(svg);
+        wrapper.appendChild(textSpan);
+        this.container.appendChild(wrapper);
     }
 
     /**
@@ -82,7 +121,7 @@ class NetworthHeaderDisplay {
 
         const valueFormatted = networthFormatter(Math.round(networthData.coins));
 
-        this.container.textContent = `Gold: ${valueFormatted}`;
+        this.renderGoldDisplay(valueFormatted);
     }
 
     /**
