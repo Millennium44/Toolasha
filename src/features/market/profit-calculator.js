@@ -105,6 +105,22 @@ class ProfitCalculator {
             return null;
         }
 
+        // Initialize price cache for this calculation
+        const priceCache = new Map();
+        const getCachedPrice = (itemHridParam, options) => {
+            const side = options?.side || '';
+            const enhancementLevelParam = options?.enhancementLevel ?? '';
+            const cacheKey = `${itemHridParam}|${side}|${enhancementLevelParam}`;
+
+            if (priceCache.has(cacheKey)) {
+                return priceCache.get(cacheKey);
+            }
+
+            const price = getItemPrice(itemHridParam, options);
+            priceCache.set(cacheKey, price);
+            return price;
+        };
+
         // Calculate base action time
         // Game uses NANOSECONDS (1e9 = 1 second)
         const baseTime = actionDetails.baseTimeCost / 1e9; // Convert nanoseconds to seconds
@@ -215,7 +231,7 @@ class ProfitCalculator {
         const totalItemsPerHour = itemsPerHour + gourmetBonusItems;
 
         // Calculate material costs (with artisan reduction if applicable)
-        const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus);
+        const materialCosts = this.calculateMaterialCosts(actionDetails, artisanBonus, getCachedPrice);
 
         // Total material cost per action
         const totalMaterialCost = materialCosts.reduce((sum, mat) => sum + mat.totalCost, 0);
@@ -226,7 +242,7 @@ class ProfitCalculator {
 
         // Get output price based on pricing mode setting
         // Uses 'profit' context with 'sell' side to get correct sell price
-        const rawOutputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+        const rawOutputPrice = getCachedPrice(itemHrid, { context: 'profit', side: 'sell' });
         const outputPriceMissing = rawOutputPrice === null;
         const outputPrice = outputPriceMissing ? 0 : rawOutputPrice;
 
@@ -244,7 +260,7 @@ class ProfitCalculator {
         const revenuePerHour = itemsPerHour * outputPrice + gourmetBonusItems * outputPrice;
 
         // Calculate tea consumption costs (drinks consumed per hour)
-        const teaCosts = this.calculateTeaCosts(actionDetails.type, actionsPerHour, drinkConcentration);
+        const teaCosts = this.calculateTeaCosts(actionDetails.type, actionsPerHour, drinkConcentration, getCachedPrice);
         const totalTeaCostPerHour = teaCosts.reduce((sum, tea) => sum + tea.totalCost, 0);
 
         // Calculate bonus revenue from essence and rare find drops (before profit calculation)
@@ -348,9 +364,10 @@ class ProfitCalculator {
      * Calculate material costs for an action
      * @param {Object} actionDetails - Action details from game data
      * @param {number} artisanBonus - Artisan material reduction (0 to 1, e.g., 0.112 for 11.2% reduction)
+     * @param {Function} getCachedPrice - Price lookup function with caching
      * @returns {Array} Array of material cost objects
      */
-    calculateMaterialCosts(actionDetails, artisanBonus = 0) {
+    calculateMaterialCosts(actionDetails, artisanBonus = 0, getCachedPrice) {
         const costs = [];
 
         // Check for upgrade item (e.g., Crimson Bulwark → Rainbow Bulwark)
@@ -359,7 +376,7 @@ class ProfitCalculator {
 
             if (itemDetails) {
                 // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                const materialPrice = getItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+                const materialPrice = getCachedPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
                 const isPriceMissing = materialPrice === null;
                 const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
@@ -402,7 +419,7 @@ class ProfitCalculator {
                 const reducedAmount = baseAmount * (1 - artisanBonus);
 
                 // Get material price based on pricing mode (uses 'profit' context with 'buy' side)
-                const materialPrice = getItemPrice(input.itemHrid, { context: 'profit', side: 'buy' });
+                const materialPrice = getCachedPrice(input.itemHrid, { context: 'profit', side: 'buy' });
                 const isPriceMissing = materialPrice === null;
                 const resolvedPrice = isPriceMissing ? 0 : materialPrice;
 
@@ -532,9 +549,11 @@ class ProfitCalculator {
      * Calculate tea consumption costs
      * @param {string} actionTypeHrid - Action type HRID
      * @param {number} actionsPerHour - Actions per hour (not used, but kept for consistency)
+     * @param {number} drinkConcentration - Drink Concentration stat value
+     * @param {Function} getCachedPrice - Price lookup function with caching
      * @returns {Array} Array of tea cost objects
      */
-    calculateTeaCosts(actionTypeHrid, actionsPerHour, drinkConcentration = 0) {
+    calculateTeaCosts(actionTypeHrid, actionsPerHour, drinkConcentration = 0, getCachedPrice) {
         const activeDrinks = dataManager.getActionDrinkSlots(actionTypeHrid);
         if (!activeDrinks || activeDrinks.length === 0) {
             return [];
@@ -549,7 +568,7 @@ class ProfitCalculator {
             if (!itemDetails) continue;
 
             // Get tea price based on pricing mode (uses 'profit' context with 'buy' side)
-            const teaPrice = getItemPrice(drink.itemHrid, { context: 'profit', side: 'buy' });
+            const teaPrice = getCachedPrice(drink.itemHrid, { context: 'profit', side: 'buy' });
             const isPriceMissing = teaPrice === null;
             const resolvedPrice = isPriceMissing ? 0 : teaPrice;
 
