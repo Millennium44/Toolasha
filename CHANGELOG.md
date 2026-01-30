@@ -2,10 +2,9 @@
 
 ## [0.7.0](https://github.com/Celasha/Toolasha/compare/v0.6.2...v0.7.0) (2026-01-30)
 
-
 ### Features
 
-* add gold coin icon to networth header display ([aa6f36e](https://github.com/Celasha/Toolasha/commit/aa6f36ee595912889a491871c612c8492abe8df2))
+- add gold coin icon to networth header display ([aa6f36e](https://github.com/Celasha/Toolasha/commit/aa6f36ee595912889a491871c612c8492abe8df2))
 
 ## [0.6.2](https://github.com/Celasha/Toolasha/compare/toolasha-v0.6.1...toolasha-v0.6.2) (2026-01-30)
 
