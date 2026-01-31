@@ -18,6 +18,10 @@ class MarketOrderTotals {
         this.unregisterObserver = null;
         this.isInitialized = false;
         this.displayElement = null;
+        this.marketplaceClickHandler = (event) => {
+            event.preventDefault();
+            this.openMarketplace();
+        };
     }
 
     /**
@@ -155,18 +159,36 @@ class MarketOrderTotals {
         // Check if we have no data yet (all zeros)
         const hasNoData = totals.buyOrders === 0 && totals.sellOrders === 0 && totals.unclaimed === 0;
 
-        // Format values or show marketplace icon
-        const boDisplay = hasNoData
-            ? '<svg width="16" height="16"><use href="/static/media/misc_sprite.f614f988.svg#marketplace"></use></svg>'
-            : `<span style="color: #ffd700;">${formatKMB(totals.buyOrders)}</span>`;
+        this.displayElement.style.justifyContent = hasNoData ? 'flex-end' : 'flex-start';
+        this.displayElement.style.width = hasNoData ? '100%' : '';
 
-        const soDisplay = hasNoData
-            ? '<svg width="16" height="16"><use href="/static/media/misc_sprite.f614f988.svg#marketplace"></use></svg>'
-            : `<span style="color: #ffd700;">${formatKMB(totals.sellOrders)}</span>`;
+        if (hasNoData) {
+            this.displayElement.innerHTML = `
+                <button
+                    type="button"
+                    class="mwi-market-order-totals-link"
+                    title="Open Marketplace"
+                    aria-label="Open Marketplace"
+                    style="background: none; border: none; padding: 0; cursor: pointer; display: flex; align-items: center;"
+                >
+                    <svg width="16" height="16" aria-hidden="true">
+                        <use href="/static/media/misc_sprite.f614f988.svg#marketplace"></use>
+                    </svg>
+                </button>
+            `;
 
-        const unclaimedDisplay = hasNoData
-            ? '<svg width="16" height="16"><use href="/static/media/misc_sprite.f614f988.svg#marketplace"></use></svg>'
-            : `<span style="color: #ffd700;">${formatKMB(totals.unclaimed)}</span>`;
+            const linkButton = this.displayElement.querySelector('.mwi-market-order-totals-link');
+            if (linkButton) {
+                linkButton.addEventListener('click', this.marketplaceClickHandler);
+            }
+
+            return;
+        }
+
+        // Format values for display
+        const boDisplay = `<span style="color: #ffd700;">${formatKMB(totals.buyOrders)}</span>`;
+        const soDisplay = `<span style="color: #ffd700;">${formatKMB(totals.sellOrders)}</span>`;
+        const unclaimedDisplay = `<span style="color: #ffd700;">${formatKMB(totals.unclaimed)}</span>`;
 
         // Update display
         this.displayElement.innerHTML = `
@@ -183,6 +205,28 @@ class MarketOrderTotals {
                 ${unclaimedDisplay}
             </div>
         `;
+    }
+
+    /**
+     * Open the marketplace view
+     */
+    openMarketplace() {
+        try {
+            const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
+            const marketplaceButton = Array.from(navButtons).find((nav) => {
+                const svg = nav.querySelector('svg[aria-label="navigationBar.marketplace"]');
+                return svg !== null;
+            });
+
+            if (!marketplaceButton) {
+                console.error('[MarketOrderTotals] Marketplace navbar button not found');
+                return;
+            }
+
+            marketplaceButton.click();
+        } catch (error) {
+            console.error('[MarketOrderTotals] Failed to open marketplace:', error);
+        }
     }
 
     /**
