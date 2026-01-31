@@ -734,6 +734,13 @@ export const settingsGroups = {
                 dependencies: ['market_showEstimatedListingAge'],
                 help: 'Time format when using Date/Time display (only applies if Date/Time format is selected)',
             },
+            market_showOrderTotals: {
+                id: 'market_showOrderTotals',
+                label: 'Market: Show order totals in header',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays buy orders (BO), sell orders (SO), and unclaimed coins (💰) in the header area below gold',
+            },
             itemDictionary_transmuteRates: {
                 id: 'itemDictionary_transmuteRates',
                 label: 'Item Dictionary: Show transmutation success rates',

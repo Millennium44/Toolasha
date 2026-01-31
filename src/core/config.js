@@ -105,6 +105,13 @@ class Config {
                 description: 'Estimates creation time for all market listings using listing ID interpolation',
                 settingKey: 'market_showEstimatedListingAge',
             },
+            market_showOrderTotals: {
+                enabled: true,
+                name: 'Market Order Totals',
+                category: 'Market',
+                description: 'Shows buy orders, sell orders, and unclaimed coins in header',
+                settingKey: 'market_showOrderTotals',
+            },
 
             // Action Features
             actionTimeDisplay: {
