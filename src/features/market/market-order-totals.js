@@ -10,7 +10,6 @@
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
-import webSocketHook from '../../core/websocket.js';
 import { formatKMB } from '../../utils/formatters.js';
 
 class MarketOrderTotals {
@@ -35,8 +34,8 @@ class MarketOrderTotals {
 
         this.isInitialized = true;
 
-        // Setup WebSocket listeners for listing updates
-        this.setupWebSocketListeners();
+        // Setup data listeners for listing updates
+        this.setupDataListeners();
 
         // Setup DOM observer for header
         this.setupObserver();
@@ -45,17 +44,17 @@ class MarketOrderTotals {
     /**
      * Setup WebSocket listeners to detect listing changes
      */
-    setupWebSocketListeners() {
+    setupDataListeners() {
         const updateHandler = () => {
             this.updateDisplay();
         };
 
-        webSocketHook.on('market_listings_updated', updateHandler);
-        webSocketHook.on('init_character_data', updateHandler);
+        dataManager.on('market_listings_updated', updateHandler);
+        dataManager.on('character_initialized', updateHandler);
 
         this.unregisterWebSocket = () => {
-            webSocketHook.off('market_listings_updated', updateHandler);
-            webSocketHook.off('init_character_data', updateHandler);
+            dataManager.off('market_listings_updated', updateHandler);
+            dataManager.off('character_initialized', updateHandler);
         };
     }
 
