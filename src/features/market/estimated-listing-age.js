@@ -39,7 +39,7 @@ class EstimatedListingAge {
             const ageMs = Date.now() - timestamp;
             return formatRelativeTime(ageMs);
         } else {
-            // Show date/time (e.g., "01-13 14:30" or "01-13 2:30 PM")
+            // Show date/time (e.g., "01-13 14:30:45" or "01-13 2:30:45 PM")
             const timeFormat = config.getSettingValue('market_listingTimeFormat', '24hour');
             const use12Hour = timeFormat === '12hour';
 
@@ -50,6 +50,7 @@ class EstimatedListingAge {
                     day: '2-digit',
                     hour: '2-digit',
                     minute: '2-digit',
+                    second: '2-digit',
                     hour12: use12Hour,
                 })
                 .replace(/\//g, '-')
