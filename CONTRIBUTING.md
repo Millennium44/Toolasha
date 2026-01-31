@@ -240,27 +240,29 @@ const value = await storage.get('key', 'storeName', defaultValue);
 
 ## Commit Message Guidelines
 
-We use conventional commits with emojis:
+We use [conventional commits](https://www.conventionalcommits.org/) for automated changelog generation and releases:
 
-- ✨ `feat`: New feature
-- 🐛 `fix`: Bug fix
-- 📝 `docs`: Documentation changes
-- 💄 `style`: Code style/formatting
-- ♻️ `refactor`: Code refactoring
-- ⚡️ `perf`: Performance improvements
-- ✅ `test`: Adding or fixing tests
-- 🔧 `chore`: Tooling, configuration
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style/formatting
+- `refactor`: Code refactoring
+- `perf`: Performance improvements
+- `test`: Adding or fixing tests
+- `chore`: Tooling, configuration
 
-**Format**: `<emoji> <type>: <description>`
+**Format**: `<type>: <description>`
 
 **Examples**:
 
 ```
-✨ feat: add dungeon tracker feature
-🐛 fix: resolve memory leak in rendering
-📝 docs: update API documentation
-♻️ refactor: simplify error handling logic
+feat: add dungeon tracker feature
+fix: resolve memory leak in rendering
+docs: update API documentation
+refactor: simplify error handling logic
 ```
+
+> **Note**: Emojis are not allowed in commit messages (enforced by pre-commit hooks)
 
 ## Pull Request Process
 
@@ -276,7 +278,7 @@ We use conventional commits with emojis:
 Use the same format as commit messages:
 
 ```
-✨ feat: add dungeon tracker feature
+feat: add dungeon tracker feature
 ```
 
 ### PR Description Template
@@ -299,6 +301,268 @@ How to test these changes
 
 Add screenshots for UI changes
 ```
+
+## Release Process
+
+Toolasha uses an automated release system powered by [release-please](https://github.com/googleapis/release-please). This means **releases happen automatically** based on your commit messages - no manual version bumping required!
+
+### How It Works
+
+1. **You write code** and commit with conventional commit messages
+2. **Release-please** analyzes commits and creates a release PR
+3. **Maintainer merges** the release PR
+4. **GitHub Actions** automatically:
+    - Publishes the GitHub release
+    - Builds and uploads `Toolasha.user.js`
+    - Updates the `releases` branch (triggers Greasy Fork webhook)
+    - Syncs version across all files
+
+### Conventional Commits for Releases
+
+Your commit messages determine what gets released and how the version number changes:
+
+#### Version Bumps
+
+| Commit Type | Version Change | Example                                     |
+| ----------- | -------------- | ------------------------------------------- |
+| `feat:`     | Minor (0.X.0)  | `feat: add dungeon tracker`                 |
+| `fix:`      | Patch (0.0.X)  | `fix: resolve memory leak`                  |
+| `perf:`     | Patch (0.0.X)  | `perf: optimize rendering`                  |
+| `docs:`     | No release     | `docs: update API documentation`            |
+| `chore:`    | No release     | `chore: update dependencies`                |
+| `refactor:` | No release     | `refactor: simplify error handling`         |
+| `test:`     | No release     | `test: add unit tests for formatters`       |
+| `style:`    | No release     | `style: fix formatting`                     |
+| Breaking    | Major (X.0.0)  | `feat!: redesign settings API` (note the !) |
+
+#### Breaking Changes
+
+To trigger a major version bump, add `!` after the type:
+
+```
+feat!: redesign settings API
+
+BREAKING CHANGE: Settings API now uses async/await pattern
+```
+
+### Commit Message Format
+
+```
+<type>: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Examples:**
+
+```bash
+# Feature (bumps minor version)
+feat: add combat score to profile panels
+
+# Bug fix (bumps patch version)
+fix: correct efficiency calculation in time estimates
+
+# Performance improvement (bumps patch version)
+perf: optimize action panel rendering
+
+# No release (documentation only)
+docs: add release process documentation
+
+# Breaking change (bumps major version)
+feat!: redesign storage API
+
+BREAKING CHANGE: Storage methods now return Promises
+```
+
+### The Release Workflow
+
+#### 1. Development Phase
+
+You develop features and commit with conventional commit messages:
+
+```bash
+git commit -m "feat: add marketplace filter feature"
+git commit -m "fix: resolve tooltip positioning issue"
+git push origin main
+```
+
+#### 2. Release PR Creation (Automatic)
+
+When commits are pushed to `main`, release-please:
+
+- Analyzes all commits since the last release
+- Determines the next version number
+- Creates/updates a release PR with:
+    - Updated `CHANGELOG.md`
+    - Updated version in `package.json`
+    - Updated `.release-please-manifest.json`
+
+The PR title will be: `chore(main): release X.X.X`
+
+#### 3. Version Sync (Automatic)
+
+When the release PR is created, a GitHub Action automatically:
+
+- Runs `npm run version:sync` to update:
+    - `userscript-header.txt` - `@version` tag
+    - `README.md` - version badge and footer
+    - `src/main.js` - `Toolasha.version` property
+- Formats all files with Prettier
+- Commits changes to the release PR
+
+#### 4. Release PR Review
+
+A maintainer reviews the release PR:
+
+- Check the changelog is accurate
+- Verify version number is correct
+- Ensure all version references are synced
+- Confirm tests pass
+
+#### 5. Merge and Publish (Automatic)
+
+When the release PR is merged:
+
+1. **GitHub Release** is created with tag `vX.X.X`
+2. **Build process** runs:
+    - `npm ci` - Install dependencies
+    - `npm run build` - Build userscript
+3. **Asset upload** - `dist/Toolasha.user.js` attached to release
+4. **Releases branch** updated:
+    - Built file committed to `releases` branch
+    - Triggers Greasy Fork webhook for auto-sync
+5. **Release published** - Draft status removed, release goes live
+
+### Version Sync System
+
+The `npm run version:sync` script keeps version numbers consistent across:
+
+| File                     | Location                                     | Format                                   |
+| ------------------------ | -------------------------------------------- | ---------------------------------------- |
+| `package.json`           | `version` field                              | `"version": "0.7.0"`                     |
+| `userscript-header.txt`  | `@version` tag                               | `// @version 0.7.0`                      |
+| `README.md`              | Badge                                        | `badge/version-0.7.0-orange`             |
+| `README.md`              | Footer                                       | `**Version:** 0.7.0 (Pre-release)`       |
+| `src/main.js`            | `Toolasha.version`                           | `version: '0.7.0',`                      |
+| `.release-please-*.json` | Manifest                                     | `{ ".": "0.7.0" }`                       |
+| `dist/Toolasha.user.js`  | Built file (updated on next `npm run build`) | `// @version 0.7.0` + `version: '0.7.0'` |
+
+**Source of truth**: `package.json` version field
+
+### Manual Steps (Maintainers Only)
+
+The only manual step is **merging the release PR**. Everything else is automated.
+
+#### Publishing a Release
+
+1. Wait for release-please to create the release PR
+2. Review the PR (changelog, version number, tests)
+3. Merge the PR
+4. GitHub Actions handles the rest automatically
+
+#### Emergency Manual Release
+
+If automation fails, you can manually create a release:
+
+```bash
+# 1. Update version in package.json
+npm version patch  # or minor, major
+
+# 2. Sync versions across files
+npm run version:sync
+
+# 3. Build
+npm run build
+
+# 4. Commit and tag
+git add .
+git commit -m "chore(main): release X.X.X"
+git tag vX.X.X
+git push origin main --tags
+
+# 5. Create GitHub release manually and upload dist/Toolasha.user.js
+```
+
+### Troubleshooting
+
+#### Release PR Not Created
+
+**Cause**: No release-worthy commits since last release (only `docs:`, `chore:`, etc.)
+
+**Solution**: This is normal. Release PR will be created when you add `feat:` or `fix:` commits.
+
+#### Version Not Synced
+
+**Cause**: `version:sync` script failed or wasn't run
+
+**Solution**:
+
+```bash
+npm run version:sync
+git add .
+git commit -m "chore: sync version across files"
+git push
+```
+
+#### Build Failed in Release Workflow
+
+**Cause**: Tests failing or build errors
+
+**Solution**:
+
+1. Check GitHub Actions logs for error details
+2. Fix the issue in a new commit
+3. Push to main - release-please will update the release PR
+
+#### Greasy Fork Not Updated
+
+**Cause**: Webhook not triggered or `releases` branch not updated
+
+**Solution**:
+
+1. Check that `releases` branch has the latest built file
+2. Manually trigger Greasy Fork sync from their dashboard
+3. Verify webhook URL is correct in Greasy Fork settings
+
+### Best Practices
+
+✅ **Use conventional commits** - Ensures proper version bumping  
+✅ **Keep commits atomic** - One logical change per commit  
+✅ **Write clear descriptions** - Helps generate good changelogs  
+✅ **Test before merging** - Pre-commit hooks help, but verify manually too  
+✅ **Review release PRs carefully** - Changelog should accurately reflect changes
+
+❌ **Don't manually edit version numbers** - Let release-please handle it  
+❌ **Don't skip commit conventions** - Breaks automatic changelog generation  
+❌ **Don't merge broken code** - Releases should always be stable
+
+### Release Checklist (Maintainers)
+
+Before merging a release PR:
+
+- [ ] Changelog accurately reflects all changes
+- [ ] Version number follows semver correctly
+- [ ] All version references are synced (check the auto-commit)
+- [ ] CI tests pass
+- [ ] No breaking changes without major version bump
+- [ ] Manual testing completed (if needed for critical changes)
+
+After merging:
+
+- [ ] GitHub release published successfully
+- [ ] `Toolasha.user.js` attached to release
+- [ ] `releases` branch updated
+- [ ] Greasy Fork synced (check within 5-10 minutes)
+
+### Questions?
+
+- **How do I know what version will be released?** Check the release PR title
+- **Can I trigger a release manually?** No, releases are commit-driven only
+- **What if I make a mistake in a commit message?** Amend before pushing, or add a new commit
+- **Do I need to update CHANGELOG.md?** No, release-please generates it automatically
+- **When will my feature be released?** When a maintainer merges the next release PR
 
 ## Adding New Features
 
