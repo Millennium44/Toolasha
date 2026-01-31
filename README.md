@@ -225,7 +225,7 @@ npm test -- --coverage # Coverage report
 **Original Author**: bot7420 (MWITools)  
 **Rewrite & Maintenance**: Celasha and Claude
 
-**Version**: 0.6.2 (Pre-release)
+**Version**: 0.9.2 (Pre-release)
 
 ---
 
