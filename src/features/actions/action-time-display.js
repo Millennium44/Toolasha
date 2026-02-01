@@ -476,6 +476,7 @@ class ActionTimeDisplay {
 
         // Calculate material limit for infinite actions
         let materialLimit = null;
+        let limitType = null;
         if (!action.hasMaxCount) {
             // Get inventory and calculate Artisan bonus
             const inventory = dataManager.getInventory();
@@ -484,8 +485,12 @@ class ActionTimeDisplay {
             const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
             const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
-            // Calculate max actions based on materials
-            materialLimit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action);
+            // Calculate max actions based on materials and costs
+            const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action);
+            if (limitResult) {
+                materialLimit = limitResult.maxActions;
+                limitType = limitResult.limitType;
+            }
         }
 
         // Get queue size for display (total queued, doesn't change)
@@ -569,8 +574,20 @@ class ActionTimeDisplay {
         if (queueSizeDisplay !== Infinity) {
             statsToAppend.push(`(${queueSizeDisplay.toLocaleString()} queued)`);
         } else if (materialLimit !== null) {
-            // Show infinity with optional material limit
-            statsToAppend.push(`(∞ · max: ${this.formatLargeNumber(materialLimit)})`);
+            // Show infinity with material limit and what's limiting it
+            let limitLabel = '';
+            if (limitType === 'gold') {
+                limitLabel = 'gold limit';
+            } else if (limitType && limitType.startsWith('material:')) {
+                limitLabel = 'mat limit';
+            } else if (limitType && limitType.startsWith('upgrade:')) {
+                limitLabel = 'upgrade limit';
+            } else if (limitType === 'alchemy_item') {
+                limitLabel = 'item limit';
+            } else {
+                limitLabel = 'max';
+            }
+            statsToAppend.push(`(∞ · ${limitLabel}: ${this.formatLargeNumber(materialLimit)})`);
         } else {
             statsToAppend.push(`(∞)`);
         }
@@ -768,7 +785,7 @@ class ActionTimeDisplay {
      * @param {Object|Array} inventoryLookup - Inventory lookup maps or raw inventory array
      * @param {number} artisanBonus - Artisan material reduction (0-1 decimal)
      * @param {Object} actionObj - Character action object (for primaryItemHash)
-     * @returns {number|null} Max actions possible, or null if unlimited/no materials required
+     * @returns {Object|null} {maxActions: number, limitType: string} or null if unlimited
      */
     calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj = null) {
         if (!actionDetails || !inventoryLookup) {
@@ -801,19 +818,45 @@ class ActionTimeDisplay {
                 // Calculate max queued actions based on available items
                 const maxActions = Math.floor(availableCount / bulkMultiplier);
 
-                return maxActions;
+                console.log('[Action Time Display] Alchemy limit:', {
+                    itemHrid,
+                    availableCount,
+                    bulkMultiplier,
+                    maxActions,
+                });
+
+                return { maxActions, limitType: 'alchemy_item' };
             }
         }
 
-        // Check if action requires input materials
+        // Check if action requires input materials or has costs
         const hasInputItems = actionDetails.inputItems && actionDetails.inputItems.length > 0;
         const hasUpgradeItem = actionDetails.upgradeItemHrid;
+        const hasCoinCost = actionDetails.coinCost && actionDetails.coinCost > 0;
 
-        if (!hasInputItems && !hasUpgradeItem) {
-            return null; // No materials required - unlimited
+        if (!hasInputItems && !hasUpgradeItem && !hasCoinCost) {
+            return null; // No materials or costs required - unlimited
         }
 
         let minLimit = Infinity;
+        let limitType = 'unknown';
+
+        // Check gold/coin constraint (if action has a coin cost)
+        if (hasCoinCost) {
+            const availableGold = byHrid['/items/gold_coin'] || 0;
+            const maxActionsFromGold = Math.floor(availableGold / actionDetails.coinCost);
+
+            console.log('[Action Time Display] Gold constraint:', {
+                availableGold,
+                coinCost: actionDetails.coinCost,
+                maxActions: maxActionsFromGold,
+            });
+
+            if (maxActionsFromGold < minLimit) {
+                minLimit = maxActionsFromGold;
+                limitType = 'gold';
+            }
+        }
 
         // Check input items (affected by Artisan Tea)
         if (hasInputItems) {
@@ -826,7 +869,17 @@ class ActionTimeDisplay {
                 // Calculate max queued actions for this material
                 const maxActions = Math.floor(availableCount / requiredPerAction);
 
-                minLimit = Math.min(minLimit, maxActions);
+                console.log('[Action Time Display] Material constraint:', {
+                    itemHrid: inputItem.itemHrid,
+                    availableCount,
+                    requiredPerAction,
+                    maxActions,
+                });
+
+                if (maxActions < minLimit) {
+                    minLimit = maxActions;
+                    limitType = `material:${inputItem.itemHrid}`;
+                }
             }
         }
 
@@ -834,11 +887,28 @@ class ActionTimeDisplay {
         if (hasUpgradeItem) {
             const availableCount = byHrid[hasUpgradeItem] || 0;
 
-            // Upgrade items are consumed per queued action
-            minLimit = Math.min(minLimit, availableCount);
+            console.log('[Action Time Display] Upgrade item constraint:', {
+                itemHrid: hasUpgradeItem,
+                availableCount,
+            });
+
+            if (availableCount < minLimit) {
+                minLimit = availableCount;
+                limitType = `upgrade:${hasUpgradeItem}`;
+            }
         }
 
-        return minLimit === Infinity ? null : minLimit;
+        if (minLimit === Infinity) {
+            return null;
+        }
+
+        console.log('[Action Time Display] Final material limit:', {
+            maxActions: minLimit,
+            limitType,
+            actionHrid: actionDetails.hrid,
+        });
+
+        return { maxActions: minLimit, limitType };
     }
 
     /**
@@ -964,6 +1034,10 @@ class ActionTimeDisplay {
                 // Use getCleanActionName to strip any stats we previously appended
                 const actionNameText = this.getCleanActionName(actionNameElement);
 
+                console.log('[Action Time Display] Detecting current action:', {
+                    cleanText: actionNameText,
+                });
+
                 // Parse action name (same logic as main display)
                 // Also handles formatted numbers like "Farmland (276K)" or "Zone (1.2M)"
                 const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
@@ -979,6 +1053,11 @@ class ActionTimeDisplay {
                     itemNameFromDom = null;
                 }
 
+                console.log('[Action Time Display] Parsed action name:', {
+                    actionName: actionNameFromDom,
+                    itemName: itemNameFromDom,
+                });
+
                 // Match current action from cache
                 currentAction = currentActions.find((a) => {
                     const actionDetails = dataManager.getActionDetails(a.actionHrid);
@@ -988,20 +1067,46 @@ class ActionTimeDisplay {
 
                     if (itemNameFromDom && a.primaryItemHash) {
                         const itemHrid = '/items/' + itemNameFromDom.toLowerCase().replace(/\s+/g, '_');
-                        return a.primaryItemHash.includes(itemHrid);
+                        const matches = a.primaryItemHash.includes(itemHrid);
+                        console.log('[Action Time Display] Matching by primaryItemHash:', {
+                            actionHrid: a.actionHrid,
+                            itemNameFromDom,
+                            itemHrid,
+                            primaryItemHash: a.primaryItemHash,
+                            matches,
+                        });
+                        return matches;
                     }
 
                     return true;
                 });
+
+                if (currentAction) {
+                    console.log('[Action Time Display] Current action matched:', {
+                        id: currentAction.id,
+                        actionHrid: currentAction.actionHrid,
+                        hasMaxCount: currentAction.hasMaxCount,
+                        maxCount: currentAction.maxCount,
+                        currentCount: currentAction.currentCount,
+                    });
+                }
             }
 
             if (currentAction) {
+                // Check if current action appears in the queue list
                 for (const actionDiv of actionDivs) {
                     const actionObj = this.matchActionFromDiv(actionDiv, currentActions);
                     if (actionObj && actionObj.id === currentAction.id) {
                         isCurrentActionInQueue = true;
+                        console.log('[Action Time Display] Current action IS in queue - will not double-count', {
+                            id: actionObj.id,
+                        });
                         break;
                     }
+                }
+
+                if (!isCurrentActionInQueue) {
+                    console.log('[Action Time Display] Current action NOT in queue - adding to total time calculation');
                 }
             }
 
@@ -1028,12 +1133,20 @@ class ActionTimeDisplay {
                         const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
                         if (timeData) {
                             const { actionTime, totalEfficiency } = timeData;
-                            const materialLimit = this.calculateMaterialLimit(
+                            const limitResult = this.calculateMaterialLimit(
                                 actionDetails,
                                 inventoryLookup,
                                 artisanBonus,
                                 currentAction
                             );
+
+                            const materialLimit = limitResult?.maxActions || null;
+
+                            console.log('[Action Time Display] Current action (infinite) limit check:', {
+                                actionHrid: currentAction.actionHrid,
+                                materialLimit,
+                                limitType: limitResult?.limitType,
+                            });
 
                             if (materialLimit !== null) {
                                 // Material-limited infinite action - calculate time
@@ -1123,6 +1236,7 @@ class ActionTimeDisplay {
 
                 // Calculate material limit for infinite actions
                 let materialLimit = null;
+                let limitType = null;
                 if (isInfinite) {
                     const equipment = dataManager.getEquipment();
                     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
@@ -1130,12 +1244,23 @@ class ActionTimeDisplay {
                     const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
                     const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
-                    materialLimit = this.calculateMaterialLimit(
+                    const limitResult = this.calculateMaterialLimit(
                         actionDetails,
                         inventoryLookup,
                         artisanBonus,
                         actionObj
                     );
+
+                    if (limitResult) {
+                        materialLimit = limitResult.maxActions;
+                        limitType = limitResult.limitType;
+
+                        console.log('[Action Time Display] Queue action limit check:', {
+                            actionHrid: actionObj.actionHrid,
+                            materialLimit,
+                            limitType,
+                        });
+                    }
                 }
 
                 // Determine if truly infinite (no material limit)
@@ -1205,8 +1330,20 @@ class ActionTimeDisplay {
                     timeDiv.textContent = '[∞]';
                 } else if (isInfinite && materialLimit !== null) {
                     // Material-limited infinite action
+                    let limitLabel = '';
+                    if (limitType === 'gold') {
+                        limitLabel = 'gold';
+                    } else if (limitType && limitType.startsWith('material:')) {
+                        limitLabel = 'mat';
+                    } else if (limitType && limitType.startsWith('upgrade:')) {
+                        limitLabel = 'upgrade';
+                    } else if (limitType === 'alchemy_item') {
+                        limitLabel = 'item';
+                    } else {
+                        limitLabel = 'max';
+                    }
                     const timeStr = timeReadable(totalTime);
-                    timeDiv.textContent = `[${timeStr} · max: ${this.formatLargeNumber(materialLimit)}]${completionText}`;
+                    timeDiv.textContent = `[${timeStr} · ${limitLabel}: ${this.formatLargeNumber(materialLimit)}]${completionText}`;
                 } else {
                     const timeStr = timeReadable(totalTime);
                     timeDiv.textContent = `[${timeStr}]${completionText}`;
