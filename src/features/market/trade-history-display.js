@@ -237,7 +237,7 @@ class TradeHistoryDisplay {
      * @param {HTMLElement} panel - Current item panel (unused, kept for signature compatibility)
      * @returns {Object|null} { ask, bid } or null
      */
-    extractCurrentPrices(panel) {
+    extractCurrentPrices(_panel) {
         // Use WebSocket order book data instead of DOM scraping
         if (!this.currentOrderBookData || !this.currentOrderBookData.orderBooks) {
             return null;
