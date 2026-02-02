@@ -348,7 +348,13 @@ export function formatPercentage(value, decimals = 1) {
         return null;
     }
 
-    return (value * 100).toFixed(decimals) + '%';
+    const percentage = value * 100;
+    const formatted = new Intl.NumberFormat(undefined, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+    }).format(percentage);
+
+    return formatted + '%';
 }
 
 /**
