@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/Celasha/Toolasha/compare/v0.12.2...v0.13.0) (2026-02-02)
+
+
+### Features
+
+* **action-time:** always include current action time in queue total ([d40a171](https://github.com/Celasha/Toolasha/commit/d40a171a042aed212c8b7cca0bfedf5b4026d6d8))
+
+
+### Bug Fixes
+
+* **market:** parse K/M suffixes in listing quantities ([eee35f3](https://github.com/Celasha/Toolasha/commit/eee35f3c2d47f180046854441a38a620beb47494))
+
 ## [0.12.2](https://github.com/Celasha/Toolasha/compare/v0.12.1...v0.12.2) (2026-02-02)
 
 ### Bug Fixes
