@@ -90,10 +90,13 @@ class AutoFillPrice {
         // Click the best price label to populate the suggested price
         bestPriceLabel.click();
 
-        // Wait a brief moment for the click to take effect, then adjust the price
-        setTimeout(() => {
-            this.adjustPrice(modal, isBuyOrder);
-        }, 50);
+        // Only adjust price for buy orders (increment by 1 to outbid)
+        // Sell orders use the best sell price as-is (no decrement)
+        if (isBuyOrder) {
+            setTimeout(() => {
+                this.adjustPrice(modal, isBuyOrder);
+            }, 50);
+        }
     }
 
     /**
