@@ -15,12 +15,17 @@ class DungeonTrackerChatAnnotations {
         this.observer = null;
         this.lastSeenDungeonName = null; // Cache last known dungeon name
         this.cumulativeStatsByDungeon = {}; // Persistent cumulative counters for rolling averages
+        this.processedMessages = new Map(); // Track processed messages to prevent duplicate counting
+        this.initComplete = false; // Flag to ensure storage loads before annotation
     }
 
     /**
      * Initialize chat annotation monitor
      */
-    initialize() {
+    async initialize() {
+        // Load run counts from storage to sync with UI
+        await this.loadRunCountsFromStorage();
+
         // Wait for chat to be available
         this.waitForChat();
 
@@ -28,6 +33,47 @@ class DungeonTrackerChatAnnotations {
         dataManager.on('character_switching', () => {
             this.cleanup();
         });
+    }
+
+    /**
+     * Load run counts from storage to keep chat and UI in sync
+     */
+    async loadRunCountsFromStorage() {
+        try {
+            // Get all runs from unified storage
+            const allRuns = await dungeonTrackerStorage.getAllRuns();
+
+            // Extract unique dungeon names
+            const uniqueDungeonNames = [...new Set(allRuns.map((run) => run.dungeonName))];
+
+            // Load stats for each dungeon
+            for (const dungeonName of uniqueDungeonNames) {
+                const stats = await dungeonTrackerStorage.getStatsByName(dungeonName);
+                if (stats && stats.totalRuns > 0) {
+                    this.cumulativeStatsByDungeon[dungeonName] = {
+                        runCount: stats.totalRuns,
+                        totalTime: stats.avgTime * stats.totalRuns, // Reconstruct total time
+                    };
+                }
+            }
+
+            this.initComplete = true;
+            console.log('[Dungeon Tracker] Loaded run counts from storage:', this.cumulativeStatsByDungeon);
+        } catch (error) {
+            console.error('[Dungeon Tracker] Failed to load run counts from storage:', error);
+            this.initComplete = true; // Continue anyway
+        }
+    }
+
+    /**
+     * Refresh run counts after backfill operation
+     */
+    async refreshRunCounts() {
+        console.log('[Dungeon Tracker] Refreshing run counts after backfill...');
+        this.cumulativeStatsByDungeon = {};
+        this.processedMessages.clear();
+        await this.loadRunCountsFromStorage();
+        await this.annotateAllMessages();
     }
 
     /**
@@ -102,6 +148,24 @@ class DungeonTrackerChatAnnotations {
     async annotateAllMessages() {
         if (!this.enabled || !config.isFeatureEnabled('dungeonTracker')) {
             return;
+        }
+
+        // Wait for initialization to complete to ensure run counts are loaded
+        if (!this.initComplete) {
+            await new Promise((resolve) => {
+                const checkInterval = setInterval(() => {
+                    if (this.initComplete) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 50);
+
+                // Timeout after 5 seconds
+                setTimeout(() => {
+                    clearInterval(checkInterval);
+                    resolve();
+                }, 5000);
+            });
         }
 
         const events = this.extractChatEvents();
@@ -181,6 +245,9 @@ class DungeonTrackerChatAnnotations {
                 const isSuccessfulRun = diff && dungeonName && dungeonName !== 'Unknown' && !nextRunWasCanceled;
 
                 if (isSuccessfulRun) {
+                    // Create unique message ID to prevent duplicate counting on scroll
+                    const messageId = `${e.timestamp.getTime()}_${dungeonName}`;
+
                     // Initialize dungeon tracking if needed
                     if (!this.cumulativeStatsByDungeon[dungeonName]) {
                         this.cumulativeStatsByDungeon[dungeonName] = {
@@ -189,13 +256,20 @@ class DungeonTrackerChatAnnotations {
                         };
                     }
 
-                    // Add this run to cumulative totals
                     const dungeonStats = this.cumulativeStatsByDungeon[dungeonName];
-                    dungeonStats.runCount++;
-                    dungeonStats.totalTime += diff;
 
-                    // Add run number to label for successful runs
-                    label = `Run #${dungeonStats.runCount}: ${label}`;
+                    // Check if this message was already counted
+                    if (this.processedMessages.has(messageId)) {
+                        // Already counted, use stored run number
+                        const storedRunNumber = this.processedMessages.get(messageId);
+                        label = `Run #${storedRunNumber}: ${label}`;
+                    } else {
+                        // New message, increment counter and store
+                        dungeonStats.runCount++;
+                        dungeonStats.totalTime += diff;
+                        this.processedMessages.set(messageId, dungeonStats.runCount);
+                        label = `Run #${dungeonStats.runCount}: ${label}`;
+                    }
                 }
 
                 // Mark as processed BEFORE inserting (matches working DRT script)
@@ -623,6 +697,8 @@ class DungeonTrackerChatAnnotations {
         // Clear cached state
         this.lastSeenDungeonName = null;
         this.cumulativeStatsByDungeon = {}; // Reset cumulative counters
+        this.processedMessages.clear(); // Clear message deduplication map
+        this.initComplete = false; // Reset init flag
         this.enabled = true; // Reset to default enabled state
 
         // Remove all annotations from DOM
