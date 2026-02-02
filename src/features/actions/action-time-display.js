@@ -917,7 +917,7 @@ class ActionTimeDisplay {
      * @param {Array} cachedActions - Array of actions from dataManager
      * @returns {Object|null} Matched action object or null
      */
-    matchActionFromDiv(actionDiv, cachedActions) {
+    matchActionFromDiv(actionDiv, cachedActions, usedActionIds = new Set()) {
         // Find the action text element within the div
         const actionTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
         if (!actionTextContainer) {
@@ -947,8 +947,12 @@ class ActionTimeDisplay {
             const itemName = actionNameText;
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
-            // Find enhancing action matching this item
+            // Find enhancing action matching this item (excluding already-used actions)
             return cachedActions.find((a) => {
+                if (usedActionIds.has(a.id)) {
+                    return false; // Skip already-matched actions
+                }
+
                 const actionDetails = dataManager.getActionDetails(a.actionHrid);
                 if (!actionDetails || actionDetails.type !== '/action_types/enhancing') {
                     return false;
@@ -970,8 +974,12 @@ class ActionTimeDisplay {
             itemNameFromDiv = null;
         }
 
-        // Match action from cache (same logic as main display)
+        // Match action from cache (same logic as main display, excluding already-used actions)
         return cachedActions.find((a) => {
+            if (usedActionIds.has(a.id)) {
+                return false; // Skip already-matched actions
+            }
+
             const actionDetails = dataManager.getActionDetails(a.actionHrid);
             if (!actionDetails || actionDetails.name !== actionNameFromDiv) {
                 return false;
@@ -1192,11 +1200,14 @@ class ActionTimeDisplay {
 
             // Now process queued actions by reading from each div
             // Each div shows a queued action, and we match it to cache by name
+            // Track used action IDs to prevent duplicate matching (e.g., two identical infinite actions)
+            const usedActionIds = new Set();
+
             for (let divIndex = 0; divIndex < actionDivs.length; divIndex++) {
                 const actionDiv = actionDivs[divIndex];
 
-                // Match this div's action from the cache
-                const actionObj = this.matchActionFromDiv(actionDiv, currentActions);
+                // Match this div's action from the cache (excluding already-matched actions)
+                const actionObj = this.matchActionFromDiv(actionDiv, currentActions, usedActionIds);
 
                 if (!actionObj) {
                     // Could not match action - show unknown
@@ -1218,6 +1229,9 @@ class ActionTimeDisplay {
 
                     continue;
                 }
+
+                // Mark this action as used for subsequent divs
+                usedActionIds.add(actionObj.id);
 
                 const actionDetails = dataManager.getActionDetails(actionObj.actionHrid);
                 if (!actionDetails) {

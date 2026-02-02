@@ -13,8 +13,10 @@ class TradeHistoryDisplay {
     constructor() {
         this.isActive = false;
         this.unregisterObserver = null;
+        this.unregisterWebSocket = null;
         this.currentItemHrid = null;
         this.currentEnhancementLevel = 0;
+        this.currentOrderBookData = null;
         this.isInitialized = false;
     }
 
@@ -33,6 +35,7 @@ class TradeHistoryDisplay {
 
         this.isInitialized = true;
         this.setupObserver();
+        this.setupWebSocketListener();
         this.isActive = true;
     }
 
@@ -54,6 +57,31 @@ class TradeHistoryDisplay {
         if (existingPanel) {
             this.handleItemPanelUpdate(existingPanel);
         }
+    }
+
+    /**
+     * Setup WebSocket listener for order book updates
+     */
+    setupWebSocketListener() {
+        const orderBookHandler = (data) => {
+            if (data.marketItemOrderBooks) {
+                // Store order book data for current item
+                this.currentOrderBookData = data.marketItemOrderBooks;
+
+                // Trigger display update if we're viewing this item
+                const existingPanel = document.querySelector('[class*="MarketplacePanel_currentItem"]');
+                if (existingPanel) {
+                    this.handleItemPanelUpdate(existingPanel);
+                }
+            }
+        };
+
+        dataManager.on('market_item_order_books_updated', orderBookHandler);
+
+        // Store unregister function for cleanup
+        this.unregisterWebSocket = () => {
+            dataManager.off('market_item_order_books_updated', orderBookHandler);
+        };
     }
 
     /**
@@ -224,82 +252,34 @@ class TradeHistoryDisplay {
     }
 
     /**
-     * Extract current top order prices from the marketplace panel
-     * @param {HTMLElement} panel - Current item panel
+     * Extract current top order prices from WebSocket order book data
+     * @param {HTMLElement} panel - Current item panel (unused, kept for signature compatibility)
      * @returns {Object|null} { ask, bid } or null
      */
     extractCurrentPrices(panel) {
-        try {
-            // Try method 1: Find the top order section (works in compact view)
-            const topOrderSection = panel.querySelector('[class*="MarketplacePanel_topOrderSection"]');
-            if (topOrderSection) {
-                // The top order section contains two price displays: Sell (Ask) and Buy (Bid)
-                const priceTexts = topOrderSection.querySelectorAll('[class*="MarketplacePanel_price"]');
-
-                if (priceTexts.length >= 2) {
-                    // First price is Sell price (Ask), second is Buy price (Bid)
-                    const askText = priceTexts[0].textContent.trim();
-                    const bidText = priceTexts[1].textContent.trim();
-
-                    return {
-                        ask: this.parsePrice(askText),
-                        bid: this.parsePrice(bidText),
-                    };
-                }
-            }
-
-            // Method 2: Extract from order book table (when viewing full order book)
-            // Find all price elements in the panel
-            const allPriceElements = panel.querySelectorAll('[class*="MarketplacePanel_price"]');
-
-            if (allPriceElements.length >= 2) {
-                // In order book view, prices appear in table rows
-                // Left table = Ask orders (sell listings), Right table = Bid orders (buy listings)
-                // First price is typically the lowest ask, second is typically the highest bid
-                const askText = allPriceElements[0].textContent.trim();
-                const bidText = allPriceElements[1].textContent.trim();
-
-                const ask = this.parsePrice(askText);
-                const bid = this.parsePrice(bidText);
-
-                // Sanity check: ask should be >= bid (or at least positive)
-                if (ask > 0 && bid > 0) {
-                    return { ask, bid };
-                }
-            }
-
-            return null;
-        } catch (error) {
-            console.error('[TradeHistoryDisplay] Failed to extract current prices:', error);
+        // Use WebSocket order book data instead of DOM scraping
+        if (!this.currentOrderBookData || !this.currentOrderBookData.orderBooks) {
             return null;
         }
-    }
 
-    /**
-     * Parse price text to number (handles K, M, B suffixes)
-     * @param {string} text - Price text (e.g., "82.0K", "1.5M")
-     * @returns {number} Parsed price
-     */
-    parsePrice(text) {
-        if (!text) return 0;
-
-        // Remove non-numeric characters except K, M, B, and decimal point
-        let cleaned = text.replace(/[^0-9.KMB]/gi, '');
-
-        let multiplier = 1;
-        if (cleaned.toUpperCase().includes('K')) {
-            multiplier = 1000;
-            cleaned = cleaned.replace(/K/gi, '');
-        } else if (cleaned.toUpperCase().includes('M')) {
-            multiplier = 1000000;
-            cleaned = cleaned.replace(/M/gi, '');
-        } else if (cleaned.toUpperCase().includes('B')) {
-            multiplier = 1000000000;
-            cleaned = cleaned.replace(/B/gi, '');
+        const orderBook = this.currentOrderBookData.orderBooks[0];
+        if (!orderBook) {
+            return null;
         }
 
-        const num = parseFloat(cleaned);
-        return isNaN(num) ? 0 : Math.floor(num * multiplier);
+        // Extract top ask (lowest sell price) and top bid (highest buy price)
+        const topAsk = orderBook.asks?.[0]?.price;
+        const topBid = orderBook.bids?.[0]?.price;
+
+        // Validate prices exist and are positive
+        if (!topAsk || topAsk <= 0 || !topBid || topBid <= 0) {
+            return null;
+        }
+
+        return {
+            ask: topAsk,
+            bid: topBid,
+        };
     }
 
     /**
@@ -351,12 +331,18 @@ class TradeHistoryDisplay {
             this.unregisterObserver = null;
         }
 
+        if (this.unregisterWebSocket) {
+            this.unregisterWebSocket();
+            this.unregisterWebSocket = null;
+        }
+
         // Remove all displays
         document.querySelectorAll('.mwi-trade-history').forEach((el) => el.remove());
 
         this.isActive = false;
         this.currentItemHrid = null;
         this.currentEnhancementLevel = 0;
+        this.currentOrderBookData = null;
         this.isInitialized = false;
     }
 }
