@@ -2,10 +2,9 @@
 
 ## [0.14.3](https://github.com/Celasha/Toolasha/compare/v0.14.2...v0.14.3) (2026-02-03)
 
-
 ### Performance Improvements
 
-* reduce script size by removing debug logging and redundant comments ([382d014](https://github.com/Celasha/Toolasha/commit/382d01423f6522a52140d49a6ebd8661bc31e989))
+- reduce script size by removing debug logging and redundant comments ([382d014](https://github.com/Celasha/Toolasha/commit/382d01423f6522a52140d49a6ebd8661bc31e989))
 
 ## [0.14.2](https://github.com/Celasha/Toolasha/compare/v0.14.1...v0.14.2) (2026-02-03)
 
