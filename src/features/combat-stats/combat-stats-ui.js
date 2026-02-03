@@ -101,8 +101,8 @@ class CombatStatsUI {
      * @param {Object} stats - Player statistics
      */
     shareStatsToChat(stats) {
-        // Get chat message format from config
-        const messageTemplate = config.getSetting('combatStatsChatMessage');
+        // Get chat message format from config (use getSettingValue for template type)
+        const messageTemplate = config.getSettingValue('combatStatsChatMessage');
 
         // Convert array format to string if needed
         let message = '';
