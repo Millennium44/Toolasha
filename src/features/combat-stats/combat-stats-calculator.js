@@ -57,7 +57,7 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
     for (const consumable of consumables) {
         const consumed = consumable.consumed || 0;
         const actualConsumed = consumable.actualConsumed || 0;
-        const elapsedSeconds = consumable.elapsedSeconds || 0;
+        const _elapsedSeconds = consumable.elapsedSeconds || 0;
 
         // Skip if no consumption (even estimated)
         if (consumed <= 0) {
@@ -84,6 +84,7 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
             currentCount: consumable.currentCount,
             actualConsumed: actualConsumed,
             consumptionRate: consumable.consumptionRate,
+            elapsedSeconds: consumable.elapsedSeconds || 0,
         });
     }
 
@@ -230,5 +231,54 @@ export function calculateAllPlayerStats(combatData, durationSeconds = null) {
         return [];
     }
 
-    return combatData.players.map((player) => calculatePlayerStats(player, durationSeconds));
+    // Calculate encounters per hour (EPH)
+    const duration = durationSeconds || combatData.durationSeconds || 0;
+    const battleId = combatData.battleId || 1;
+    const encountersPerHour = duration > 0 ? (3600 * (battleId - 1)) / duration : 0;
+
+    return combatData.players.map((player) => {
+        const stats = calculatePlayerStats(player, durationSeconds);
+        // Add EPH and formatted duration to each player's stats
+        stats.encountersPerHour = encountersPerHour;
+        stats.durationFormatted = formatDuration(duration);
+        return stats;
+    });
+}
+
+/**
+ * Format duration in seconds to human-readable format
+ * @param {number} seconds - Duration in seconds
+ * @returns {string} Formatted duration (e.g., "1h 23m", "3d 12h", "2mo 15d")
+ */
+function formatDuration(seconds) {
+    if (!seconds || seconds <= 0) {
+        return '0s';
+    }
+
+    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+
+    // Days
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    if (d >= 365) {
+        const years = Math.floor(d / 365);
+        const days = d % 365;
+        if (days >= 30) {
+            const months = Math.floor(days / 30);
+            return `${years}y ${months}mo`;
+        }
+        return days > 0 ? `${years}y ${days}d` : `${years}y`;
+    }
+    if (d >= 30) {
+        const months = Math.floor(d / 30);
+        const days = d % 30;
+        return days > 0 ? `${months}mo ${days}d` : `${months}mo`;
+    }
+    return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }

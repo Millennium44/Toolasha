@@ -304,6 +304,14 @@ class SettingsUI {
         // Add change listener
         card.addEventListener('change', (e) => this.handleSettingChange(e));
 
+        // Add click listener for template edit buttons
+        card.addEventListener('click', (e) => {
+            if (e.target.classList.contains('toolasha-template-edit-btn')) {
+                const settingId = e.target.dataset.settingId;
+                this.openTemplateEditor(settingId);
+            }
+        });
+
         return panel;
     }
 
@@ -614,6 +622,35 @@ class SettingsUI {
                         class="toolasha-text-input"
                         value="${value}"
                         placeholder="${settingDef.placeholder || ''}">
+                `;
+            }
+
+            case 'template': {
+                const value = currentSetting?.value ?? settingDef.default ?? [];
+                // Store as JSON string
+                const jsonValue = JSON.stringify(value);
+                const escapedValue = jsonValue.replace(/"/g, '&quot;');
+
+                return `
+                    <input type="hidden"
+                        id="${settingId}"
+                        value="${escapedValue}">
+                    <button type="button"
+                        class="toolasha-template-edit-btn"
+                        data-setting-id="${settingId}"
+                        style="
+                            background: #4a7c59;
+                            border: 1px solid #5a8c69;
+                            border-radius: 4px;
+                            padding: 6px 12px;
+                            color: #e0e0e0;
+                            cursor: pointer;
+                            font-size: 13px;
+                            white-space: nowrap;
+                            transition: all 0.2s;
+                        ">
+                        Edit Template
+                    </button>
                 `;
             }
 
@@ -1170,6 +1207,448 @@ class SettingsUI {
         });
 
         input.click();
+    }
+
+    /**
+     * Open template editor modal
+     * @param {string} settingId - Setting ID
+     */
+    openTemplateEditor(settingId) {
+        const setting = this.findSettingDef(settingId);
+        if (!setting || !setting.templateVariables) {
+            return;
+        }
+
+        const input = document.getElementById(settingId);
+        let currentValue = setting.default;
+
+        // Try to parse stored value
+        if (input && input.value) {
+            try {
+                const parsed = JSON.parse(input.value);
+                if (Array.isArray(parsed)) {
+                    currentValue = parsed;
+                }
+            } catch (e) {
+                console.error('[Settings] Failed to parse template value:', e);
+            }
+        }
+
+        // Ensure currentValue is an array
+        if (!Array.isArray(currentValue)) {
+            currentValue = setting.default || [];
+        }
+
+        // Deep clone to avoid mutating original
+        const templateItems = JSON.parse(JSON.stringify(currentValue));
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'toolasha-template-editor-overlay';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `;
+
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'toolasha-template-editor-modal';
+        modal.style.cssText = `
+            background: #1a1a1a;
+            border: 2px solid #3a3a3a;
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 90%;
+            overflow-y: auto;
+            color: #e0e0e0;
+        `;
+
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #3a3a3a;
+            padding-bottom: 10px;
+        `;
+        header.innerHTML = `
+            <h3 style="margin: 0; color: #e0e0e0;">Edit Template</h3>
+            <button class="toolasha-template-close-btn" style="
+                background: none;
+                border: none;
+                color: #e0e0e0;
+                font-size: 32px;
+                cursor: pointer;
+                padding: 0;
+                line-height: 1;
+            ">×</button>
+        `;
+
+        // Template list section
+        const listSection = document.createElement('div');
+        listSection.style.cssText = 'margin-bottom: 20px;';
+        listSection.innerHTML =
+            '<h4 style="margin: 0 0 10px 0; color: #e0e0e0;">Template Items (drag to reorder):</h4>';
+
+        const listContainer = document.createElement('div');
+        listContainer.className = 'toolasha-template-list';
+        listContainer.style.cssText = `
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            padding: 10px;
+            min-height: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+        `;
+
+        const renderList = () => {
+            listContainer.innerHTML = '';
+            templateItems.forEach((item, index) => {
+                const itemEl = this.createTemplateListItem(item, index, templateItems, renderList);
+                listContainer.appendChild(itemEl);
+            });
+        };
+
+        renderList();
+        listSection.appendChild(listContainer);
+
+        // Available variables section
+        const variablesSection = document.createElement('div');
+        variablesSection.style.cssText = 'margin-bottom: 20px;';
+        variablesSection.innerHTML = '<h4 style="margin: 0 0 10px 0; color: #e0e0e0;">Add Variable:</h4>';
+
+        const variablesContainer = document.createElement('div');
+        variablesContainer.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        `;
+
+        for (const variable of setting.templateVariables) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.textContent = '+  ' + variable.label;
+            chip.title = variable.description;
+            chip.style.cssText = `
+                background: #2a2a2a;
+                border: 1px solid #4a4a4a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                color: #e0e0e0;
+                cursor: pointer;
+                font-size: 13px;
+                transition: all 0.2s;
+            `;
+            chip.onmouseover = () => {
+                chip.style.background = '#3a3a3a';
+                chip.style.borderColor = '#5a5a5a';
+            };
+            chip.onmouseout = () => {
+                chip.style.background = '#2a2a2a';
+                chip.style.borderColor = '#4a4a4a';
+            };
+            chip.onclick = () => {
+                templateItems.push({
+                    type: 'variable',
+                    key: variable.key,
+                    label: variable.label,
+                });
+                renderList();
+            };
+            variablesContainer.appendChild(chip);
+        }
+
+        // Add text button
+        const addTextBtn = document.createElement('button');
+        addTextBtn.type = 'button';
+        addTextBtn.textContent = '+ Add Text';
+        addTextBtn.style.cssText = `
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            padding: 6px 12px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        `;
+        addTextBtn.onmouseover = () => {
+            addTextBtn.style.background = '#3a3a3a';
+            addTextBtn.style.borderColor = '#5a5a5a';
+        };
+        addTextBtn.onmouseout = () => {
+            addTextBtn.style.background = '#2a2a2a';
+            addTextBtn.style.borderColor = '#4a4a4a';
+        };
+        addTextBtn.onclick = () => {
+            const text = prompt('Enter text:');
+            if (text !== null && text !== '') {
+                templateItems.push({
+                    type: 'text',
+                    value: text,
+                });
+                renderList();
+            }
+        };
+
+        variablesContainer.appendChild(addTextBtn);
+        variablesSection.appendChild(variablesContainer);
+
+        // Buttons
+        const buttonsSection = document.createElement('div');
+        buttonsSection.style.cssText = `
+            display: flex;
+            gap: 10px;
+            justify-content: space-between;
+            margin-top: 20px;
+        `;
+
+        // Restore to Default button (left side)
+        const restoreBtn = document.createElement('button');
+        restoreBtn.type = 'button';
+        restoreBtn.textContent = 'Restore to Default';
+        restoreBtn.style.cssText = `
+            background: #6b5b3a;
+            border: 1px solid #8b7b5a;
+            border-radius: 4px;
+            padding: 8px 16px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+        restoreBtn.onclick = () => {
+            if (confirm('Reset template to default? This will discard your current template.')) {
+                // Reset to default
+                templateItems.length = 0;
+                const defaultTemplate = setting.default || [];
+                templateItems.push(...JSON.parse(JSON.stringify(defaultTemplate)));
+                renderList();
+            }
+        };
+
+        // Right side buttons container
+        const rightButtons = document.createElement('div');
+        rightButtons.style.cssText = 'display: flex; gap: 10px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = `
+            background: #2a2a2a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            padding: 8px 16px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+        cancelBtn.onclick = () => overlay.remove();
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Save';
+        saveBtn.style.cssText = `
+            background: #4a7c59;
+            border: 1px solid #5a8c69;
+            border-radius: 4px;
+            padding: 8px 16px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+        saveBtn.onclick = () => {
+            const input = document.getElementById(settingId);
+            if (input) {
+                input.value = JSON.stringify(templateItems);
+                // Trigger change event
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            overlay.remove();
+        };
+
+        rightButtons.appendChild(cancelBtn);
+        rightButtons.appendChild(saveBtn);
+
+        buttonsSection.appendChild(restoreBtn);
+        buttonsSection.appendChild(rightButtons);
+
+        // Assemble modal
+        modal.appendChild(header);
+        modal.appendChild(listSection);
+        modal.appendChild(variablesSection);
+        modal.appendChild(buttonsSection);
+        overlay.appendChild(modal);
+
+        // Close button handler
+        header.querySelector('.toolasha-template-close-btn').onclick = () => overlay.remove();
+
+        // Close on overlay click
+        overlay.onclick = (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        };
+
+        // Add to page
+        document.body.appendChild(overlay);
+    }
+
+    /**
+     * Create a draggable template list item
+     * @param {Object} item - Template item
+     * @param {number} index - Item index
+     * @param {Array} items - All items
+     * @param {Function} renderList - Callback to re-render list
+     * @returns {HTMLElement} List item element
+     */
+    createTemplateListItem(item, index, items, renderList) {
+        const itemEl = document.createElement('div');
+        itemEl.draggable = true;
+        itemEl.dataset.index = index;
+        itemEl.style.cssText = `
+            background: #1a1a1a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: move;
+            transition: all 0.2s;
+        `;
+
+        // Drag handle
+        const dragHandle = document.createElement('span');
+        dragHandle.textContent = '⋮⋮';
+        dragHandle.style.cssText = `
+            color: #666;
+            font-size: 16px;
+            cursor: move;
+        `;
+
+        // Content
+        const content = document.createElement('div');
+        content.style.cssText = 'flex: 1; color: #e0e0e0; font-size: 13px;';
+
+        if (item.type === 'variable') {
+            content.innerHTML = `<strong style="color: #4a9eff;">${item.label}</strong> <span style="color: #666; font-family: monospace;">${item.key}</span>`;
+        } else {
+            // Editable text
+            const textInput = document.createElement('input');
+            textInput.type = 'text';
+            textInput.value = item.value;
+            textInput.style.cssText = `
+                background: #2a2a2a;
+                border: 1px solid #4a4a4a;
+                border-radius: 3px;
+                padding: 4px 8px;
+                color: #e0e0e0;
+                font-size: 13px;
+                width: 100%;
+            `;
+            textInput.onchange = () => {
+                items[index].value = textInput.value;
+            };
+            content.appendChild(textInput);
+        }
+
+        // Delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = '×';
+        deleteBtn.title = 'Remove';
+        deleteBtn.style.cssText = `
+            background: #8b0000;
+            border: 1px solid #a00000;
+            border-radius: 3px;
+            color: #e0e0e0;
+            cursor: pointer;
+            font-size: 18px;
+            line-height: 1;
+            padding: 4px 8px;
+            transition: all 0.2s;
+        `;
+        deleteBtn.onmouseover = () => {
+            deleteBtn.style.background = '#a00000';
+        };
+        deleteBtn.onmouseout = () => {
+            deleteBtn.style.background = '#8b0000';
+        };
+        deleteBtn.onclick = () => {
+            items.splice(index, 1);
+            renderList();
+        };
+
+        // Drag events
+        itemEl.ondragstart = (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', index);
+            itemEl.style.opacity = '0.5';
+        };
+
+        itemEl.ondragend = () => {
+            itemEl.style.opacity = '1';
+        };
+
+        itemEl.ondragover = (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            itemEl.style.borderColor = '#4a9eff';
+        };
+
+        itemEl.ondragleave = () => {
+            itemEl.style.borderColor = '#4a4a4a';
+        };
+
+        itemEl.ondrop = (e) => {
+            e.preventDefault();
+            itemEl.style.borderColor = '#4a4a4a';
+
+            const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
+            const dropIndex = index;
+
+            if (dragIndex !== dropIndex) {
+                // Remove from old position
+                const [movedItem] = items.splice(dragIndex, 1);
+                // Insert at new position
+                items.splice(dropIndex, 0, movedItem);
+                renderList();
+            }
+        };
+
+        itemEl.appendChild(dragHandle);
+        itemEl.appendChild(content);
+        itemEl.appendChild(deleteBtn);
+
+        return itemEl;
+    }
+
+    /**
+     * Find setting definition by ID
+     * @param {string} settingId - Setting ID
+     * @returns {Object|null} Setting definition
+     */
+    findSettingDef(settingId) {
+        for (const group of Object.values(settingsGroups)) {
+            if (group.settings[settingId]) {
+                return group.settings[settingId];
+            }
+        }
+        return null;
     }
 
     /**

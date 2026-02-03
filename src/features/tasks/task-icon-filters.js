@@ -53,7 +53,6 @@ class TaskIconFilters {
      * Initialize the task icon filters feature
      */
     initialize() {
-        console.log('[TaskIconFilters] Initializing task icon filters');
         // Note: Filter bar is added by task-sorter.js when task panel appears
 
         // Listen for taskIconsDungeons setting changes
@@ -69,8 +68,6 @@ class TaskIconFilters {
      * Cleanup when feature is disabled
      */
     cleanup() {
-        console.log('[TaskIconFilters] Cleaning up task icon filters');
-
         // Remove setting change listener
         if (this.settingChangeHandler) {
             config.offSettingChange('taskIconsDungeons', this.settingChangeHandler);

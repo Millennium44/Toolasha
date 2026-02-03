@@ -10,10 +10,10 @@ class CombatStatsDataCollector {
     constructor() {
         this.isInitialized = false;
         this.newBattleHandler = null;
+        this.consumableEventHandler = null; // NEW: for battle_consumable_ability_updated
         this.latestCombatData = null;
         this.currentBattleId = null;
-        this.consumablePreviousCount = {}; // { characterId: { itemHrid: previousCount } } - for detecting drops
-        this.consumableTotalConsumed = {}; // { characterId: { itemHrid: totalConsumed } } - accumulated consumption
+        this.consumableActualConsumed = {}; // { characterId: { itemHrid: count } } - from consumption events
         this.trackingStartTime = {}; // { characterId: timestamp } - when we started tracking
     }
 
@@ -27,11 +27,49 @@ class CombatStatsDataCollector {
 
         this.isInitialized = true;
 
-        // Store handler reference for cleanup
+        // Store handler references for cleanup
         this.newBattleHandler = (data) => this.onNewBattle(data);
+        this.consumableEventHandler = (data) => this.onConsumableUsed(data);
 
         // Listen for new_battle messages (fires during combat, continuously updated)
         webSocketHook.on('new_battle', this.newBattleHandler);
+
+        // Listen for battle_consumable_ability_updated (fires on each consumable use)
+        webSocketHook.on('battle_consumable_ability_updated', this.consumableEventHandler);
+    }
+
+    /**
+     * Handle battle_consumable_ability_updated event (fires on each consumption)
+     * NOTE: This event only fires for the CURRENT PLAYER (solo tracking)
+     * @param {Object} data - Consumable update data
+     */
+    onConsumableUsed(data) {
+        try {
+            if (!data || !data.consumable || !data.consumable.itemHrid) {
+                return;
+            }
+
+            // Use 'current' key for solo player tracking (event only fires for current player)
+            const characterId = 'current';
+
+            // Initialize tracking for current player if needed
+            if (!this.consumableActualConsumed[characterId]) {
+                this.consumableActualConsumed[characterId] = {};
+                this.trackingStartTime[characterId] = Date.now();
+            }
+
+            const itemHrid = data.consumable.itemHrid;
+
+            // Initialize count for this item if first time seen
+            if (!this.consumableActualConsumed[characterId][itemHrid]) {
+                this.consumableActualConsumed[characterId][itemHrid] = 0;
+            }
+
+            // Increment consumption count (this event fires once per use)
+            this.consumableActualConsumed[characterId][itemHrid]++;
+        } catch (error) {
+            console.error('[Combat Stats] Error processing consumable event:', error);
+        }
     }
 
     /**
@@ -62,84 +100,60 @@ class CombatStatsDataCollector {
                 battleId: battleId,
                 combatStartTime: data.combatStartTime,
                 durationSeconds: durationSeconds,
-                players: data.players.map((player) => {
+                players: data.players.map((player, index) => {
                     const characterId = player.character.id;
 
+                    // For the first player (current player), use event-based consumption tracking
+                    // For other players (party members), we'd need snapshot-based tracking (TODO)
+                    const trackingKey = index === 0 ? 'current' : characterId;
+
                     // Initialize tracking for this character if needed
-                    if (!this.consumablePreviousCount[characterId]) {
-                        this.consumablePreviousCount[characterId] = {};
-                        this.consumableTotalConsumed[characterId] = {};
-                        this.trackingStartTime[characterId] = Date.now();
+                    if (!this.consumableActualConsumed[trackingKey]) {
+                        this.consumableActualConsumed[trackingKey] = {};
+                        this.trackingStartTime[trackingKey] = Date.now();
                     }
 
                     // Calculate time elapsed since we started tracking
-                    const trackingStartTime = this.trackingStartTime[characterId] || Date.now();
+                    const trackingStartTime = this.trackingStartTime[trackingKey] || Date.now();
                     const elapsedSeconds = (Date.now() - trackingStartTime) / 1000;
 
-                    // Process consumables - detect drops and accumulate consumption
+                    // Process consumables using event-based consumption data
                     const consumablesWithConsumed = [];
                     if (player.combatConsumables) {
                         for (const consumable of player.combatConsumables) {
-                            const currentCount = consumable.count;
-                            const previousCount = this.consumablePreviousCount[characterId][consumable.itemHrid];
-
-                            // Detect consumption (inventory drop)
-                            if (previousCount !== undefined && currentCount < previousCount) {
-                                const consumed = previousCount - currentCount;
-                                this.consumableTotalConsumed[characterId][consumable.itemHrid] =
-                                    (this.consumableTotalConsumed[characterId][consumable.itemHrid] || 0) + consumed;
-                            }
-
-                            // Update previous count for next comparison
-                            this.consumablePreviousCount[characterId][consumable.itemHrid] = currentCount;
-
-                            // Get total consumed for this item
+                            // Get actual consumed count from consumption events
                             const totalActualConsumed =
-                                this.consumableTotalConsumed[characterId][consumable.itemHrid] || 0;
+                                this.consumableActualConsumed[trackingKey]?.[consumable.itemHrid] || 0;
 
-                            // Calculate baseline consumption rate based on item type (matching Edible Tools)
+                            // MCS-style baseline: fixed item counts (not rates)
+                            // Baseline assumes 2 drinks or 10 foods consumed in DEFAULT_TIME (600s)
                             const itemName = consumable.itemHrid.toLowerCase();
                             const isDrink = itemName.includes('coffee') || itemName.includes('drink');
-                            const isDonutOrCake = itemName.includes('donut') || itemName.includes('cake');
-                            const isGummyOrYogurt = itemName.includes('gummy') || itemName.includes('yogurt');
+                            const isFood =
+                                itemName.includes('donut') ||
+                                itemName.includes('cupcake') ||
+                                itemName.includes('cake') ||
+                                itemName.includes('gummy') ||
+                                itemName.includes('yogurt');
 
-                            let baselineRate;
-                            if (isDrink) {
-                                // Coffees: 300 / (1 + drinkConcentration) seconds per coffee
-                                const drinkConcentration = player.combatDetails?.combatStats?.drinkConcentration || 0;
-                                const secondsPerCoffee = 300 / (1 + drinkConcentration);
-                                baselineRate = 1 / secondsPerCoffee;
-                            } else if (isDonutOrCake) {
-                                // Donut/Cake: 75 seconds
-                                baselineRate = 1 / 75;
-                            } else if (isGummyOrYogurt) {
-                                // Gummy/Yogurt: 67 seconds
-                                baselineRate = 1 / 67;
-                            } else {
-                                // Default food: 60 seconds
-                                baselineRate = 1 / 60;
-                            }
+                            const defaultConsumed = isDrink ? 2 : isFood ? 10 : 0;
 
-                            let consumptionRate;
-
-                            // If we have insufficient actual data, use 100% baseline
-                            // Otherwise use weighted average (90% actual, 10% baseline)
-                            if (elapsedSeconds < 60 || totalActualConsumed === 0) {
-                                // Not enough data yet, use pure baseline
-                                consumptionRate = baselineRate;
-                            } else {
-                                // Enough data, use weighted average
-                                const actualRate = totalActualConsumed / elapsedSeconds;
-                                // 90% actual data + 10% baseline
-                                consumptionRate = actualRate * 0.9 + baselineRate * 0.1;
-                            }
+                            // MCS-style weighted average with DEFAULT_TIME constant
+                            // Adds 10 minutes (600s) of baseline data to make estimates stable from start
+                            const DEFAULT_TIME = 10 * 60; // 600 seconds
+                            const actualRate = elapsedSeconds > 0 ? totalActualConsumed / elapsedSeconds : 0;
+                            const combinedTotal = defaultConsumed + totalActualConsumed;
+                            const combinedTime = DEFAULT_TIME + elapsedSeconds;
+                            const combinedRate = combinedTotal / combinedTime;
+                            // 90% actual rate + 10% combined (baseline+actual) rate
+                            const consumptionRate = actualRate * 0.9 + combinedRate * 0.1;
 
                             // Estimate total consumed for the entire combat duration
                             const estimatedConsumed = consumptionRate * durationSeconds;
 
                             consumablesWithConsumed.push({
                                 itemHrid: consumable.itemHrid,
-                                currentCount: currentCount,
+                                currentCount: consumable.count,
                                 actualConsumed: totalActualConsumed,
                                 consumed: estimatedConsumed,
                                 consumptionRate: consumptionRate,
@@ -204,11 +218,15 @@ class CombatStatsDataCollector {
             this.newBattleHandler = null;
         }
 
+        if (this.consumableEventHandler) {
+            webSocketHook.off('battle_consumable_ability_updated', this.consumableEventHandler);
+            this.consumableEventHandler = null;
+        }
+
         this.isInitialized = false;
         this.latestCombatData = null;
         this.currentBattleId = null;
-        this.consumablePreviousCount = {};
-        this.consumableTotalConsumed = {};
+        this.consumableActualConsumed = {};
         this.trackingStartTime = {};
     }
 }

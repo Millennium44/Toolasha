@@ -97,6 +97,105 @@ class CombatStatsUI {
     }
 
     /**
+     * Share statistics to chat (triggered by Ctrl+Click on player card)
+     * @param {Object} stats - Player statistics
+     */
+    shareStatsToChat(stats) {
+        // Get chat message format from config
+        const messageTemplate = config.getSetting('combatStatsChatMessage');
+
+        // Convert array format to string if needed
+        let message = '';
+        if (Array.isArray(messageTemplate)) {
+            // Format numbers
+            const useKMB = config.getSetting('formatting_useKMBFormat');
+            const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
+
+            // Build message from array
+            message = messageTemplate
+                .map((item) => {
+                    if (item.type === 'variable') {
+                        // Replace variable with actual value
+                        switch (item.key) {
+                            case '{income}':
+                                return formatNum(stats.income.bid);
+                            case '{dailyIncome}':
+                                return formatNum(stats.dailyIncome.bid);
+                            case '{dailyConsumableCosts}':
+                                return formatNum(stats.dailyConsumableCosts);
+                            case '{dailyProfit}':
+                                return formatNum(stats.dailyProfit.bid);
+                            case '{exp}':
+                                return formatNum(stats.expPerHour);
+                            case '{deathCount}':
+                                return stats.deathCount.toString();
+                            case '{encountersPerHour}':
+                                return formatNum(stats.encountersPerHour);
+                            case '{duration}':
+                                return stats.durationFormatted || '0s';
+                            default:
+                                return item.key;
+                        }
+                    } else {
+                        // Plain text
+                        return item.value;
+                    }
+                })
+                .join('');
+        } else {
+            // Legacy string format (shouldn't happen, but handle it)
+            const useKMB = config.getSetting('formatting_useKMBFormat');
+            const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
+
+            message = (messageTemplate || 'Combat Stats: {income} income | {dailyProfit} profit/d | {exp} exp/h')
+                .replace('{income}', formatNum(stats.income.bid))
+                .replace('{dailyIncome}', formatNum(stats.dailyIncome.bid))
+                .replace('{dailyProfit}', formatNum(stats.dailyProfit.bid))
+                .replace('{dailyConsumableCosts}', formatNum(stats.dailyConsumableCosts))
+                .replace('{exp}', formatNum(stats.expPerHour))
+                .replace('{deathCount}', stats.deathCount.toString());
+        }
+
+        // Insert into chat
+        this.insertToChat(message);
+    }
+
+    /**
+     * Insert text into chat input
+     * @param {string} text - Text to insert
+     */
+    insertToChat(text) {
+        const chatSelector =
+            '#root > div > div > div.GamePage_gamePanel__3uNKN > div.GamePage_contentPanel__Zx4FH > div.GamePage_middlePanel__uDts7 > div.GamePage_chatPanel__mVaVt > div > div.Chat_chatInputContainer__2euR8 > form > input';
+        const chatInput = document.querySelector(chatSelector);
+
+        if (!chatInput) {
+            console.error('[Combat Stats] Chat input not found');
+            return;
+        }
+
+        // Use native value setter for React compatibility
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        const start = chatInput.selectionStart || 0;
+        const end = chatInput.selectionEnd || 0;
+
+        // Insert text at cursor position
+        const newValue = chatInput.value.substring(0, start) + text + chatInput.value.substring(end);
+        nativeInputValueSetter.call(chatInput, newValue);
+
+        // Dispatch input event for React
+        const event = new Event('input', {
+            bubbles: true,
+            cancelable: true,
+        });
+        chatInput.dispatchEvent(event);
+
+        // Set cursor position after inserted text
+        chatInput.selectionStart = chatInput.selectionEnd = start + text.length;
+        chatInput.focus();
+    }
+
+    /**
      * Show statistics popup
      */
     async showPopup() {
@@ -271,7 +370,16 @@ class CombatStatsUI {
             padding: 15px;
             min-width: 300px;
             max-width: 400px;
+            cursor: pointer;
         `;
+
+        // Add Ctrl+Click handler to share to chat
+        card.onclick = (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                this.shareStatsToChat(stats);
+                e.stopPropagation();
+            }
+        };
 
         // Player name
         const nameHeader = document.createElement('div');
@@ -292,6 +400,8 @@ class CombatStatsUI {
         const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
 
         const statsRows = [
+            { label: 'Duration', value: stats.durationFormatted || '0s' },
+            { label: 'Encounters/Hour', value: formatNum(stats.encountersPerHour) },
             { label: 'Income', value: formatNum(stats.income.bid) },
             { label: 'Daily Income', value: `${formatNum(stats.dailyIncome.bid)}/d` },
             {
@@ -435,6 +545,52 @@ class CombatStatsUI {
                                 <span style="text-align: right; color: #ff6b6b;">${row.value}</span>
                             `;
                             breakdownDiv.appendChild(totalRow);
+
+                            // Add tracking info note
+                            if (row.breakdown.length > 0) {
+                                const trackingNote = document.createElement('div');
+                                trackingNote.style.cssText = `
+                                    margin-top: 8px;
+                                    padding-top: 8px;
+                                    border-top: 1px solid #3a3a3a;
+                                    font-size: 11px;
+                                    color: #888;
+                                    font-style: italic;
+                                `;
+
+                                // Format tracking duration
+                                const formatTrackingDuration = (seconds) => {
+                                    if (seconds < 60) return `${seconds}s`;
+                                    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+                                    if (seconds < 86400) {
+                                        const h = Math.floor(seconds / 3600);
+                                        const m = Math.floor((seconds % 3600) / 60);
+                                        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+                                    }
+                                    // Days
+                                    const d = Math.floor(seconds / 86400);
+                                    const h = Math.floor((seconds % 86400) / 3600);
+                                    if (d >= 30) {
+                                        const months = Math.floor(d / 30);
+                                        const days = d % 30;
+                                        return days > 0 ? `${months}mo ${days}d` : `${months}mo`;
+                                    }
+                                    return h > 0 ? `${d}d ${h}h` : `${d}d`;
+                                };
+
+                                // Display tracking info with MCS-style calculation note
+                                const firstItem = row.breakdown[0];
+                                const trackingDuration = Math.floor(firstItem.elapsedSeconds || 0);
+                                const hasActualData = firstItem.actualConsumed > 0;
+
+                                if (!hasActualData) {
+                                    trackingNote.textContent = `📊 Tracked ${formatTrackingDuration(trackingDuration)} - Using baseline rates (no consumption detected yet)`;
+                                } else {
+                                    trackingNote.textContent = `📊 Tracked ${formatTrackingDuration(trackingDuration)} - Using 90% actual + 10% combined (baseline+actual)`;
+                                }
+
+                                breakdownDiv.appendChild(trackingNote);
+                            }
                         } else {
                             breakdownDiv.textContent = 'No consumables used';
                             breakdownDiv.style.color = '#888';
