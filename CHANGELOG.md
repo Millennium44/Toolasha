@@ -2,10 +2,9 @@
 
 ## [0.14.2](https://github.com/Celasha/Toolasha/compare/v0.14.1...v0.14.2) (2026-02-03)
 
-
 ### Performance Improvements
 
-* optimize event handling to reduce calculation frequency ([c9ae1ca](https://github.com/Celasha/Toolasha/commit/c9ae1cad07251a60c6770f279120fb0ef0dc4dcf))
+- optimize event handling to reduce calculation frequency ([c9ae1ca](https://github.com/Celasha/Toolasha/commit/c9ae1cad07251a60c6770f279120fb0ef0dc4dcf))
 
 ## [0.14.1](https://github.com/Celasha/Toolasha/compare/v0.14.0...v0.14.1) (2026-02-03)
 
