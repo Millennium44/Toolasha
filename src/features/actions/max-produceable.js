@@ -58,6 +58,9 @@ class MaxProduceable {
         this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
         this.actionNameToHridCache = null; // Cached reverse lookup map (name → hrid)
         this.isInitialized = false;
+        this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
+        this.actionCompletedDebounceTimer = null; // Debounce timer for action_completed events
+        this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
     }
 
     /**
@@ -80,12 +83,18 @@ class MaxProduceable {
 
         this.setupObserver();
 
-        // Store handler references for cleanup
+        // Store handler references for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
-            this.updateAllCounts();
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                this.updateAllCounts();
+            }, this.DEBOUNCE_DELAY);
         };
         this.actionCompletedHandler = () => {
-            this.updateAllCounts();
+            clearTimeout(this.actionCompletedDebounceTimer);
+            this.actionCompletedDebounceTimer = setTimeout(() => {
+                this.updateAllCounts();
+            }, this.DEBOUNCE_DELAY);
         };
         this.characterSwitchingHandler = () => {
             this.clearAllReferences();
@@ -561,6 +570,12 @@ class MaxProduceable {
      * Disable the max produceable display
      */
     disable() {
+        // Clear debounce timers
+        clearTimeout(this.itemsUpdatedDebounceTimer);
+        clearTimeout(this.actionCompletedDebounceTimer);
+        this.itemsUpdatedDebounceTimer = null;
+        this.actionCompletedDebounceTimer = null;
+
         // Remove event listeners
         if (this.itemsUpdatedHandler) {
             dataManager.off('items_updated', this.itemsUpdatedHandler);

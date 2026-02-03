@@ -42,6 +42,13 @@ const _ENHANCING_TYPE = '/action_types/enhancing';
 const updateTimeouts = new Map();
 
 /**
+ * Event handler debounce timers
+ */
+let itemsUpdatedDebounceTimer = null;
+let consumablesUpdatedDebounceTimer = null;
+const DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
+
+/**
  * Module-level observer reference for cleanup
  */
 let panelObserver = null;
@@ -210,14 +217,20 @@ function setupMutationObserver() {
  * Refreshes enhancement calculator when gear or teas change
  */
 function setupEnhancementRefreshListeners() {
-    // Listen for equipment changes (equipping/unequipping items)
+    // Listen for equipment changes (equipping/unequipping items) with debouncing
     dataManager.on('items_updated', () => {
-        refreshEnhancementCalculator();
+        clearTimeout(itemsUpdatedDebounceTimer);
+        itemsUpdatedDebounceTimer = setTimeout(() => {
+            refreshEnhancementCalculator();
+        }, DEBOUNCE_DELAY);
     });
 
-    // Listen for consumable changes (drinking teas)
+    // Listen for consumable changes (drinking teas) with debouncing
     dataManager.on('consumables_updated', () => {
-        refreshEnhancementCalculator();
+        clearTimeout(consumablesUpdatedDebounceTimer);
+        consumablesUpdatedDebounceTimer = setTimeout(() => {
+            refreshEnhancementCalculator();
+        }, DEBOUNCE_DELAY);
     });
 }
 

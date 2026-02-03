@@ -63,10 +63,14 @@ class EquipmentLevelDisplay {
             return;
         }
 
-        // Register with centralized DOM observer
-        this.unregisterHandler = domObserver.register('EquipmentLevelDisplay', () => {
-            this.addItemLevels();
-        });
+        // Register with centralized DOM observer with debouncing
+        this.unregisterHandler = domObserver.register(
+            'EquipmentLevelDisplay',
+            () => {
+                this.addItemLevels();
+            },
+            { debounce: true, debounceDelay: 150 } // 150ms debounce to reduce update frequency
+        );
 
         // Process any existing items on page
         this.addItemLevels();

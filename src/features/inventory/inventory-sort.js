@@ -24,6 +24,8 @@ class InventorySort {
         this.isCalculating = false; // Guard flag to prevent recursive calls
         this.isInitialized = false;
         this.itemsUpdatedHandler = null;
+        this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
+        this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
     }
 
     /**
@@ -84,11 +86,14 @@ class InventorySort {
             50 // Priority: render before bid/ask badges (lower = earlier)
         );
 
-        // Store handler reference for cleanup
+        // Store handler reference for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
-            if (this.currentInventoryElem) {
-                this.applyCurrentSort();
-            }
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                if (this.currentInventoryElem) {
+                    this.applyCurrentSort();
+                }
+            }, this.DEBOUNCE_DELAY);
         };
 
         // Listen for inventory changes to recalculate prices
@@ -449,6 +454,10 @@ class InventorySort {
      * Disable and cleanup
      */
     disable() {
+        // Clear debounce timer
+        clearTimeout(this.itemsUpdatedDebounceTimer);
+        this.itemsUpdatedDebounceTimer = null;
+
         // Remove event listeners
         if (this.itemsUpdatedHandler) {
             dataManager.off('items_updated', this.itemsUpdatedHandler);

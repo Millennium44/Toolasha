@@ -10,6 +10,7 @@ import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
+import inventorySort from './inventory-sort.js';
 
 /**
  * InventoryBadgePrices class manages price badge overlays on inventory items
@@ -22,6 +23,8 @@ class InventoryBadgePrices {
         this.isCalculating = false;
         this.isInitialized = false;
         this.itemsUpdatedHandler = null;
+        this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
+        this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
     }
 
     /**
@@ -87,11 +90,14 @@ class InventoryBadgePrices {
             100 // Priority: render after stack prices
         );
 
-        // Store handler reference for cleanup
+        // Store handler reference for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
-            if (this.currentInventoryElem) {
-                this.updateBadges();
-            }
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                if (this.currentInventoryElem) {
+                    this.updateBadges();
+                }
+            }, this.DEBOUNCE_DELAY);
         };
 
         // Listen for inventory changes to recalculate prices
@@ -128,8 +134,15 @@ class InventoryBadgePrices {
 
     /**
      * Update all price badges (delegates to badge manager)
+     * Skips rendering if InventorySort is active (it already handles badge rendering)
      */
     async updateBadges() {
+        // Skip if InventorySort is active - it already calls renderAllBadges() in applyCurrentSort()
+        // This prevents duplicate calculations when both modules are enabled
+        if (inventorySort.isInitialized && config.getSetting('invSort')) {
+            return;
+        }
+
         await inventoryBadgeManager.renderAllBadges();
     }
 
@@ -214,6 +227,10 @@ class InventoryBadgePrices {
      * Disable and cleanup
      */
     disable() {
+        // Clear debounce timer
+        clearTimeout(this.itemsUpdatedDebounceTimer);
+        this.itemsUpdatedDebounceTimer = null;
+
         // Remove event listeners
         if (this.itemsUpdatedHandler) {
             dataManager.off('items_updated', this.itemsUpdatedHandler);

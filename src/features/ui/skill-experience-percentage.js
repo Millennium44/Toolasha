@@ -56,10 +56,11 @@ class SkillExperiencePercentage {
         // Initial update for existing skills
         this.updateAllSkills();
 
-        // Update every second to catch XP changes (matches remaining-xp behavior)
+        // Update every 5 seconds to catch XP changes
+        // Experience changes slowly enough that frequent polling is unnecessary
         this.updateInterval = setInterval(() => {
             this.updateAllSkills();
-        }, 1000);
+        }, 5000); // 5 seconds (reduced from 1 second for better performance)
 
         this.isInitialized = true;
     }

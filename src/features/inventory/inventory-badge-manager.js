@@ -26,6 +26,11 @@ class InventoryBadgeManager {
         this.processedItems = new WeakSet(); // Track processed item containers
         this.warnedItems = new Set(); // Track items we've already warned about
         this.isCalculating = false; // Guard flag to prevent recursive calls
+        this.lastCalculationTime = 0; // Timestamp of last calculation
+        this.CALCULATION_COOLDOWN = 250; // 250ms minimum between calculations
+        this.inventoryLookupCache = null; // Cached inventory lookup map
+        this.inventoryLookupCacheTime = 0; // Timestamp when cache was built
+        this.INVENTORY_CACHE_TTL = 500; // 500ms cache lifetime
     }
 
     /**
@@ -135,14 +140,48 @@ class InventoryBadgeManager {
 
         // Prevent recursive calls
         if (this.isCalculating) return;
+
+        // Cooldown check - prevent spamming during rapid events
+        const now = Date.now();
+        if (now - this.lastCalculationTime < this.CALCULATION_COOLDOWN) {
+            return;
+        }
+        this.lastCalculationTime = now;
+
         this.isCalculating = true;
 
         const inventoryElem = this.currentInventoryElem;
 
+        // Build inventory cache once if expired or missing (500ms TTL)
+        let inventory = null;
+        let inventoryLookup = null;
+
+        const cacheAge = now - this.inventoryLookupCacheTime;
+        if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
+            // Use cached data
+            inventory = this.inventoryLookupCache.inventory;
+            inventoryLookup = this.inventoryLookupCache.lookup;
+        } else {
+            // Rebuild cache
+            inventory = dataManager.getInventory();
+            if (inventory) {
+                inventoryLookup = new Map();
+                for (const item of inventory) {
+                    if (item.itemLocationHrid === '/item_locations/inventory') {
+                        const key = `${item.itemHrid}|${item.count}`;
+                        inventoryLookup.set(key, item);
+                    }
+                }
+                // Store in cache
+                this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
+                this.inventoryLookupCacheTime = now;
+            }
+        }
+
         // Process each category
         for (const categoryDiv of inventoryElem.children) {
             const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-            await this.calculateItemPrices(itemElems);
+            await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
         }
 
         this.isCalculating = false;
@@ -151,27 +190,35 @@ class InventoryBadgeManager {
     /**
      * Calculate and store prices for all items (populates dataset.askValue/bidValue)
      * @param {NodeList} itemElems - Item elements
+     * @param {Array} cachedInventory - Optional cached inventory data
+     * @param {Map} cachedInventoryLookup - Optional cached inventory lookup map
      */
-    async calculateItemPrices(itemElems) {
+    async calculateItemPrices(itemElems, cachedInventory = null, cachedInventoryLookup = null) {
         const gameData = dataManager.getInitClientData();
         if (!gameData) {
             console.warn('[InventoryBadgeManager] Game data not available yet');
             return;
         }
 
-        // Get inventory data for enhancement level matching
-        const inventory = dataManager.getInventory();
-        if (!inventory) {
-            console.warn('[InventoryBadgeManager] Inventory data not available yet');
-            return;
-        }
+        // Use cached inventory if provided, otherwise fetch fresh
+        let inventory = cachedInventory;
+        let inventoryLookup = cachedInventoryLookup;
 
-        // Build lookup map: itemHrid|count -> inventory item
-        const inventoryLookup = new Map();
-        for (const item of inventory) {
-            if (item.itemLocationHrid === '/item_locations/inventory') {
-                const key = `${item.itemHrid}|${item.count}`;
-                inventoryLookup.set(key, item);
+        if (!inventory || !inventoryLookup) {
+            // Get inventory data for enhancement level matching
+            inventory = dataManager.getInventory();
+            if (!inventory) {
+                console.warn('[InventoryBadgeManager] Inventory data not available yet');
+                return;
+            }
+
+            // Build lookup map: itemHrid|count -> inventory item
+            inventoryLookup = new Map();
+            for (const item of inventory) {
+                if (item.itemLocationHrid === '/item_locations/inventory') {
+                    const key = `${item.itemHrid}|${item.count}`;
+                    inventoryLookup.set(key, item);
+                }
             }
         }
 

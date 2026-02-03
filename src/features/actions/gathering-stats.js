@@ -21,6 +21,9 @@ class GatheringStats {
         this.actionCompletedHandler = null;
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
         this.isInitialized = false;
+        this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
+        this.actionCompletedDebounceTimer = null; // Debounce timer for action_completed events
+        this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
     }
 
     /**
@@ -43,12 +46,18 @@ class GatheringStats {
 
         this.setupObserver();
 
-        // Store handler references for cleanup
+        // Store handler references for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
-            this.updateAllStats();
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                this.updateAllStats();
+            }, this.DEBOUNCE_DELAY);
         };
         this.actionCompletedHandler = () => {
-            this.updateAllStats();
+            clearTimeout(this.actionCompletedDebounceTimer);
+            this.actionCompletedDebounceTimer = setTimeout(() => {
+                this.updateAllStats();
+            }, this.DEBOUNCE_DELAY);
         };
 
         this.characterSwitchingHandler = () => {
@@ -295,6 +304,12 @@ class GatheringStats {
      * Disable the gathering stats display
      */
     disable() {
+        // Clear debounce timers
+        clearTimeout(this.itemsUpdatedDebounceTimer);
+        clearTimeout(this.actionCompletedDebounceTimer);
+        this.itemsUpdatedDebounceTimer = null;
+        this.actionCompletedDebounceTimer = null;
+
         // Remove event listeners
         if (this.itemsUpdatedHandler) {
             dataManager.off('items_updated', this.itemsUpdatedHandler);
