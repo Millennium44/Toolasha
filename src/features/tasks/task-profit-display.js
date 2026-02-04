@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateTaskProfit } from './task-profit-calculator.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { numberFormatter, timeReadable, formatPercentage } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { calculateSecondsForActions } from '../../utils/profit-helpers.js';
@@ -166,6 +167,7 @@ class TaskProfitDisplay {
         this.eventListeners = new WeakMap(); // Store listeners for cleanup
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
+        this.marketDataInitPromise = null; // Guard against duplicate market data inits
     }
 
     /**
@@ -365,6 +367,31 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Ensure expected value calculator is initialized when task profits need market data
+     * @returns {Promise<boolean>} True if initialization completed
+     */
+    async ensureMarketDataInitialized() {
+        if (expectedValueCalculator.isInitialized) {
+            return true;
+        }
+
+        if (!this.marketDataInitPromise) {
+            this.marketDataInitPromise = (async () => {
+                try {
+                    return await expectedValueCalculator.initialize();
+                } catch (error) {
+                    console.error('[Task Profit Display] Market data initialization failed:', error);
+                    return false;
+                } finally {
+                    this.marketDataInitPromise = null;
+                }
+            })();
+        }
+
+        return this.marketDataInitPromise;
+    }
+
+    /**
      * Add profit display to a task card
      * @param {Element} taskNode - Task card DOM element
      */
@@ -387,6 +414,15 @@ class TaskProfitDisplay {
             const taskData = this.parseTaskData(taskNode);
             if (!taskData) {
                 return;
+            }
+
+            if (!expectedValueCalculator.isInitialized) {
+                const initialized = await this.ensureMarketDataInitialized();
+                if (!initialized || !expectedValueCalculator.isInitialized) {
+                    this.pendingTaskNodes.add(taskNode);
+                    this.displayLoadingState(taskNode, taskData);
+                    return;
+                }
             }
 
             // Calculate profit
