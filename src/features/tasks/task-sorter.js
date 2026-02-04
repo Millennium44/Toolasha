@@ -83,6 +83,15 @@ class TaskSorter {
         if (config.isFeatureEnabled('taskIcons')) {
             taskIconFilters.addFilterBar(headerElement);
         }
+
+        // Auto-sort if setting is enabled
+        if (config.getSetting('taskSorter_autoSort')) {
+            // Delay slightly to ensure all task cards are rendered
+            const autoSortTimeout = setTimeout(() => {
+                this.sortTasks();
+            }, 100);
+            this.timerRegistry.registerTimeout(autoSortTimeout);
+        }
     }
 
     /**

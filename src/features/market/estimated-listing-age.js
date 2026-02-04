@@ -107,6 +107,26 @@ class EstimatedListingAge {
 
             // Load all historical data (no time-based filtering)
             this.knownListings = stored.sort((a, b) => a.id - b.id);
+
+            // Add hardcoded seed listings for baseline estimation accuracy
+            // These are anchor points from RWI script author's data
+            const seedListings = [
+                { id: 106442952, timestamp: 1763409373481 },
+                { id: 106791533, timestamp: 1763541486867 },
+                { id: 107530218, timestamp: 1763842767083 },
+                { id: 107640371, timestamp: 1763890560819 },
+                { id: 107678558, timestamp: 1763904036320 },
+            ];
+
+            // Add seeds only if they don't already exist in stored data
+            for (const seed of seedListings) {
+                if (!this.knownListings.find((l) => l.id === seed.id)) {
+                    this.knownListings.push(seed);
+                }
+            }
+
+            // Re-sort after adding seeds
+            this.knownListings.sort((a, b) => a.id - b.id);
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load historical data:', error);
             this.knownListings = [];
@@ -292,6 +312,9 @@ class EstimatedListingAge {
         header.title = 'Estimated listing age (based on listing ID)';
         thead.appendChild(header);
 
+        // Track which listings have been matched to prevent duplicates
+        const usedListingIds = new Set();
+
         // Add age cells to each row
         const rows = tbody.querySelectorAll('tr');
 
@@ -331,10 +354,15 @@ class EstimatedListingAge {
             if (listing) {
                 const listingId = listing.listingId;
 
-                // Check if this is YOUR listing
-                const yourListing = this.knownListings.find((known) => known.id === listingId);
+                // Check if this is YOUR listing (and not already matched)
+                const yourListing = this.knownListings.find(
+                    (known) => known.id === listingId && !usedListingIds.has(known.id)
+                );
 
                 if (yourListing) {
+                    // Mark this listing as used
+                    usedListingIds.add(yourListing.id);
+
                     // Exact timestamp for your listing
                     const formatted = this.formatTimestamp(yourListing.timestamp);
                     cell.textContent = formatted; // No tilde for exact timestamps
@@ -354,6 +382,11 @@ class EstimatedListingAge {
                 if (hasCancel) {
                     // This is YOUR listing beyond top 20 - match from knownListings
                     const matchedListing = this.knownListings.find((listing) => {
+                        // Skip already-matched listings
+                        if (usedListingIds.has(listing.id)) {
+                            return false;
+                        }
+
                         const itemMatch = listing.itemHrid === currentItemHrid;
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
                         const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
@@ -361,6 +394,9 @@ class EstimatedListingAge {
                     });
 
                     if (matchedListing) {
+                        // Mark this listing as used
+                        usedListingIds.add(matchedListing.id);
+
                         const formatted = this.formatTimestamp(matchedListing.timestamp);
                         cell.textContent = formatted;
                         cell.style.color = '#00FF00'; // Green for YOUR listing
