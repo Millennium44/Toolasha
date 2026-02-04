@@ -10,6 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { formatPercentage } from '../../utils/formatters.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 // UI Style Constants (matching Ultimate Enhancement Tracker)
 const STYLE = {
@@ -72,6 +73,12 @@ class EnhancementUI {
         this.pollInterval = null;
         this.isOnEnhancingScreen = false;
         this.isCollapsed = false; // Track collapsed state
+        this.updateInterval = null;
+        this.timerRegistry = createTimerRegistry();
+        this.dragHandle = null;
+        this.dragMouseDownHandler = null;
+        this.dragMoveHandler = null;
+        this.dragUpHandler = null;
     }
 
     /**
@@ -85,12 +92,13 @@ class EnhancementUI {
         this.setupScreenObserver();
 
         // Update UI every second during active sessions
-        setInterval(() => {
+        this.updateInterval = setInterval(() => {
             const session = this.getCurrentSession();
             if (session && session.state === SessionState.TRACKING) {
                 this.updateUI();
             }
         }, 1000);
+        this.timerRegistry.registerInterval(this.updateInterval);
     }
 
     /**
@@ -142,6 +150,7 @@ class EnhancementUI {
                 }
             }
         }, 500);
+        this.timerRegistry.registerInterval(this.pollInterval);
     }
 
     /**
@@ -437,35 +446,49 @@ class EnhancementUI {
         let offsetX = 0;
         let offsetY = 0;
 
-        header.addEventListener('mousedown', (e) => {
+        const onMouseMove = (event) => {
+            if (this.isDragging) {
+                const newLeft = event.clientX - offsetX;
+                const newTop = event.clientY - offsetY;
+
+                // Use absolute positioning during drag
+                this.floatingUI.style.left = `${newLeft}px`;
+                this.floatingUI.style.right = 'auto';
+                this.floatingUI.style.top = `${newTop}px`;
+            }
+        };
+
+        const onMouseUp = () => {
+            this.isDragging = false;
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            this.dragMoveHandler = null;
+            this.dragUpHandler = null;
+        };
+
+        const onMouseDown = (event) => {
             this.isDragging = true;
 
             // Calculate offset from panel's current screen position
             const rect = this.floatingUI.getBoundingClientRect();
-            offsetX = e.clientX - rect.left;
-            offsetY = e.clientY - rect.top;
+            offsetX = event.clientX - rect.left;
+            offsetY = event.clientY - rect.top;
 
-            const onMouseMove = (e) => {
-                if (this.isDragging) {
-                    const newLeft = e.clientX - offsetX;
-                    const newTop = e.clientY - offsetY;
-
-                    // Use absolute positioning during drag
-                    this.floatingUI.style.left = `${newLeft}px`;
-                    this.floatingUI.style.right = 'auto';
-                    this.floatingUI.style.top = `${newTop}px`;
-                }
-            };
-
-            const onMouseUp = () => {
-                this.isDragging = false;
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-            };
+            this.dragMoveHandler = onMouseMove;
+            this.dragUpHandler = onMouseUp;
 
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
-        });
+        };
+
+        if (this.dragHandle && this.dragMouseDownHandler) {
+            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+        }
+
+        this.dragHandle = header;
+        this.dragMouseDownHandler = onMouseDown;
+
+        header.addEventListener('mousedown', onMouseDown);
     }
 
     /**
@@ -486,9 +509,10 @@ class EnhancementUI {
             this.floatingUI.style.width = '250px';
 
             // Show compact summary after content fades
-            setTimeout(() => {
+            const summaryTimeout = setTimeout(() => {
                 this.showCollapsedSummary();
             }, 200);
+            this.timerRegistry.registerTimeout(summaryTimeout);
         } else {
             // Expanded state
             this.hideCollapsedSummary();
@@ -604,6 +628,7 @@ class EnhancementUI {
             clearTimeout(this.updateDebounce);
         }
         this.updateDebounce = setTimeout(() => this.updateUI(), 100);
+        this.timerRegistry.registerTimeout(this.updateDebounce);
     }
 
     /**
@@ -1007,10 +1032,35 @@ class EnhancementUI {
             this.pollInterval = null;
         }
 
+        if (this.updateInterval) {
+            clearInterval(this.updateInterval);
+            this.updateInterval = null;
+        }
+
+        // Unregister DOM observer
         if (this.unregisterScreenObserver) {
             this.unregisterScreenObserver();
             this.unregisterScreenObserver = null;
         }
+
+        if (this.dragMoveHandler) {
+            document.removeEventListener('mousemove', this.dragMoveHandler);
+            this.dragMoveHandler = null;
+        }
+
+        if (this.dragUpHandler) {
+            document.removeEventListener('mouseup', this.dragUpHandler);
+            this.dragUpHandler = null;
+        }
+
+        if (this.dragHandle && this.dragMouseDownHandler) {
+            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+        }
+
+        this.dragHandle = null;
+        this.dragMouseDownHandler = null;
+
+        this.timerRegistry.clearAll();
 
         // Remove floating UI from DOM
         if (this.floatingUI && this.floatingUI.parentNode) {

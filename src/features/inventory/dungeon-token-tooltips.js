@@ -245,6 +245,10 @@ class DungeonTokenTooltips {
         this.isActive = false;
         this.isInitialized = false;
     }
+
+    disable() {
+        this.cleanup();
+    }
 }
 
 const dungeonTokenTooltips = new DungeonTokenTooltips();
@@ -256,5 +260,8 @@ export default {
     },
     cleanup: () => {
         dungeonTokenTooltips.cleanup();
+    },
+    disable: () => {
+        dungeonTokenTooltips.disable();
     },
 };

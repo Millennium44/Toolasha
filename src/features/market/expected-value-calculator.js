@@ -325,6 +325,23 @@ class ExpectedValueCalculator {
             this.initialize();
         }
     }
+
+    /**
+     * Cleanup calculator state and handlers
+     */
+    cleanup() {
+        if (this.retryHandler) {
+            dataManager.off('character_initialized', this.retryHandler);
+            this.retryHandler = null;
+        }
+
+        this.containerCache.clear();
+        this.isInitialized = false;
+    }
+
+    disable() {
+        this.cleanup();
+    }
 }
 
 const expectedValueCalculator = new ExpectedValueCalculator();

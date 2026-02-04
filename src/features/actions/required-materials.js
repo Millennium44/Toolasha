@@ -379,6 +379,10 @@ class RequiredMaterials {
 
         this.initialized = false;
     }
+
+    disable() {
+        this.cleanup();
+    }
 }
 
 const requiredMaterials = new RequiredMaterials();

@@ -20,6 +20,8 @@ import profitCalculator from '../market/profit-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { timeReadable, formatWithSeparator } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import {
     parseArtisanBonus,
     getDrinkConcentration,
@@ -43,8 +45,12 @@ class ActionTimeDisplay {
         this.unregisterQueueObserver = null;
         this.actionNameObserver = null;
         this.queueMenuObserver = null; // Observer for queue menu mutations
+        this.unregisterActionNameObserver = null;
         this.characterInitHandler = null; // Handler for character switch
         this.activeProfitCalculationId = null; // Track active profit calculation to prevent race conditions
+        this.waitForPanelTimeout = null;
+        this.retryUpdateTimeout = null;
+        this.cleanupRegistry = createCleanupRegistry();
     }
 
     /**
@@ -66,10 +72,67 @@ class ActionTimeDisplay {
                 this.handleCharacterSwitch();
             };
             dataManager.on('character_initialized', this.characterInitHandler);
+            this.cleanupRegistry.registerCleanup(() => {
+                if (this.characterInitHandler) {
+                    dataManager.off('character_initialized', this.characterInitHandler);
+                    this.characterInitHandler = null;
+                }
+            });
         }
+
+        this.cleanupRegistry.registerCleanup(() => {
+            const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
+            if (actionNameElement) {
+                this.clearAppendedStats(actionNameElement);
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.waitForPanelTimeout) {
+                clearTimeout(this.waitForPanelTimeout);
+                this.waitForPanelTimeout = null;
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.retryUpdateTimeout) {
+                clearTimeout(this.retryUpdateTimeout);
+                this.retryUpdateTimeout = null;
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.updateTimer) {
+                clearInterval(this.updateTimer);
+                this.updateTimer = null;
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.actionNameObserver) {
+                this.actionNameObserver();
+                this.actionNameObserver = null;
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.queueMenuObserver) {
+                this.queueMenuObserver();
+                this.queueMenuObserver = null;
+            }
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.unregisterActionNameObserver) {
+                this.unregisterActionNameObserver();
+                this.unregisterActionNameObserver = null;
+            }
+        });
 
         // Wait for action name element to exist
         this.waitForActionPanel();
+
+        this.initializeActionNameWatcher();
 
         // Initialize queue tooltip observer
         this.initializeQueueObserver();
@@ -88,24 +151,71 @@ class ActionTimeDisplay {
             (queueMenu) => {
                 this.injectQueueTimes(queueMenu);
 
-                // Set up mutation observer to watch for queue reordering
-                if (this.queueMenuObserver) {
-                    this.queueMenuObserver.disconnect();
+                this.setupQueueMenuObserver(queueMenu);
+            }
+        );
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.unregisterQueueObserver) {
+                this.unregisterQueueObserver();
+                this.unregisterQueueObserver = null;
+            }
+        });
+    }
+
+    /**
+     * Initialize observer for action name element replacement
+     */
+    initializeActionNameWatcher() {
+        if (this.unregisterActionNameObserver) {
+            return;
+        }
+
+        this.unregisterActionNameObserver = domObserver.onClass(
+            'ActionTimeDisplay-ActionName',
+            'Header_actionName',
+            (actionNameElement) => {
+                if (!actionNameElement) {
+                    return;
                 }
 
-                this.queueMenuObserver = new MutationObserver(() => {
-                    // Disconnect to prevent infinite loop (our injection triggers mutations)
-                    this.queueMenuObserver.disconnect();
+                this.createDisplayPanel();
+                this.setupActionNameObserver(actionNameElement);
+                this.updateDisplay();
+            }
+        );
+    }
 
-                    // Queue DOM changed (reordering) - re-inject times
-                    // NOTE: Reconnection happens inside injectQueueTimes after async completes
-                    this.injectQueueTimes(queueMenu);
-                });
+    /**
+     * Setup mutation observer for queue menu reordering
+     * @param {HTMLElement} queueMenu - Queue menu container element
+     */
+    setupQueueMenuObserver(queueMenu) {
+        if (!queueMenu) {
+            return;
+        }
 
-                this.queueMenuObserver.observe(queueMenu, {
-                    childList: true,
-                    subtree: true,
-                });
+        if (this.queueMenuObserver) {
+            this.queueMenuObserver();
+            this.queueMenuObserver = null;
+        }
+
+        this.queueMenuObserver = createMutationWatcher(
+            queueMenu,
+            () => {
+                // Disconnect to prevent infinite loop (our injection triggers mutations)
+                if (this.queueMenuObserver) {
+                    this.queueMenuObserver();
+                    this.queueMenuObserver = null;
+                }
+
+                // Queue DOM changed (reordering) - re-inject times
+                // NOTE: Reconnection happens inside injectQueueTimes after async completes
+                this.injectQueueTimes(queueMenu);
+            },
+            {
+                childList: true,
+                subtree: true,
             }
         );
     }
@@ -126,7 +236,7 @@ class ActionTimeDisplay {
 
         // Disconnect old action name observer (watching removed element)
         if (this.actionNameObserver) {
-            this.actionNameObserver.disconnect();
+            this.actionNameObserver();
             this.actionNameObserver = null;
         }
 
@@ -150,7 +260,14 @@ class ActionTimeDisplay {
             this.updateDisplay();
         } else {
             // Not found, try again in 200ms
-            setTimeout(() => this.waitForActionPanel(), 200);
+            if (this.waitForPanelTimeout) {
+                clearTimeout(this.waitForPanelTimeout);
+            }
+            this.waitForPanelTimeout = setTimeout(() => {
+                this.waitForPanelTimeout = null;
+                this.waitForActionPanel();
+            }, 200);
+            this.cleanupRegistry.registerTimeout(this.waitForPanelTimeout);
         }
     }
 
@@ -160,15 +277,17 @@ class ActionTimeDisplay {
      */
     setupActionNameObserver(actionNameElement) {
         // Watch for text content changes in the action name element
-        this.actionNameObserver = new MutationObserver(() => {
-            this.updateDisplay();
-        });
-
-        this.actionNameObserver.observe(actionNameElement, {
-            childList: true,
-            characterData: true,
-            subtree: true,
-        });
+        this.actionNameObserver = createMutationWatcher(
+            actionNameElement,
+            () => {
+                this.updateDisplay();
+            },
+            {
+                childList: true,
+                characterData: true,
+                subtree: true,
+            }
+        );
     }
 
     /**
@@ -202,6 +321,13 @@ class ActionTimeDisplay {
 
         // Insert after action name
         actionNameContainer.parentNode.insertBefore(this.displayElement, actionNameContainer.nextSibling);
+
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.displayElement && this.displayElement.parentNode) {
+                this.displayElement.parentNode.removeChild(this.displayElement);
+            }
+            this.displayElement = null;
+        });
     }
 
     /**
@@ -219,7 +345,8 @@ class ActionTimeDisplay {
 
         // CRITICAL: Disconnect observer before making changes to prevent infinite loop
         if (this.actionNameObserver) {
-            this.actionNameObserver.disconnect();
+            this.actionNameObserver();
+            this.actionNameObserver = null;
         }
 
         if (!actionNameElement || !actionNameElement.textContent) {
@@ -246,53 +373,22 @@ class ActionTimeDisplay {
         }
 
         // Extract inventory count from parentheses (e.g., "Coinify: Item (4312)" -> 4312)
-        const inventoryCountMatch = actionNameText.match(/\((\d+)\)$/);
-        const inventoryCount = inventoryCountMatch ? parseInt(inventoryCountMatch[1]) : null;
+        const inventoryCountMatch = actionNameText.match(/\(([\d,]+)\)$/);
+        const inventoryCount = inventoryCountMatch ? parseInt(inventoryCountMatch[1].replace(/,/g, ''), 10) : null;
 
         // Find the matching action in cache
         const cachedActions = dataManager.getCurrentActions();
         let action;
 
-        // Parse the action name, handling special formats like "Coinify: Item Name (count)"
-        // Also handles combat zones like "Farmland (276K)" or "Zone (1.2M)"
-        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
-        const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
-
-        // Check if this is a format like "Coinify: Item Name"
-        let actionNameFromDom, itemNameFromDom;
-        if (fullNameFromDom.includes(':')) {
-            const parts = fullNameFromDom.split(':');
-            actionNameFromDom = parts[0].trim();
-            itemNameFromDom = parts.slice(1).join(':').trim(); // Handle multiple colons
-        } else {
-            actionNameFromDom = fullNameFromDom;
-            itemNameFromDom = null;
-        }
-
         // ONLY match against the first action (current action), not queued actions
         // This prevents showing stats from queued actions when party combat interrupts
         if (cachedActions.length > 0) {
-            const currentAction = cachedActions[0];
-            const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
-
-            if (actionDetails && actionDetails.name === actionNameFromDom) {
-                // If there's an item name (like "Foraging Essence" from "Coinify: Foraging Essence"),
-                // we need to match on primaryItemHash
-                if (itemNameFromDom && currentAction.primaryItemHash) {
-                    // Convert display name to item HRID format (lowercase with underscores)
-                    const itemHrid = '/items/' + itemNameFromDom.toLowerCase().replace(/\s+/g, '_');
-                    if (currentAction.primaryItemHash.includes(itemHrid)) {
-                        action = currentAction;
-                    }
-                } else if (!itemNameFromDom) {
-                    // No item name specified, match on action name alone
-                    action = currentAction;
-                }
-            }
+            action = this.matchCurrentActionFromText(cachedActions, actionNameText);
         }
 
         if (!action) {
             this.displayElement.innerHTML = '';
+            this.scheduleUpdateRetry();
             // Reconnect observer
             this.reconnectActionNameObserver(actionNameElement);
             return;
@@ -620,15 +716,87 @@ class ActionTimeDisplay {
      * @param {HTMLElement} actionNameElement - Action name element
      */
     reconnectActionNameObserver(actionNameElement) {
-        if (!actionNameElement || !this.actionNameObserver) {
+        if (!actionNameElement) {
             return;
         }
 
-        this.actionNameObserver.observe(actionNameElement, {
-            childList: true,
-            characterData: true,
-            subtree: true,
+        if (this.actionNameObserver) {
+            this.actionNameObserver();
+        }
+
+        this.actionNameObserver = createMutationWatcher(
+            actionNameElement,
+            () => {
+                this.updateDisplay();
+            },
+            {
+                childList: true,
+                characterData: true,
+                subtree: true,
+            }
+        );
+    }
+
+    parseActionNameFromDom(actionNameText) {
+        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
+        const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
+
+        if (fullNameFromDom.includes(':')) {
+            const parts = fullNameFromDom.split(':');
+            return {
+                actionNameFromDom: parts[0].trim(),
+                itemNameFromDom: parts.slice(1).join(':').trim(),
+            };
+        }
+
+        return {
+            actionNameFromDom: fullNameFromDom,
+            itemNameFromDom: null,
+        };
+    }
+
+    buildItemHridFromName(itemName) {
+        return `/items/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
+    }
+
+    matchCurrentActionFromText(currentActions, actionNameText) {
+        const { actionNameFromDom, itemNameFromDom } = this.parseActionNameFromDom(actionNameText);
+        const itemHridFromDom = this.buildItemHridFromName(itemNameFromDom || actionNameFromDom);
+
+        return currentActions.find((currentAction) => {
+            const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
+            if (!actionDetails) {
+                return false;
+            }
+
+            const outputItems = actionDetails.outputItems || [];
+            const dropTable = actionDetails.dropTable || [];
+            const matchesOutput = outputItems.some((item) => item.itemHrid === itemHridFromDom);
+            const matchesDrop = dropTable.some((drop) => drop.itemHrid === itemHridFromDom);
+            const matchesName = actionDetails.name === actionNameFromDom;
+
+            if (!matchesName && !matchesOutput && !matchesDrop) {
+                return false;
+            }
+
+            if (itemNameFromDom && currentAction.primaryItemHash) {
+                return currentAction.primaryItemHash.includes(itemHridFromDom);
+            }
+
+            return true;
         });
+    }
+
+    scheduleUpdateRetry() {
+        if (this.retryUpdateTimeout) {
+            return;
+        }
+
+        this.retryUpdateTimeout = setTimeout(() => {
+            this.retryUpdateTimeout = null;
+            this.updateDisplay();
+        }, 150);
+        this.cleanupRegistry.registerTimeout(this.retryUpdateTimeout);
     }
 
     /**
@@ -949,8 +1117,22 @@ class ActionTimeDisplay {
             }
 
             const actionDetails = dataManager.getActionDetails(a.actionHrid);
-            if (!actionDetails || actionDetails.name !== actionNameFromDiv) {
+            if (!actionDetails) {
                 return false;
+            }
+
+            if (actionDetails.name !== actionNameFromDiv) {
+                const itemHridFromDiv = itemNameFromDiv
+                    ? `/items/${itemNameFromDiv.toLowerCase().replace(/\s+/g, '_')}`
+                    : `/items/${actionNameFromDiv.toLowerCase().replace(/\s+/g, '_')}`;
+                const outputItems = actionDetails.outputItems || [];
+                const dropTable = actionDetails.dropTable || [];
+                const matchesOutput = outputItems.some((item) => item.itemHrid === itemHridFromDiv);
+                const matchesDrop = dropTable.some((drop) => drop.itemHrid === itemHridFromDiv);
+
+                if (!matchesOutput && !matchesDrop) {
+                    return false;
+                }
             }
 
             // If there's an item name, match on primaryItemHash
@@ -1003,8 +1185,6 @@ class ActionTimeDisplay {
 
             // Detect current action from DOM so we can avoid double-counting
             let currentAction = null;
-            let isCurrentActionInQueue = false;
-
             const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
             if (actionNameElement && actionNameElement.textContent) {
                 // Use getCleanActionName to strip any stats we previously appended
@@ -1043,17 +1223,6 @@ class ActionTimeDisplay {
 
                 if (currentAction) {
                     // Current action matched
-                }
-            }
-
-            if (currentAction) {
-                // Check if current action appears in the queue list
-                for (const actionDiv of actionDivs) {
-                    const actionObj = this.matchActionFromDiv(actionDiv, currentActions);
-                    if (actionObj && actionObj.id === currentAction.id) {
-                        isCurrentActionInQueue = true;
-                        break;
-                    }
                 }
             }
 
@@ -1367,11 +1536,8 @@ class ActionTimeDisplay {
             console.error('[MWI Tools] Error injecting queue times:', error);
         } finally {
             // Reconnect observer only if async didn't take over
-            if (shouldReconnectObserver && this.queueMenuObserver) {
-                this.queueMenuObserver.observe(queueMenu, {
-                    childList: true,
-                    subtree: true,
-                });
+            if (shouldReconnectObserver) {
+                this.setupQueueMenuObserver(queueMenu);
             }
         }
     }
@@ -1457,12 +1623,7 @@ class ActionTimeDisplay {
         } finally {
             // CRITICAL: Reconnect mutation observer after ALL DOM updates are complete
             // This prevents infinite loop by ensuring observer only reconnects once all profit divs are updated
-            if (this.queueMenuObserver && queueMenu) {
-                this.queueMenuObserver.observe(queueMenu, {
-                    childList: true,
-                    subtree: true,
-                });
-            }
+            this.setupQueueMenuObserver(queueMenu);
         }
     }
 
@@ -1534,46 +1695,15 @@ class ActionTimeDisplay {
      * Disable the action time display (cleanup)
      */
     disable() {
-        // Disconnect action name observer
-        if (this.actionNameObserver) {
-            this.actionNameObserver.disconnect();
-            this.actionNameObserver = null;
-        }
-
-        // Disconnect queue menu observer
-        if (this.queueMenuObserver) {
-            this.queueMenuObserver.disconnect();
-            this.queueMenuObserver = null;
-        }
-
-        if (this.unregisterQueueObserver) {
-            this.unregisterQueueObserver();
-            this.unregisterQueueObserver = null;
-        }
-
-        if (this.characterInitHandler) {
-            dataManager.off('character_initialized', this.characterInitHandler);
-            this.characterInitHandler = null;
-        }
-
-        // Clear update timer
-        if (this.updateTimer) {
-            clearInterval(this.updateTimer);
-            this.updateTimer = null;
-        }
-
-        // Clear appended stats from game's action name div
-        const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
-        if (actionNameElement) {
-            this.clearAppendedStats(actionNameElement);
-        }
-
-        // Remove display element
-        if (this.displayElement && this.displayElement.parentNode) {
-            this.displayElement.parentNode.removeChild(this.displayElement);
-            this.displayElement = null;
-        }
-
+        this.cleanupRegistry.cleanupAll();
+        this.displayElement = null;
+        this.updateTimer = null;
+        this.unregisterQueueObserver = null;
+        this.actionNameObserver = null;
+        this.queueMenuObserver = null;
+        this.characterInitHandler = null;
+        this.waitForPanelTimeout = null;
+        this.activeProfitCalculationId = null;
         this.isInitialized = false;
     }
 }
