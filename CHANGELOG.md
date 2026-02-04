@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.3](https://github.com/Celasha/Toolasha/compare/v0.15.2...v0.15.3) (2026-02-04)
+
+
+### Bug Fixes
+
+* sync library header versions in version sync script ([a1b71d4](https://github.com/Celasha/Toolasha/commit/a1b71d418e8284acffcd3dd5b3195986a0973223))
+* sync library header versions in version sync script ([1718445](https://github.com/Celasha/Toolasha/commit/1718445a1bed396e3c10f47b364897231b5f944c))
+
 ## [0.15.2](https://github.com/Celasha/Toolasha/compare/v0.15.1...v0.15.2) (2026-02-04)
 
 ### Bug Fixes
