@@ -101,9 +101,9 @@ const isProduction = process.env.BUILD_MODE === 'production';
 const buildTarget = process.env.BUILD_TARGET || 'dev';
 const devOutputFile = buildTarget === 'dev-standalone' ? 'dist/Toolasha-dev.user.js' : 'dist/Toolasha.user.js';
 
-// Development build configuration (single bundle like before)
+// Development build configuration (single bundle for local testing)
 const devConfig = {
-    input: 'src/main.js',
+    input: 'src/dev-entrypoint.js',
     output: {
         file: devOutputFile,
         format: 'iife',
