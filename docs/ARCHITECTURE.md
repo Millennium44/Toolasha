@@ -453,22 +453,25 @@ Rollup Bundler
       └─ Generate sourcemap
       │
       ▼
-dist/Toolasha.user.js
+dist/Toolasha.user.js (production entrypoint)
+dist/Toolasha-dev.user.js (dev standalone)
+dist/libraries/*.user.js (production libraries)
 ```
 
 ### Build Configuration
 
-- **Entry**: `src/main.js`
-- **Output**: `dist/Toolasha.user.js`
+- **Dev standalone**: `src/dev-entrypoint.js` → `dist/Toolasha-dev.user.js` (bundles libraries + entrypoint)
+- **Production**: `src/entrypoint.js` → `dist/Toolasha.user.js` + `dist/libraries/*.user.js`
 - **Format**: IIFE (Immediately Invoked Function Expression)
 - **Sourcemap**: Inline for debugging
 
 ### Build Commands
 
 ```bash
-npm run build    # One-time build
-npm run watch    # Watch mode (auto-rebuild)
-npm run dev      # Alias for watch
+npm run build:dev # One-time dev standalone build
+npm run build     # Production bundles (entrypoint + libraries)
+npm run watch     # Watch mode (auto-rebuild)
+npm run dev       # Alias for watch
 ```
 
 ## Deployment
@@ -483,8 +486,9 @@ This project uses [release-please](https://github.com/googleapis/release-please)
     - `feat!: breaking change` or `BREAKING CHANGE:` in body (triggers major bump)
 2. **Push to `main`** - Release-please analyzes commits
 3. **Release PR** - Release-please opens/updates a PR with version bump + changelog
-4. **Merge Release PR** - Creates GitHub Release with `dist/Toolasha.user.js` attached
-5. **Distribution** - Users update via Tampermonkey
+4. **Merge Release PR** - Creates GitHub Release with entrypoint + libraries attached
+5. **Releases branch** - Built artifacts committed and entrypoint @require URLs pinned to the release commit SHA
+6. **Distribution** - Users update via Tampermonkey
 
 ### Conventional Commit Types
 
@@ -509,7 +513,7 @@ This project uses [release-please](https://github.com/googleapis/release-please)
 
 1. Create feature module in `src/features/`
 2. Register in `src/core/feature-registry.js`
-3. Add settings in `src/features/settings/settings-config.js`
+3. Add settings in `src/core/settings-schema.js`
 4. Write tests in `tests/`
 
 ### Adding New Core Systems

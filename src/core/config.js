@@ -3,8 +3,8 @@
  * Manages all script constants and user settings
  */
 
-import settingsStorage from '../features/settings/settings-storage.js';
-import { settingsGroups } from '../features/settings/settings-config.js';
+import settingsStorage from './settings-storage.js';
+import { settingsGroups } from './settings-schema.js';
 import dataManager from './data-manager.js';
 
 /**
@@ -48,7 +48,7 @@ class Config {
         // Market API URL
         this.MARKET_API_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
 
-        // Settings loaded from settings-config.js via settings-storage.js
+        // Settings loaded from settings-schema via settings-storage.js
         this.settingsMap = {};
 
         // Map of setting keys to callback functions
@@ -368,7 +368,7 @@ class Config {
             settingsStorage.setCharacterId(characterId);
         }
 
-        // Load settings from settings-storage (which uses settings-config.js as source of truth)
+        // Load settings from settings-storage (which uses settings-schema as source of truth)
         this.settingsMap = await settingsStorage.loadSettings();
     }
 
@@ -397,7 +397,7 @@ class Config {
             return this.settingsMap[key].isTrue ?? false;
         }
 
-        // Fallback: Check settings-config.js for default (fixes race condition on load)
+        // Fallback: Check settings-schema for default (fixes race condition on load)
         for (const group of Object.values(settingsGroups)) {
             if (group.settings[key]) {
                 return group.settings[key].default ?? false;

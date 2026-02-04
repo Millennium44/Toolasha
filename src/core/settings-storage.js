@@ -3,8 +3,8 @@
  * Handles persistence of settings to chrome.storage.local
  */
 
-import storage from '../../core/storage.js';
-import { settingsGroups } from './settings-config.js';
+import storage from './storage.js';
+import { settingsGroups } from './settings-schema.js';
 
 class SettingsStorage {
     constructor() {
@@ -37,7 +37,7 @@ class SettingsStorage {
 
     /**
      * Load all settings from storage
-     * Merges saved values with defaults from settings-config
+     * Merges saved values with defaults from settings-schema
      * @returns {Promise<Object>} Settings map
      */
     async loadSettings() {

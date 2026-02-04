@@ -34,7 +34,7 @@ This document guides you through investigating the task reroll cost tracking sys
 
 ```javascript
 // 1. Build and install MWI Tools
-npm run build
+npm run build:dev
 
 // 2. Reload the game page
 
