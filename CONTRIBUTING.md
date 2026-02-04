@@ -29,7 +29,8 @@ Thank you for your interest in contributing to Toolasha! This guide will help yo
 
     ```bash
     npm test           # Run tests
-    npm run build      # Build userscript
+    npm run build:dev  # Build dev standalone userscript
+    npm run build      # Build production bundles
     npm run lint       # Check code quality
     ```
 
@@ -58,18 +59,18 @@ Thank you for your interest in contributing to Toolasha! This guide will help yo
 
 ### Building and Testing
 
-1. **Build the userscript**
+1. **Build the dev standalone userscript**
 
     ```bash
-    npm run build
+    npm run build:dev
     ```
 
-    This creates `dist/Toolasha.user.js`
+    This creates `dist/Toolasha-dev.user.js`
 
 2. **Install in Tampermonkey**
     - Open Tampermonkey dashboard
     - Click "+" to create new script
-    - Copy contents of `dist/Toolasha.user.js`
+    - Copy contents of `dist/Toolasha-dev.user.js`
     - Save
 
 3. **Test in-game**
@@ -313,8 +314,9 @@ Toolasha uses an automated release system powered by [release-please](https://gi
 3. **Maintainer merges** the release PR
 4. **GitHub Actions** automatically:
     - Publishes the GitHub release
-    - Builds and uploads `Toolasha.user.js`
-    - Updates the `releases` branch (triggers Greasy Fork webhook)
+    - Builds production bundles (entrypoint + libraries)
+    - Updates the `releases` branch with built artifacts
+    - Pins entrypoint library URLs to the release commit SHA
     - Syncs version across all files
 
 ### Conventional Commits for Releases
@@ -428,26 +430,27 @@ When the release PR is merged:
 1. **GitHub Release** is created with tag `vX.X.X`
 2. **Build process** runs:
     - `npm ci` - Install dependencies
-    - `npm run build` - Build userscript
-3. **Asset upload** - `dist/Toolasha.user.js` attached to release
+    - `npm run build` - Build production bundles
+3. **Asset upload** - `dist/Toolasha.user.js` + `dist/libraries/*.user.js` attached to release
 4. **Releases branch** updated:
-    - Built file committed to `releases` branch
-    - Triggers Greasy Fork webhook for auto-sync
+    - Built artifacts committed to `releases` branch
+    - Entrypoint @require URLs pinned to the release commit SHA
 5. **Release published** - Draft status removed, release goes live
 
 ### Version Sync System
 
 The `npm run version:sync` script keeps version numbers consistent across:
 
-| File                     | Location                                     | Format                                   |
-| ------------------------ | -------------------------------------------- | ---------------------------------------- |
-| `package.json`           | `version` field                              | `"version": "0.7.0"`                     |
-| `userscript-header.txt`  | `@version` tag                               | `// @version 0.7.0`                      |
-| `README.md`              | Badge                                        | `badge/version-0.7.0-orange`             |
-| `README.md`              | Footer                                       | `**Version:** 0.7.0 (Pre-release)`       |
-| `src/main.js`            | `Toolasha.version`                           | `version: '0.7.0',`                      |
-| `.release-please-*.json` | Manifest                                     | `{ ".": "0.7.0" }`                       |
-| `dist/Toolasha.user.js`  | Built file (updated on next `npm run build`) | `// @version 0.7.0` + `version: '0.7.0'` |
+| File                       | Location                                           | Format                                   |
+| -------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| `package.json`             | `version` field                                    | `"version": "0.7.0"`                     |
+| `userscript-header.txt`    | `@version` tag                                     | `// @version 0.7.0`                      |
+| `README.md`                | Badge                                              | `badge/version-0.7.0-orange`             |
+| `README.md`                | Footer                                             | `**Version:** 0.7.0 (Pre-release)`       |
+| `src/main.js`              | `Toolasha.version`                                 | `version: '0.7.0',`                      |
+| `.release-please-*.json`   | Manifest                                           | `{ ".": "0.7.0" }`                       |
+| `dist/Toolasha.user.js`    | Built entrypoint (updated on next `npm run build`) | `// @version 0.7.0` + `version: '0.7.0'` |
+| `dist/libraries/*.user.js` | Built libraries (updated on next `npm run build`)  | `// @version 0.7.0`                      |
 
 **Source of truth**: `package.json` version field
 
@@ -473,7 +476,7 @@ npm version patch  # or minor, major
 # 2. Sync versions across files
 npm run version:sync
 
-# 3. Build
+# 3. Build production bundles
 npm run build
 
 # 4. Commit and tag
@@ -482,7 +485,7 @@ git commit -m "chore(main): release X.X.X"
 git tag vX.X.X
 git push origin main --tags
 
-# 5. Create GitHub release manually and upload dist/Toolasha.user.js
+# 5. Create GitHub release manually and upload dist/Toolasha.user.js and dist/libraries/*.user.js
 ```
 
 ### Troubleshooting
@@ -522,8 +525,8 @@ git push
 
 **Solution**:
 
-1. Check that `releases` branch has the latest built file
-2. Manually trigger Greasy Fork sync from their dashboard
+1. Check that `releases` branch has the latest built artifacts
+2. Manually trigger Greasy Fork sync from their dashboard (entrypoint)
 3. Verify webhook URL is correct in Greasy Fork settings
 
 ### Best Practices
@@ -552,8 +555,8 @@ Before merging a release PR:
 After merging:
 
 - [ ] GitHub release published successfully
-- [ ] `Toolasha.user.js` attached to release
-- [ ] `releases` branch updated
+- [ ] `Toolasha.user.js` + libraries attached to release
+- [ ] `releases` branch updated with pinned entrypoint
 - [ ] Greasy Fork synced (check within 5-10 minutes)
 
 ### Questions?

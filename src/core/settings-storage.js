@@ -37,7 +37,7 @@ class SettingsStorage {
 
     /**
      * Load all settings from storage
-     * Merges saved values with defaults from settings-config
+     * Merges saved values with defaults from settings-schema
      * @returns {Promise<Object>} Settings map
      */
     async loadSettings() {

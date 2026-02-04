@@ -4,8 +4,8 @@
     "description": "Toolasha - Enhanced tools for Milky Way Idle",
     "type": "module",
     "scripts": {
-        "build": "rollup -c",
-        "build:prod": "BUILD_MODE=production rollup -c",
+        "build": "BUILD_MODE=production rollup -c",
+        "build:dev": "BUILD_TARGET=dev-standalone rollup -c",
         "watch": "rollup -c -w",
         "dev": "rollup -c -w",
         "test": "vitest run",
@@ -50,6 +50,7 @@
             "eslint --fix",
             "prettier --write",
             "bash -c 'npm test'",
+            "bash -c 'npm run build:dev'",
             "bash -c 'npm run build'"
         ],
         "*.config.js": [

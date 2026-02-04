@@ -39,13 +39,14 @@ import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.Utils = {
+toolashaRoot.Utils = {
     formatters,
     efficiency,
     profitHelpers,

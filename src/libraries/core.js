@@ -20,13 +20,14 @@ import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../co
 import marketAPI from '../api/marketplace.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.Core = {
+toolashaRoot.Core = {
     storage,
     config,
     webSocketHook,

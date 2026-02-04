@@ -75,7 +75,7 @@ All features are modular and can be individually enabled/disabled through an in-
 
 1. **Download the latest release**
     - Visit the [Releases page](../../releases)
-    - Download `Toolasha.user.js` from the latest release
+    - Download `Toolasha.user.js` from the latest release (entrypoint)
 
 2. **Install in Tampermonkey**
     - Click the downloaded file, or
@@ -84,6 +84,8 @@ All features are modular and can be individually enabled/disabled through an in-
 3. **Visit the game**
     - Go to [Milky Way Idle](https://www.milkywayidle.com/game)
     - Toolasha should load automatically
+
+> The entrypoint loads required libraries automatically from GitHub raw URLs.
 
 ### Install from Source
 
@@ -95,10 +97,10 @@ cd Toolasha
 # Install dependencies
 npm install
 
-# Build the userscript
-npm run build
+# Build the dev standalone userscript
+npm run build:dev
 
-# Install dist/Toolasha.user.js in Tampermonkey
+# Install dist/Toolasha-dev.user.js in Tampermonkey
 ```
 
 ## Usage
@@ -139,9 +141,10 @@ Toolasha is built with modern JavaScript (ES6+) using a modular, feature-based a
 
 ```bash
 npm install          # Install dependencies
-npm run build        # Build userscript
-npm run dev          # Watch mode (auto-rebuild)
-npm test             # Run test suite (143 tests)
+npm run build:dev     # Build dev standalone userscript
+npm run build         # Build production libraries + entrypoint
+npm run dev           # Watch mode (auto-rebuild)
+npm test              # Run test suite (143 tests)
 ```
 
 ### Documentation

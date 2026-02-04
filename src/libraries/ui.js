@@ -36,13 +36,14 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.UI = {
+toolashaRoot.UI = {
     equipmentLevelDisplay,
     alchemyItemDimming,
     skillExperiencePercentage,

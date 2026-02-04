@@ -26,13 +26,14 @@ import combatScore from '../features/profile/combat-score.js';
 import characterCardButton from '../features/profile/character-card-button.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.Combat = {
+toolashaRoot.Combat = {
     zoneIndices,
     dungeonTracker,
     dungeonTrackerUI,

@@ -4,6 +4,8 @@
 **Purpose:** Analyze dependencies to determine safe library split boundaries
 **Script Size:** 2,117,431 bytes (100.97% of 2MB limit - OVER by 20,279 bytes)
 
+> **Status:** Historical analysis from pre-refactor state. Paths and sizes have since changed, but the dependency rationale remains useful for context.
+
 ## Critical Findings
 
 ### 1. Core → Features Dependencies (BLOCKS "Core First" Strategy)
