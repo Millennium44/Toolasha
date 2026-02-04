@@ -2,7 +2,7 @@
 
 ## Installation
 
-1. Build MWI Tools: `npm run build`
+1. Build dev standalone: `npm run build:dev`
 2. Reload the game page
 3. Open browser console (F12)
 

@@ -2,41 +2,41 @@
 
 ## Overview
 
-Successfully implemented library split to comply with Greasyfork's 2MB per-file size limit. The monolithic 2.1MB userscript has been divided into 6 separate libraries plus a minimal entrypoint.
+Successfully implemented library split to comply with Greasy Fork's 2MB per-file size limit. The monolithic userscript has been divided into 6 separate libraries plus a minimal entrypoint.
 
 ## Library Architecture
 
 ### Libraries
 
-1. **toolasha-core.user.js** (2.1MB, 100.11% of limit)
+1. **toolasha-core.user.js** (~176KB)
     - Core infrastructure modules
     - API clients (marketplace)
     - All GM grants and external dependencies
-    - **Status:** Slightly over limit by 2,277 bytes (0.11%)
+    - **Status:** Under 2MB limit
 
-2. **toolasha-utils.user.js** (402KB, 19.17%)
+2. **toolasha-utils.user.js** (~229KB)
     - All utility modules (formatters, calculators, helpers)
     - Pure functions, no side effects
-    - No GM grants needed
+    - Grants aligned with entrypoint for consistent context
 
-3. **toolasha-market.user.js** (846KB, 40.31%)
+3. **toolasha-market.user.js** (~543KB)
     - Market features
     - Inventory features
     - Economy/networth features
 
-4. **toolasha-actions.user.js** (853KB, 40.68%)
+4. **toolasha-actions.user.js** (~523KB)
     - Production/crafting features
     - Gathering features
     - Alchemy features
 
-5. **toolasha-combat.user.js** (655KB, 31.25%)
+5. **toolasha-combat.user.js** (~409KB)
     - Combat features
     - Abilities features
     - Combat stats
     - Profile features
     - Requires Chart.js
 
-6. **toolasha-ui.user.js** (710KB, 33.86%)
+6. **toolasha-ui.user.js** (~442KB)
     - UI enhancements
     - Tasks features
     - Skills features
@@ -46,7 +46,7 @@ Successfully implemented library split to comply with Greasyfork's 2MB per-file 
     - Enhancement features
     - Notifications
 
-7. **Toolasha.user.js** (16KB, 0.74%)
+7. **Toolasha.user.js** (~16KB)
     - Minimal entrypoint
     - Loads all libraries via @require
     - Orchestrates initialization
@@ -54,9 +54,9 @@ Successfully implemented library split to comply with Greasyfork's 2MB per-file 
 
 ### Total Size
 
-- **Combined:** 5.2MB across 7 files
-- **Original:** 2.1MB single file (100.98% of limit)
-- **Overhead:** ~2.5x due to code duplication across libraries
+- **Combined:** ~2.3MB across 7 files
+- **Original:** 2.1MB single file
+- **Overhead:** Minimal (shared core/utils are externalized in library builds)
 
 ## Load Order
 
@@ -119,31 +119,33 @@ window.Toolasha = {
 
 ## Build System
 
-### Development Build (Single Bundle)
+### Development Build (Standalone)
 
 ```bash
-npm run build       # or npm run dev
+npm run build:dev
 ```
 
 - Uses `src/main.js` as entry point
-- Outputs single `dist/Toolasha.user.js` (2.1MB)
-- Same workflow as before
-- No breaking changes
+- Outputs `dist/Toolasha-dev.user.js`
+- Intended for local testing and iteration
 
 ### Production Build (Multi-Bundle)
 
 ```bash
-npm run build:prod
+npm run build
 ```
 
-- Uses `BUILD_MODE=production` environment variable
+- Uses `BUILD_MODE=production` environment variable (set by npm script)
 - Outputs 7 separate files to `dist/` and `dist/libraries/`
-- Each library includes its own dependencies (duplicated)
+- Core/utils are externalized in feature library builds
 - Entrypoint is minimal (no bundled code)
 
 ### Configuration
 
-Rollup config (`rollup.config.js`) detects `BUILD_MODE` and switches between single-bundle (dev) and multi-bundle (prod) configurations.
+Rollup config (`rollup.config.js`) uses:
+
+- `BUILD_MODE=production` for multi-bundle output
+- `BUILD_TARGET=dev-standalone` for dev standalone output
 
 ## Feature Registration
 
@@ -193,63 +195,25 @@ Before library split, these circular dependencies blocked clean separation:
 - Chart.js (CDN via @require)
 - chartjs-plugin-datalabels (CDN via @require)
 
-## Known Issues
+## Release Workflow Notes
 
-1. **Core Library Size**: 2,277 bytes over 2MB limit (100.11%)
-    - May need minor optimization
-    - Alternative: Split core further (e.g., core-api.js)
-
-2. **Code Duplication**: Each library bundles dependencies independently
-    - Increases total size from 2.1MB to 5.2MB
-    - Trade-off for staying under per-file limit
-
-3. **@require URLs**: Placeholder URLs in entrypoint header
-    - Must be updated with actual Greasyfork library URLs after publishing
-
-## Next Steps
-
-### Phase 3: Entrypoint Integration ✅
-
-- [x] Create minimal entrypoint
-- [x] Define library load order
-- [x] Implement feature registration
-- [ ] Update @require URLs (after Phase 4)
-
-### Phase 4: Publishing Workflow
-
-1. Optimize core library (if needed)
-    - Remove unused imports
-    - Consider splitting into core + api
-    - Target: Under 2,097,152 bytes exactly
-
-2. Publish libraries to Greasyfork
-    - Create 6 library entries (one per library)
-    - Set up sync from GitHub
-    - Get stable URLs for each library
-
-3. Update entrypoint @require URLs
-    - Replace placeholder URLs
-    - Pin to specific library versions
-    - Test in Tampermonkey
-
-4. Document release process
-    - Library update workflow
-    - Version pinning strategy
-    - Breaking change policy
+- Entrypoint @require URLs start as placeholders in `library-headers/entrypoint.txt`.
+- Release workflow replaces placeholders with GitHub raw URLs pinned to the release commit SHA.
+- Built artifacts are pushed to the `releases` branch.
 
 ## Testing
 
 ### Local Testing
 
-1. Build production bundles: `npm run build:prod`
+1. Build production bundles: `npm run build`
 2. Inspect sizes: `ls -lh dist/libraries/*.user.js`
 3. Test entrypoint loads libraries correctly
 4. Verify all features initialize properly
 
 ### Tampermonkey Testing
 
-1. Install all 7 userscripts in correct order
-2. Verify libraries load before entrypoint
+1. Install the entrypoint userscript
+2. Verify libraries load via @require before entrypoint execution
 3. Test core features (market, actions, combat, UI)
 4. Check for console errors or missing features
 
@@ -283,21 +247,22 @@ dist/
 │   ├── toolasha-actions.user.js
 │   ├── toolasha-combat.user.js
 │   └── toolasha-ui.user.js
-└── Toolasha.user.js   # Entrypoint (dev: single bundle, prod: minimal)
+├── Toolasha.user.js       # Production entrypoint
+└── Toolasha-dev.user.js   # Dev standalone
 ```
 
 ## Migration Notes
 
 ### For Users
 
-- **Before:** Install single Toolasha.user.js (2.1MB)
-- **After:** Install 7 separate scripts in order
+- **Before:** Install single Toolasha.user.js
+- **After:** Install single Toolasha.user.js (entrypoint) which @requires libraries
 - **Compatibility:** Same features, same settings, same data
 
 ### For Developers
 
-- **Dev workflow unchanged:** `npm run build` still works
-- **New prod build:** `npm run build:prod` for multi-bundle
+- **Dev workflow:** `npm run build:dev` for standalone testing
+- **Prod build:** `npm run build` for multi-bundle output
 - **Feature changes:** Edit feature in appropriate library
 - **New features:** Add to correct library + register in entrypoint
 
@@ -306,14 +271,13 @@ dist/
 - **Load time:** Slightly slower (7 HTTP requests vs 1)
 - **Memory:** Similar (same code, different loading)
 - **Execution:** Identical (same initialization flow)
-- **Cache:** Better (CDN caching for each library)
+- **Cache:** GitHub raw caching per library
 
 ## Success Criteria
 
 - ✅ All libraries under 2MB individually
-- ⚠️ Core library at 100.11% (needs minor optimization)
 - ✅ Dev workflow unchanged
 - ✅ All tests pass (170/170)
 - ✅ Feature registration works
 - ✅ Load order correct
-- ⏳ Greasyfork publish (pending)
+- ✅ Release workflow publishes artifacts and pins entrypoint @require URLs

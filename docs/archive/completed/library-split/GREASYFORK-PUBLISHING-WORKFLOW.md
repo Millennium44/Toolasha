@@ -2,91 +2,40 @@
 
 ## Overview
 
-This document describes the process for publishing and maintaining the library-split version of Toolasha on Greasyfork.
+This document describes the process for publishing and maintaining the library-split version of Toolasha on Greasy Fork using GitHub-hosted libraries.
 
 ## Prerequisites
 
-- Greasyfork account with access to Toolasha script
-- GitHub repository with library-split branch merged
-- All libraries built and tested locally
-- Core library optimized to under 2MB (if needed)
+- Greasy Fork account with access to the Toolasha script
+- GitHub repository with release workflow enabled
+- Production bundles build cleanly (`npm run build`)
+- Releases branch is used for published artifacts
 
 ## Initial Setup
 
-### 1. Create Library Entries on Greasyfork
+### 1. Configure Entrypoint Placeholder URLs
 
-Create 6 separate library entries:
-
-1. **Toolasha Core Library**
-    - Name: `Toolasha Core Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-core.user.js`)
-
-2. **Toolasha Utils Library**
-    - Name: `Toolasha Utils Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-utils.user.js`)
-
-3. **Toolasha Market Library**
-    - Name: `Toolasha Market Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-market.user.js`)
-
-4. **Toolasha Actions Library**
-    - Name: `Toolasha Actions Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-actions.user.js`)
-
-5. **Toolasha Combat Library**
-    - Name: `Toolasha Combat Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-combat.user.js`)
-
-6. **Toolasha UI Library**
-    - Name: `Toolasha UI Library`
-    - Type: Library
-    - Sync: GitHub (raw file URL for `dist/libraries/toolasha-ui.user.js`)
-
-### 2. Get Library URLs
-
-After creating each library entry, Greasyfork will assign a stable URL:
+`library-headers/entrypoint.txt` contains placeholder library URLs:
 
 ```
-https://greasyfork.org/scripts/XXXXX-toolasha-core-library/code/toolasha-core.user.js
-https://greasyfork.org/scripts/XXXXX-toolasha-utils-library/code/toolasha-utils.user.js
-https://greasyfork.org/scripts/XXXXX-toolasha-market-library/code/toolasha-market.user.js
-https://greasyfork.org/scripts/XXXXX-toolasha-actions-library/code/toolasha-actions.user.js
-https://greasyfork.org/scripts/XXXXX-toolasha-combat-library/code/toolasha-combat.user.js
-https://greasyfork.org/scripts/XXXXX-toolasha-ui-library/code/toolasha-ui.user.js
+https://UPDATE-THIS-URL/toolasha-core.user.js
 ```
 
-### 3. Update Entrypoint Header
+The release workflow replaces these with GitHub raw URLs pinned to the releases commit SHA.
 
-Update `library-headers/entrypoint.txt` with actual Greasyfork URLs:
+### 2. Release Workflow Publishes Artifacts
 
-```javascript
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-core-library/code/toolasha-core.user.js
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-utils-library/code/toolasha-utils.user.js
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-market-library/code/toolasha-market.user.js
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-actions-library/code/toolasha-actions.user.js
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-combat-library/code/toolasha-combat.user.js
-// @require      https://greasyfork.org/scripts/XXXXX-toolasha-ui-library/code/toolasha-ui.user.js
-```
+Release-please builds production bundles and pushes to the `releases` branch:
 
-### 4. Rebuild and Test
+- `dist/Toolasha.user.js` (entrypoint)
+- `dist/libraries/*.user.js` (libraries)
 
-```bash
-npm run build:prod
-```
+### 3. Greasy Fork Main Script Sync
 
-Test the entrypoint locally in Tampermonkey to ensure all libraries load correctly.
-
-### 5. Update Main Script
-
-Update the main Toolasha script on Greasyfork to sync from the production entrypoint:
+Greasy Fork syncs the entrypoint from the `releases` branch:
 
 ```
-https://raw.githubusercontent.com/Celasha/Toolasha/main/dist/Toolasha.user.js
+https://raw.githubusercontent.com/Celasha/Toolasha/releases/dist/Toolasha.user.js
 ```
 
 ## Release Workflow
@@ -98,7 +47,7 @@ https://raw.githubusercontent.com/Celasha/Toolasha/main/dist/Toolasha.user.js
     ```bash
     git checkout -b feature/my-feature
     # Make changes...
-    npm run build     # Test dev build
+    npm run build:dev # Test dev standalone build
     npm test          # Run tests
     git commit -m "feat: add feature"
     git push origin feature/my-feature
@@ -114,7 +63,7 @@ https://raw.githubusercontent.com/Celasha/Toolasha/main/dist/Toolasha.user.js
     ```bash
     git checkout main
     git pull origin main
-    npm run build:prod
+    npm run build
     ```
 
 4. **Commit production builds**
@@ -126,32 +75,14 @@ https://raw.githubusercontent.com/Celasha/Toolasha/main/dist/Toolasha.user.js
     git push origin main --tags
     ```
 
-5. **Sync updates on Greasyfork**
-    - Greasyfork automatically syncs from GitHub
-    - Check each library updates correctly
-    - Verify entrypoint updates last
+5. **Sync updates on Greasy Fork**
+    - Greasy Fork syncs the entrypoint from GitHub
+    - Entrypoint @require URLs are pinned to the release commit SHA
+    - Libraries are fetched from GitHub raw URLs
 
 ### Version Pinning Strategy
 
-**Option A: Unpinned (Latest)**
-
-```javascript
-// @require https://greasyfork.org/scripts/XXXXX/code/toolasha-core.user.js
-```
-
-- Pros: Users always get latest version
-- Cons: Breaking changes can break users' installations
-
-**Option B: Pinned Versions (Recommended)**
-
-```javascript
-// @require https://greasyfork.org/scripts/XXXXX/code/toolasha-core.user.js?version=12345
-```
-
-- Pros: Stable, predictable behavior
-- Cons: Requires manual version bumps
-
-**Recommendation:** Use unpinned URLs initially for easier iteration. Switch to pinned versions once the library split stabilizes.
+Entrypoint @require URLs are pinned to the release commit SHA on the `releases` branch, making library loading immutable per release.
 
 ## Breaking Changes
 
@@ -182,30 +113,18 @@ https://raw.githubusercontent.com/Celasha/Toolasha/main/dist/Toolasha.user.js
 
 Before publishing, ensure all libraries are under 2MB:
 
-### Core Library (Currently 100.11%)
+### Core Library
 
-Options to reduce size:
+Core is under the 2MB limit. CI enforces per-bundle size checks.
 
-1. **Remove unused exports**
-    - Audit what's actually used by features
-    - Remove dead code
-
-2. **Split into core + api**
-    - Create separate `toolasha-api.user.js` (marketplace API)
-    - Reduces core to just infrastructure
-
-3. **Minify in production**
-    - Add terser plugin to prod config
-    - Typically saves 20-30%
-
-4. **Remove source comments**
+1. **Remove source comments**
     - Strip JSDoc in production build
     - Saves ~5-10%
 
 ### Size Verification
 
 ```bash
-npm run build:prod
+npm run build
 for file in dist/libraries/*.user.js; do
     size=$(wc -c < "$file")
     limit=2097152
@@ -221,16 +140,16 @@ done
 
 ### Local Testing
 
-- [ ] Dev build works: `npm run build && npm test`
-- [ ] Prod build succeeds: `npm run build:prod`
+- [ ] Dev build works: `npm run build:dev && npm test`
+- [ ] Prod build succeeds: `npm run build`
 - [ ] All libraries under 2MB
 - [ ] No console errors in browser
 - [ ] Core features work (market, actions, combat)
 
 ### Tampermonkey Testing
 
-- [ ] Install all 7 scripts in correct order
-- [ ] Verify load order (Core → Utils → Features → Entrypoint)
+- [ ] Install the entrypoint script only
+- [ ] Verify load order (Core → Utils → Features → Entrypoint) via @require
 - [ ] Test each feature category:
     - [ ] Market prices and tooltips
     - [ ] Action panel enhancements
@@ -289,7 +208,7 @@ If issues arise after publishing:
 
 ### Metrics to Track
 
-- Install count (main script vs library scripts)
+- Install count (main script)
 - Update success rate
 - Error rates by library
 - Load time performance
@@ -301,20 +220,19 @@ If issues arise after publishing:
 
 **"Script doesn't load"**
 
-- Check library install order
-- Verify all 7 scripts installed
+- Verify entrypoint is installed
+- Check @require URLs are correct
 - Check console for missing dependency errors
 
 **"Features missing after update"**
 
 - Force update all libraries
 - Clear Tampermonkey cache
-- Reinstall scripts in correct order
+- Reinstall the entrypoint script
 
 **"Too many scripts to install"**
 
-- This is the trade-off for staying under 2MB
-- Alternative: Use single-bundle version (if available)
+- Users install only the entrypoint (libraries auto-load)
 
 ### Developer Issues
 
@@ -354,8 +272,8 @@ If issues arise after publishing:
 
 ```bash
 # Development
-npm run build          # Single bundle (dev)
-npm run build:prod     # Multi-bundle (prod)
+npm run build:dev      # Dev standalone
+npm run build          # Multi-bundle (prod)
 npm test              # Run tests
 npm run lint          # Check code quality
 
@@ -369,7 +287,7 @@ done
 # Git workflow
 git checkout main
 git pull origin main
-npm run build:prod
+npm run build
 git add dist/
 git commit -m "build: production release v0.X.Y"
 git tag v0.X.Y

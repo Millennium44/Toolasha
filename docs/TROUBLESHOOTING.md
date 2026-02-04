@@ -258,7 +258,7 @@ Common issues and solutions for Toolasha users and developers.
 
 ### Build Fails
 
-**Symptoms**: `npm run build` shows errors
+**Symptoms**: `npm run build` or `npm run build:dev` shows errors
 
 **Solutions**:
 

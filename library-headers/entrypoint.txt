@@ -11,7 +11,13 @@
 // @match        https://www.milkywayidle.com/*
 // @match        https://test.milkywayidle.com/*
 // @match        https://shykai.github.io/MWICombatSimulatorTest/dist/*
-// @grant        none
+// @grant        GM_addStyle
+// @grant        GM.xmlHttpRequest
+// @grant        GM_xmlhttpRequest
+// @grant        GM_notification
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
 // @require      https://UPDATE-THIS-URL/toolasha-core.user.js
 // @require      https://UPDATE-THIS-URL/toolasha-utils.user.js
 // @require      https://UPDATE-THIS-URL/toolasha-market.user.js

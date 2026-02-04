@@ -94,7 +94,7 @@ The investigation will reveal:
 ```bash
 # 1. Build
 cd "/Users/kennydean/Downloads/MWI/MWI Tools"
-npm run build
+npm run build:dev
 
 # 2. Reload game page
 

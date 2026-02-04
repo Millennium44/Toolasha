@@ -19,13 +19,14 @@ import missingMaterialsButton from '../features/actions/missing-materials-button
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.Actions = {
+toolashaRoot.Actions = {
     initActionPanelObserver,
     actionTimeDisplay,
     quickInputButtons,

@@ -58,6 +58,9 @@ Historical documentation and completed work:
 - [Dungeon Tracker Enhancements](docs/archive/completed/dungeon-tracker-enhancements.md)
 - [Enhancement Tracker Changes](docs/archive/completed/enhancement-tracker-changes.md)
 - [Inventory Badge Prices](docs/archive/completed/inventory-badge-prices.md)
+- [Library Split - Implementation](docs/archive/completed/library-split/LIBRARY-SPLIT-IMPLEMENTATION.md)
+- [Library Split - Publishing Workflow](docs/archive/completed/library-split/GREASYFORK-PUBLISHING-WORKFLOW.md)
+- [Library Split - Dependency Analysis](docs/archive/completed/library-split/LIBRARY-SPLIT-DEPENDENCY-ANALYSIS.md)
 
 ### Investigations
 

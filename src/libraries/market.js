@@ -32,13 +32,14 @@ import inventoryBadgePrices from '../features/inventory/inventory-badge-prices.j
 import dungeonTokenTooltips from '../features/inventory/dungeon-token-tooltips.js';
 
 // Export to global namespace
-const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+const toolashaRoot = window.Toolasha || {};
+window.Toolasha = toolashaRoot;
 
-if (!targetWindow.Toolasha) {
-    targetWindow.Toolasha = {};
+if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.Toolasha = toolashaRoot;
 }
 
-targetWindow.Toolasha.Market = {
+toolashaRoot.Market = {
     tooltipPrices,
     expectedValueCalculator,
     tooltipConsumables,
