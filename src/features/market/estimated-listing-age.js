@@ -551,7 +551,7 @@ class EstimatedListingAge {
      * @returns {number} Estimated timestamp
      */
     linearRegression(listingId) {
-        // Calculate linear regression coefficients
+        // Calculate linear regression slope
         let sumX = 0,
             sumY = 0;
         for (const entry of this.knownListings) {
@@ -571,10 +571,20 @@ class EstimatedListingAge {
         }
 
         const slope = numerator / denominator;
-        const intercept = meanY - slope * meanX;
 
-        // Estimate timestamp using regression line
-        return slope * listingId + intercept;
+        // Get boundary points
+        const minId = this.knownListings[0].id;
+        const maxId = this.knownListings[this.knownListings.length - 1].id;
+        const minTimestamp = this.knownListings[0].timestamp;
+        const maxTimestamp = this.knownListings[this.knownListings.length - 1].timestamp;
+
+        // Extrapolate from closest boundary (RWI approach)
+        // This prevents drift from large intercept values
+        if (listingId > maxId) {
+            return slope * (listingId - maxId) + maxTimestamp;
+        } else {
+            return slope * (listingId - minId) + minTimestamp;
+        }
     }
 
     /**
