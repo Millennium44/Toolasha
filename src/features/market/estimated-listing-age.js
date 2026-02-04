@@ -287,6 +287,10 @@ class EstimatedListingAge {
             return;
         }
 
+        // Remove existing age column elements if they exist (RWI pattern)
+        thead.querySelectorAll('.mwi-estimated-age-header').forEach((el) => el.remove());
+        tbody.querySelectorAll('.mwi-estimated-age-cell').forEach((el) => el.remove());
+
         // Get current item and order book data
         const currentItemHrid = this.getCurrentItemHrid();
 
