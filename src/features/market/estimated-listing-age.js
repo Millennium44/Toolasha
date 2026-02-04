@@ -296,14 +296,25 @@ class EstimatedListingAge {
 
         const orderBookData = this.orderBooksCache[currentItemHrid];
 
+        // Get current enhancement level being viewed
+        const enhancementLevel = this.getCurrentEnhancementLevel();
+
         // Determine if this is buy or sell table (asks = sell, bids = buy)
         const isSellTable =
             table.closest('[class*="orderBookTableContainer"]') ===
             table.closest('[class*="orderBooksContainer"]')?.children[0];
 
-        const listings = isSellTable
-            ? orderBookData.orderBooks[0]?.asks || []
-            : orderBookData.orderBooks[0]?.bids || [];
+        // Access orderBooks by enhancement level (orderBooks is an object, not array)
+        // For non-equipment items, only level 0 exists
+        // For equipment, there can be orderBooks[0], orderBooks[1], etc.
+        const orderBookAtLevel = orderBookData.orderBooks?.[enhancementLevel];
+
+        if (!orderBookAtLevel) {
+            // No order book data for this enhancement level
+            return;
+        }
+
+        const listings = isSellTable ? orderBookAtLevel.asks || [] : orderBookAtLevel.bids || [];
 
         // Add header
         const header = document.createElement('th');
@@ -456,20 +467,42 @@ class EstimatedListingAge {
                     const price = this.parsePrice(priceText);
                     const quantity = this.parseQuantity(quantityText);
 
-                    // Match against stored listings
-                    for (const listing of this.knownListings) {
+                    // Find matching listing from YOUR listings
+                    const matchedListing = this.knownListings.find((listing) => {
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
                         const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
+                        return priceMatch && qtyMatch;
+                    });
 
-                        if (priceMatch && qtyMatch) {
-                            return listing.itemHrid;
-                        }
+                    if (matchedListing) {
+                        return matchedListing.itemHrid;
                     }
                 }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Get current enhancement level being viewed in order book
+     * @returns {number} Enhancement level (0 for non-equipment)
+     */
+    getCurrentEnhancementLevel() {
+        // Check for enhancement level indicator in the current item display
+        const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+        if (currentItemElement) {
+            const enhancementElement = currentItemElement.querySelector('[class*="Item_enhancementLevel"]');
+            if (enhancementElement) {
+                const match = enhancementElement.textContent.match(/\+(\d+)/);
+                if (match) {
+                    return parseInt(match[1], 10);
+                }
+            }
+        }
+
+        // Default to enhancement level 0 (non-equipment or base equipment)
+        return 0;
     }
 
     /**
