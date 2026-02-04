@@ -323,63 +323,20 @@ class EstimatedListingAge {
         header.title = 'Estimated listing age (based on listing ID)';
         thead.appendChild(header);
 
-        // Track which listings have been matched to prevent duplicates
-        const usedListingIds = new Set(); // User's known listings
-        const usedWebSocketIndices = new Set(); // WebSocket order book listings
+        // Track which of user's listings have been matched to prevent duplicates
+        const usedListingIds = new Set();
 
         // Add age cells to each row
         const rows = tbody.querySelectorAll('tr');
+        let index = 0;
 
         rows.forEach((row) => {
             const cell = document.createElement('td');
             cell.classList.add('mwi-estimated-age-cell');
 
-            // Extract price and quantity from DOM row
-            const priceText = row.querySelector('[class*="price"]')?.textContent || '';
-            const quantityText = row.children[0]?.textContent || '';
-
-            const price = this.parsePrice(priceText);
-            const quantity = this.parseQuantity(quantityText);
-
-            // Check if quantity is abbreviated (K/M)
-            const isAbbreviated = quantityText.match(/[KM]/i);
-
-            // Find matching listing by price + quantity (excluding already-matched listings)
-            let listingIndex = -1;
-            let listing = null;
-
-            for (let i = 0; i < listings.length; i++) {
-                // Skip already-matched WebSocket listings
-                if (usedWebSocketIndices.has(i)) {
-                    continue;
-                }
-
-                const l = listings[i];
-                const priceMatch = Math.abs(l.price - price) < 0.01;
-
-                let qtyMatch;
-                if (isAbbreviated) {
-                    // For abbreviated quantities, match within rounding range
-                    // "127K" could be 127,000 to 127,999
-                    // "1.2M" could be 1,200,000 to 1,299,999
-                    const tolerance = quantityText.includes('M') ? 100000 : 1000;
-                    qtyMatch = l.quantity >= quantity && l.quantity < quantity + tolerance;
-                } else {
-                    // For exact quantities, match exactly
-                    qtyMatch = l.quantity === quantity;
-                }
-
-                if (priceMatch && qtyMatch) {
-                    listingIndex = i;
-                    listing = l;
-                    break;
-                }
-            }
-
-            if (listing) {
-                // Mark this WebSocket listing as matched
-                usedWebSocketIndices.add(listingIndex);
-
+            if (index < listings.length) {
+                // Top 20 listings from order book (use positional indexing like RWI)
+                const listing = listings[index];
                 const listingId = listing.listingId;
 
                 // Check if this is YOUR listing (and not already matched)
@@ -404,16 +361,26 @@ class EstimatedListingAge {
                     cell.style.color = '#999999'; // Gray to indicate estimate
                     cell.style.fontSize = '0.9em';
                 }
+            } else if (index === listings.length) {
+                // Ellipsis row
+                cell.textContent = '· · ·';
+                cell.style.color = '#666666';
+                cell.style.fontSize = '0.9em';
             } else {
-                // No matching listing in order book data
+                // Beyond top 20 - YOUR listings only
                 const hasCancel = row.textContent.includes('Cancel');
                 if (hasCancel) {
-                    // This is YOUR listing beyond top 20 - match from knownListings
+                    // Extract price and quantity for matching
+                    const priceText = row.querySelector('[class*="price"]')?.textContent || '';
+                    const quantityText = row.children[0]?.textContent || '';
+                    const price = this.parsePrice(priceText);
+                    const quantity = this.parseQuantity(quantityText);
+
+                    // Match from knownListings (filtering out already-used and top-20 listings)
+                    const allOrderBookIds = new Set(listings.map((l) => l.listingId));
                     const matchedListing = this.knownListings.find((listing) => {
-                        // Skip already-matched listings
-                        if (usedListingIds.has(listing.id)) {
-                            return false;
-                        }
+                        if (usedListingIds.has(listing.id)) return false;
+                        if (allOrderBookIds.has(listing.id)) return false; // Skip top 20
 
                         const itemMatch = listing.itemHrid === currentItemHrid;
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
@@ -422,9 +389,7 @@ class EstimatedListingAge {
                     });
 
                     if (matchedListing) {
-                        // Mark this listing as used
                         usedListingIds.add(matchedListing.id);
-
                         const formatted = this.formatTimestamp(matchedListing.timestamp);
                         cell.textContent = formatted;
                         cell.style.color = '#00FF00'; // Green for YOUR listing
@@ -435,7 +400,6 @@ class EstimatedListingAge {
                         cell.style.fontSize = '0.9em';
                     }
                 } else {
-                    // Ellipsis row or unknown
                     cell.textContent = '· · ·';
                     cell.style.color = '#666666';
                     cell.style.fontSize = '0.9em';
@@ -443,6 +407,7 @@ class EstimatedListingAge {
             }
 
             row.appendChild(cell);
+            index++;
         });
     }
 
