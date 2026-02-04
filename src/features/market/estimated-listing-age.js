@@ -324,7 +324,8 @@ class EstimatedListingAge {
         thead.appendChild(header);
 
         // Track which listings have been matched to prevent duplicates
-        const usedListingIds = new Set();
+        const usedListingIds = new Set(); // User's known listings
+        const usedWebSocketIndices = new Set(); // WebSocket order book listings
 
         // Add age cells to each row
         const rows = tbody.querySelectorAll('tr');
@@ -343,8 +344,17 @@ class EstimatedListingAge {
             // Check if quantity is abbreviated (K/M)
             const isAbbreviated = quantityText.match(/[KM]/i);
 
-            // Find matching listing by price + quantity
-            const listing = listings.find((l) => {
+            // Find matching listing by price + quantity (excluding already-matched listings)
+            let listingIndex = -1;
+            let listing = null;
+
+            for (let i = 0; i < listings.length; i++) {
+                // Skip already-matched WebSocket listings
+                if (usedWebSocketIndices.has(i)) {
+                    continue;
+                }
+
+                const l = listings[i];
                 const priceMatch = Math.abs(l.price - price) < 0.01;
 
                 let qtyMatch;
@@ -359,10 +369,17 @@ class EstimatedListingAge {
                     qtyMatch = l.quantity === quantity;
                 }
 
-                return priceMatch && qtyMatch;
-            });
+                if (priceMatch && qtyMatch) {
+                    listingIndex = i;
+                    listing = l;
+                    break;
+                }
+            }
 
             if (listing) {
+                // Mark this WebSocket listing as matched
+                usedWebSocketIndices.add(listingIndex);
+
                 const listingId = listing.listingId;
 
                 // Check if this is YOUR listing (and not already matched)
