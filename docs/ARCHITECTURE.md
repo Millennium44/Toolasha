@@ -460,7 +460,7 @@ dist/libraries/*.user.js (production libraries)
 
 ### Build Configuration
 
-- **Dev standalone**: `src/main.js` → `dist/Toolasha-dev.user.js`
+- **Dev standalone**: `src/dev-entrypoint.js` → `dist/Toolasha-dev.user.js` (bundles libraries + entrypoint)
 - **Production**: `src/entrypoint.js` → `dist/Toolasha.user.js` + `dist/libraries/*.user.js`
 - **Format**: IIFE (Immediately Invoked Function Expression)
 - **Sourcemap**: Inline for debugging
