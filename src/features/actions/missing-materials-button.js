@@ -654,11 +654,16 @@ function setupMarketplaceCleanupObserver() {
         (mutations) => {
             for (const mutation of mutations) {
                 for (const removedNode of mutation.removedNodes) {
-                    // Check if marketplace panel was removed
-                    // Look for tabs container disappearing
+                    // Check if marketplace panel was specifically removed
+                    // Look for marketplace-specific elements (not generic MUI tabs)
                     if (removedNode.nodeType === Node.ELEMENT_NODE) {
-                        const hadTabsContainer = removedNode.querySelector('.MuiTabs-flexContainer[role="tablist"]');
-                        if (hadTabsContainer) {
+                        const wasMarketplace =
+                            removedNode.querySelector('[class*="MarketplacePanel"]') ||
+                            removedNode.classList?.contains('MarketplacePanel') ||
+                            (removedNode.className &&
+                                typeof removedNode.className === 'string' &&
+                                removedNode.className.includes('MarketplacePanel'));
+                        if (wasMarketplace) {
                             // Marketplace closed, remove custom tabs
                             removeMissingMaterialTabs();
                             console.log('[MissingMats] Marketplace closed, cleaned up custom tabs');

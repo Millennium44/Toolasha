@@ -35,7 +35,22 @@ class TradeHistoryDisplay {
         this.isInitialized = true;
         this.setupObserver();
         this.setupWebSocketListener();
+        this.setupSettingListener();
         this.isActive = true;
+    }
+
+    /**
+     * Setup setting change listener to refresh display when comparison mode changes
+     */
+    setupSettingListener() {
+        config.onSettingChange('market_tradeHistoryComparisonMode', () => {
+            // Refresh display if currently viewing an item
+            const existingPanel = document.querySelector('[class*="MarketplacePanel_currentItem"]');
+            if (existingPanel && this.currentItemHrid) {
+                const history = tradeHistory.getHistory(this.currentItemHrid, this.currentEnhancementLevel);
+                this.updateDisplay(existingPanel, history);
+            }
+        });
     }
 
     /**
@@ -178,6 +193,9 @@ class TradeHistoryDisplay {
         // Get current top order prices from the DOM
         const currentPrices = this.extractCurrentPrices(panel);
 
+        // Get comparison mode setting
+        const comparisonMode = config.getSettingValue('market_tradeHistoryComparisonMode', 'instant');
+
         // Ensure panel has position relative for absolute positioning to work
         if (!panel.style.position || panel.style.position === 'static') {
             panel.style.position = 'relative';
@@ -209,7 +227,7 @@ class TradeHistoryDisplay {
         parts.push(`<span style="color: #aaa; font-weight: 500;">Last:</span>`);
 
         if (history.buy) {
-            const buyColor = this.getBuyColor(history.buy, currentPrices?.ask);
+            const buyColor = this.getBuyColor(history.buy, currentPrices, comparisonMode);
             parts.push(
                 `<span style="color: ${buyColor}; font-weight: 600;" title="Your last buy price">Buy ${formatKMB3Digits(history.buy)}</span>`
             );
@@ -220,7 +238,7 @@ class TradeHistoryDisplay {
         }
 
         if (history.sell) {
-            const sellColor = this.getSellColor(history.sell, currentPrices?.bid);
+            const sellColor = this.getSellColor(history.sell, currentPrices, comparisonMode);
             parts.push(
                 `<span style="color: ${sellColor}; font-weight: 600;" title="Your last sell price">Sell ${formatKMB3Digits(history.sell)}</span>`
             );
@@ -264,19 +282,29 @@ class TradeHistoryDisplay {
     }
 
     /**
-     * Get color for buy price based on comparison to current ask
+     * Get color for buy price based on comparison mode
      * @param {number} lastBuy - Your last buy price
-     * @param {number} currentAsk - Current market ask price
+     * @param {Object|null} currentPrices - Current market prices { ask, bid }
+     * @param {string} comparisonMode - 'instant' or 'listing'
      * @returns {string} Color code
      */
-    getBuyColor(lastBuy, currentAsk) {
-        if (!currentAsk || currentAsk === -1) {
+    getBuyColor(lastBuy, currentPrices, comparisonMode) {
+        if (!currentPrices) {
             return '#888'; // Grey if no market data
         }
 
-        if (currentAsk > lastBuy) {
+        // Choose comparison price based on mode
+        const comparePrice = comparisonMode === 'instant' ? currentPrices.ask : currentPrices.bid;
+
+        if (!comparePrice || comparePrice === -1) {
+            return '#888'; // Grey if no market data
+        }
+
+        // Instant mode: Compare to ask (what you'd pay to instant-buy now)
+        // Listing mode: Compare to bid (what buyers are offering)
+        if (comparePrice > lastBuy) {
             return config.COLOR_LOSS; // Red - current price is higher (worse deal now)
-        } else if (currentAsk < lastBuy) {
+        } else if (comparePrice < lastBuy) {
             return config.COLOR_PROFIT; // Green - current price is lower (better deal now)
         } else {
             return '#888'; // Grey - same price
@@ -284,19 +312,29 @@ class TradeHistoryDisplay {
     }
 
     /**
-     * Get color for sell price based on comparison to current bid
+     * Get color for sell price based on comparison mode
      * @param {number} lastSell - Your last sell price
-     * @param {number} currentBid - Current market bid price
+     * @param {Object|null} currentPrices - Current market prices { ask, bid }
+     * @param {string} comparisonMode - 'instant' or 'listing'
      * @returns {string} Color code
      */
-    getSellColor(lastSell, currentBid) {
-        if (!currentBid || currentBid === -1) {
+    getSellColor(lastSell, currentPrices, comparisonMode) {
+        if (!currentPrices) {
             return '#888'; // Grey if no market data
         }
 
-        if (currentBid > lastSell) {
+        // Choose comparison price based on mode
+        const comparePrice = comparisonMode === 'instant' ? currentPrices.bid : currentPrices.ask;
+
+        if (!comparePrice || comparePrice === -1) {
+            return '#888'; // Grey if no market data
+        }
+
+        // Instant mode: Compare to bid (what you'd get to instant-sell now)
+        // Listing mode: Compare to ask (what sellers are asking)
+        if (comparePrice > lastSell) {
             return config.COLOR_PROFIT; // Green - current price is higher (better deal now to sell)
-        } else if (currentBid < lastSell) {
+        } else if (comparePrice < lastSell) {
             return config.COLOR_LOSS; // Red - current price is lower (worse deal now to sell)
         } else {
             return '#888'; // Grey - same price

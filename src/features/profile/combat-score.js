@@ -279,12 +279,12 @@ class CombatScore {
         const panelWidth = 220;
         const gap = 8;
 
-        // Try right side first
-        if (modalRect.right + gap + panelWidth < window.innerWidth) {
-            panel.style.left = modalRect.right + gap + 'px';
+        // Try left side first
+        if (modalRect.left - gap - panelWidth >= 10) {
+            panel.style.left = modalRect.left - panelWidth - gap + 'px';
         } else {
-            // Fall back to left side
-            panel.style.left = Math.max(10, modalRect.left - panelWidth - gap) + 'px';
+            // Fall back to right side
+            panel.style.left = modalRect.right + gap + 'px';
         }
 
         panel.style.top = modalRect.top + 'px';

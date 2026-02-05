@@ -757,6 +757,18 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays your last buy/sell prices for items in marketplace',
             },
+            market_tradeHistoryComparisonMode: {
+                id: 'market_tradeHistoryComparisonMode',
+                label: 'Market: Trade history comparison mode',
+                type: 'select',
+                default: 'instant',
+                options: [
+                    { value: 'instant', label: 'Instant' },
+                    { value: 'listing', label: 'Orders' },
+                ],
+                dependencies: ['market_tradeHistory'],
+                help: 'Instant: Compare to instant buy/sell prices. Orders: Compare to buy/sell orders.',
+            },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
                 label: 'Market: Listing price decimal precision',
