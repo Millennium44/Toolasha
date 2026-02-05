@@ -182,6 +182,13 @@ class EstimatedListingAge {
                 document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
                     table.classList.remove('mwi-listing-prices-set');
                 });
+
+                // Manually re-process any existing containers (handles race condition where
+                // container appeared before WebSocket data arrived)
+                const existingContainers = document.querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]');
+                existingContainers.forEach((container) => {
+                    this.processOrderBook(container);
+                });
             }
         };
 
