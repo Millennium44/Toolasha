@@ -217,22 +217,14 @@ class TaskIconFilters {
         this.filterBar.style.display = isEnabled ? 'flex' : 'none';
 
         // Create battle icon
-        const battleIcon = this.createFilterIcon(
-            'battle',
-            'Battle',
-            '/static/media/misc_sprite.426c5d78.svg#combat',
-            () => this.getBattleFilterEnabled()
-        );
+        const battleIcon = this.createFilterIcon('battle', 'Battle', 'combat', () => this.getBattleFilterEnabled());
         this.filterBar.appendChild(battleIcon);
         this.filterIcons.set('battle', battleIcon);
 
         // Create dungeon icons
         Object.entries(this.dungeonConfig).forEach(([hrid, dungeon]) => {
-            const dungeonIcon = this.createFilterIcon(
-                dungeon.id,
-                dungeon.name,
-                `/static/media/actions_sprite.e6388cbc.svg#${dungeon.spriteId}`,
-                () => this.getDungeonFilterEnabled(hrid)
+            const dungeonIcon = this.createFilterIcon(dungeon.id, dungeon.name, dungeon.spriteId, () =>
+                this.getDungeonFilterEnabled(hrid)
             );
             this.filterBar.appendChild(dungeonIcon);
             this.filterIcons.set(dungeon.id, dungeonIcon);
@@ -254,14 +246,39 @@ class TaskIconFilters {
     }
 
     /**
+     * Clone SVG symbol from DOM into defs
+     * @param {string} symbolId - Symbol ID to clone
+     * @param {SVGDefsElement} defsElement - Defs element to append to
+     * @returns {boolean} True if symbol was found and cloned
+     */
+    cloneSymbolToDefs(symbolId, defsElement) {
+        // Check if already cloned
+        if (defsElement.querySelector(`symbol[id="${symbolId}"]`)) {
+            return true;
+        }
+
+        // Find the symbol in the game's loaded sprites
+        const symbol = document.querySelector(`symbol[id="${symbolId}"]`);
+        if (!symbol) {
+            console.warn('[TaskIconFilters] Symbol not found:', symbolId);
+            return false;
+        }
+
+        // Clone and add to our defs
+        const clonedSymbol = symbol.cloneNode(true);
+        defsElement.appendChild(clonedSymbol);
+        return true;
+    }
+
+    /**
      * Create a clickable filter icon with count badge
      * @param {string} id - Unique identifier for this filter
      * @param {string} title - Tooltip text
-     * @param {string} spriteHref - SVG sprite reference
+     * @param {string} symbolId - Symbol ID in sprite
      * @param {Function} getEnabled - Function to check if filter is enabled
      * @returns {HTMLElement} Filter icon container
      */
-    createFilterIcon(id, title, spriteHref, getEnabled) {
+    createFilterIcon(id, title, symbolId, getEnabled) {
         const container = document.createElement('div');
         container.setAttribute('data-filter-id', id);
         container.style.position = 'relative';
@@ -269,7 +286,7 @@ class TaskIconFilters {
         container.style.userSelect = 'none';
         container.title = title;
 
-        // Create SVG icon
+        // Create SVG icon with defs
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('width', '24');
         svg.setAttribute('height', '24');
@@ -277,8 +294,16 @@ class TaskIconFilters {
         svg.style.display = 'block';
         svg.style.transition = 'opacity 0.2s';
 
+        // Create defs section
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        svg.appendChild(defs);
+
+        // Clone the symbol into defs
+        this.cloneSymbolToDefs(symbolId, defs);
+
+        // Create use element with local reference
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', spriteHref);
+        use.setAttribute('href', `#${symbolId}`);
         svg.appendChild(use);
         container.appendChild(svg);
 

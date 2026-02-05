@@ -21,6 +21,31 @@ class NetworthHeaderDisplay {
     }
 
     /**
+     * Clone SVG symbol from DOM into defs
+     * @param {string} symbolId - Symbol ID to clone
+     * @param {SVGDefsElement} defsElement - Defs element to append to
+     * @returns {boolean} True if symbol was found and cloned
+     */
+    cloneSymbolToDefs(symbolId, defsElement) {
+        // Check if already cloned
+        if (defsElement.querySelector(`symbol[id="${symbolId}"]`)) {
+            return true;
+        }
+
+        // Find the symbol in the game's loaded sprites
+        const symbol = document.querySelector(`symbol[id="${symbolId}"]`);
+        if (!symbol) {
+            console.warn('[NetworthHeaderDisplay] Symbol not found:', symbolId);
+            return false;
+        }
+
+        // Clone and add to our defs
+        const clonedSymbol = symbol.cloneNode(true);
+        defsElement.appendChild(clonedSymbol);
+        return true;
+    }
+
+    /**
      * Initialize header display
      */
     initialize() {
@@ -95,9 +120,16 @@ class NetworthHeaderDisplay {
             fill: currentColor;
         `;
 
-        // Create use element to reference coin sprite
+        // Create defs section
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        svg.appendChild(defs);
+
+        // Clone the coin symbol into defs
+        this.cloneSymbolToDefs('coin', defs);
+
+        // Create use element with local reference
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', '/static/media/items_sprite.328d6606.svg#coin');
+        use.setAttribute('href', '#coin');
         svg.appendChild(use);
 
         // Create text span

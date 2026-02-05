@@ -813,6 +813,30 @@ class CombatScore {
     }
 
     /**
+     * Clone SVG symbol from DOM into defs
+     * @param {string} symbolId - Symbol ID to clone
+     * @returns {boolean} True if symbol was found and cloned
+     */
+    cloneSymbolToDefs(symbolId, defsElement) {
+        // Check if already cloned
+        if (defsElement.querySelector(`symbol[id="${symbolId}"]`)) {
+            return true;
+        }
+
+        // Find the symbol in the game's loaded sprites
+        const symbol = document.querySelector(`symbol[id="${symbolId}"]`);
+        if (!symbol) {
+            console.warn('[CombatScore] Symbol not found:', symbolId);
+            return false;
+        }
+
+        // Clone and add to our defs
+        const clonedSymbol = symbol.cloneNode(true);
+        defsElement.appendChild(clonedSymbol);
+        return true;
+    }
+
+    /**
      * Build abilities and triggers HTML
      * @param {Object} profileData - Profile data from WebSocket
      * @returns {string} HTML string for abilities/triggers section
@@ -830,7 +854,33 @@ class CombatScore {
             return ''; // Don't show section if no data
         }
 
-        let html = '';
+        // Create SVG with defs for all needed symbols
+        const symbolIds = [];
+
+        // Collect all symbol IDs we need
+        abilities.forEach((ability) => {
+            symbolIds.push(ability.abilityHrid.split('/').pop());
+        });
+
+        Object.keys(consumableTriggers).forEach((itemHrid) => {
+            symbolIds.push(itemHrid.split('/').pop());
+        });
+
+        // Create a temporary container to build the defs
+        const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        tempSvg.style.display = 'none';
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        tempSvg.appendChild(defs);
+
+        // Clone all needed symbols
+        symbolIds.forEach((symbolId) => {
+            this.cloneSymbolToDefs(symbolId, defs);
+        });
+
+        // Get the defs HTML
+        const defsHtml = tempSvg.outerHTML;
+
+        let html = defsHtml;
 
         // Build abilities section
         if (abilities.length > 0) {
@@ -842,7 +892,7 @@ class CombatScore {
                 html += `
                     <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
                         <svg role="img" aria-label="Ability" style="width: 24px; height: 24px; flex-shrink: 0;">
-                            <use href="/static/media/abilities_sprite.fdd1b4de.svg#${abilityIconId}"></use>
+                            <use href="#${abilityIconId}"></use>
                         </svg>
                         <span style="font-size: 0.75rem; color: #999; line-height: 1.3;">${triggerText}</span>
                     </div>
@@ -865,7 +915,7 @@ class CombatScore {
                 html += `
                     <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
                         <svg role="img" aria-label="Item" style="width: 24px; height: 24px; flex-shrink: 0;">
-                            <use href="/static/media/items_sprite.53ef17dc.svg#${itemIconId}"></use>
+                            <use href="#${itemIconId}"></use>
                         </svg>
                         <span style="font-size: 0.75rem; color: #999; line-height: 1.3;">${triggerText}</span>
                     </div>

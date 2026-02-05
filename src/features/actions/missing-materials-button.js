@@ -162,7 +162,8 @@ function updateButtonForPanel(panel, value) {
         return;
     }
 
-    if (config.getSetting('actions_missingMaterialsButton') !== true) {
+    // Check setting early
+    if (!config.getSetting('actions_missingMaterialsButton')) {
         return;
     }
 
