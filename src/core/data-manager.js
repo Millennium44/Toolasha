@@ -164,8 +164,12 @@ class DataManager {
                 return; // Don't process invalid character data
             }
 
+            // Track whether this is a character switch or first load
+            let isCharacterSwitch = false;
+
             // Check if this is a character switch (not first load)
             if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
+                isCharacterSwitch = true;
                 // Prevent rapid-fire character switches (loop protection)
                 const now = Date.now();
                 if (this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < 1000) {
@@ -243,7 +247,8 @@ class DataManager {
             this.isCharacterSwitching = false;
 
             // Emit character_initialized event (trigger feature initialization)
-            this.emit('character_initialized', data);
+            // Include flag to indicate if this is a character switch vs first load
+            this.emit('character_initialized', { ...data, _isCharacterSwitch: isCharacterSwitch });
             connectionState.handleCharacterInitialized(data);
         });
 

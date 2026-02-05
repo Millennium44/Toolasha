@@ -73,6 +73,12 @@ if (isCombatSimulatorPage()) {
     featureRegistry.setupCharacterSwitchHandler();
 
     dataManager.on('character_initialized', (_data) => {
+        // Skip full initialization during character switches
+        // The character_switched handler in feature-registry already handles reinitialization
+        if (_data._isCharacterSwitch) {
+            return;
+        }
+
         // Initialize all features using the feature registry
         setTimeout(async () => {
             try {
