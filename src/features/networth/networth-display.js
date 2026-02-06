@@ -21,6 +21,19 @@ class NetworthHeaderDisplay {
     }
 
     /**
+     * Get the current items sprite URL from the DOM
+     * @returns {string|null} Items sprite URL or null if not found
+     */
+    getItemsSpriteUrl() {
+        const itemIcon = document.querySelector('use[href*="items_sprite"]');
+        if (!itemIcon) {
+            return null;
+        }
+        const href = itemIcon.getAttribute('href');
+        return href ? href.split('#')[0] : null;
+    }
+
+    /**
      * Clone SVG symbol from DOM into defs
      * @param {string} symbolId - Symbol ID to clone
      * @param {SVGDefsElement} defsElement - Defs element to append to
@@ -111,33 +124,32 @@ class NetworthHeaderDisplay {
             gap: 4px;
         `;
 
+        // Get current items sprite URL from DOM
+        const itemsSpriteUrl = this.getItemsSpriteUrl();
+
         // Create SVG icon using game's sprite
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('width', '16');
-        svg.setAttribute('height', '16');
-        svg.style.cssText = `
-            vertical-align: middle;
-            fill: currentColor;
-        `;
+        if (itemsSpriteUrl) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '16');
+            svg.setAttribute('height', '16');
+            svg.style.cssText = `
+                vertical-align: middle;
+                fill: currentColor;
+            `;
 
-        // Create defs section
-        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-        svg.appendChild(defs);
+            // Create use element with external sprite reference
+            const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+            use.setAttribute('href', `${itemsSpriteUrl}#coin`);
+            svg.appendChild(use);
 
-        // Clone the coin symbol into defs
-        this.cloneSymbolToDefs('coin', defs);
-
-        // Create use element with local reference
-        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', '#coin');
-        svg.appendChild(use);
+            wrapper.appendChild(svg);
+        }
 
         // Create text span
         const textSpan = document.createElement('span');
         textSpan.textContent = `Gold: ${value}`;
 
         // Assemble
-        wrapper.appendChild(svg);
         wrapper.appendChild(textSpan);
         this.container.appendChild(wrapper);
     }

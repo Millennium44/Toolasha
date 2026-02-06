@@ -477,6 +477,45 @@ class TaskIcons {
     }
 
     /**
+     * Get the current items sprite URL from the DOM
+     * @returns {string|null} Items sprite URL or null if not found
+     */
+    getItemsSpriteUrl() {
+        const itemIcon = document.querySelector('use[href*="items_sprite"]');
+        if (!itemIcon) {
+            return null;
+        }
+        const href = itemIcon.getAttribute('href');
+        return href ? href.split('#')[0] : null;
+    }
+
+    /**
+     * Get the current combat monsters sprite URL from the DOM
+     * @returns {string|null} Monsters sprite URL or null if not found
+     */
+    getMonstersSpriteUrl() {
+        const monsterIcon = document.querySelector('use[href*="combat_monsters_sprite"]');
+        if (!monsterIcon) {
+            return null;
+        }
+        const href = monsterIcon.getAttribute('href');
+        return href ? href.split('#')[0] : null;
+    }
+
+    /**
+     * Get the current misc sprite URL from the DOM (for dungeon icons)
+     * @returns {string|null} Misc sprite URL or null if not found
+     */
+    getMiscSpriteUrl() {
+        const miscIcon = document.querySelector('use[href*="misc_sprite"]');
+        if (!miscIcon) {
+            return null;
+        }
+        const href = miscIcon.getAttribute('href');
+        return href ? href.split('#')[0] : null;
+    }
+
+    /**
      * Clone SVG symbol from DOM into defs
      * @param {string} symbolId - Symbol ID to clone
      * @param {SVGDefsElement} defsElement - Defs element to append to
@@ -521,21 +560,28 @@ class TaskIcons {
         iconDiv.style.pointerEvents = 'none';
         iconDiv.style.zIndex = '0';
 
-        // Create SVG element with defs
+        // Get appropriate sprite URL based on icon type
+        let spriteUrl;
+        if (type === 'monster') {
+            spriteUrl = this.getMonstersSpriteUrl();
+        } else {
+            // action and dungeon types both use items sprite
+            spriteUrl = this.getItemsSpriteUrl();
+        }
+
+        if (!spriteUrl) {
+            // Sprite not loaded yet, skip icon
+            return;
+        }
+
+        // Create SVG element
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('width', '100%');
         svg.setAttribute('height', '100%');
 
-        // Create defs section
-        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-        svg.appendChild(defs);
-
-        // Clone the symbol into defs
-        this.cloneSymbolToDefs(iconName, defs);
-
-        // Create use element with local reference
+        // Create use element with external sprite reference
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', `#${iconName}`);
+        use.setAttribute('href', `${spriteUrl}#${iconName}`);
         svg.appendChild(use);
 
         iconDiv.appendChild(svg);
