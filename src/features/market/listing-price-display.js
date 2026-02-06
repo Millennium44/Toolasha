@@ -682,7 +682,20 @@ class ListingPriceDisplay {
         span.classList.add('mwi-listing-price-value');
 
         // Get order book data from estimatedListingAge module (shared cache)
-        const orderBookData = estimatedListingAge.orderBooksCache[itemHrid];
+        const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
+
+        if (!cacheEntry) {
+            // No order book data available
+            span.textContent = 'N/A';
+            span.style.color = '#666666';
+            span.style.fontSize = '0.9em';
+            cell.appendChild(span);
+            return cell;
+        }
+
+        // Support both old format (direct data) and new format ({data, lastUpdated})
+        const orderBookData = cacheEntry.data || cacheEntry;
+        const lastUpdated = cacheEntry.lastUpdated;
 
         if (!orderBookData || !orderBookData.orderBooks || orderBookData.orderBooks.length === 0) {
             // No order book data available
@@ -733,8 +746,15 @@ class ListingPriceDisplay {
         const formatted = formatRelativeTime(ageMs);
 
         span.textContent = `~${formatted}`;
-        span.style.color = '#999999'; // Gray to indicate estimate
+
+        // Apply staleness color based on when order book data was fetched
+        span.style.color = estimatedListingAge.getStalenessColor(lastUpdated);
         span.style.fontSize = '0.9em';
+
+        // Add tooltip with staleness info
+        if (lastUpdated) {
+            span.title = estimatedListingAge.getStalenessTooltip(lastUpdated);
+        }
 
         cell.appendChild(span);
         return cell;

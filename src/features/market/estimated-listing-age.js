@@ -21,6 +21,7 @@ class EstimatedListingAge {
         this.unregisterWebSocket = null;
         this.unregisterObserver = null;
         this.storageKey = 'marketListingTimestamps';
+        this.orderBooksCacheKey = 'marketOrderBooksCache';
         this.isInitialized = false;
     }
 
@@ -74,6 +75,9 @@ class EstimatedListingAge {
 
         // Load historical data from storage
         await this.loadHistoricalData();
+
+        // Load cached order books from storage
+        await this.loadOrderBooksCache();
 
         // Load initial listings from dataManager
         this.loadInitialListings();
@@ -134,6 +138,19 @@ class EstimatedListingAge {
     }
 
     /**
+     * Load cached order books from IndexedDB
+     */
+    async loadOrderBooksCache() {
+        try {
+            const stored = await storage.getJSON(this.orderBooksCacheKey, 'marketListings', {});
+            this.orderBooksCache = stored || {};
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to load order books cache:', error);
+            this.orderBooksCache = {};
+        }
+    }
+
+    /**
      * Save listing data to IndexedDB
      */
     async saveHistoricalData() {
@@ -141,6 +158,17 @@ class EstimatedListingAge {
             await storage.setJSON(this.storageKey, this.knownListings, 'marketListings', true);
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to save historical data:', error);
+        }
+    }
+
+    /**
+     * Save order books cache to IndexedDB
+     */
+    async saveOrderBooksCache() {
+        try {
+            await storage.setJSON(this.orderBooksCacheKey, this.orderBooksCache, 'marketListings', true);
+        } catch (error) {
+            console.error('[EstimatedListingAge] Failed to save order books cache:', error);
         }
     }
 
@@ -170,8 +198,17 @@ class EstimatedListingAge {
         const orderBookHandler = (data) => {
             if (data.marketItemOrderBooks) {
                 const itemHrid = data.marketItemOrderBooks.itemHrid;
-                this.orderBooksCache[itemHrid] = data.marketItemOrderBooks;
+
+                // Store with timestamp for staleness tracking
+                this.orderBooksCache[itemHrid] = {
+                    data: data.marketItemOrderBooks,
+                    lastUpdated: Date.now(),
+                };
+
                 this.currentItemHrid = itemHrid; // Track current item
+
+                // Save to storage (debounced)
+                this.saveOrderBooksCache();
 
                 // Clear processed flags to re-render with new data
                 document.querySelectorAll('.mwi-estimated-age-set').forEach((container) => {
@@ -305,7 +342,9 @@ class EstimatedListingAge {
             return;
         }
 
-        const orderBookData = this.orderBooksCache[currentItemHrid];
+        const cacheEntry = this.orderBooksCache[currentItemHrid];
+        // Support both old format (direct data) and new format ({data, lastUpdated})
+        const orderBookData = cacheEntry.data || cacheEntry;
 
         // Get current enhancement level being viewed
         const enhancementLevel = this.getCurrentEnhancementLevel();
@@ -532,6 +571,42 @@ class EstimatedListingAge {
         }
         const numStr = text.replace(/[^0-9.]/g, '');
         return numStr ? Number(numStr) * multiplier : 0;
+    }
+
+    /**
+     * Get color based on data staleness
+     * @param {number} lastUpdated - Timestamp when data was last updated
+     * @returns {string} Color code for display
+     */
+    getStalenessColor(lastUpdated) {
+        if (!lastUpdated) {
+            return '#999999'; // Gray for unknown age
+        }
+
+        const age = Date.now() - lastUpdated;
+        const minutes = age / (60 * 1000);
+        const hours = age / (60 * 60 * 1000);
+
+        if (minutes < 15) return '#00AA00'; // < 15 min: dark green (fresh)
+        if (hours < 1) return '#00FF00'; // < 1 hour: light green (recent)
+        if (hours < 4) return '#FFAA00'; // < 4 hours: yellow (moderate)
+        if (hours < 12) return '#FF6600'; // < 12 hours: orange (stale)
+        return '#FF0000'; // 12+ hours: red (very stale)
+    }
+
+    /**
+     * Get tooltip text for staleness
+     * @param {number} lastUpdated - Timestamp when data was last updated
+     * @returns {string} Tooltip text
+     */
+    getStalenessTooltip(lastUpdated) {
+        if (!lastUpdated) {
+            return 'Order book data - Visit market page to refresh';
+        }
+
+        const age = Date.now() - lastUpdated;
+        const relativeTime = formatRelativeTime(age);
+        return `Order book data from ${relativeTime} ago - Visit market page to refresh`;
     }
 
     /**
