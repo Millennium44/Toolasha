@@ -181,7 +181,8 @@ class MarketHistoryViewer {
     async loadListings() {
         try {
             const stored = await storage.getJSON(this.storageKey, 'marketListings', []);
-            this.listings = stored;
+            // Filter out listings without itemHrid (e.g., seed listings from estimated-listing-age)
+            this.listings = stored.filter((listing) => listing && listing.itemHrid);
             this.cachedDateRange = null; // Clear cache when loading new data
             this.applyFilters();
         } catch (error) {
