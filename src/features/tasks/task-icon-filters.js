@@ -407,7 +407,7 @@ class TaskIconFilters {
             // Toggle battle filter
             const currentState = this.getBattleFilterEnabled();
             this.state.battle = !currentState;
-            storage.set(STORAGE_KEYS.battle, this.state.battle, 'settings');
+            storage.set(STORAGE_KEYS.battle, this.state.battle, 'settings', true);
         } else {
             // Toggle dungeon filter
             const dungeonHrid = Object.keys(this.dungeonConfig).find(
@@ -417,7 +417,7 @@ class TaskIconFilters {
                 const currentState = this.getDungeonFilterEnabled(dungeonHrid);
                 this.state.dungeons[filterId] = !currentState;
                 const key = `${STORAGE_KEYS.dungeonPrefix}${filterId}`;
-                storage.set(key, this.state.dungeons[filterId], 'settings');
+                storage.set(key, this.state.dungeons[filterId], 'settings', true);
             }
         }
 

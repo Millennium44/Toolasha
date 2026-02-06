@@ -11,6 +11,10 @@ import webSocketHook from '../../core/websocket.js';
 import taskIconFilters from './task-icon-filters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
+// Hardcoded sprite URL for actions_sprite (like MWI Task Manager)
+// This may need updating when the game rebuilds with new webpack hashes
+const ACTIONS_SPRITE_URL = '/static/media/actions_sprite.e6388cbc.svg';
+
 class TaskIcons {
     constructor() {
         this.initialized = false;
@@ -503,7 +507,21 @@ class TaskIcons {
     }
 
     /**
-     * Get the current misc sprite URL from the DOM (for dungeon icons)
+     * Get the current actions sprite URL from the DOM (for dungeon icons)
+     * @returns {string|null} Actions sprite URL or null if not found
+     */
+    getActionsSpriteUrl() {
+        const actionsIcon = document.querySelector('use[href*="actions_sprite"]');
+        if (!actionsIcon) {
+            // Fallback to hardcoded URL (actions_sprite not loaded until Combat panel visited)
+            return ACTIONS_SPRITE_URL;
+        }
+        const href = actionsIcon.getAttribute('href');
+        return href ? href.split('#')[0] : null;
+    }
+
+    /**
+     * Get the current misc sprite URL from the DOM
      * @returns {string|null} Misc sprite URL or null if not found
      */
     getMiscSpriteUrl() {
@@ -564,8 +582,11 @@ class TaskIcons {
         let spriteUrl;
         if (type === 'monster') {
             spriteUrl = this.getMonstersSpriteUrl();
+        } else if (type === 'dungeon') {
+            // Dungeon icons are in actions_sprite
+            spriteUrl = this.getActionsSpriteUrl();
         } else {
-            // action and dungeon types both use items sprite
+            // Action icons are in items_sprite
             spriteUrl = this.getItemsSpriteUrl();
         }
 
