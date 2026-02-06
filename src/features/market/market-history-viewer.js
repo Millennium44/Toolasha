@@ -13,7 +13,6 @@ import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
-import settingsUI from '../settings/settings-ui.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 class MarketHistoryViewer {
@@ -178,7 +177,11 @@ class MarketHistoryViewer {
         };
 
         // Register callback with settings UI to be notified when settings panel appears
-        settingsUI.onSettingsPanelAppear(ensureButtonExists);
+        // Access settingsUI from global namespace to ensure we use the same instance
+        const settingsUI = window.Toolasha?.UI?.settingsUI;
+        if (settingsUI && typeof settingsUI.onSettingsPanelAppear === 'function') {
+            settingsUI.onSettingsPanelAppear(ensureButtonExists);
+        }
 
         // Also try immediately in case settings is already open
         ensureButtonExists();
