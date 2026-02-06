@@ -119,8 +119,16 @@ class CombatStatsDataCollector {
 
                     // Process consumables using event-based consumption data
                     const consumablesWithConsumed = [];
+                    const seenItems = new Set(); // Deduplicate by itemHrid (game allows 1 of each type)
+
                     if (player.combatConsumables) {
                         for (const consumable of player.combatConsumables) {
+                            // Skip duplicate entries (game UI enforces 1 per type, but WS data may have dupes)
+                            if (seenItems.has(consumable.itemHrid)) {
+                                continue;
+                            }
+                            seenItems.add(consumable.itemHrid);
+
                             // Get actual consumed count from consumption events
                             const totalActualConsumed =
                                 this.consumableActualConsumed[trackingKey]?.[consumable.itemHrid] || 0;

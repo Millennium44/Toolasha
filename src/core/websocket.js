@@ -308,35 +308,52 @@ class WebSocketHook {
      * @param {string} message - JSON string from WebSocket
      */
     processMessage(message) {
-        // Deduplicate by message content to prevent 4x JSON.parse on same message
-        // Use first 100 chars as hash (contains type + timestamp, unique enough)
-        const messageHash = message.substring(0, 100);
-
-        if (this.processedMessages.has(messageHash)) {
-            return; // Already processed this message, skip
+        // Parse message type first to determine deduplication strategy
+        let messageType;
+        try {
+            // Quick parse to get type (avoid full parse for duplicates)
+            const typeMatch = message.match(/"type":"([^"]+)"/);
+            messageType = typeMatch ? typeMatch[1] : null;
+        } catch {
+            // If regex fails, skip deduplication and process normally
+            messageType = null;
         }
 
-        this.processedMessages.set(messageHash, Date.now());
+        // Skip deduplication for quest updates (quest content changes are beyond 100 chars)
+        // The quest slot ID stays the same, causing false duplicate detection
+        const skipDedup = messageType === 'quests_updated';
 
-        // Cleanup old entries every 100 messages to prevent memory leak
-        if (this.processedMessages.size > 100) {
-            this.cleanupProcessedMessages();
+        if (!skipDedup) {
+            // Deduplicate by message content to prevent 4x JSON.parse on same message
+            // Use first 100 chars as hash (contains type + timestamp, unique enough)
+            const messageHash = message.substring(0, 100);
+
+            if (this.processedMessages.has(messageHash)) {
+                return; // Already processed this message, skip
+            }
+
+            this.processedMessages.set(messageHash, Date.now());
+
+            // Cleanup old entries every 100 messages to prevent memory leak
+            if (this.processedMessages.size > 100) {
+                this.cleanupProcessedMessages();
+            }
         }
 
         try {
             const data = JSON.parse(message);
-            const messageType = data.type;
+            const parsedMessageType = data.type;
 
             // Save critical data to GM storage for Combat Sim export
-            this.saveCombatSimData(messageType, message);
+            this.saveCombatSimData(parsedMessageType, message);
 
             // Call registered handlers for this message type
-            const handlers = this.messageHandlers.get(messageType) || [];
+            const handlers = this.messageHandlers.get(parsedMessageType) || [];
             for (const handler of handlers) {
                 try {
                     handler(data);
                 } catch (error) {
-                    console.error(`[WebSocket] Handler error for ${messageType}:`, error);
+                    console.error(`[WebSocket] Handler error for ${parsedMessageType}:`, error);
                 }
             }
 
