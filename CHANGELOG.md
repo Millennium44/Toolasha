@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.6](https://github.com/Celasha/Toolasha/compare/v0.17.5...v0.17.6) (2026-02-06)
+
+
+### Bug Fixes
+
+* filter out seed listings without itemHrid in market history viewer ([86bbffc](https://github.com/Celasha/Toolasha/commit/86bbffc9697c7bda74d9d650e63839018cf59b4b))
+
 ## [0.17.5](https://github.com/Celasha/Toolasha/compare/v0.17.4...v0.17.5) (2026-02-06)
 
 ### Bug Fixes
