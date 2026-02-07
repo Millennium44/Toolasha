@@ -738,7 +738,9 @@ class ActionTimeDisplay {
     }
 
     parseActionNameFromDom(actionNameText) {
-        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
+        // Strip ALL trailing parentheses groups (e.g., "(T3) (Party)" or "(50)")
+        // This handles combat tiers and party indicators: "Infernal Abyss (T3) (Party)" → "Infernal Abyss"
+        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))*$/);
         const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
 
         if (fullNameFromDom.includes(':')) {
