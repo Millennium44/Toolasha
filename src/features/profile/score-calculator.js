@@ -373,13 +373,10 @@ function calculateEquipmentScore(profileData) {
         const itemName = itemDetails.name || itemHrid.replace('/items/', '');
         const displayName = enhancementLevel > 0 ? `${itemName} +${enhancementLevel}` : itemName;
 
-        // Only add to breakdown if item has non-zero value
-        if (itemCost > 0) {
-            breakdown.push({
-                name: displayName,
-                value: (itemCost / 1_000_000).toFixed(1),
-            });
-        }
+        breakdown.push({
+            name: displayName,
+            value: (itemCost / 1_000_000).toFixed(1),
+        });
     }
 
     // Convert to score (value / 1 million)
