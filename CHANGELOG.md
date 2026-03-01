@@ -2,10 +2,9 @@
 
 ## [1.23.0](https://github.com/Celasha/Toolasha/compare/v1.22.0...v1.23.0) (2026-03-01)
 
-
 ### Features
 
-* auto-click All button for ability book tooltips ([296dab0](https://github.com/Celasha/Toolasha/commit/296dab089cf5bbf8e1d2e4fd8fecefd11a2e87f6))
+- auto-click All button for ability book tooltips ([296dab0](https://github.com/Celasha/Toolasha/commit/296dab089cf5bbf8e1d2e4fd8fecefd11a2e87f6))
 
 ## [1.22.0](https://github.com/Celasha/Toolasha/compare/v1.21.0...v1.22.0) (2026-03-01)
 
