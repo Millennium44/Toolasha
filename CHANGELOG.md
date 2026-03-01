@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.23.1](https://github.com/Celasha/Toolasha/compare/v1.23.0...v1.23.1) (2026-03-01)
+
+### Continuous Integration
+
+- fix PR body regex to match release-please linked SHA format ([62fe0f3](https://github.com/Celasha/Toolasha/commit/62fe0f33e31d1fe474329ec96b10cc06556af992))
+
 ## [1.23.0](https://github.com/Celasha/Toolasha/compare/v1.22.0...v1.23.0) (2026-03-01)
 
 ### Features
