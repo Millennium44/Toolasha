@@ -556,7 +556,10 @@ class WebSocketHook {
         if (!this.messageHandlers.has(messageType)) {
             this.messageHandlers.set(messageType, []);
         }
-        this.messageHandlers.get(messageType).push(handler);
+        const handlers = this.messageHandlers.get(messageType);
+        if (!handlers.includes(handler)) {
+            handlers.push(handler);
+        }
     }
 
     /**
