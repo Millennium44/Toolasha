@@ -418,6 +418,20 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'alchemy_transmuteHistory',
+            name: 'Transmute History Tracker',
+            category: 'Alchemy',
+            module: UI.transmuteHistoryTracker,
+            async: false,
+        },
+        {
+            key: 'alchemy_transmuteHistoryViewer',
+            name: 'Transmute History Viewer',
+            category: 'Alchemy',
+            module: UI.transmuteHistoryViewer,
+            async: false,
+        },
+        {
             key: 'enhancementFeature',
             name: 'Enhancement Tracker',
             category: 'Enhancement',

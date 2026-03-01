@@ -45,6 +45,10 @@ import settingsUI from '../features/settings/settings-ui.js';
 import transmuteRates from '../features/dictionary/transmute-rates.js';
 import viewActionButton from '../features/dictionary/view-action-button.js';
 
+// Alchemy History
+import transmuteHistoryTracker from '../features/alchemy/transmute-history-tracker.js';
+import transmuteHistoryViewer from '../features/alchemy/transmute-history-viewer.js';
+
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 
@@ -82,6 +86,8 @@ toolashaRoot.UI = {
     settingsUI,
     transmuteRates,
     viewActionButton,
+    transmuteHistoryTracker,
+    transmuteHistoryViewer,
     enhancementFeature,
     emptyQueueNotification,
 };

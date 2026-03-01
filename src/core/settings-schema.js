@@ -152,6 +152,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices',
             },
+            alchemy_transmuteHistory: {
+                id: 'alchemy_transmuteHistory',
+                label: 'Alchemy panel: Track and view transmute session history',
+                type: 'checkbox',
+                default: true,
+                help: 'Records transmutation sessions and displays history in a viewer tab in the Alchemy panel',
+            },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
                 label: 'Show "Missing Mats Marketplace" button on production panels',
