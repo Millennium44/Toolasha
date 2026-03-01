@@ -361,6 +361,13 @@ function registerFeatures() {
             module: UI.altClickNavigation,
             async: false,
         },
+        {
+            key: 'collectionNavigation',
+            name: 'Collection Navigation',
+            category: 'Navigation',
+            module: UI.collectionNavigation,
+            async: false,
+        },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },

@@ -42,6 +42,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Hold Alt/Option and click any item to navigate to its crafting/gathering page, or item dictionary if not craftable',
             },
+            collectionNavigation: {
+                id: 'collectionNavigation',
+                label: 'Add navigation buttons to collection items',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds View Action and Item Dictionary buttons when clicking collection items',
+            },
         },
     },
 
