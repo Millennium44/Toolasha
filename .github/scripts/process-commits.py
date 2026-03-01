@@ -8,7 +8,7 @@ feat_lines = []
 
 for line in body.splitlines():
     # Match bullet lines like: * some message (abc1234)
-    m = re.match(r'^\*\s+(.+?)\s+\(([0-9a-f]{7,})\)$', line.strip())
+    m = re.match(r'^\*\s+(.+?)\s+\(\[([0-9a-f]{7,})\]\([^)]+\)\)$', line.strip())
     if not m:
         continue
     msg, sha = m.group(1), m.group(2)
