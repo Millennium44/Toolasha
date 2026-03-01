@@ -2,10 +2,9 @@
 
 ## [1.23.2](https://github.com/Celasha/Toolasha/compare/v1.23.1...v1.23.2) (2026-03-01)
 
-
 ### Bug Fixes
 
-* always render action panel injections to eliminate UI jitter ([771910c](https://github.com/Celasha/Toolasha/commit/771910c56d6287a100eb31f825c779a5348ea044))
+- always render action panel injections to eliminate UI jitter ([771910c](https://github.com/Celasha/Toolasha/commit/771910c56d6287a100eb31f825c779a5348ea044))
 
 ## [1.23.1](https://github.com/Celasha/Toolasha/compare/v1.23.0...v1.23.1) (2026-03-01)
 
