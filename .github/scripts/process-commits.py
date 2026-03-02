@@ -5,9 +5,15 @@ body = os.environ.get('PR_BODY', '')
 
 lines = []
 feat_lines = []
+in_features = False
 
 for line in body.splitlines():
-    # Match bullet lines like: * some message (abc1234)
+    # Track which section we're in based on release-please headers
+    if line.strip().startswith('### '):
+        in_features = line.strip() == '### Features'
+        continue
+
+    # Match bullet lines like: * some message ([abc1234](url))
     m = re.match(r'^\*\s+(.+?)\s+\(\[([0-9a-f]{7,})\]\([^)]+\)\)$', line.strip())
     if not m:
         continue
@@ -19,7 +25,7 @@ for line in body.splitlines():
     url = f'https://github.com/{repo}/commit/{sha}'
     entry = f'[`{sha}`]({url}) {msg}'
     lines.append(entry)
-    if msg.startswith('feat'):
+    if in_features:
         feat_lines.append(entry)
 
 body_out = '\n'.join(lines) if lines else 'No changes.'
