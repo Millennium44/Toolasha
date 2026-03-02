@@ -99,6 +99,11 @@ class AutoAllButton {
             return;
         }
 
+        // Skip seals if the exclude setting is on
+        if (config.getSetting('autoAllButton_excludeSeals') && itemHrid.startsWith('/items/seal_of_')) {
+            return;
+        }
+
         // Item IS openable - find and click the "All" button
         this.clickAllButton(container);
     }

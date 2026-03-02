@@ -530,6 +530,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Automatically clicks the "All" button when opening openable containers (crates, chests, caches)',
             },
+            autoAllButton_excludeSeals: {
+                id: 'autoAllButton_excludeSeals',
+                label: 'Auto-click "All": Skip Seal of... items',
+                type: 'checkbox',
+                default: true,
+                help: 'When enabled, Seal of... items from the Labyrinth are not auto-opened',
+            },
         },
     },
 
