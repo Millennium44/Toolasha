@@ -1,5 +1,21 @@
 import os
 import re
+import subprocess
+
+
+def get_commit_body(sha):
+    try:
+        result = subprocess.run(
+            ['git', 'log', '-1', '--format=%b', sha],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        lines = [l for l in result.stdout.splitlines() if not l.strip().startswith('Co-Authored-By:')]
+        return '\n'.join(lines).strip()
+    except Exception:
+        return ''
+
 
 body = os.environ.get('PR_BODY', '')
 
@@ -26,13 +42,15 @@ for line in body.splitlines():
     entry = f'[`{sha}`]({url}) {msg}'
     lines.append(entry)
     if in_features:
-        feat_lines.append(entry)
+        commit_body = get_commit_body(sha)
+        feat_entry = entry + (f'\n{commit_body}' if commit_body else '')
+        feat_lines.append(feat_entry)
 
 body_out = '\n'.join(lines) if lines else 'No changes.'
 if len(body_out) > 3900:
     body_out = body_out[:3900] + '\n...'
 
-feat_body = '\n'.join(feat_lines)
+feat_body = '\n\n'.join(feat_lines)
 
 with open(os.environ['GITHUB_ENV'], 'a') as f:
     f.write(f'COMMIT_LINES<<ENVEOF\n{body_out}\nENVEOF\n')
