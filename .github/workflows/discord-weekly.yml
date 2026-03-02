@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Fetch commits and post weekly summary
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEEKLY_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEEKLY_WEBHOOKS }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REPO="${{ github.repository }}"
