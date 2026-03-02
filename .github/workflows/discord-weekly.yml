@@ -41,8 +41,12 @@ jobs:
           for c in data:
               sha = c['sha'][:7]
               msg = c['commit']['message'].splitlines()[0]
+              url = c['html_url']
               if not any(msg.startswith(s) for s in SKIP):
-                  lines.append(f'\`{sha}\` {msg}')
+                  if msg.startswith('feat'):
+                      lines.append(f'### [\`{sha}\`]({url}) {msg}')
+                  else:
+                      lines.append(f'[\`{sha}\`]({url}) {msg}')
           print('\n'.join(lines) if lines else 'No notable commits this week.')
           ")
           fi
