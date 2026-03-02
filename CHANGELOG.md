@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.24.0](https://github.com/Celasha/Toolasha/compare/v1.23.2...v1.24.0) (2026-03-02)
+
+### Features
+
+- add transmute history tracker and viewer ([cfdbe3c](https://github.com/Celasha/Toolasha/commit/cfdbe3c03962ef7e53ba122daf75af3d5136b72d))
+
+### Bug Fixes
+
+- remove incidental drop filtering from transmute history ([1d2b945](https://github.com/Celasha/Toolasha/commit/1d2b9451e063280703dc8c3e6984159022ea3eea))
+
 ## [1.23.2](https://github.com/Celasha/Toolasha/compare/v1.23.1...v1.23.2) (2026-03-01)
 
 ### Bug Fixes
