@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.25.0](https://github.com/Celasha/Toolasha/compare/v1.24.3...v1.25.0) (2026-03-02)
+
+### Features
+
+- add labyrinth best level tracker for combat and skilling rooms ([b6ca1a9](https://github.com/Celasha/Toolasha/commit/b6ca1a938b76b69be257cac0748ca7eed243643c))
+
+### Continuous Integration
+
+- filter chore/ci/merge commits from weekly Discord summary ([6e7ade2](https://github.com/Celasha/Toolasha/commit/6e7ade2f2d16375c9bea5b2be912ddfc06847744))
+- fix weekly webhook secret name and add permissions block ([6c9ff82](https://github.com/Celasha/Toolasha/commit/6c9ff8274070a9fafed5746e324007b90e76a1f9))
+- format feat commits as headers and link SHAs in weekly summary ([1350ebe](https://github.com/Celasha/Toolasha/commit/1350ebe8baad1a53390edf5538d44d1c11cbf090))
+
 ## [1.24.3](https://github.com/Celasha/Toolasha/compare/v1.24.2...v1.24.3) (2026-03-02)
 
 ### Continuous Integration
