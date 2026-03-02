@@ -457,7 +457,7 @@ export const settingsGroups = {
                 label: 'Show price badges on item icons',
                 type: 'checkbox',
                 default: false,
-                help: 'Displays per-item ask or bid price on inventory items',
+                help: 'Displays per-item ask and bid prices on inventory items',
             },
             profitCalc_pricingMode: {
                 id: 'profitCalc_pricingMode',
