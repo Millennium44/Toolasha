@@ -478,7 +478,7 @@ class MaxProduceable {
             const efficiencyColor = coinsPerXp >= 0 ? config.COLOR_INFO : config.COLOR_WARNING;
             const efficiencySign = coinsPerXp >= 0 ? '' : '-';
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall" style="color: ${efficiencyColor};">Coins/XP: ${efficiencySign}${formatKMB(Math.abs(coinsPerXp))}</span></div>`;
+            html += `<span data-stat="overall" style="color: ${efficiencyColor};">Profit/XP: ${efficiencySign}${formatKMB(Math.abs(coinsPerXp))}</span></div>`;
         }
 
         data.displayElement.style.display = 'block';

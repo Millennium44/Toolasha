@@ -118,7 +118,7 @@ class ActionFilter {
             default: 'Sort: Default',
             profit: 'Sort: Profit',
             xp: 'Sort: XP',
-            coinsPerXp: 'Sort: Coins/XP',
+            coinsPerXp: 'Sort: Profit/XP',
         };
         const sortBtn = document.createElement('button');
         sortBtn.id = 'mwi-action-sort-toggle';
