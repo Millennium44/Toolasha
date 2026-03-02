@@ -619,6 +619,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
             },
+            labyrinthTracker: {
+                id: 'labyrinthTracker',
+                label: 'Labyrinth best level tracker',
+                type: 'checkbox',
+                default: true,
+                help: 'Tracks the highest recommended level enemy defeated per monster type and shows it in the Automation tab',
+            },
             combatSummary: {
                 id: 'combatSummary',
                 label: 'Combat Summary: Show detailed statistics on return',

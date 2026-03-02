@@ -9,7 +9,7 @@ class Storage {
         this.db = null;
         this.available = false;
         this.dbName = 'ToolashaDB';
-        this.dbVersion = 10; // Bumped for alchemyHistory store
+        this.dbVersion = 11; // Bumped for labyrinth store
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
@@ -133,6 +133,11 @@ class Storage {
                 // Create alchemyHistory store if it doesn't exist (for transmute history tracker)
                 if (!db.objectStoreNames.contains('alchemyHistory')) {
                     db.createObjectStore('alchemyHistory');
+                }
+
+                // Create labyrinth store if it doesn't exist (for labyrinth tracker)
+                if (!db.objectStoreNames.contains('labyrinth')) {
+                    db.createObjectStore('labyrinth');
                 }
             };
         });

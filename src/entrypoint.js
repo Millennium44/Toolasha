@@ -328,6 +328,20 @@ function registerFeatures() {
             async: false,
         },
         { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: true },
+        {
+            key: 'labyrinthTracker',
+            name: 'Labyrinth Tracker',
+            category: 'Combat',
+            module: Combat.labyrinthTracker,
+            async: false,
+        },
+        {
+            key: 'labyrinthBestLevel',
+            name: 'Labyrinth Best Level',
+            category: 'Combat',
+            module: Combat.labyrinthBestLevel,
+            async: false,
+        },
     ];
 
     // UI Features
