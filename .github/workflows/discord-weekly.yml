@@ -36,11 +36,14 @@ jobs:
             LINES=$(echo "$COMMITS" | python3 -c "
           import sys, json
           data = json.load(sys.stdin)
+          SKIP = ('chore', 'ci:', 'Merge ')
+          lines = []
           for c in data:
               sha = c['sha'][:7]
               msg = c['commit']['message'].splitlines()[0]
-              url = c['html_url']
-              print(f'\`{sha}\` {msg}')
+              if not any(msg.startswith(s) for s in SKIP):
+                  lines.append(f'\`{sha}\` {msg}')
+          print('\n'.join(lines) if lines else 'No notable commits this week.')
           ")
           fi
 
