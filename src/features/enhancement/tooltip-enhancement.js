@@ -12,7 +12,7 @@
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { formatLargeNumber } from '../../utils/formatters.js';
+import { formatLargeNumber, numberFormatter } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 
 /**
@@ -758,30 +758,58 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     const itemDetails = gameData.itemDetailMap[itemHrid];
     if (!itemDetails?.enhancementCosts?.length) return '';
 
+    const showPrices = config.getSetting('itemTooltip_prices');
+    const useKMB = config.getSetting('formatting_useKMBFormat');
+    const fmt = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—');
+
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
         const data = calculateEnhancementPath(itemHrid, level, enhancementConfig);
         if (!data) continue;
 
-        const cost = formatLargeNumber(Math.round(data.optimalStrategy.totalCost));
-        const xp = data.totalExpectedXP !== null ? formatLargeNumber(Math.round(data.totalExpectedXP)) : '—';
-        rows.push({ level, cost, xp });
+        const cost = fmt(Math.round(data.optimalStrategy.totalCost));
+        const xp = data.totalExpectedXP !== null ? fmt(Math.round(data.totalExpectedXP)) : '—';
+
+        let ask = '—';
+        let bid = '—';
+        if (showPrices) {
+            const prices = getItemPrices(itemHrid, level);
+            ask = fmt(prices?.ask);
+            bid = fmt(prices?.bid);
+        }
+
+        rows.push({ level, cost, xp, ask, bid });
     }
 
     if (rows.length === 0) return '';
 
+    const tdStyle = (align = 'right', color = '') =>
+        `style="padding: 1px 6px; text-align: ${align};${color ? ` color: ${color};` : ''}"`;
+    const thStyle = (align = 'right') =>
+        `style="padding: 1px 6px; text-align: ${align}; opacity: 0.6; font-weight: normal;"`;
+
     let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-    html += '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT MILESTONES</div>';
-    html += '<div style="font-size: 0.9em; margin-left: 8px;">';
+    html += '<div style="font-weight: bold; margin-bottom: 4px;">Enhancement Milestones</div>';
+    html += '<table style="font-size: 0.9em; border-collapse: collapse; width: 100%;">';
+    html += '<thead><tr>';
+    html += `<th ${thStyle('left')}>Level</th>`;
+    html += `<th ${thStyle()}>Cost</th>`;
+    html += `<th ${thStyle()}>XP</th>`;
+    if (showPrices) html += `<th ${thStyle()}>Ask / Bid</th>`;
+    html += '</tr></thead><tbody>';
+
     for (const row of rows) {
-        html +=
-            `<div style="display: flex; justify-content: space-between; gap: 16px;">` +
-            `<span style="color: ${config.COLOR_TOOLTIP_INFO};">+${row.level}</span>` +
-            `<span style="color: ${config.COLOR_TOOLTIP_INFO};">${row.cost}</span>` +
-            `<span style="color: ${config.COLOR_XP_RATE};">${row.xp} XP</span>` +
-            `</div>`;
+        html += '<tr>';
+        html += `<td ${tdStyle('left', config.COLOR_TOOLTIP_INFO)}>+${row.level}</td>`;
+        html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.cost}</td>`;
+        html += `<td ${tdStyle('right', config.COLOR_XP_RATE)}>${row.xp}</td>`;
+        if (showPrices) {
+            html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.ask} / ${row.bid}</td>`;
+        }
+        html += '</tr>';
     }
-    html += '</div>';
+
+    html += '</tbody></table>';
     html += '</div>';
 
     return html;
