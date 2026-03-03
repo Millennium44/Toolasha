@@ -114,8 +114,7 @@ async function _handleEnhancementStart(action) {
         const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, currentLevel);
 
         if (extendableSessionId) {
-            // Extend by 5 levels (or to 20, whichever is lower)
-            const newTarget = Math.min(currentLevel + 5, 20);
+            const newTarget = action.enhancingMaxLevel || Math.min(currentLevel + 5, 20);
             await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
             enhancementUI.switchToSession(extendableSessionId);
             enhancementUI.scheduleUpdate();
@@ -334,7 +333,7 @@ async function handleEnhancementResult(action, _data) {
             // Try to extend a completed session for the same item
             const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, newLevel);
             if (extendableSessionId) {
-                const newTarget = Math.min(newLevel + 5, 20);
+                const newTarget = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
                 await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
                 currentSession = enhancementTracker.getCurrentSession();
 
