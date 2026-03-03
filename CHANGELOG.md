@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.2](https://github.com/Celasha/Toolasha/compare/v1.27.1...v1.27.2) (2026-03-03)
+
+
+### Bug Fixes
+
+* use game target level when extending enhancement sessions ([463f43c](https://github.com/Celasha/Toolasha/commit/463f43c70ee5a4446b46c6a1eff099bad63f0167))
+
 ## [1.27.1](https://github.com/Celasha/Toolasha/compare/v1.27.0...v1.27.1) (2026-03-03)
 
 ### Bug Fixes
