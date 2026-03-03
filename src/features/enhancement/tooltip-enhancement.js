@@ -10,6 +10,7 @@
  */
 
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
@@ -152,11 +153,48 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         };
     }
 
+    // Calculate XP/hr for the optimal path
+    let xpPerHour = null;
+    let totalExpectedXP = null;
+    try {
+        const xpCalc = calculateEnhancement({
+            enhancingLevel: config.enhancingLevel,
+            houseLevel: config.houseLevel,
+            toolBonus: config.toolBonus || 0,
+            speedBonus: config.speedBonus || 0,
+            itemLevel,
+            targetLevel: currentEnhancementLevel,
+            protectFrom: optimalStrategy.protectFrom,
+            blessedTea: config.teas.blessed,
+            guzzlingBonus: config.guzzlingBonus,
+        });
+
+        if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
+            const wisdomDecimal = (config.experienceBonus || 0) / 100;
+            const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+            let totalXP = 0;
+            for (let i = 0; i < currentEnhancementLevel; i++) {
+                const visits = xpCalc.visitCounts[i];
+                const successRate = xpCalc.successRates[i].actualRate / 100;
+                const enhMult = i === 0 ? 1.0 : i + 1;
+                const successXP = Math.floor(1.4 * (1 + wisdomDecimal) * enhMult * (10 + xpBaseLevel));
+                const failXP = Math.floor(successXP * 0.1);
+                totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
+            }
+            xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
+            totalExpectedXP = Math.round(totalXP);
+        }
+    } catch {
+        // XP data is optional; don't let it break the tooltip
+    }
+
     return {
         targetLevel: currentEnhancementLevel,
         itemLevel,
         optimalStrategy,
         allStrategies: [optimalStrategy], // Only return optimal
+        xpPerHour,
+        totalExpectedXP,
     };
 }
 
@@ -554,7 +592,7 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         return '';
     }
 
-    const { targetLevel, optimalStrategy } = enhancementData;
+    const { targetLevel, optimalStrategy, xpPerHour, totalExpectedXP } = enhancementData;
 
     // Validate required fields
     if (
@@ -681,6 +719,24 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     }
 
     html += '</div>'; // Close margin-left div
+
+    if (xpPerHour !== null && xpPerHour > 0) {
+        html +=
+            '<div style="margin-top: 4px; font-size: 0.9em; color: ' +
+            config.COLOR_XP_RATE +
+            ';">XP/hr: ' +
+            xpPerHour.toLocaleString() +
+            '</div>';
+    }
+    if (totalExpectedXP !== null && totalExpectedXP > 0) {
+        html +=
+            '<div style="font-size: 0.9em; color: ' +
+            config.COLOR_XP_RATE +
+            ';">Total XP: ~' +
+            totalExpectedXP.toLocaleString() +
+            '</div>';
+    }
+
     html += '</div>'; // Close main container
 
     return html;

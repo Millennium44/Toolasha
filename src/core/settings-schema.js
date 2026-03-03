@@ -1172,7 +1172,7 @@ export const settingsGroups = {
             },
             color_xp_rate: {
                 id: 'color_xp_rate',
-                label: 'XP/hr Rate Text',
+                label: 'XP Text',
                 type: 'color',
                 default: '#ffffff',
             },
