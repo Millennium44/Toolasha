@@ -2,21 +2,18 @@
 
 ## [1.27.0](https://github.com/Celasha/Toolasha/compare/v1.26.0...v1.27.0) (2026-03-03)
 
-
 ### Features
 
-* add enhancement milestones to unenhanced item tooltips ([181f09d](https://github.com/Celasha/Toolasha/commit/181f09dfbcd4e141583ef6730da47fdba6b0af93))
-
+- add enhancement milestones to unenhanced item tooltips ([181f09d](https://github.com/Celasha/Toolasha/commit/181f09dfbcd4e141583ef6730da47fdba6b0af93))
 
 ### Bug Fixes
 
-* add target level calculator to alchemy Level Progress section ([d512931](https://github.com/Celasha/Toolasha/commit/d512931b9eb503ea6438f52f3a9cf69ccf5b3ab2))
-* improve enhancement milestones table formatting and layout ([abd4f1d](https://github.com/Celasha/Toolasha/commit/abd4f1d49ac32ba9d065f7a1019a129a859e8130))
-
+- add target level calculator to alchemy Level Progress section ([d512931](https://github.com/Celasha/Toolasha/commit/d512931b9eb503ea6438f52f3a9cf69ccf5b3ab2))
+- improve enhancement milestones table formatting and layout ([abd4f1d](https://github.com/Celasha/Toolasha/commit/abd4f1d49ac32ba9d065f7a1019a129a859e8130))
 
 ### Continuous Integration
 
-* use full clone in discord-commits workflow ([312884d](https://github.com/Celasha/Toolasha/commit/312884d58026503be17a9aea4d4fa6a423fa3c14))
+- use full clone in discord-commits workflow ([312884d](https://github.com/Celasha/Toolasha/commit/312884d58026503be17a9aea4d4fa6a423fa3c14))
 
 ## [1.26.0](https://github.com/Celasha/Toolasha/compare/v1.25.1...v1.26.0) (2026-03-03)
 
