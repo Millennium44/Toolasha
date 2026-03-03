@@ -13,6 +13,7 @@ import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
+import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 
 class AlchemyProfitDisplay {
     constructor() {
@@ -1319,11 +1320,69 @@ class AlchemyProfitDisplay {
             lines.push(`  Time: ${timeReadable(timeNeeded)}`);
 
             lines.push('');
+
+            // Target level calculator
+            lines.push(
+                `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Target Level Calculator:</span>`
+            );
+            lines.push(`<div style="margin-top: 4px;">
+                <span>To level </span>
+                <input
+                    type="number"
+                    id="mwi-alchemy-target-level-input"
+                    value="${nextLevel}"
+                    min="${nextLevel}"
+                    max="200"
+                    style="
+                        width: 50px;
+                        padding: 2px 4px;
+                        background: var(--background-secondary, #2a2a2a);
+                        color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});
+                        border: 1px solid var(--border-color, ${config.COLOR_BORDER});
+                        border-radius: 3px;
+                        font-size: 0.9em;
+                    "
+                >
+                <span>:</span>
+            </div>`);
+            lines.push(`<div id="mwi-alchemy-target-level-result" style="margin-top: 4px; margin-left: 8px;">
+                ${formatWithSeparator(actionsNeeded)} actions | ${timeReadable(timeNeeded)}
+            </div>`);
+
+            lines.push('');
             lines.push(
                 `XP/hour: ${formatWithSeparator(Math.round(xpPerHour))} | XP/day: ${formatWithSeparator(Math.round(xpPerDay))}`
             );
 
             content.innerHTML = lines.join('<br>');
+
+            // Set up event listener for target level calculator
+            const targetLevelInput = content.querySelector('#mwi-alchemy-target-level-input');
+            const targetLevelResult = content.querySelector('#mwi-alchemy-target-level-result');
+            const baseEfficiency = profitData.efficiency * 100; // efficiency is decimal, convert to %
+
+            const updateTargetLevel = () => {
+                const targetLevelValue = parseInt(targetLevelInput.value);
+                if (targetLevelValue > currentLevel && targetLevelValue <= 200) {
+                    const result = calculateMultiLevelProgress(
+                        currentLevel,
+                        currentXP,
+                        targetLevelValue,
+                        baseEfficiency,
+                        actionTime,
+                        xpPerAction,
+                        levelExperienceTable
+                    );
+                    targetLevelResult.innerHTML = `${formatWithSeparator(result.actionsNeeded)} actions | ${timeReadable(result.timeNeeded)}`;
+                    targetLevelResult.style.color = `var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})`;
+                } else {
+                    targetLevelResult.textContent = 'Invalid level';
+                    targetLevelResult.style.color = 'var(--color-error, #ff4444)';
+                }
+            };
+
+            targetLevelInput.addEventListener('input', updateTargetLevel);
+            targetLevelInput.addEventListener('change', updateTargetLevel);
 
             // Create summary for collapsed view
             const summary = `${timeReadable(timeNeeded)} to Level ${nextLevel}`;

@@ -34,7 +34,7 @@ import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { stackAdditive } from '../../utils/efficiency.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { setReactInputValue } from '../../utils/react-input.js';
-import { calculateExpPerHour } from '../../utils/experience-calculator.js';
+import { calculateExpPerHour, calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -1018,65 +1018,6 @@ class QuickInputButtons {
     }
 
     /**
-     * Calculate actions and time needed to reach target level
-     * Accounts for progressive efficiency gains (+1% per level)
-     * Efficiency reduces actions needed (each action gives more XP) but not time per action
-     * @param {number} currentLevel - Current skill level
-     * @param {number} currentXP - Current experience points
-     * @param {number} targetLevel - Target skill level
-     * @param {number} baseEfficiency - Starting efficiency percentage
-     * @param {number} actionTime - Time per action in seconds
-     * @param {number} xpPerAction - Modified XP per action (with multipliers)
-     * @param {Object} levelExperienceTable - XP requirements per level
-     * @returns {Object} {actionsNeeded, timeNeeded}
-     */
-    calculateMultiLevelProgress(
-        currentLevel,
-        currentXP,
-        targetLevel,
-        baseEfficiency,
-        actionTime,
-        xpPerAction,
-        levelExperienceTable
-    ) {
-        let totalActions = 0;
-        let totalTime = 0;
-
-        for (let level = currentLevel; level < targetLevel; level++) {
-            // Calculate XP needed for this level
-            let xpNeeded;
-            if (level === currentLevel) {
-                // First level: Account for current progress
-                xpNeeded = levelExperienceTable[level + 1] - currentXP;
-            } else {
-                // Subsequent levels: Full level requirement
-                xpNeeded = levelExperienceTable[level + 1] - levelExperienceTable[level];
-            }
-
-            // Progressive efficiency: +1% per level gained during grind
-            const levelsGained = level - currentLevel;
-            const progressiveEfficiency = baseEfficiency + levelsGained;
-            const efficiencyMultiplier = 1 + progressiveEfficiency / 100;
-
-            // Calculate XP per performed action (base XP × efficiency multiplier)
-            // Efficiency means each action repeats, giving more XP per performed action
-            const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
-
-            // Calculate time-consuming actions needed for this level
-            const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);
-
-            // Convert time-consuming actions to queued actions (instant repeats count toward queue total)
-            const actionsToQueue = Math.round(baseActionsForLevel * efficiencyMultiplier);
-            totalActions += actionsToQueue;
-
-            // Time is based on time-consuming actions, not instant repeats
-            totalTime += baseActionsForLevel * actionTime;
-        }
-
-        return { actionsNeeded: totalActions, timeNeeded: totalTime };
-    }
-
-    /**
      * Create level progress section
      * @param {Object} actionDetails - Action details from game data
      * @param {number} actionTime - Time per action in seconds
@@ -1227,7 +1168,7 @@ class QuickInputButtons {
             lines.push('');
 
             // Single level progress (always shown)
-            const singleLevel = this.calculateMultiLevelProgress(
+            const singleLevel = calculateMultiLevelProgress(
                 currentLevel,
                 currentXP,
                 nextLevel,
@@ -1290,7 +1231,7 @@ class QuickInputButtons {
                 const targetLevel = parseInt(targetLevelInput.value);
 
                 if (targetLevel > currentLevel && targetLevel <= 200) {
-                    const result = this.calculateMultiLevelProgress(
+                    const result = calculateMultiLevelProgress(
                         currentLevel,
                         currentXP,
                         targetLevel,
