@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.0](https://github.com/Celasha/Toolasha/compare/v1.25.1...v1.26.0) (2026-03-03)
+
+
+### Features
+
+* add option to skip auto-opening Seal of... items ([a5856c9](https://github.com/Celasha/Toolasha/commit/a5856c9429e303a872db64cf749867893f3a584c))
+* add XP/hr and total expected XP to enhancing displays ([122787e](https://github.com/Celasha/Toolasha/commit/122787eade0287e949275e67edea06d6faa1b24f))
+
 ## [1.25.1](https://github.com/Celasha/Toolasha/compare/v1.25.0...v1.25.1) (2026-03-02)
 
 ### Bug Fixes
