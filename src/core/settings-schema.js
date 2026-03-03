@@ -877,6 +877,18 @@ export const settingsGroups = {
                 ],
                 help: 'When creating sell listings, choose whether to match or undercut the current best sell price',
             },
+            market_autoFillBuyStrategy: {
+                id: 'market_autoFillBuyStrategy',
+                label: 'Auto-fill buy price strategy',
+                type: 'select',
+                default: 'outbid',
+                options: [
+                    { value: 'outbid', label: 'Outbid by 1 (best buy + 1)' },
+                    { value: 'match', label: 'Match best buy price' },
+                    { value: 'undercut', label: 'Undercut by 1 (best buy - 1)' },
+                ],
+                help: 'When creating buy listings, choose whether to outbid, match, or undercut the current best buy price',
+            },
             market_autoClickMax: {
                 id: 'market_autoClickMax',
                 label: 'Auto-click Max button on sell listing dialogs',
