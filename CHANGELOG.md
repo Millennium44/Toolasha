@@ -2,10 +2,9 @@
 
 ## [1.27.1](https://github.com/Celasha/Toolasha/compare/v1.27.0...v1.27.1) (2026-03-03)
 
-
 ### Bug Fixes
 
-* clear stale tooltip injections when item changes ([b662d95](https://github.com/Celasha/Toolasha/commit/b662d9507066514cd2161da692c3cf94d4133708))
+- clear stale tooltip injections when item changes ([b662d95](https://github.com/Celasha/Toolasha/commit/b662d9507066514cd2161da692c3cf94d4133708))
 
 ## [1.27.0](https://github.com/Celasha/Toolasha/compare/v1.26.0...v1.27.0) (2026-03-03)
 
