@@ -741,3 +741,48 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
     return html;
 }
+
+const MILESTONE_LEVELS = [5, 7, 10, 12];
+
+/**
+ * Build compact enhancement milestones HTML for unenhanced item tooltips
+ * Shows expected cost and XP for +5, +7, +10, +12
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} enhancementConfig - Enhancement configuration from getEnhancingParams()
+ * @returns {string} HTML string, or empty string if item is not enhanceable
+ */
+export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData) return '';
+
+    const itemDetails = gameData.itemDetailMap[itemHrid];
+    if (!itemDetails?.enhancementCosts?.length) return '';
+
+    const rows = [];
+    for (const level of MILESTONE_LEVELS) {
+        const data = calculateEnhancementPath(itemHrid, level, enhancementConfig);
+        if (!data) continue;
+
+        const cost = formatLargeNumber(Math.round(data.optimalStrategy.totalCost));
+        const xp = data.totalExpectedXP !== null ? formatLargeNumber(Math.round(data.totalExpectedXP)) : '—';
+        rows.push({ level, cost, xp });
+    }
+
+    if (rows.length === 0) return '';
+
+    let html = '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+    html += '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT MILESTONES</div>';
+    html += '<div style="font-size: 0.9em; margin-left: 8px;">';
+    for (const row of rows) {
+        html +=
+            `<div style="display: flex; justify-content: space-between; gap: 16px;">` +
+            `<span style="color: ${config.COLOR_TOOLTIP_INFO};">+${row.level}</span>` +
+            `<span style="color: ${config.COLOR_TOOLTIP_INFO};">${row.cost}</span>` +
+            `<span style="color: ${config.COLOR_XP_RATE};">${row.xp} XP</span>` +
+            `</div>`;
+    }
+    html += '</div>';
+    html += '</div>';
+
+    return html;
+}

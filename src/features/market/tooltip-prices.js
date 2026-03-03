@@ -10,7 +10,11 @@ import marketAPI from '../../api/marketplace.js';
 import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import expectedValueCalculator from './expected-value-calculator.js';
-import { calculateEnhancementPath, buildEnhancementTooltipHTML } from '../enhancement/tooltip-enhancement.js';
+import {
+    calculateEnhancementPath,
+    buildEnhancementTooltipHTML,
+    buildEnhancementMilestonesHTML,
+} from '../enhancement/tooltip-enhancement.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { numberFormatter, formatKMB, networthFormatter, formatPercentage } from '../../utils/formatters.js';
@@ -237,6 +241,26 @@ class TooltipPrices {
             const abilityStatus = this.getAbilityStatus(itemHrid);
             if (abilityStatus) {
                 this.injectAbilityStatusDisplay(tooltipElement, abilityStatus, isCollectionTooltip);
+            }
+        }
+
+        // Show enhancement milestones for unenhanced equipment items
+        if (enhancementLevel === 0 && config.getSetting('itemTooltip_enhancementMilestones')) {
+            const enhancementConfig = getEnhancingParams();
+            if (enhancementConfig) {
+                const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
+                if (milestonesHTML) {
+                    const tooltipText = tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+                    if (tooltipText && !tooltipText.querySelector('.mwi-enhancement-milestones')) {
+                        const div = dom.createStyledDiv(
+                            { color: config.COLOR_TOOLTIP_INFO },
+                            '',
+                            'mwi-enhancement-milestones'
+                        );
+                        div.innerHTML = milestonesHTML;
+                        tooltipText.appendChild(div);
+                    }
+                }
             }
         }
 
