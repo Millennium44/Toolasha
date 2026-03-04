@@ -179,7 +179,7 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         const itemLevel = itemData.level || 0;
 
         // Get enhancing skill level
-        const enhancingLevel = charData.characterSkills?.['/skills/enhancing']?.level || 1;
+        const enhancingLevel = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing')?.level || 1;
 
         // Get house level (Observatory)
         const houseRooms = charData.characterHouseRoomMap;
