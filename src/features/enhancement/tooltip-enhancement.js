@@ -761,13 +761,14 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     const showPrices = config.getSetting('itemTooltip_prices');
     const useKMB = config.getSetting('formatting_useKMBFormat');
     const fmt = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—');
+    const fmtCost = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 1) : numberFormatter(Math.round(n))) : '—');
 
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
         const data = calculateEnhancementPath(itemHrid, level, enhancementConfig);
         if (!data) continue;
 
-        const cost = fmt(Math.round(data.optimalStrategy.totalCost));
+        const cost = fmtCost(data.optimalStrategy.totalCost);
         const xp = data.totalExpectedXP !== null ? fmt(Math.round(data.totalExpectedXP)) : '—';
 
         let ask = '—';
@@ -794,18 +795,18 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     html += '<thead><tr>';
     html += `<th ${thStyle('left')}>Level</th>`;
     html += `<th ${thStyle()}>Cost</th>`;
-    html += `<th ${thStyle()}>XP</th>`;
     if (showPrices) html += `<th ${thStyle()}>Ask / Bid</th>`;
+    html += `<th ${thStyle()}>XP</th>`;
     html += '</tr></thead><tbody>';
 
     for (const row of rows) {
         html += '<tr>';
         html += `<td ${tdStyle('left', config.COLOR_TOOLTIP_INFO)}>+${row.level}</td>`;
         html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.cost}</td>`;
-        html += `<td ${tdStyle('right', config.COLOR_XP_RATE)}>${row.xp}</td>`;
         if (showPrices) {
             html += `<td ${tdStyle('right', config.COLOR_TOOLTIP_INFO)}>${row.ask} / ${row.bid}</td>`;
         }
+        html += `<td ${tdStyle('right', config.COLOR_XP_RATE)}>${row.xp}</td>`;
         html += '</tr>';
     }
 
