@@ -360,6 +360,9 @@ async function initializeSkillCalculator() {
             return;
         }
 
+        // Apply result section highlights
+        applyResultHighlights();
+
         // Setup mutation observer to watch for sim results
         setupSkillCalculatorObserver(expDiv, resultsPanel);
     } catch (error) {
@@ -422,6 +425,25 @@ async function waitForExpDiv() {
 
         check();
     });
+}
+
+/**
+ * Apply background color highlights to the three key result sections.
+ */
+function applyResultHighlights() {
+    const highlights = [
+        { id: 'simulationResultPlayerDeaths', background: '#FFEAE9' },
+        { id: 'simulationResultExperienceGain', background: '#CDFFDD' },
+        { id: 'simulationResultConsumablesUsed', background: '#F0F8FF' },
+    ];
+
+    for (const { id, background } of highlights) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.backgroundColor = background;
+            el.style.color = 'black';
+        }
+    }
 }
 
 /**
