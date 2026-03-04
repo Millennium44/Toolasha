@@ -19,6 +19,7 @@ import collectionNavigation from '../features/collection/collection-navigation.j
 import chatCommands from '../features/chat/chat-commands.js';
 import mentionTracker from '../features/chat/mention-tracker.js';
 import popOutChat from '../features/chat/pop-out-chat.js';
+import chatBlockList from '../features/chat/chat-block-list.js';
 
 // Task features
 import taskProfitDisplay from '../features/tasks/task-profit-display.js';
@@ -75,6 +76,7 @@ toolashaRoot.UI = {
     chatCommands,
     mentionTracker,
     popOutChat,
+    chatBlockList,
     taskProfitDisplay,
     taskRerollTracker,
     taskSorter,

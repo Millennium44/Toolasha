@@ -10,6 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import domObserver from '../../core/dom-observer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { chatBlockList } from './chat-block-list.js';
 
 const RELAY_CHANNEL = 'mwi-chat-relay';
 const SEND_CHANNEL = 'mwi-chat-send';
@@ -258,6 +259,11 @@ class PopOutChat {
 
         const resolved = resolveMessage(message);
 
+        // Drop messages from blocked players
+        if (!resolved.isSystem && chatBlockList.isBlocked(resolved.sName)) {
+            return;
+        }
+
         // Track channels seen via messages that aren't in the hardcoded list
         if (!CHANNELS.some((c) => c.hrid === resolved.channel) && !this.discoveredChannels.has(resolved.channel)) {
             const name = resolved.channel
@@ -336,10 +342,10 @@ class PopOutChat {
     _sendInit() {
         if (!this.relayChannel) return;
 
-        // Serialize buffer: Map → plain object
+        // Serialize buffer: Map → plain object, filtering blocked players
         const bufferSnapshot = {};
         for (const [hrid, messages] of this.messageBuffer.entries()) {
-            bufferSnapshot[hrid] = [...messages];
+            bufferSnapshot[hrid] = messages.filter((msg) => msg.isSystem || !chatBlockList.isBlocked(msg.sName));
         }
 
         this.relayChannel.postMessage({
