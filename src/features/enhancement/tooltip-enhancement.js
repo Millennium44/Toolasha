@@ -761,7 +761,8 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     const showPrices = config.getSetting('itemTooltip_prices');
     const useKMB = config.getSetting('formatting_useKMBFormat');
     const fmt = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—');
-    const fmtCost = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 1) : numberFormatter(Math.round(n))) : '—');
+    const fmtCost = (n) =>
+        n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 1) : numberFormatter(Math.round(n))) : '—';
 
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
