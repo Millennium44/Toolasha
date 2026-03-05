@@ -102,7 +102,6 @@ Toolasha is a complete rewrite of the popular MWITools userscript, rebuilt from 
 - **External Tool Links** — Quick links to external tools from relevant panels
 - **Color Customization** — 14 configurable UI color options
 
-
 ## Installation
 
 ### Prerequisites
