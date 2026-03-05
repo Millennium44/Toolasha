@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.29.1](https://github.com/Celasha/Toolasha/compare/v1.29.0...v1.29.1) (2026-03-05)
+
+### Documentation
+
+- rewrite README and remove legacy MWI-TOOLS-CHANGELOG ([b3781bb](https://github.com/Celasha/Toolasha/commit/b3781bb0a6ed6dab4ba5ba0ba95019bfd9e745a9))
+
 ## [1.29.0](https://github.com/Celasha/Toolasha/compare/v1.28.0...v1.29.0) (2026-03-04)
 
 ### Features
