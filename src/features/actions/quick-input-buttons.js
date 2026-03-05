@@ -965,6 +965,9 @@ class QuickInputButtons {
         // Map action type to skill HRID
         const skillHrid = skillType.replace('/action_types/', '/skills/');
         const skill = skills.find((s) => s.skillHrid === skillHrid);
+        if (!skill) {
+            console.error(`[QuickInputButtons] Skill not found: ${skillHrid}`);
+        }
         return skill?.level || 1;
     }
 
@@ -981,6 +984,9 @@ class QuickInputButtons {
 
         // Calculate all efficiency components (reuse existing logic)
         const skillLevel = this.getSkillLevel(skills, actionDetails.type);
+        if (!actionDetails.levelRequirement) {
+            console.error(`[QuickInputButtons] Action has no levelRequirement: ${actionDetails.hrid}`);
+        }
         const baseRequirement = actionDetails.levelRequirement?.level || 1;
 
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);

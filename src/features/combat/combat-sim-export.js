@@ -208,6 +208,9 @@ function constructSelfPlayer(characterObj, clientObj) {
         if (!ability || !ability.abilityHrid) continue;
 
         // Check if special ability
+        if (clientObj?.abilityDetailMap && !clientObj.abilityDetailMap[ability.abilityHrid]) {
+            console.error(`[CombatSimExport] Ability not found in abilityDetailMap: ${ability.abilityHrid}`);
+        }
         const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
 
         if (isSpecial) {
@@ -364,6 +367,9 @@ function constructPartyPlayer(profile, clientObj, battleObj) {
         if (!ability || !ability.abilityHrid) continue;
 
         // Check if special ability
+        if (clientObj?.abilityDetailMap && !clientObj.abilityDetailMap[ability.abilityHrid]) {
+            console.error(`[CombatSimExport] Ability not found in abilityDetailMap: ${ability.abilityHrid}`);
+        }
         const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
 
         if (isSpecial) {

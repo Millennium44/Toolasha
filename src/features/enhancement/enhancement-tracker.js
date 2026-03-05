@@ -65,8 +65,8 @@ class EnhancementTracker {
             }
 
             this.isInitialized = true;
-        } catch {
-            // Silent failure
+        } catch (error) {
+            console.error('[EnhancementTracker] Failed to initialize:', error);
         }
     }
 

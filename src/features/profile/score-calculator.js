@@ -440,8 +440,8 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
     if (workerTasks.length > 0) {
         try {
             workerResults = await calculateEnhancementBatch(workerTasks);
-        } catch {
-            // Continue with empty results - will use fallback pricing
+        } catch (error) {
+            console.warn('[ScoreCalculator] Enhancement batch worker failed, using fallback pricing:', error);
         }
     }
 

@@ -171,6 +171,9 @@ class CoinifyHistoryTracker {
     async startSession(inputItemHrid, enhancementLevel, timestamp) {
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
 
+        if (!itemDetails?.alchemyDetail?.bulkMultiplier) {
+            console.error(`[CoinifyHistoryTracker] Item has no alchemyDetail.bulkMultiplier: ${inputItemHrid}`);
+        }
         const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
         const coinsPerSuccess = (itemDetails?.sellPrice || 0) * 5 * bulkMultiplier;
 

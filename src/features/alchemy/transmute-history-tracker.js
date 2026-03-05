@@ -118,7 +118,11 @@ class TransmuteHistoryTracker {
         }
 
         // bulkMultiplier defines how many items are consumed and returned per action
-        const bulkMultiplier = dataManager.getItemDetails(inputItemHrid)?.alchemyDetail?.bulkMultiplier ?? 1;
+        const itemDetailsForBulk = dataManager.getItemDetails(inputItemHrid);
+        if (!itemDetailsForBulk?.alchemyDetail?.bulkMultiplier) {
+            console.error(`[TransmuteHistoryTracker] Item has no alchemyDetail.bulkMultiplier: ${inputItemHrid}`);
+        }
+        const bulkMultiplier = itemDetailsForBulk?.alchemyDetail?.bulkMultiplier ?? 1;
 
         // Detect success vs failure — exclude incidental drops (essences, artisan's crates)
         const nonCoinItems = (data.endCharacterItems || []).filter((item) => item.itemHrid !== COIN_ITEM_HRID);

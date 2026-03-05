@@ -148,6 +148,9 @@ class ProfitCalculator {
 
         // Calculate efficiency components
         // Action Level bonus increases the effective requirement
+        if (!actionDetails.levelRequirement) {
+            console.error(`[ProfitCalculator] Action has no levelRequirement: ${actionDetails.hrid}`);
+        }
         const baseRequirement = actionDetails.levelRequirement?.level || 1;
         // Calculate tea skill level bonus (e.g., +8 Cheesesmithing from Ultra Cheesesmithing Tea)
         const teaSkillLevelBonus = parseTeaSkillLevelBonus(
@@ -521,6 +524,9 @@ class ProfitCalculator {
         const skillHrid = skillType.replace('/action_types/', '/skills/');
 
         const skill = skills.find((s) => s.skillHrid === skillHrid);
+        if (!skill) {
+            console.error(`[ProfitCalculator] Skill not found: ${skillHrid}`);
+        }
         return skill?.level || 1;
     }
 

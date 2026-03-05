@@ -131,8 +131,8 @@ async function _handleEnhancementStart(action) {
         const sessionId = await enhancementTracker.startSession(itemHrid, currentLevel, targetLevel, protectFrom);
         enhancementUI.switchToSession(sessionId);
         enhancementUI.scheduleUpdate();
-    } catch {
-        // Silent failure
+    } catch (error) {
+        console.error('[EnhancementHandlers] Enhancement start failed:', error);
     }
 }
 
@@ -375,6 +375,11 @@ async function handleEnhancementResult(action, _data) {
                 if (protectionCost === 0) {
                     const gameData = dataManager.getInitClientData();
                     const protectionItem = gameData?.itemDetailMap?.[protectionItemHrid];
+                    if (!protectionItem) {
+                        console.warn(
+                            `[EnhancementHandlers] Protection item not found in game data: ${protectionItemHrid}`
+                        );
+                    }
                     protectionCost = protectionItem?.vendorSellPrice || 0;
                 }
 
@@ -424,8 +429,8 @@ async function handleEnhancementResult(action, _data) {
         }
         // Note: If newLevel === previousLevel (and not 0->0), we track costs but don't record attempt
         // This happens with protection items that prevent level decrease
-    } catch {
-        // Silent failure
+    } catch (error) {
+        console.error('[EnhancementHandlers] Enhancement result handler failed:', error);
     }
 }
 

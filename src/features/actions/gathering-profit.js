@@ -201,6 +201,9 @@ export async function calculateGatheringProfit(actionHrid) {
     }));
 
     // Calculate level efficiency bonus
+    if (!actionDetail.levelRequirement) {
+        console.error(`[GatheringProfit] Action has no levelRequirement: ${actionDetail.hrid}`);
+    }
     const requiredLevel = actionDetail.levelRequirement?.level || 1;
     const skillHrid = actionDetail.levelRequirement?.skillHrid;
     let currentLevel = requiredLevel;
