@@ -211,7 +211,12 @@ class CombatStatsDataCollector {
             lastUpdate: null,
             lastEventByItem: {},
         };
+        this.partyConsumableTrackers = {};
+        this.partyConsumableSnapshots = {};
+        this.partyLastKnownConsumables = {};
         await storage.setJSON('consumableTracker', null, 'combatStats');
+        await storage.setJSON('partyConsumableTrackers', null, 'combatStats');
+        await storage.setJSON('partyConsumableSnapshots', null, 'combatStats');
     }
 
     /**
