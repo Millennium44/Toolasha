@@ -426,7 +426,7 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
  * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
  * @private
  */
-function getRealisticBaseItemPrice(itemHrid) {
+export function getRealisticBaseItemPrice(itemHrid) {
     const marketPrice = getItemPrices(itemHrid, 0);
     const ask = marketPrice?.ask > 0 ? marketPrice.ask : 0;
     const bid = marketPrice?.bid > 0 ? marketPrice.bid : 0;
@@ -478,11 +478,13 @@ function getProductionCost(itemHrid) {
 
     // Find the action that produces this item
     let actionHrid = null;
+    let outputCount = 1;
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
         if (action.outputItems && action.outputItems.length > 0) {
             const output = action.outputItems[0];
             if (output.itemHrid === itemHrid) {
                 actionHrid = hrid;
+                outputCount = output.count || 1;
                 break;
             }
         }
@@ -520,7 +522,7 @@ function getProductionCost(itemHrid) {
         totalPrice += upgradePrice;
     }
 
-    return totalPrice;
+    return totalPrice / outputCount;
 }
 
 /**
@@ -528,7 +530,7 @@ function getProductionCost(itemHrid) {
  * Tests: item itself, mirror of protection, and specific protection items
  * @private
  */
-function getCheapestProtectionPrice(itemHrid) {
+export function getCheapestProtectionPrice(itemHrid) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -718,25 +720,14 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         html += '<div>Time: ~' + days + ' days</div>';
     }
 
-    html += '</div>'; // Close margin-left div
-
     if (xpPerHour !== null && xpPerHour > 0) {
-        html +=
-            '<div style="margin-top: 4px; font-size: 0.9em; color: ' +
-            config.COLOR_XP_RATE +
-            ';">XP/hr: ' +
-            xpPerHour.toLocaleString() +
-            '</div>';
+        html += '<div style="margin-top: 4px;">XP/hr: ' + xpPerHour.toLocaleString() + '</div>';
     }
     if (totalExpectedXP !== null && totalExpectedXP > 0) {
-        html +=
-            '<div style="font-size: 0.9em; color: ' +
-            config.COLOR_XP_RATE +
-            ';">Total XP: ~' +
-            totalExpectedXP.toLocaleString() +
-            '</div>';
+        html += '<div>Total XP: ~' + totalExpectedXP.toLocaleString() + '</div>';
     }
 
+    html += '</div>'; // Close margin-left div
     html += '</div>'; // Close main container
 
     return html;
