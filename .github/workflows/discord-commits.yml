@@ -30,7 +30,7 @@ jobs:
           DISCORD_COMMITS_WEBHOOK: ${{ secrets.DISCORD_COMMITS_WEBHOOK }}
           DISCORD_FEAT_WEBHOOK: ${{ secrets.DISCORD_FEAT_WEBHOOK }}
         run: |
-          ESCAPED_TITLE=$(echo "${{ github.event.pull_request.title }}" | sed 's/"/\\"/g')
+          ESCAPED_TITLE=$(echo "${{ github.event.pull_request.title }}" | sed 's/^chore([^)]*): //' | sed 's/^chore: //' | sed 's/\b\w/\u&/' | sed 's/"/\\"/g')
           BODY=$(python3 -c "import json,os; print(json.dumps(os.environ.get('COMMIT_LINES','')))")
 
           PAYLOAD=$(cat <<EOF
