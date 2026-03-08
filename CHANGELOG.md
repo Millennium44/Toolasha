@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.30.2](https://github.com/Celasha/Toolasha/compare/v1.30.1...v1.30.2) (2026-03-08)
+
+### Bug Fixes
+
+- only enable sim dungeon mode for full 5-player parties ([297ac5c](https://github.com/Celasha/Toolasha/commit/297ac5cd506dfd9ff2c60319f7cf95faf2ae1e1f))
+
 ## [1.30.1](https://github.com/Celasha/Toolasha/compare/v1.30.0...v1.30.1) (2026-03-08)
 
 ### Bug Fixes
