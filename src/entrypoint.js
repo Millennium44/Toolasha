@@ -182,6 +182,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'invCategoryTotals',
+            name: 'Inventory Category Totals',
+            category: 'Inventory',
+            module: Market.inventoryCategoryTotals,
+            async: false,
+        },
+        {
             key: 'autoAllButton',
             name: 'Auto All Button',
             category: 'Inventory',
