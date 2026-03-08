@@ -202,6 +202,9 @@ class TaskIconFilters {
             return;
         }
 
+        // Ensure state is loaded before creating icons so persisted state is reflected
+        await this.loadState();
+
         // Ensure manifest URLs are loaded before creating icons
         this.manifestUrls = await assetManifest.fetchManifest();
 
