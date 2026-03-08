@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.30.1](https://github.com/Celasha/Toolasha/compare/v1.30.0...v1.30.1) (2026-03-08)
+
+### Bug Fixes
+
+- persist collapsible section state across panel rebuilds ([67f50ed](https://github.com/Celasha/Toolasha/commit/67f50ed66b21cbe0ea847844515d46535449c141))
+
 ## [1.30.0](https://github.com/Celasha/Toolasha/compare/v1.29.4...v1.30.0) (2026-03-07)
 
 ### Features
