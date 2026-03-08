@@ -2,15 +2,13 @@
 
 ## [1.33.0](https://github.com/Celasha/Toolasha/compare/v1.32.0...v1.33.0) (2026-03-08)
 
-
 ### Features
 
-* merge duplicate task amounts when clicking Go ([2d8df70](https://github.com/Celasha/Toolasha/commit/2d8df70c390959301ba1ccc8297eb2b8229d28e1))
-
+- merge duplicate task amounts when clicking Go ([2d8df70](https://github.com/Celasha/Toolasha/commit/2d8df70c390959301ba1ccc8297eb2b8229d28e1))
 
 ### Miscellaneous Chores
 
-* fix Steam build header — point downloadURL to GitHub releases, drop updateURL ([d433ddd](https://github.com/Celasha/Toolasha/commit/d433ddd8a90187dbc3cfc560b2663ef931bd4f8a))
+- fix Steam build header — point downloadURL to GitHub releases, drop updateURL ([d433ddd](https://github.com/Celasha/Toolasha/commit/d433ddd8a90187dbc3cfc560b2663ef931bd4f8a))
 
 ## [1.32.0](https://github.com/Celasha/Toolasha/compare/v1.31.0...v1.32.0) (2026-03-08)
 
