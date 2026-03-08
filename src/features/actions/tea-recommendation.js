@@ -420,6 +420,111 @@ class TeaRecommendation {
         `;
         stats.querySelector('div:last-child').appendChild(actionsToggle);
         stats.appendChild(actionsDetail);
+
+        // Expandable tea cost breakdown
+        const costData = result.teaCostPerHour;
+        if (costData?.total > 0) {
+            const costSection = document.createElement('div');
+            costSection.style.cssText = 'margin-top: 6px; font-size: 11px;';
+
+            const costToggle = document.createElement('span');
+            costToggle.style.cssText = `
+                cursor: pointer;
+                text-decoration: underline;
+                color: ${config.COLOR_GOLD};
+            `;
+            costToggle.textContent = `Tea cost: ${formatKMB(costData.total)}/hr ▶`;
+            costToggle.title = 'Click to expand';
+
+            const costDetail = document.createElement('div');
+            costDetail.style.cssText = `
+                display: none;
+                margin-top: 6px;
+                padding: 8px;
+                background: rgba(0, 0, 0, 0.3);
+                border-radius: 4px;
+            `;
+
+            // Header row
+            const headerRow = document.createElement('div');
+            headerRow.style.cssText = `
+                display: grid;
+                grid-template-columns: 1fr auto auto auto;
+                gap: 8px;
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.4);
+                padding-bottom: 4px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+                margin-bottom: 4px;
+            `;
+            ['Tea', 'Units/hr', 'Unit cost', 'Cost/hr'].forEach((label) => {
+                const cell = document.createElement('span');
+                cell.textContent = label;
+                cell.style.textAlign = 'right';
+                if (label === 'Tea') cell.style.textAlign = 'left';
+                headerRow.appendChild(cell);
+            });
+            costDetail.appendChild(headerRow);
+
+            // Per-tea rows
+            for (const tea of costData.breakdown) {
+                const row = document.createElement('div');
+                row.style.cssText = `
+                    display: grid;
+                    grid-template-columns: 1fr auto auto auto;
+                    gap: 8px;
+                    font-size: 11px;
+                    padding: 2px 0;
+                    color: rgba(255, 255, 255, 0.7);
+                `;
+                const cells = [
+                    { text: tea.name, align: 'left' },
+                    { text: tea.unitsPerHour.toFixed(1), align: 'right' },
+                    { text: formatKMB(tea.unitPrice), align: 'right' },
+                    { text: formatKMB(tea.costPerHour), align: 'right', color: config.COLOR_GOLD },
+                ];
+                for (const { text, align, color } of cells) {
+                    const cell = document.createElement('span');
+                    cell.textContent = text;
+                    cell.style.textAlign = align;
+                    if (color) cell.style.color = color;
+                    row.appendChild(cell);
+                }
+                costDetail.appendChild(row);
+            }
+
+            // Total row
+            const totalRow = document.createElement('div');
+            totalRow.style.cssText = `
+                display: grid;
+                grid-template-columns: 1fr auto auto auto;
+                gap: 8px;
+                font-size: 11px;
+                padding-top: 4px;
+                margin-top: 4px;
+                border-top: 1px solid rgba(255, 255, 255, 0.15);
+                color: rgba(255, 255, 255, 0.5);
+            `;
+            ['Total', '', '', formatKMB(costData.total)].forEach((text, i) => {
+                const cell = document.createElement('span');
+                cell.textContent = text;
+                cell.style.textAlign = i === 0 ? 'left' : 'right';
+                if (i === 3) cell.style.color = config.COLOR_GOLD;
+                totalRow.appendChild(cell);
+            });
+            costDetail.appendChild(totalRow);
+
+            costToggle.addEventListener('click', () => {
+                const isHidden = costDetail.style.display === 'none';
+                costDetail.style.display = isHidden ? 'block' : 'none';
+                costToggle.textContent = `Tea cost: ${formatKMB(costData.total)}/hr ${isHidden ? '▼' : '▶'}`;
+            });
+
+            costSection.appendChild(costToggle);
+            costSection.appendChild(costDetail);
+            stats.appendChild(costSection);
+        }
+
         popup.appendChild(stats);
 
         // Alternative combos section
@@ -449,7 +554,9 @@ class TeaRecommendation {
                     color: rgba(255, 255, 255, 0.6);
                     padding: 2px 0;
                 `;
-                altRow.textContent = `${alt.teas.join(', ')} (${formatKMB(alt.avgScore)}/hr)`;
+                const costSuffix =
+                    alt.teaCostPerHour?.total > 0 ? ` · ${formatKMB(alt.teaCostPerHour.total)} cost/hr` : '';
+                altRow.textContent = `${alt.teas.join(', ')} (${formatKMB(alt.avgScore)}/hr${costSuffix})`;
                 altSection.appendChild(altRow);
             }
 

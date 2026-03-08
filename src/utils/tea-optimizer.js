@@ -539,19 +539,24 @@ function getActionsForSkill(skillName, playerLevel) {
  * Uses the same pricing logic as the tile calculation
  * @param {Array<string>} teaHrids - Array of tea item HRIDs
  * @param {number} drinkConcentration - Drink concentration as decimal
- * @returns {number} Total tea cost per hour
+ * @returns {{ total: number, breakdown: Array<{hrid: string, name: string, unitsPerHour: number, unitPrice: number, costPerHour: number}> }}
  */
 function calculateTeaCostPerHour(teaHrids, drinkConcentration) {
+    const gameData = dataManager.getInitClientData();
     const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
-    let totalCost = 0;
+    const breakdown = [];
+    let total = 0;
 
     for (const teaHrid of teaHrids) {
         // Use getItemPrice with 'profit' context and 'buy' side to match tile calculation
-        const price = getItemPrice(teaHrid, { context: 'profit', side: 'buy' }) || 0;
-        totalCost += price * drinksPerHour;
+        const unitPrice = getItemPrice(teaHrid, { context: 'profit', side: 'buy' }) || 0;
+        const costPerHour = unitPrice * drinksPerHour;
+        const name = gameData?.itemDetailMap?.[teaHrid]?.name || teaHrid;
+        breakdown.push({ hrid: teaHrid, name, unitsPerHour: drinksPerHour, unitPrice, costPerHour });
+        total += costPerHour;
     }
 
-    return totalCost;
+    return { total, breakdown };
 }
 
 /**
@@ -732,8 +737,8 @@ export function findOptimalTeas(skillName, goal, locationName = null) {
     for (const combo of combinations) {
         const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration);
 
-        // Calculate tea cost per hour for this combo (only matters for gold goal)
-        const teaCostPerHour = goal === 'gold' ? calculateTeaCostPerHour(combo, drinkConcentration) : 0;
+        // Calculate tea cost per hour for this combo
+        const teaCostPerHour = calculateTeaCostPerHour(combo, drinkConcentration);
 
         let totalScore = 0;
         let profitableCount = 0;
@@ -754,7 +759,7 @@ export function findOptimalTeas(skillName, goal, locationName = null) {
                     calcContext
                 );
                 // Deduct tea costs from gold score
-                score -= teaCostPerHour;
+                score -= teaCostPerHour.total;
                 // Only include profitable actions in gold calculations
                 if (score > 0) {
                     totalScore += score;
@@ -770,7 +775,7 @@ export function findOptimalTeas(skillName, goal, locationName = null) {
                     calcContext
                 );
                 // Deduct tea costs from gold score
-                score -= teaCostPerHour;
+                score -= teaCostPerHour.total;
                 // Only include profitable actions in gold calculations
                 if (score > 0) {
                     totalScore += score;
@@ -825,7 +830,7 @@ export function findOptimalTeas(skillName, goal, locationName = null) {
             combinationsEvaluated: combinations.length,
             allResults: [],
             excludedActions: excludedForDisplay,
-            teaCostPerHour: 0,
+            teaCostPerHour: { total: 0, breakdown: [] },
         };
     }
 
