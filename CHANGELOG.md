@@ -2,11 +2,10 @@
 
 ## [1.33.3](https://github.com/Celasha/Toolasha/compare/v1.33.2...v1.33.3) (2026-03-09)
 
-
 ### Bug Fixes
 
-* replace success rate with profit per action in alternative actions tooltip ([2797f45](https://github.com/Celasha/Toolasha/commit/2797f4585d46e98a04475cfb3178f064732ed478))
-* scrub downtime-inflated runs and drop invalid nextRunWasCanceled check ([8ccbcb0](https://github.com/Celasha/Toolasha/commit/8ccbcb0891cc7b9c40e19ecefc692514ee7f3564))
+- replace success rate with profit per action in alternative actions tooltip ([2797f45](https://github.com/Celasha/Toolasha/commit/2797f4585d46e98a04475cfb3178f064732ed478))
+- scrub downtime-inflated runs and drop invalid nextRunWasCanceled check ([8ccbcb0](https://github.com/Celasha/Toolasha/commit/8ccbcb0891cc7b9c40e19ecefc692514ee7f3564))
 
 ## [1.33.2](https://github.com/Celasha/Toolasha/compare/v1.33.1...v1.33.2) (2026-03-09)
 
