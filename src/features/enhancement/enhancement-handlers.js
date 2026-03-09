@@ -358,15 +358,15 @@ async function handleEnhancementResult(action, _data) {
         // Track protection cost if protection item exists in action data
         // Protection items are consumed when:
         // 1. Level would have decreased (Mirror of Protection prevents decrease, level stays same)
-        // 2. Level increased (Philosopher's Mirror guarantees success)
         const protectionItemHrid = getProtectionItemHrid(action);
         if (protectionItemHrid) {
             // Only track if we're at a level where protection might be used
-            // (either level stayed same when it could have decreased, or succeeded at high level)
             const protectFrom = currentSession.protectFrom || 0;
             const shouldTrack = previousLevel >= Math.max(2, protectFrom);
 
-            if (shouldTrack && (newLevel <= previousLevel || newLevel === previousLevel + 1)) {
+            // Protection is consumed only on failure (level stays same or would have decreased)
+            // Successful enhancements do NOT consume a protection item
+            if (shouldTrack && newLevel <= previousLevel) {
                 // Use market price (like Ultimate Tracker) instead of vendor price
                 const marketPrice = marketAPI.getPrice(protectionItemHrid, 0);
                 let protectionCost = marketPrice?.ask || marketPrice?.bid || 0;
