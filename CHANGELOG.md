@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.33.1](https://github.com/Celasha/Toolasha/compare/v1.33.0...v1.33.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* await state load in addFilterBar to restore persisted dungeon filter selections ([42b69dc](https://github.com/Celasha/Toolasha/commit/42b69dce81f326c427cc0b3ecf7fddf2c3d9bea2))
+* only count protection uses on failure, not successful enhancements ([a5fb333](https://github.com/Celasha/Toolasha/commit/a5fb3335de32bd7ed50bca7f794b3fbbd0731451))
+* show total market value per category in inventory panel ([88dbaff](https://github.com/Celasha/Toolasha/commit/88dbaff2d18e2829cca819ef7b3d318ad62d7456))
+
+
+### Continuous Integration
+
+* strip chore prefix from release PR title in Discord notification ([2969ec7](https://github.com/Celasha/Toolasha/commit/2969ec7955242dca6f9c74d24f024f425a5cd94b))
+
 ## [1.33.0](https://github.com/Celasha/Toolasha/compare/v1.32.0...v1.33.0) (2026-03-08)
 
 ### Features
