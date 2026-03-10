@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.34.0](https://github.com/Celasha/Toolasha/compare/v1.33.3...v1.34.0) (2026-03-10)
+
+
+### Features
+
+* add chest EV, key costs, and drop tooltips to combat stats ([5be1b92](https://github.com/Celasha/Toolasha/commit/5be1b927fc6b89acf3d385257867f449695a77a2))
+* factor catalyst cost into alchemy profit tooltips ([979d2e5](https://github.com/Celasha/Toolasha/commit/979d2e5d4378912189c6701268ad671359242ed5))
+* support enhancement level in /market chat command ([a190364](https://github.com/Celasha/Toolasha/commit/a19036489538a31265e5237a24132a9a5a14c816))
+
+
+### Bug Fixes
+
+* resolve spurious skill error for combat and missing coinify value ([0b940a3](https://github.com/Celasha/Toolasha/commit/0b940a3ef922aa49b0a3ddcd28ede97784a4947c))
+
 ## [1.33.3](https://github.com/Celasha/Toolasha/compare/v1.33.2...v1.33.3) (2026-03-09)
 
 ### Bug Fixes
