@@ -71,12 +71,21 @@ class DungeonTrackerChatAnnotations {
     }
 
     /**
-     * Refresh run counts after backfill operation
+     * Refresh run counts after backfill or clear operation
+     * Resets all in-memory state and DOM annotation state, then re-annotates from scratch
      */
     async refreshRunCounts() {
         this.cumulativeStatsByDungeon = {};
         this.processedMessages.clear();
-        await this.loadRunCountsFromStorage();
+
+        // Remove existing annotation spans and reset DOM flags so messages can be re-annotated
+        document.querySelectorAll('[class^="ChatMessage_chatMessage"]').forEach((msg) => {
+            msg.querySelectorAll('.dungeon-timer-annotation, .dungeon-timer-average').forEach((s) => s.remove());
+            delete msg.dataset.timerAppended;
+            delete msg.dataset.avgAppended;
+            delete msg.dataset.processed;
+        });
+
         await this.annotateAllMessages();
     }
 
