@@ -2,10 +2,9 @@
 
 ## [1.34.4](https://github.com/Celasha/Toolasha/compare/v1.34.3...v1.34.4) (2026-03-11)
 
-
 ### Bug Fixes
 
-* prevent stale IndexedDB restore causing double-floor dungeon durations ([d1fadf1](https://github.com/Celasha/Toolasha/commit/d1fadf16323f8404617127f5526025283b11afef))
+- prevent stale IndexedDB restore causing double-floor dungeon durations ([d1fadf1](https://github.com/Celasha/Toolasha/commit/d1fadf16323f8404617127f5526025283b11afef))
 
 ## [1.34.3](https://github.com/Celasha/Toolasha/compare/v1.34.2...v1.34.3) (2026-03-11)
 
