@@ -563,9 +563,9 @@ export async function constructExportObject(externalProfileId = null, singlePlay
     }
 
     // If single-player format requested, return just the player object
-    if (singlePlayerFormat && exportObj[1]) {
-        // In party mode, export YOUR data (not necessarily slot 1)
-        const slotToExport = isParty ? yourSlotIndex : 1;
+    if (singlePlayerFormat && exportObj[yourSlotIndex]) {
+        // Always use yourSlotIndex — defaults to 1 for solo, set to actual slot in any party size
+        const slotToExport = yourSlotIndex;
 
         // Parse the player JSON string back to an object
         const playerObj = JSON.parse(exportObj[slotToExport]);
