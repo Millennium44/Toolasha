@@ -236,6 +236,77 @@ class DungeonTrackerChatAnnotations {
         // NOTE: Run saving is done manually via the Backfill button
         // Chat annotations only add visual time labels to messages
 
+        // Pre-pass: collect all successful key→key chat run timestamps grouped by statsKey.
+        // Used to merge stored run history with visible chat runs and assign each visible run
+        // a number based on its absolute chronological position across both populations.
+        // This prevents the "two sequences" problem caused by gaps in backfill storage —
+        // unbackfilled runs get a number based on where they fall in time, not appended after
+        // the last stored run.
+        const chatRunsByStatsKey = {};
+        for (let pi = 0; pi < events.length; pi++) {
+            const pe = events[pi];
+            if (pe.type !== 'key') continue;
+
+            let pnext = null;
+            for (let pj = pi + 1; pj < events.length; pj++) {
+                const ev = events[pj];
+                if (ev.type === 'battle_start') break;
+                if (ev.type === 'key' || ev.type === 'fail' || ev.type === 'cancel') {
+                    pnext = ev;
+                    break;
+                }
+            }
+            if (!pnext || pnext.type !== 'key') continue;
+
+            const pDungeonName = this.getDungeonNameWithFallback(events, pi);
+            const pTeamKey = dungeonTrackerStorage.getTeamKey(pe.team);
+            const pStatsKey = `${pTeamKey}::${pDungeonName}`;
+            if (!chatRunsByStatsKey[pStatsKey]) chatRunsByStatsKey[pStatsKey] = [];
+            chatRunsByStatsKey[pStatsKey].push(pe.timestamp.getTime());
+        }
+
+        // Build a chronological run number map for each statsKey.
+        // Stored-only runs (not visible in chat) occupy number slots so that visible runs
+        // reflect their true position in the full run history.
+        const precomputedRunNumbers = {}; // statsKey → Map<chatTimestamp, runNumber>
+        const chatRunsMatchedStorage = {}; // statsKey → Set<chatTimestamp> matched to a stored run
+        for (const [pStatsKey, chatTsList] of Object.entries(chatRunsByStatsKey)) {
+            const tsMap = this.storedRunNumbers[pStatsKey] || {};
+            const storedTsList = Object.keys(tsMap)
+                .map(Number)
+                .sort((a, b) => a - b);
+
+            // Match each chat run to a stored run within 10s tolerance
+            const matchedChatSet = new Set();
+            const matchedStoredSet = new Set();
+            for (const chatTs of chatTsList) {
+                const matchedSt = storedTsList.find((st) => Math.abs(st - chatTs) < 10000);
+                if (matchedSt !== undefined) {
+                    matchedStoredSet.add(matchedSt);
+                    matchedChatSet.add(chatTs);
+                }
+            }
+
+            // Stored runs not visible in chat still count toward the running total
+            const storedOnlyTsList = storedTsList.filter((st) => !matchedStoredSet.has(st));
+
+            // Merge and sort all runs chronologically
+            const merged = [
+                ...storedOnlyTsList.map((ts) => ({ ts, isChatRun: false })),
+                ...chatTsList.map((ts) => ({ ts, isChatRun: true })),
+            ].sort((a, b) => a.ts - b.ts);
+
+            // Assign 1-based sequential numbers; stored-only runs occupy slots but aren't mapped
+            const numMap = new Map();
+            for (let mi = 0; mi < merged.length; mi++) {
+                if (merged[mi].isChatRun) {
+                    numMap.set(merged[mi].ts, mi + 1);
+                }
+            }
+            precomputedRunNumbers[pStatsKey] = numMap;
+            chatRunsMatchedStorage[pStatsKey] = matchedChatSet;
+        }
+
         // Continue with visual annotations
         const runDurations = [];
 
@@ -341,22 +412,24 @@ class DungeonTrackerChatAnnotations {
                         // Already annotated — reuse stored run number
                         runNumber = this.processedMessages.get(messageId);
                     } else {
-                        // Look up run number from storage timestamp map (10s tolerance)
+                        // Look up number from pre-computed chronological position map
                         const msgTs = e.timestamp.getTime();
-                        const tsMap = this.storedRunNumbers[statsKey] || {};
-                        const matchedTs = Object.keys(tsMap).find((ts) => Math.abs(ts - msgTs) < 10000);
-                        if (matchedTs) {
-                            runNumber = tsMap[matchedTs];
-                        } else {
-                            // Not in storage yet (live run just completed) — assign next number
-                            runNumber = dungeonStats.runCount + 1;
-                            dungeonStats.runCount++;
-                            // Add to lookup so subsequent re-annotation passes use the same number
-                            if (!this.storedRunNumbers[statsKey]) this.storedRunNumbers[statsKey] = {};
-                            this.storedRunNumbers[statsKey][msgTs] = runNumber;
+                        runNumber = precomputedRunNumbers[statsKey]?.get(msgTs);
+                        if (runNumber === undefined) {
+                            // Edge case: live run arrived after the pre-pass completed
+                            runNumber = (dungeonStats.runCount || 0) + 1;
                         }
 
-                        dungeonStats.totalTime += diff;
+                        // Only add to the running total for new (unmatched) runs.
+                        // Storage-matched runs are already counted in the seed from
+                        // loadRunCountsFromStorage — adding their time again would cause
+                        // the average to climb on every annotation pass regardless of
+                        // actual run performance.
+                        if (!chatRunsMatchedStorage[statsKey]?.has(msgTs)) {
+                            dungeonStats.runCount++;
+                            dungeonStats.totalTime += diff;
+                        }
+
                         if (diff < dungeonStats.fastestTime) dungeonStats.fastestTime = diff;
                         if (diff > dungeonStats.slowestTime) dungeonStats.slowestTime = diff;
                         this.processedMessages.set(messageId, runNumber);

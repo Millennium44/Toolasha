@@ -24,6 +24,7 @@ class DungeonTracker {
         this.firstKeyCountTimestamp = null; // Timestamp from first "Key counts" message
         this.lastKeyCountTimestamp = null; // Timestamp from last "Key counts" message
         this.keyCountMessages = []; // Store all key count messages for this run
+        this.pendingNextRunFirstKeyCount = null; // Carry last timestamp forward as next run's start
         this.battleStartedTimestamp = null; // Timestamp from "Battle started" message
 
         // Character ID for data isolation
@@ -909,8 +910,16 @@ class DungeonTracker {
         this.waveTimes = [];
 
         // Reset party message tracking
-        this.firstKeyCountTimestamp = null;
-        this.lastKeyCountTimestamp = null;
+        // If a completion just happened, carry its timestamp forward as this run's start.
+        // scanExistingChatMessages will see firstKeyCountTimestamp already set and skip the scan.
+        if (this.pendingNextRunFirstKeyCount !== null) {
+            this.firstKeyCountTimestamp = this.pendingNextRunFirstKeyCount;
+            this.lastKeyCountTimestamp = this.pendingNextRunFirstKeyCount;
+            this.pendingNextRunFirstKeyCount = null;
+        } else {
+            this.firstKeyCountTimestamp = null;
+            this.lastKeyCountTimestamp = null;
+        }
         this.keyCountMessages = [];
 
         // Reset hibernation detection for new run
@@ -1039,6 +1048,11 @@ class DungeonTracker {
         const firstTimestamp = this.firstKeyCountTimestamp;
         const lastTimestamp = this.lastKeyCountTimestamp;
 
+        // Carry the completion timestamp forward as the next run's start anchor.
+        // This avoids the scanExistingChatMessages race condition where the scan
+        // fires before the live message arrives and grabs an older timestamp instead.
+        this.pendingNextRunFirstKeyCount = lastTimestamp;
+
         // Clear ALL state immediately - next dungeon can now start without contamination
         this.currentRun = null;
         this.waveStartTime = null;
@@ -1149,6 +1163,7 @@ class DungeonTracker {
         this.lastKeyCountTimestamp = null;
         this.keyCountMessages = [];
         this.battleStartedTimestamp = null;
+        this.pendingNextRunFirstKeyCount = null;
 
         // Clear saved state (await to ensure it completes)
         await this.clearInProgressRun();
@@ -1291,6 +1306,7 @@ class DungeonTracker {
         this.lastKeyCountTimestamp = null;
         this.keyCountMessages = [];
         this.battleStartedTimestamp = null;
+        this.pendingNextRunFirstKeyCount = null;
         this.recentChatMessages = [];
 
         // Reset hibernation detection
