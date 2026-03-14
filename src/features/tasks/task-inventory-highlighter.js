@@ -90,11 +90,6 @@ class TaskInventoryHighlighter {
         // Calculate needed materials from all tasks
         await this.calculateNeededMaterials();
 
-        if (this.neededItems.size === 0) {
-            console.warn('[TaskInventoryHighlighter] No materials needed for current tasks');
-            return;
-        }
-
         // Apply opacity to inventory items
         this.applyInventoryOpacity();
 
