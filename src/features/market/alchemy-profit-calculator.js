@@ -258,8 +258,8 @@ class AlchemyProfitCalculator {
         const liveTeaBonus = getAlchemySuccessBonus();
         const typeSpecificHrid = CATALYST_HRIDS[actionType];
         const primeCatalystHrid = CATALYST_HRIDS.prime;
-        const typeSpecificPrice = getItemPrice(typeSpecificHrid, { context: 'profit', side: buyType }) ?? 0;
-        const primeCatalystPrice = getItemPrice(primeCatalystHrid, { context: 'profit', side: buyType }) ?? 0;
+        const typeSpecificPrice = getItemPrice(typeSpecificHrid, { context: 'profit', mode: buyType }) ?? 0;
+        const primeCatalystPrice = getItemPrice(primeCatalystHrid, { context: 'profit', mode: buyType }) ?? 0;
 
         const combinations = [
             { catalystBonus: 0, catalystHrid: null, catalystPrice: 0, teaBonus: liveTeaBonus },
@@ -418,7 +418,7 @@ class AlchemyProfitCalculator {
 
             // Calculate input cost (material cost)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', side: buyType, enhancementLevel });
+            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', mode: buyType, enhancementLevel });
             if (pricePerItem === null) {
                 return null; // No market data
             }
@@ -452,7 +452,7 @@ class AlchemyProfitCalculator {
                 drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
-                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: buyType }),
+                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', mode: buyType }),
             });
 
             // Find the best catalyst+tea combination
@@ -694,7 +694,7 @@ class AlchemyProfitCalculator {
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
 
             // Get input cost (market price of the item being decomposed)
-            const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: buyType, enhancementLevel });
+            const inputPrice = getItemPrice(itemHrid, { context: 'profit', mode: buyType, enhancementLevel });
             if (inputPrice === null) {
                 return null; // No market data
             }
@@ -705,7 +705,7 @@ class AlchemyProfitCalculator {
 
             // 1. Base decompose items (always received on success)
             for (const output of itemDetails.alchemyDetail.decomposeItems) {
-                const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: sellType });
+                const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', mode: sellType });
                 if (outputPrice !== null) {
                     const afterTax = calculatePriceAfterTax(outputPrice);
                     const dropValue = afterTax * output.count;
@@ -728,7 +728,7 @@ class AlchemyProfitCalculator {
                 const itemLevel = itemDetails.itemLevel || 1;
                 essenceAmount = Math.round(2 * (0.5 + 0.1 * Math.pow(1.05, itemLevel)) * Math.pow(2, enhancementLevel));
 
-                const essencePrice = getItemPrice('/items/enhancing_essence', { context: 'profit', side: sellType });
+                const essencePrice = getItemPrice('/items/enhancing_essence', { context: 'profit', mode: sellType });
                 if (essencePrice !== null) {
                     const afterTax = calculatePriceAfterTax(essencePrice);
                     const dropValue = afterTax * essenceAmount;
@@ -768,7 +768,7 @@ class AlchemyProfitCalculator {
                 drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
-                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: buyType }),
+                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', mode: buyType }),
             });
 
             // Find the best catalyst+tea combination
@@ -1011,7 +1011,7 @@ class AlchemyProfitCalculator {
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
 
             // Get input cost (market price of the item being transmuted)
-            const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: buyType });
+            const inputPrice = getItemPrice(itemHrid, { context: 'profit', mode: buyType });
             if (inputPrice === null) {
                 return null; // No market data
             }
@@ -1036,7 +1036,7 @@ class AlchemyProfitCalculator {
                     selfReturnCount = averageCount * bulkMultiplier;
                 }
 
-                const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: sellType });
+                const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', mode: sellType });
                 if (outputPrice !== null) {
                     const afterTax = calculatePriceAfterTax(outputPrice);
                     // Expected value: price × dropRate × averageCount × bulkMultiplier
@@ -1086,7 +1086,7 @@ class AlchemyProfitCalculator {
                 drinkSlots: dataManager.getActionDrinkSlots('/action_types/alchemy'),
                 drinkConcentration,
                 itemDetailMap: gameData.itemDetailMap,
-                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', side: buyType }),
+                getItemPrice: (hrid) => getItemPrice(hrid, { context: 'profit', mode: buyType }),
             });
 
             // Find the best catalyst+tea combination.
