@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.36.3](https://github.com/Celasha/Toolasha/compare/v1.36.2...v1.36.3) (2026-03-14)
+
+### Bug Fixes
+
+- initialize EV calculator centrally on startup ([8ce6255](https://github.com/Celasha/Toolasha/commit/8ce62552e6656f4685952224f21ba44b4ac55698))
+
 ## [1.36.2](https://github.com/Celasha/Toolasha/compare/v1.36.1...v1.36.2) (2026-03-14)
 
 ### Bug Fixes
