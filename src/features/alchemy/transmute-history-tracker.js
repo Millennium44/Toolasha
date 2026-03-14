@@ -8,8 +8,10 @@
  * - End: actions_updated with no transmute action, or different input item
  *
  * Result detection:
- * - Success: endCharacterItems contains a non-coin item different from inputItemHrid
- * - Failure: all non-coin items in endCharacterItems match inputItemHrid
+ * - Success: endCharacterItems contains an item listed in the input item's transmuteDropTable
+ * - Failure: no items from the transmuteDropTable appear in endCharacterItems
+ * - Incidental drops (essences on non-essence transmutes, artisan's crates) are excluded
+ *   because they are not listed in the input item's transmuteDropTable
  */
 
 import config from '../../core/config.js';
@@ -134,8 +136,16 @@ class TransmuteHistoryTracker {
         }
         const bulkMultiplier = itemDetailsForBulk?.alchemyDetail?.bulkMultiplier ?? 1;
 
-        // Detect success vs failure — exclude incidental drops (essences, artisan's crates)
-        const nonCoinItems = (data.endCharacterItems || []).filter((item) => item.itemHrid !== COIN_ITEM_HRID);
+        // Build a Set of valid output HRIDs from the input item's transmute drop table.
+        // This filters out incidental drops (essences, artisan's crates) that arrive even on failure,
+        // while correctly preserving essence outputs when transmuting essence → essence.
+        const dropTable = itemDetailsForBulk?.alchemyDetail?.transmuteDropTable || [];
+        const validOutputHrids = new Set(dropTable.map((entry) => entry.itemHrid));
+
+        // Exclude coins and items not in the drop table (incidental drops)
+        const nonCoinItems = (data.endCharacterItems || []).filter(
+            (item) => item.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(item.itemHrid)
+        );
 
         // The game always sends one entry for the consumed input item.
         // If the input is also returned (self-return), it sends additional entries.
