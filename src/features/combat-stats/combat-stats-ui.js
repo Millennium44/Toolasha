@@ -701,7 +701,7 @@ class CombatStatsUI {
                                         const subHeader = document.createElement('div');
                                         subHeader.style.cssText = `
                                             display: grid;
-                                            grid-template-columns: 2fr 1fr 1fr 1fr;
+                                            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
                                             gap: 8px;
                                             font-weight: bold;
                                             margin-bottom: 4px;
@@ -712,6 +712,7 @@ class CombatStatsUI {
                                             <span>Item</span>
                                             <span style="text-align: right;">Rate</span>
                                             <span style="text-align: right;">Avg Qty</span>
+                                            <span style="text-align: right;">@</span>
                                             <span style="text-align: right;">EV</span>
                                         `;
                                         chestBreakdownDiv.appendChild(subHeader);
@@ -719,7 +720,7 @@ class CombatStatsUI {
                                             const dropRow = document.createElement('div');
                                             dropRow.style.cssText = `
                                                 display: grid;
-                                                grid-template-columns: 2fr 1fr 1fr 1fr;
+                                                grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
                                                 gap: 8px;
                                                 margin-bottom: 2px;
                                             `;
@@ -727,6 +728,7 @@ class CombatStatsUI {
                                                 <span>${drop.itemName}</span>
                                                 <span style="text-align: right;">${formatPercentage(drop.dropRate, 1)}</span>
                                                 <span style="text-align: right;">${drop.avgCount.toFixed(2)}</span>
+                                                <span style="text-align: right;">${drop.hasPriceData ? formatNum(drop.priceEach) : '—'}</span>
                                                 <span style="text-align: right;">${drop.hasPriceData ? formatNum(drop.expectedValue) : '—'}</span>
                                             `;
                                             chestBreakdownDiv.appendChild(dropRow);
@@ -738,11 +740,12 @@ class CombatStatsUI {
                                             border-top: 1px solid #3a3a3a;
                                             font-weight: bold;
                                             display: grid;
-                                            grid-template-columns: 2fr 1fr 1fr 1fr;
+                                            grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
                                             gap: 8px;
                                         `;
                                         evTotalRow.innerHTML = `
                                             <span>Total</span>
+                                            <span></span>
                                             <span></span>
                                             <span></span>
                                             <span style="text-align: right;">${formatNum(chest.evPerChest)}</span>
