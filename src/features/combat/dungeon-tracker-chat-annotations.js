@@ -350,23 +350,20 @@ class DungeonTrackerChatAnnotations {
 
                 label = this.formatTime(diff);
 
-                // Determine color based on this team's performance history for this dungeon.
-                // Uses cumulativeStatsByDungeon[statsKey] which is seeded from storage and
-                // updated as runs are annotated — no cross-team contamination.
+                // Color run relative to the running cumulative average for this team+dungeon.
+                // Green = faster than average, red = slower, neutral = no history yet.
                 const teamStats = this.cumulativeStatsByDungeon[statsKey];
-                if (teamStats && teamStats.fastestTime < Infinity && teamStats.slowestTime > 0) {
-                    const fastestThreshold = teamStats.fastestTime * 1.1;
-                    const slowestThreshold = teamStats.slowestTime * 0.9;
-
-                    if (diff <= fastestThreshold) {
-                        color = config.COLOR_PROFIT || '#5fda5f'; // Green
-                    } else if (diff >= slowestThreshold) {
-                        color = config.COLOR_LOSS || '#ff6b6b'; // Red
+                if (teamStats && teamStats.runCount > 0) {
+                    const avg = teamStats.totalTime / teamStats.runCount;
+                    if (diff < avg) {
+                        color = config.COLOR_PROFIT || '#5fda5f'; // Green — faster than average
+                    } else if (diff > avg) {
+                        color = config.COLOR_LOSS || '#ff6b6b'; // Red — slower than average
                     } else {
-                        color = '#90ee90'; // Light green (normal)
+                        color = '#90ee90'; // Exactly on average
                     }
                 } else {
-                    color = '#90ee90'; // Light green (no history yet)
+                    color = '#90ee90'; // No history yet — neutral
                 }
 
                 // Track run durations for average calculation
