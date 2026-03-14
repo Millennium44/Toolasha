@@ -28,6 +28,7 @@ class DataManager {
         this.characterHouseRooms = new Map(); // House room HRID -> {houseRoomHrid, level}
         this.actionTypeDrinkSlotsMap = new Map(); // Action type HRID -> array of drink items
         this.monsterSortIndexMap = new Map(); // Monster HRID -> combat zone sortIndex
+        this.bossMonsterHrids = new Set(); // Monster HRIDs that appear in bossSpawns
         this.battleData = null; // Current battle data (for Combat Sim export on Steam)
 
         // Character tracking for switch detection
@@ -822,6 +823,7 @@ class DataManager {
         }
 
         this.monsterSortIndexMap.clear();
+        this.bossMonsterHrids.clear();
 
         // Extract combat zones (non-dungeon only)
         for (const [_zoneHrid, action] of Object.entries(this.initClientData.actionDetailMap)) {
@@ -837,6 +839,13 @@ class DataManager {
 
             // Get boss monsters (every 10 battles)
             const bossMonsters = action.combatZoneInfo?.fightInfo?.bossSpawns || [];
+
+            // Track boss monster HRIDs
+            for (const boss of bossMonsters) {
+                if (boss.combatMonsterHrid) {
+                    this.bossMonsterHrids.add(boss.combatMonsterHrid);
+                }
+            }
 
             // Combine all monsters from this zone
             const allMonsters = [...regularMonsters, ...bossMonsters];
@@ -864,6 +873,15 @@ class DataManager {
      */
     getMonsterSortIndex(monsterHrid) {
         return this.monsterSortIndexMap.get(monsterHrid) || 999;
+    }
+
+    /**
+     * Check if a monster is a boss (appears in bossSpawns of any combat zone)
+     * @param {string} monsterHrid - Monster HRID (e.g., "/monsters/crystal_colossus")
+     * @returns {boolean} True if the monster is a boss
+     */
+    isBossMonster(monsterHrid) {
+        return this.bossMonsterHrids.has(monsterHrid);
     }
 
     /**

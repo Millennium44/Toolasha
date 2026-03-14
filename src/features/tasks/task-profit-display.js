@@ -341,12 +341,14 @@ class TaskProfitDisplay {
                         if (matchingQuests.length <= 1) return;
 
                         const total = matchingQuests.reduce((sum, q) => sum + (q.goalCount - q.currentCount), 0);
+                        const isBoss = thisQuest.monsterHrid && dataManager.isBossMonster(thisQuest.monsterHrid);
+                        const adjustedTotal = isBoss ? total * 10 : total;
 
                         // Wait for the game to navigate and render the input field
                         setTimeout(() => {
                             const inputEl = findActionInput(document);
                             if (inputEl) {
-                                setReactInputValue(inputEl, total);
+                                setReactInputValue(inputEl, adjustedTotal);
                             }
                         }, 300);
                     },
