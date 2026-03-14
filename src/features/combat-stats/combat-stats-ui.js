@@ -544,6 +544,7 @@ class CombatStatsUI {
                           expandable: true,
                           breakdown: stats.keyBreakdown,
                           hideTrackingNote: true,
+                          showKeyPricingNote: true,
                       },
                       {
                           label: 'Daily Key Costs',
@@ -553,6 +554,7 @@ class CombatStatsUI {
                           breakdown: stats.keyBreakdown,
                           isDaily: true,
                           hideTrackingNote: true,
+                          showKeyPricingNote: true,
                       },
                   ]
                 : []),
@@ -781,6 +783,19 @@ class CombatStatsUI {
                             `;
                             breakdownDiv.appendChild(incomeTotalRow);
                         } else if (row.breakdown && row.breakdown.length > 0) {
+                            // Add key pricing note if applicable
+                            if (row.showKeyPricingNote) {
+                                const keyPricing = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                                const keyPricingNote = document.createElement('div');
+                                keyPricingNote.style.cssText = `
+                                    font-size: 11px;
+                                    color: #aaa;
+                                    margin-bottom: 6px;
+                                `;
+                                keyPricingNote.textContent = `Pricing: ${keyPricing === 'bid' ? 'Bid (patient buy)' : 'Ask (instant buy)'}`;
+                                breakdownDiv.appendChild(keyPricingNote);
+                            }
+
                             // Add header
                             const header = document.createElement('div');
                             header.style.cssText = `

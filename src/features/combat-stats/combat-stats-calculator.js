@@ -5,6 +5,7 @@
 
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
+import config from '../../core/config.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 // Maps regular dungeon chest HRIDs to their required entry key HRIDs (1:1 relationship)
@@ -128,6 +129,8 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
         return { ask: 0, bid: 0, dailyCost: 0, breakdown: [] };
     }
 
+    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+
     for (const loot of Object.values(lootMap)) {
         const keyHrid = DUNGEON_CHEST_KEYS[loot.itemHrid];
         if (!keyHrid) continue;
@@ -136,8 +139,7 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
         const keyPrices = marketAPI.getPrice(keyHrid);
         if (!keyPrices) continue;
 
-        // Keys are bought at ask price (you pay ask to acquire them)
-        const keyPrice = keyPrices.ask;
+        const keyPrice = keyPrices[keyPricingSetting] ?? keyPrices.ask;
         const itemCost = keyPrice * chestCount;
 
         totalCost += itemCost;
@@ -169,7 +171,7 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
         const keyPrices = marketAPI.getPrice(keyHrid);
         if (!keyPrices) continue;
 
-        const keyPrice = keyPrices.ask;
+        const keyPrice = keyPrices[keyPricingSetting] ?? keyPrices.ask;
         const itemCost = keyPrice * count;
 
         totalCost += itemCost;

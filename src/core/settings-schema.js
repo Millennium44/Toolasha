@@ -676,6 +676,14 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a Statistics button to the Combat panel showing income, profit, consumable costs, EXP, and drop details',
             },
+            combatStats_keyPricing: {
+                id: 'combatStats_keyPricing',
+                label: 'Combat Statistics: Key cost pricing',
+                type: 'select',
+                default: 'ask',
+                options: ['ask', 'bid'],
+                help: 'Whether to use ask (instant buy) or bid (patient buy) prices for key costs. Use bid if you craft your own keys.',
+            },
             combatStatsChatMessage: {
                 id: 'combatStatsChatMessage',
                 label: 'Combat Statistics: Chat message format',
