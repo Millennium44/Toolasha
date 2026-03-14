@@ -795,6 +795,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Automatically sorts tasks by skill type when you open the task panel',
             },
+            taskSorter_hideButton: {
+                id: 'taskSorter_hideButton',
+                label: 'Hide Sort Tasks button',
+                type: 'checkbox',
+                default: false,
+                help: 'Hides the Sort Tasks button while keeping auto-sort functional',
+            },
             taskSorter_sortMode: {
                 id: 'taskSorter_sortMode',
                 label: 'Task sort mode',

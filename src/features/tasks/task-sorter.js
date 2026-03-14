@@ -69,15 +69,16 @@ class TaskSorter {
             return;
         }
 
-        // Create sort button
-        this.sortButton = document.createElement('button');
-        this.sortButton.className = 'Button_button__1Fe9z Button_small__3fqC7';
-        this.sortButton.textContent = 'Sort Tasks';
-        this.sortButton.style.marginLeft = '8px';
-        this.sortButton.setAttribute('data-mwi-task-sort', 'true');
-        this.sortButton.addEventListener('click', () => this.sortTasks());
-
-        headerElement.appendChild(this.sortButton);
+        // Create and insert sort button (skipped if user has chosen to hide it)
+        if (!config.getSetting('taskSorter_hideButton')) {
+            this.sortButton = document.createElement('button');
+            this.sortButton.className = 'Button_button__1Fe9z Button_small__3fqC7';
+            this.sortButton.textContent = 'Sort Tasks';
+            this.sortButton.style.marginLeft = '8px';
+            this.sortButton.setAttribute('data-mwi-task-sort', 'true');
+            this.sortButton.addEventListener('click', () => this.sortTasks());
+            headerElement.appendChild(this.sortButton);
+        }
 
         // Add task icon filters if enabled
         if (config.isFeatureEnabled('taskIcons')) {
