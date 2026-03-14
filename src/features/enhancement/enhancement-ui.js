@@ -697,13 +697,7 @@ class EnhancementUI {
      * Clear all sessions
      */
     async clearAllSessions() {
-        // Clear from tracker
-        const sessions = enhancementTracker.getAllSessions();
-        for (const sessionId of Object.keys(sessions)) {
-            delete sessions[sessionId];
-        }
-
-        await enhancementTracker.saveSessions();
+        await enhancementTracker.clearSessions();
 
         this.currentViewingIndex = 0;
         this.updateUI();

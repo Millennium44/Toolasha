@@ -31,6 +31,7 @@ class EnhancementTracker {
         this.sessions = {}; // All sessions (keyed by session ID)
         this.currentSessionId = null; // Currently active session ID
         this.isInitialized = false;
+        this.pendingSessionStart = false; // Start new session on next action_completed regardless of currentCount
     }
 
     /**
@@ -338,6 +339,26 @@ class EnhancementTracker {
      */
     async saveSessions() {
         await saveSessions(this.sessions);
+    }
+
+    /**
+     * Set flag so the next action_completed starts a new session regardless of currentCount.
+     * Used when the tracker is cleared mid-session or when a new action queue is detected.
+     */
+    setPendingStart() {
+        this.pendingSessionStart = true;
+    }
+
+    /**
+     * Clear all sessions and flag that the next attempt should start a new session.
+     * @returns {Promise<void>}
+     */
+    async clearSessions() {
+        this.sessions = {};
+        this.currentSessionId = null;
+        this.pendingSessionStart = true;
+        await saveSessions(this.sessions);
+        await saveCurrentSessionId(null);
     }
 
     /**
