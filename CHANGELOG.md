@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.4](https://github.com/Celasha/Toolasha/compare/v1.36.3...v1.36.4) (2026-03-14)
+
+### Bug Fixes
+
+- add setting to hide the Sort Tasks button ([aa918fe](https://github.com/Celasha/Toolasha/commit/aa918fe741afc9457960b896a4cf79a69755796f))
+- exclude incidental drops from transmute success detection ([36e1bf9](https://github.com/Celasha/Toolasha/commit/36e1bf97963dd3b3c197bff344f02095306239b3))
+
 ## [1.36.3](https://github.com/Celasha/Toolasha/compare/v1.36.2...v1.36.3) (2026-03-14)
 
 ### Bug Fixes
