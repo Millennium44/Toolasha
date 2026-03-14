@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.36.0](https://github.com/Celasha/Toolasha/compare/v1.35.0...v1.36.0) (2026-03-14)
+
+### Features
+
+- add per-item price column to chest drop breakdown ([c2a787f](https://github.com/Celasha/Toolasha/commit/c2a787f556d9bf78eaec1ae5715a2640556df525))
+
+### Bug Fixes
+
+- correct alchemy pricing mode for conservative and optimistic ([a80cfd3](https://github.com/Celasha/Toolasha/commit/a80cfd38a13d9fa0048c4bae05a3e50bc688814a))
+
 ## [1.35.0](https://github.com/Celasha/Toolasha/compare/v1.34.6...v1.35.0) (2026-03-13)
 
 ### Features
