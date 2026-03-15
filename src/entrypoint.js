@@ -473,6 +473,20 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'guildXPTracker',
+            name: 'Guild XP Tracker',
+            category: 'Guild',
+            module: UI.guildXPTracker,
+            async: false,
+        },
+        {
+            key: 'guildXPDisplay',
+            name: 'Guild XP Display',
+            category: 'Guild',
+            module: UI.guildXPDisplay,
+            async: false,
+        },
+        {
             key: 'emptyQueueNotification',
             name: 'Empty Queue Notification',
             category: 'Notifications',

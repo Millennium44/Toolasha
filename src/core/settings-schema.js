@@ -1097,6 +1097,27 @@ export const settingsGroups = {
         },
     },
 
+    guild: {
+        title: 'Guild',
+        icon: '👥',
+        settings: {
+            guildXPTracker: {
+                id: 'guildXPTracker',
+                label: 'Track guild and member XP over time',
+                type: 'checkbox',
+                default: true,
+                help: 'Records guild and member XP data from WebSocket messages for XP/hr calculations',
+            },
+            guildXPDisplay: {
+                id: 'guildXPDisplay',
+                label: 'Show XP/hr stats on Guild panel and Leaderboard',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays XP/hr rates, rankings, and a weekly chart on the Guild Overview, Members, and Guild Leaderboard tabs. Disable the standalone Guild XP/h userscript if using this.',
+            },
+        },
+    },
+
     house: {
         title: 'House',
         icon: '🏠',
