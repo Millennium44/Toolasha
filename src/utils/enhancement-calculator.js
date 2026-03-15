@@ -12,7 +12,7 @@ import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
 /**
  * Base success rates by enhancement level (before bonuses)
  */
-const BASE_SUCCESS_RATES = [
+export const BASE_SUCCESS_RATES = [
     50, // +1
     45, // +2
     45, // +3
@@ -98,6 +98,7 @@ export function calculatePerActionTime(enhancingLevel, itemLevel, speedBonus = 0
  * @param {number} params.speedBonus - Speed bonus % (for action time calculation)
  * @param {number} params.itemLevel - Item level being enhanced
  * @param {number} params.targetLevel - Target enhancement level (1-20)
+ * @param {number} params.startLevel - Starting enhancement level (0-19, default 0)
  * @param {number} params.protectFrom - Start using protection items at this level (0 = never)
  * @param {boolean} params.blessedTea - Whether Blessed Tea is active (1% double jump)
  * @param {number} params.guzzlingBonus - Drink concentration multiplier (1.0 = no bonus, scales blessed tea)
@@ -111,6 +112,7 @@ export function calculateEnhancement(params) {
         speedBonus = 0,
         itemLevel,
         targetLevel,
+        startLevel = 0,
         protectFrom = 0,
         blessedTea = false,
         guzzlingBonus = 1.0,
@@ -168,18 +170,18 @@ export function calculateEnhancement(params) {
     const I = math.identity(targetLevel);
     const M = math.inv(math.subtract(I, Q));
 
-    // Expected attempts from level 0 to target
-    // Sum all elements in first row of M up to targetLevel
+    // Expected attempts from startLevel to target
+    // Sum all elements in startLevel row of M from startLevel to targetLevel
     let attempts = 0;
-    for (let i = 0; i < targetLevel; i++) {
-        attempts += M.get([0, i]);
+    for (let i = startLevel; i < targetLevel; i++) {
+        attempts += M.get([startLevel, i]);
     }
 
     // Expected protection item uses
     let protects = 0;
     if (protectFrom > 0 && protectFrom < targetLevel) {
         for (let i = protectFrom; i < targetLevel; i++) {
-            const timesAtLevel = M.get([0, i]);
+            const timesAtLevel = M.get([startLevel, i]);
             const failureChance = markov.get([i, i - 1]);
             protects += timesAtLevel * failureChance;
         }
@@ -220,6 +222,6 @@ export function calculateEnhancement(params) {
         }),
 
         // Expected number of times each state is visited (from fundamental matrix M)
-        visitCounts: Array.from({ length: targetLevel }, (_, i) => M.get([0, i])),
+        visitCounts: Array.from({ length: targetLevel }, (_, i) => M.get([startLevel, i])),
     };
 }
