@@ -419,26 +419,52 @@ class ActionTimeDisplay {
             this.displayElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
 
-            // REMOVE CSS overrides for combat to restore normal HP/MP bar width
-            actionNameElement.style.removeProperty('overflow');
-            actionNameElement.style.removeProperty('text-overflow');
-            actionNameElement.style.removeProperty('white-space');
-            actionNameElement.style.removeProperty('max-width');
-            actionNameElement.style.removeProperty('width');
-            actionNameElement.style.removeProperty('min-width');
+            const combatDisplayMode = config.getSettingValue('totalActionTime', 'full');
 
-            // Remove from parent chain as well
-            let parent = actionNameElement.parentElement;
-            let levels = 0;
-            while (parent && levels < 5) {
-                parent.style.removeProperty('overflow');
-                parent.style.removeProperty('text-overflow');
-                parent.style.removeProperty('white-space');
-                parent.style.removeProperty('max-width');
-                parent.style.removeProperty('width');
-                parent.style.removeProperty('min-width');
-                parent = parent.parentElement;
-                levels++;
+            if (combatDisplayMode === 'full') {
+                // FULL MODE: Expand parent containers so HP/MP bars match skilling progress bar width
+                actionNameElement.style.removeProperty('overflow');
+                actionNameElement.style.removeProperty('text-overflow');
+                actionNameElement.style.removeProperty('white-space');
+                actionNameElement.style.removeProperty('max-width');
+                actionNameElement.style.removeProperty('width');
+                actionNameElement.style.removeProperty('min-width');
+
+                const parent1 = actionNameElement.parentElement;
+                const parent2 = parent1?.parentElement;
+
+                if (parent1) {
+                    parent1.style.setProperty('max-width', 'none', 'important');
+                    parent1.style.setProperty('width', 'auto', 'important');
+                    parent1.style.setProperty('overflow', 'visible', 'important');
+                }
+
+                if (parent2) {
+                    parent2.style.setProperty('max-width', 'none', 'important');
+                    parent2.style.setProperty('width', 'auto', 'important');
+                    parent2.style.setProperty('overflow', 'visible', 'important');
+                }
+            } else {
+                // COMPACT/MINIMAL: Remove all CSS overrides to restore game defaults
+                actionNameElement.style.removeProperty('overflow');
+                actionNameElement.style.removeProperty('text-overflow');
+                actionNameElement.style.removeProperty('white-space');
+                actionNameElement.style.removeProperty('max-width');
+                actionNameElement.style.removeProperty('width');
+                actionNameElement.style.removeProperty('min-width');
+
+                let parent = actionNameElement.parentElement;
+                let levels = 0;
+                while (parent && levels < 5) {
+                    parent.style.removeProperty('overflow');
+                    parent.style.removeProperty('text-overflow');
+                    parent.style.removeProperty('white-space');
+                    parent.style.removeProperty('max-width');
+                    parent.style.removeProperty('width');
+                    parent.style.removeProperty('min-width');
+                    parent = parent.parentElement;
+                    levels++;
+                }
             }
 
             this.reconnectActionNameObserver(actionNameElement);
