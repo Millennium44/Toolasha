@@ -8,7 +8,9 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { calculateEnhancement, calculatePerActionTime } from '../../utils/enhancement-calculator.js';
+import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import { getEnhancingSpeedBreakdown } from '../enhancement/enhancement-xp.js';
+import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -94,8 +96,6 @@ export async function displayEnhancementStats(panel, itemHrid) {
             return;
         }
 
-        const itemLevel = itemDetails.itemLevel || 1;
-
         // Get auto-detected enhancing parameters
         const params = getEnhancingParams();
 
@@ -109,8 +109,11 @@ export async function displayEnhancementStats(panel, itemHrid) {
         // Detect protection item once (avoid repeated DOM queries)
         const protectionItemHrid = getProtectionItemFromUI(panel);
 
-        // Calculate per-action time (simple calculation, no Markov chain needed)
-        const perActionTime = calculatePerActionTime(params.enhancingLevel, itemLevel, params.speedBonus);
+        // Calculate per-action time from game's buff maps (authoritative source)
+        const speedBreakdown = getEnhancingSpeedBreakdown(itemHrid);
+        const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
+        const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
+        const perActionTime = Math.max(MIN_ACTION_TIME_SECONDS, baseTime / (1 + speedBreakdown.total));
 
         // Format and inject display
         const html = formatEnhancementDisplay(
@@ -120,7 +123,8 @@ export async function displayEnhancementStats(panel, itemHrid) {
             itemDetails,
             effectiveProtectFrom,
             itemDetails.enhancementCosts || [],
-            protectionItemHrid
+            protectionItemHrid,
+            speedBreakdown
         );
         injectDisplay(panel, html);
     } catch (error) {
@@ -139,7 +143,7 @@ export async function displayEnhancementStats(panel, itemHrid) {
  * @param {string|null} protectionItemHrid - Protection item HRID (cached, avoid repeated DOM queries)
  * @returns {string} HTML string
  */
-function generateCostsByLevelTable(panel, params, itemDetails, protectFromLevel, enhancementCosts, protectionItemHrid) {
+function generateCostsByLevelTable(panel, params, itemDetails, protectFromLevel, enhancementCosts, protectionItemHrid, perActionTime) {
     const lines = [];
     const gameData = dataManager.getInitClientData();
     const itemLevel = itemDetails.itemLevel || 1;
@@ -230,9 +234,12 @@ function generateCostsByLevelTable(panel, params, itemDetails, protectFromLevel,
 
         const totalCost = materialCost + protectionCost;
 
+        // Override time with buff-map-based per-action time (authoritative source)
+        const totalTime = perActionTime * calc.attempts;
+
         // Calculate XP/hr for this target level
         let totalXP = 0;
-        if (calc.visitCounts && calc.totalTime > 0) {
+        if (calc.visitCounts && totalTime > 0) {
             for (let i = 0; i < level; i++) {
                 const visits = calc.visitCounts[i];
                 const successRate = calc.successRates[i].actualRate / 100;
@@ -242,13 +249,13 @@ function generateCostsByLevelTable(panel, params, itemDetails, protectFromLevel,
                 totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
             }
         }
-        const xpPerHour = calc.totalTime > 0 ? Math.round((totalXP / calc.totalTime) * 3600) : 0;
+        const xpPerHour = totalTime > 0 ? Math.round((totalXP / totalTime) * 3600) : 0;
 
         costData.push({
             level,
             attempts: calc.attempts, // Use exact decimal attempts
             protection: calc.protectionCount,
-            time: calc.totalTime,
+            time: totalTime,
             xpPerHour,
             cost: totalCost,
             breakdown: materialBreakdown,
@@ -456,7 +463,8 @@ function formatEnhancementDisplay(
     itemDetails,
     protectFromLevel,
     enhancementCosts,
-    protectionItemHrid
+    protectionItemHrid,
+    speedBreakdown
 ) {
     const lines = [];
 
@@ -553,47 +561,46 @@ function formatEnhancementDisplay(
         }
     }
 
-    // Calculate total speed (includes level advantage if applicable)
-    let totalSpeed = params.speedBonus;
-    let speedLevelAdvantage = 0;
-    if (params.enhancingLevel > itemDetails.itemLevel) {
-        speedLevelAdvantage = params.enhancingLevel - itemDetails.itemLevel;
-        totalSpeed += speedLevelAdvantage;
-    }
+    // Speed display from game's buff maps (authoritative source)
+    const totalSpeed = speedBreakdown.total * 100; // Convert decimal to percentage
 
     if (totalSpeed > 0) {
         lines.push(
             `<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}%</div>`
         );
 
-        // Show breakdown: equipment + house + community + tea + level advantage
-        if (params.equipmentSpeedBonus > 0) {
+        // Show breakdown from buff maps (each value is decimal, convert to %)
+        if (speedBreakdown.equipment > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${params.equipmentSpeedBonus.toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${(speedBreakdown.equipment * 100).toFixed(1)}%</div>`
             );
         }
-        if (params.houseSpeedBonus > 0) {
+        if (speedBreakdown.house > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${params.houseSpeedBonus.toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${(speedBreakdown.house * 100).toFixed(1)}%</div>`
             );
         }
-        if (params.communitySpeedBonus > 0) {
+        if (speedBreakdown.community > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community T${params.communityBuffLevel}:</span> +${params.communitySpeedBonus.toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community:</span> +${(speedBreakdown.community * 100).toFixed(1)}%</div>`
             );
         }
-        if (params.teaSpeedBonus > 0) {
-            const teaName = params.teas.ultraEnhancing ? 'Ultra' : params.teas.superEnhancing ? 'Super' : 'Enhancing';
+        if (speedBreakdown.consumable > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">${teaName} Tea:</span> +${params.teaSpeedBonus.toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Tea:</span> +${(speedBreakdown.consumable * 100).toFixed(1)}%</div>`
             );
         }
-        if (speedLevelAdvantage > 0) {
+        if (speedBreakdown.personal > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${speedLevelAdvantage.toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Labyrinth:</span> +${(speedBreakdown.personal * 100).toFixed(1)}%</div>`
             );
         }
-    } else if (totalSpeed === 0 && speedLevelAdvantage === 0) {
+        if (speedBreakdown.levelAdvantage > 0) {
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${(speedBreakdown.levelAdvantage * 100).toFixed(1)}%</div>`
+            );
+        }
+    } else {
         lines.push(`<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +0.0%</div>`);
     }
 
@@ -685,7 +692,8 @@ function formatEnhancementDisplay(
         itemDetails,
         protectFromLevel,
         enhancementCosts,
-        protectionItemHrid
+        protectionItemHrid,
+        perActionTime
     );
     lines.push(costsByLevelHTML);
 
@@ -762,13 +770,7 @@ function formatEnhancementDisplay(
 
     lines.push('• Attempts and time are statistical averages<br>');
 
-    // Calculate total speed for display (includes level advantage if applicable)
-    let displaySpeed = params.speedBonus;
-    if (params.enhancingLevel > itemDetails.itemLevel) {
-        displaySpeed += params.enhancingLevel - itemDetails.itemLevel;
-    }
-
-    lines.push(`• Action time: ${perActionTime.toFixed(2)}s (includes ${displaySpeed.toFixed(1)}% speed bonus)`);
+    lines.push(`• Action time: ${perActionTime.toFixed(2)}s (includes ${(speedBreakdown.total * 100).toFixed(1)}% speed bonus)`);
     lines.push('</div>');
 
     lines.push('</div>'); // Close targets section

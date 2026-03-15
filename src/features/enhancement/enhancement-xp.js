@@ -5,6 +5,8 @@
 
 import dataManager from '../../core/data-manager.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 
 /**
  * Get base item level from item HRID
@@ -154,6 +156,141 @@ export function calculateAdjustedAttemptCount(session) {
 }
 
 /**
+ * Calculate enhancing action time from the game's buff maps
+ * Reads the pre-computed action_speed flatBoost values from all buff sources
+ * and adds level advantage, matching the game's actual speed calculation
+ * @param {string} itemHrid - Item HRID being enhanced
+ * @returns {number} Per-action time in seconds
+ */
+function getEnhancingActionTime(itemHrid) {
+    try {
+        const charData = dataManager.characterData;
+        if (!charData) return 12;
+
+        // Get base time from game data
+        const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
+        const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
+
+        // Get enhancing skill level
+        const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
+        const baseLevel = enhancingSkill?.level || 1;
+
+        // Get tea level bonus from consumable buff map
+        let teaLevelBonus = 0;
+        const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+        if (Array.isArray(consumableBuffs)) {
+            for (const buff of consumableBuffs) {
+                if (buff.typeHrid === '/buff_types/enhancing_level') {
+                    teaLevelBonus = buff.flatBoost || 0;
+                }
+            }
+        }
+
+        // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
+        let totalSpeedBuff = 0;
+
+        const buffMaps = [
+            charData.equipmentActionTypeBuffsMap,
+            charData.houseActionTypeBuffsMap,
+            charData.communityActionTypeBuffsMap,
+            charData.consumableActionTypeBuffsMap,
+        ];
+
+        for (const buffMap of buffMaps) {
+            const enhancingBuffs = buffMap?.['/action_types/enhancing'];
+            if (!Array.isArray(enhancingBuffs)) continue;
+
+            for (const buff of enhancingBuffs) {
+                if (buff.typeHrid === '/buff_types/action_speed') {
+                    totalSpeedBuff += buff.flatBoost || 0;
+                }
+            }
+        }
+
+        // Add personal buffs (Labyrinth seals)
+        totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
+
+        // Add level advantage: (effectiveLevel - itemLevel) / 100
+        const effectiveLevel = baseLevel + teaLevelBonus;
+        const itemLevel = getBaseItemLevel(itemHrid);
+        if (effectiveLevel > itemLevel) {
+            totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
+        }
+
+        return Math.max(MIN_ACTION_TIME_SECONDS, baseTime / (1 + totalSpeedBuff));
+    } catch {
+        return 12;
+    }
+}
+
+/**
+ * Get enhancing speed breakdown from the game's buff maps
+ * Returns per-source speed values and total, matching the game's actual calculation
+ * @param {string} itemHrid - Item HRID being enhanced
+ * @returns {Object} Speed breakdown with total and per-source values (as percentages)
+ */
+export function getEnhancingSpeedBreakdown(itemHrid) {
+    try {
+        const charData = dataManager.characterData;
+        if (!charData) return { total: 0, equipment: 0, house: 0, community: 0, consumable: 0, personal: 0, levelAdvantage: 0 };
+
+        // Get enhancing skill level
+        const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
+        const baseLevel = enhancingSkill?.level || 1;
+
+        // Get tea level bonus from consumable buff map
+        let teaLevelBonus = 0;
+        const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+        if (Array.isArray(consumableBuffs)) {
+            for (const buff of consumableBuffs) {
+                if (buff.typeHrid === '/buff_types/enhancing_level') {
+                    teaLevelBonus = buff.flatBoost || 0;
+                }
+            }
+        }
+
+        // Read action_speed flatBoost from each buff source individually
+        const sources = {
+            equipment: charData.equipmentActionTypeBuffsMap,
+            house: charData.houseActionTypeBuffsMap,
+            community: charData.communityActionTypeBuffsMap,
+            consumable: charData.consumableActionTypeBuffsMap,
+        };
+
+        const breakdown = { equipment: 0, house: 0, community: 0, consumable: 0, personal: 0, levelAdvantage: 0 };
+
+        for (const [source, buffMap] of Object.entries(sources)) {
+            const enhancingBuffs = buffMap?.['/action_types/enhancing'];
+            if (!Array.isArray(enhancingBuffs)) continue;
+
+            for (const buff of enhancingBuffs) {
+                if (buff.typeHrid === '/buff_types/action_speed') {
+                    breakdown[source] += buff.flatBoost || 0;
+                }
+            }
+        }
+
+        // Personal buffs (Labyrinth seals)
+        breakdown.personal = dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
+
+        // Level advantage
+        const effectiveLevel = baseLevel + teaLevelBonus;
+        const itemLevel = getBaseItemLevel(itemHrid);
+        if (effectiveLevel > itemLevel) {
+            breakdown.levelAdvantage = (effectiveLevel - itemLevel) / 100;
+        }
+
+        // Total (as decimal, e.g. 1.56 for +156%)
+        breakdown.total = breakdown.equipment + breakdown.house + breakdown.community
+            + breakdown.consumable + breakdown.personal + breakdown.levelAdvantage;
+
+        return breakdown;
+    } catch {
+        return { total: 0, equipment: 0, house: 0, community: 0, consumable: 0, personal: 0, levelAdvantage: 0 };
+    }
+}
+
+/**
  * Calculate enhancement predictions using character stats
  * @param {string} itemHrid - Item HRID being enhanced
  * @param {number} startLevel - Starting enhancement level
@@ -163,116 +300,42 @@ export function calculateAdjustedAttemptCount(session) {
  */
 export function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
     try {
-        // Use dataManager for character data (NOT localStorage)
-        const charData = dataManager.characterData;
-        const gameData = dataManager.getInitClientData();
-
-        if (!charData || !gameData) {
-            return null;
-        }
-
         // Get item level
-        const itemData = gameData.itemDetailMap?.[itemHrid];
-        if (!itemData) {
-            return null;
-        }
-        const itemLevel = itemData.level || 0;
+        const itemLevel = getBaseItemLevel(itemHrid);
 
-        // Get enhancing skill level
-        const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
-        if (!enhancingSkill) {
-            console.error('[EnhancementXP] Skill not found: /skills/enhancing');
-        }
-        const enhancingLevel = enhancingSkill?.level || 1;
-
-        // Get house level (Observatory)
-        const houseRooms = charData.characterHouseRoomMap;
-        let houseLevel = 0;
-        if (houseRooms) {
-            for (const roomHrid in houseRooms) {
-                const room = houseRooms[roomHrid];
-                if (room.houseRoomHrid === '/house_rooms/observatory') {
-                    houseLevel = room.level || 0;
-                    break;
-                }
-            }
-        }
-
-        // Get equipment buffs for enhancing
-        let toolBonus = 0;
-        let speedBonus = 0;
-        const equipmentBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(equipmentBuffs)) {
-            equipmentBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/enhancing_success') {
-                    toolBonus += (buff.flatBoost || 0) * 100; // Convert to percentage
-                }
-                if (buff.typeHrid === '/buff_types/enhancing_speed') {
-                    speedBonus += (buff.flatBoost || 0) * 100; // Convert to percentage
-                }
-            });
-        }
-
-        // Add house buffs
-        const houseBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(houseBuffs)) {
-            houseBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/enhancing_success') {
-                    toolBonus += (buff.flatBoost || 0) * 100;
-                }
-                if (buff.typeHrid === '/buff_types/enhancing_speed') {
-                    speedBonus += (buff.flatBoost || 0) * 100;
-                }
-            });
-        }
-
-        // Add achievement buffs
-        toolBonus +=
-            dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100;
+        // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
+        const params = getEnhancingParams();
 
         // Check for blessed tea
-        let hasBlessed = false;
-        let guzzlingBonus = 1.0;
-        const enhancingTeas = charData.actionTypeDrinkSlotsMap?.['/action_types/enhancing'] || [];
-        const activeTeas = enhancingTeas.filter((tea) => tea?.isActive);
+        const hasBlessed = params.teas?.blessed || false;
 
-        activeTeas.forEach((tea) => {
-            if (tea.itemHrid === '/items/blessed_tea') {
-                hasBlessed = true;
-            }
-        });
-
-        // Get guzzling pouch bonus (drink concentration)
-        const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(consumableBuffs)) {
-            consumableBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/drink_concentration') {
-                    guzzlingBonus = 1.0 + (buff.flatBoost || 0);
-                }
-            });
-        }
-
-        // Calculate predictions
+        // Calculate predictions (Markov chain for attempts, protections, success rates)
         const result = calculateEnhancement({
-            enhancingLevel,
-            houseLevel,
-            toolBonus,
-            speedBonus,
+            enhancingLevel: params.enhancingLevel,
+            houseLevel: params.houseLevel,
+            toolBonus: params.toolBonus,
+            speedBonus: params.speedBonus,
             itemLevel,
             targetLevel,
+            startLevel,
             protectFrom,
             blessedTea: hasBlessed,
-            guzzlingBonus,
+            guzzlingBonus: params.guzzlingBonus,
         });
 
         if (!result) {
             return null;
         }
 
+        // Calculate per-action time from the game's buff maps (authoritative source)
+        // instead of the hardcoded formula in calculateEnhancement
+        const perActionTime = getEnhancingActionTime(itemHrid);
+
         return {
             expectedAttempts: Math.round(result.attemptsRounded),
             expectedProtections: Math.round(result.protectionCount),
-            expectedTime: result.totalTime,
+            expectedTime: perActionTime * result.attempts,
+            perActionTime,
             successMultiplier: result.successMultiplier,
         };
     } catch {
