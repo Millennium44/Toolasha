@@ -2,28 +2,24 @@
 
 ## [1.37.0](https://github.com/Celasha/Toolasha/compare/v1.36.4...v1.37.0) (2026-03-15)
 
-
 ### Features
 
-* add enhancing stats to action bar and fix calculator speed display ([7eb0e7a](https://github.com/Celasha/Toolasha/commit/7eb0e7abd157d55da365ade3dcf5a31ea53958cd))
-* add guild XP tracker with per-member XP/hr stats ([8d5630d](https://github.com/Celasha/Toolasha/commit/8d5630dc6ab16c94c1622df6fe63f470bbae52c6))
-
+- add enhancing stats to action bar and fix calculator speed display ([7eb0e7a](https://github.com/Celasha/Toolasha/commit/7eb0e7abd157d55da365ade3dcf5a31ea53958cd))
+- add guild XP tracker with per-member XP/hr stats ([8d5630d](https://github.com/Celasha/Toolasha/commit/8d5630dc6ab16c94c1622df6fe63f470bbae52c6))
 
 ### Bug Fixes
 
-* correct config access in pop-out chat time format ([330acc7](https://github.com/Celasha/Toolasha/commit/330acc7ea44ececb83257c971b3285b0bb23c761))
-* dim all inventory items when no task materials are needed ([23df45e](https://github.com/Celasha/Toolasha/commit/23df45e94657272d58b0834f1594553a6a305762))
-* replace full action object on action_completed websocket event ([eb5f918](https://github.com/Celasha/Toolasha/commit/eb5f9188ebeb4f7e310dd7b58ac87874157277c6))
-
+- correct config access in pop-out chat time format ([330acc7](https://github.com/Celasha/Toolasha/commit/330acc7ea44ececb83257c971b3285b0bb23c761))
+- dim all inventory items when no task materials are needed ([23df45e](https://github.com/Celasha/Toolasha/commit/23df45e94657272d58b0834f1594553a6a305762))
+- replace full action object on action_completed websocket event ([eb5f918](https://github.com/Celasha/Toolasha/commit/eb5f9188ebeb4f7e310dd7b58ac87874157277c6))
 
 ### Code Refactoring
 
-* export BASE_SUCCESS_RATES and add startLevel parameter ([fcef20c](https://github.com/Celasha/Toolasha/commit/fcef20ce0aaa4025ca28b84b1235cc30e9499fd0))
-
+- export BASE_SUCCESS_RATES and add startLevel parameter ([fcef20c](https://github.com/Celasha/Toolasha/commit/fcef20ce0aaa4025ca28b84b1235cc30e9499fd0))
 
 ### Styles
 
-* format files with prettier ([12eb818](https://github.com/Celasha/Toolasha/commit/12eb81801e330c54b458ec890f0cb90974c9a98d))
+- format files with prettier ([12eb818](https://github.com/Celasha/Toolasha/commit/12eb81801e330c54b458ec890f0cb90974c9a98d))
 
 ## [1.36.4](https://github.com/Celasha/Toolasha/compare/v1.36.3...v1.36.4) (2026-03-14)
 
