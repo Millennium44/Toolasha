@@ -837,7 +837,7 @@ class PopOutChat {
   function formatTime(isoString) {
     if (!isoString) return '';
     const d = new Date(isoString);
-    const use12Hour = config.getSettingValue('market_listingTimeFormat', '24hour') === '12hour';
+    const use12Hour = ${config.getSettingValue('market_listingTimeFormat', '24hour') === '12hour'};
     return d
         .toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: use12Hour })
         .trim();
