@@ -97,7 +97,9 @@ export function calculateIncomeBreakdown(lootMap) {
             isDungeonRun = true;
         }
 
-        const evData = expectedValueCalculator.calculateExpectedValue(loot.itemHrid);
+        const evData = expectedValueCalculator.isInitialized
+            ? expectedValueCalculator.calculateExpectedValue(loot.itemHrid)
+            : null;
         const evPerChest = evData?.expectedValue ?? 0;
         const totalValue = evPerChest * loot.count;
 

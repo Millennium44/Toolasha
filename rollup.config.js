@@ -66,6 +66,20 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
 ]);
 
+// Market modules imported cross-library (by combat, actions, ui)
+// Must be external so they reference the shared Market.* globals instead of bundling duplicates
+const marketExternalGlobals = new Map([
+    [
+        normalize(join(__dirname, 'src/features/market/expected-value-calculator.js')),
+        'Toolasha.Market.expectedValueCalculator',
+    ],
+    [normalize(join(__dirname, 'src/features/market/profit-calculator.js')), 'Toolasha.Market.profitCalculator'],
+    [
+        normalize(join(__dirname, 'src/features/market/alchemy-profit-calculator.js')),
+        'Toolasha.Market.alchemyProfitCalculator',
+    ],
+]);
+
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());
 const buildExternal = (globalsMap) => (id) => globalsMap.has(normalizeModuleId(id));
 
@@ -212,9 +226,14 @@ const prodConfig = [
         if (key === 'utils') {
             external = buildExternal(coreExternalGlobals);
             globals = sharedCoreGlobals;
-        } else if (key !== 'core') {
+        } else if (key === 'market') {
             external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
             globals = sharedFeatureGlobals;
+        } else if (key !== 'core') {
+            // actions, combat, ui — need core + utils + market externals
+            const allExternals = new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...marketExternalGlobals]);
+            external = buildExternal(allExternals);
+            globals = buildGlobals(allExternals);
         }
 
         return {

@@ -1054,7 +1054,9 @@ class CombatStatsUI {
      * @returns {string} HTML string
      */
     buildChestTooltipHTML(itemHrid) {
-        const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+        const evData = expectedValueCalculator.isInitialized
+            ? expectedValueCalculator.calculateExpectedValue(itemHrid)
+            : null;
         if (!evData) return null;
 
         const formatPrice = (val) => formatKMB(Math.round(val));
