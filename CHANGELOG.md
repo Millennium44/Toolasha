@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.2](https://github.com/Celasha/Toolasha/compare/v1.37.1...v1.37.2) (2026-03-15)
+
+
+### Bug Fixes
+
+* resolve EV calculator never initializing in production builds ([a15005f](https://github.com/Celasha/Toolasha/commit/a15005f68c72eca3d2daf88cf39cd136ba5b0835))
+
 ## [1.37.1](https://github.com/Celasha/Toolasha/compare/v1.37.0...v1.37.1) (2026-03-15)
 
 ### Bug Fixes
