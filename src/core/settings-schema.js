@@ -117,19 +117,19 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays how many items you can make based on current inventory',
             },
-            actionPanel_gatheringStats: {
-                id: 'actionPanel_gatheringStats',
-                label: 'Action panel: Show profit/exp per hour on gathering actions',
+            actionPanel_showProfitPerHour: {
+                id: 'actionPanel_showProfitPerHour',
+                label: 'Action panel: Show profit/hr displays',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays profit/hr and exp/hr on gathering tiles (foraging, woodcutting, milking)',
+                help: 'Displays profit/hr on gathering tiles and profitability sections in gathering, production, and alchemy panels',
             },
-            actionPanel_hideActionStats: {
-                id: 'actionPanel_hideActionStats',
-                label: 'Action panel: Hide all profit/efficiency displays',
+            actionPanel_showExpPerHour: {
+                id: 'actionPanel_showExpPerHour',
+                label: 'Action panel: Show exp/hr displays',
                 type: 'checkbox',
-                default: false,
-                help: 'Hides Profitability, Action Speed & Time, and Level Progress sections in gathering, production, and alchemy panels',
+                default: true,
+                help: 'Displays exp/hr on gathering tiles and in action panel sections',
             },
             actionPanel_hideNegativeProfit: {
                 id: 'actionPanel_hideNegativeProfit',
