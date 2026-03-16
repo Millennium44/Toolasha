@@ -66,6 +66,16 @@ class MarketplaceShortcuts {
         const itemHrid = this.findItemHrid(itemName);
         if (!itemHrid) return;
 
+        // Get enhancement level (e.g. "+3" → 3, absent → 0)
+        let enhancementLevel = 0;
+        const enhEl = actionMenu.querySelector('[class*="Item_enhancementLevel"]');
+        if (enhEl) {
+            const match = enhEl.textContent.match(/\+(\d+)/);
+            if (match) {
+                enhancementLevel = parseInt(match[1], 10);
+            }
+        }
+
         // Check tradeability
         const gameData = dataManager.getInitClientData();
         if (!gameData?.itemDetailMap) return;
@@ -78,7 +88,7 @@ class MarketplaceShortcuts {
         if (!viewMarketplaceBtn) return;
 
         // Build and insert dropdown
-        const dropdown = this.buildDropdown(actionMenu, itemHrid);
+        const dropdown = this.buildDropdown(actionMenu, itemHrid, enhancementLevel);
         viewMarketplaceBtn.insertAdjacentElement('afterend', dropdown);
     }
 
@@ -86,9 +96,10 @@ class MarketplaceShortcuts {
      * Build the dropdown UI
      * @param {HTMLElement} actionMenu - The action menu container
      * @param {string} itemHrid - Item HRID for marketplace navigation
+     * @param {number} enhancementLevel - Enhancement level (0 for base items)
      * @returns {HTMLElement} Dropdown wrapper element
      */
-    buildDropdown(actionMenu, itemHrid) {
+    buildDropdown(actionMenu, itemHrid, enhancementLevel = 0) {
         const wrapper = document.createElement('div');
         wrapper.classList.add('mwi-marketplace-dropdown');
         wrapper.style.cssText = 'position: relative; width: 100%;';
@@ -161,7 +172,7 @@ class MarketplaceShortcuts {
                 e.stopPropagation();
                 e.preventDefault();
                 closePanel();
-                this.executeAction(action.type, itemHrid);
+                this.executeAction(action.type, itemHrid, enhancementLevel);
             });
             panel.appendChild(btn);
         }
@@ -198,8 +209,9 @@ class MarketplaceShortcuts {
      * Execute a marketplace action
      * @param {string} actionType - 'sell', 'buy', 'sell-listing', 'buy-listing'
      * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level (0 for base items)
      */
-    async executeAction(actionType, itemHrid) {
+    async executeAction(actionType, itemHrid, enhancementLevel = 0) {
         // Read quantity from item submenu input before navigating away
         const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input[type="number"]');
         if (amountInput) {
@@ -210,7 +222,7 @@ class MarketplaceShortcuts {
         }
 
         // Navigate to marketplace for this item
-        navigateToMarketplace(itemHrid, 0);
+        navigateToMarketplace(itemHrid, enhancementLevel);
 
         // Wait for the marketplace panel to render
         await new Promise((r) => setTimeout(r, 300));
