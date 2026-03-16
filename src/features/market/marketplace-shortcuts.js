@@ -5,9 +5,11 @@
  */
 
 import domObserver from '../../core/dom-observer.js';
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { setReactInputValue } from '../../utils/react-input.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -23,6 +25,7 @@ class MarketplaceShortcuts {
         this.itemNameToHridCache = null;
         this.closeHandler = null;
         this.pendingQuantity = null;
+        this.addMode = false;
     }
 
     /**
@@ -41,9 +44,10 @@ class MarketplaceShortcuts {
         });
         this.unregisterHandlers.push(unregister);
 
-        // Watch for marketplace modals to autofill quantity
+        // Watch for marketplace modals to autofill quantity and inject quick input buttons
         const unregisterModal = domObserver.onClass('MarketplaceShortcuts_modal', 'Modal_modalContainer', (modal) => {
             this.autofillQuantity(modal);
+            this.injectQuickInputButtons(modal);
         });
         this.unregisterHandlers.push(unregisterModal);
     }
@@ -355,6 +359,122 @@ class MarketplaceShortcuts {
     }
 
     /**
+     * Inject quick input buttons (10, 100, 1000, + toggle) into a marketplace modal.
+     * @param {HTMLElement} modal - Modal container element
+     */
+    injectQuickInputButtons(modal) {
+        // Check setting
+        if (!config.getSetting('market_quickInputButtons')) return;
+
+        // Check if this is a marketplace modal
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
+        if (!header) return;
+
+        const headerText = header.textContent.trim();
+        const isMarketplaceModal =
+            headerText.includes('Buy Now') ||
+            headerText.includes('Buy Listing') ||
+            headerText.includes('Sell Now') ||
+            headerText.includes('Sell Listing');
+        if (!isMarketplaceModal) return;
+
+        // Delay to let the modal fully render
+        setTimeout(() => {
+            // Skip if already injected
+            if (modal.querySelector('.mwi-mp-quick-input')) return;
+
+            const quantityInput = this.findQuantityInput(modal);
+            if (!quantityInput) return;
+
+            // Create button row
+            const row = document.createElement('div');
+            row.className = 'mwi-mp-quick-input';
+            row.style.cssText =
+                'display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 2px;';
+
+            // + toggle button
+            const addToggle = document.createElement('button');
+            addToggle.textContent = '+';
+            addToggle.title = 'Toggle add mode: click to accumulate counts instead of setting them';
+            addToggle.style.cssText = `
+                font-size: 11px;
+                font-weight: 700;
+                padding: 1px 5px;
+                border-radius: 4px;
+                border: 1px solid rgba(215, 183, 255, 0.3);
+                background: transparent;
+                color: rgba(215, 183, 255, 0.5);
+                cursor: pointer;
+                margin-right: 4px;
+                line-height: 1.4;
+                transition: background 0.15s, color 0.15s, border-color 0.15s;
+            `;
+
+            const applyToggleStyle = (active) => {
+                if (active) {
+                    addToggle.style.background = 'rgba(215, 183, 255, 0.2)';
+                    addToggle.style.color = '#d7b7ff';
+                    addToggle.style.borderColor = '#d7b7ff';
+                } else {
+                    addToggle.style.background = 'transparent';
+                    addToggle.style.color = 'rgba(215, 183, 255, 0.5)';
+                    addToggle.style.borderColor = 'rgba(215, 183, 255, 0.3)';
+                }
+            };
+
+            applyToggleStyle(this.addMode);
+            addToggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.addMode = !this.addMode;
+                applyToggleStyle(this.addMode);
+            });
+            row.appendChild(addToggle);
+
+            // Preset count buttons
+            const presetValues = [10, 100, 1000];
+            for (const value of presetValues) {
+                const btn = document.createElement('button');
+                btn.textContent = value.toLocaleString();
+                btn.className = 'mwi-quick-input-btn';
+                btn.style.cssText = `
+                    background-color: white;
+                    color: black;
+                    padding: 1px 6px;
+                    margin: 1px;
+                    border: 1px solid #ccc;
+                    border-radius: 3px;
+                    cursor: pointer;
+                    font-size: 0.9em;
+                `;
+                btn.addEventListener('mouseenter', () => {
+                    btn.style.backgroundColor = '#f0f0f0';
+                });
+                btn.addEventListener('mouseleave', () => {
+                    btn.style.backgroundColor = 'white';
+                });
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (this.addMode) {
+                        const current = parseInt(quantityInput.value) || 0;
+                        setReactInputValue(quantityInput, current + value, { focus: true });
+                    } else {
+                        setReactInputValue(quantityInput, value, { focus: true });
+                    }
+                });
+                row.appendChild(btn);
+            }
+
+            // Insert below the quantity input row (1 / input / Max)
+            const inputRow = quantityInput.closest('div')?.parentElement?.parentElement;
+            if (inputRow) {
+                inputRow.insertAdjacentElement('afterend', row);
+            }
+        }, 150);
+    }
+
+    /**
      * Find the quantity input in a marketplace modal.
      * Equipment items have multiple number inputs (enhancement level + quantity),
      * so we identify the correct one by checking parent containers.
@@ -437,6 +557,7 @@ class MarketplaceShortcuts {
         this.timerRegistry.clearAll();
 
         document.querySelectorAll('.mwi-marketplace-dropdown').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-mp-quick-input').forEach((el) => el.remove());
 
         this.itemNameToHridCache = null;
         this.isInitialized = false;

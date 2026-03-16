@@ -932,6 +932,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Automatically clicks the Max button in the quantity field when opening Sell listing dialogs',
             },
+            market_quickInputButtons: {
+                id: 'market_quickInputButtons',
+                label: 'Marketplace: Quick input buttons on order dialogs',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds 10, 100, 1000 preset quantity buttons to buy/sell dialogs',
+            },
             market_visibleItemCount: {
                 id: 'market_visibleItemCount',
                 label: 'Market: Show inventory count on items',
