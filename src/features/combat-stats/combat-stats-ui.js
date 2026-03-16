@@ -134,6 +134,7 @@ class CombatStatsUI {
     shareStatsToChat(stats) {
         // Get chat message format from config (use getSettingValue for template type)
         const messageTemplate = config.getSettingValue('combatStatsChatMessage');
+        const priceKey = config.getSettingValue('combatStats_keyPricing') || 'ask';
 
         // Convert array format to string if needed
         let message = '';
@@ -149,13 +150,13 @@ class CombatStatsUI {
                         // Replace variable with actual value
                         switch (item.key) {
                             case '{income}':
-                                return formatNum(stats.income.bid);
+                                return formatNum(stats.income[priceKey]);
                             case '{dailyIncome}':
-                                return formatNum(stats.dailyIncome.bid);
+                                return formatNum(stats.dailyIncome[priceKey]);
                             case '{dailyConsumableCosts}':
                                 return formatNum(stats.dailyConsumableCosts);
                             case '{dailyProfit}':
-                                return formatNum(stats.dailyProfit.bid);
+                                return formatNum(stats.dailyProfit[priceKey]);
                             case '{exp}':
                                 return formatNum(stats.expPerHour);
                             case '{deathCount}':
@@ -179,9 +180,9 @@ class CombatStatsUI {
             const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
 
             message = (messageTemplate || 'Combat Stats: {income} income | {dailyProfit} profit/d | {exp} exp/h')
-                .replace('{income}', formatNum(stats.income.bid))
-                .replace('{dailyIncome}', formatNum(stats.dailyIncome.bid))
-                .replace('{dailyProfit}', formatNum(stats.dailyProfit.bid))
+                .replace('{income}', formatNum(stats.income[priceKey]))
+                .replace('{dailyIncome}', formatNum(stats.dailyIncome[priceKey]))
+                .replace('{dailyProfit}', formatNum(stats.dailyProfit[priceKey]))
                 .replace('{dailyConsumableCosts}', formatNum(stats.dailyConsumableCosts))
                 .replace('{exp}', formatNum(stats.expPerHour))
                 .replace('{deathCount}', stats.deathCount.toString());
@@ -342,7 +343,7 @@ class CombatStatsUI {
         `;
 
         const resetButton = document.createElement('button');
-        resetButton.textContent = 'Reset Tracking';
+        resetButton.textContent = 'Reset Consumable Tracking';
         resetButton.style.cssText = `
             background: #4a4a4a;
             border: 1px solid #5a5a5a;
@@ -361,9 +362,27 @@ class CombatStatsUI {
         resetButton.onclick = async () => {
             if (confirm('Reset consumable tracking? This will clear all tracked consumption data and start fresh.')) {
                 await combatStatsDataCollector.resetConsumableTracking();
-                this.closePopup();
-                // Reopen popup to show fresh data
-                setTimeout(() => this.showPopup(), 100);
+
+                // Clear stale consumable data from the in-memory snapshot so the
+                // reopened popup reflects the reset immediately (before the next
+                // new_battle WS message recalculates everything).
+                const cached = combatStatsDataCollector.getLatestData();
+                if (cached?.players) {
+                    for (const player of cached.players) {
+                        if (player.consumables) {
+                            for (const c of player.consumables) {
+                                c.actualConsumed = 0;
+                                c.consumed = 0;
+                                c.consumedPerDay = 0;
+                                c.consumptionRate = 0;
+                                c.elapsedSeconds = 0;
+                            }
+                        }
+                    }
+                }
+
+                // Rebuild popup in-place with fresh data
+                await this.showPopup();
             }
         };
 
@@ -509,17 +528,19 @@ class CombatStatsUI {
                 ? coinFormatter(Math.round(num))
                 : new Intl.NumberFormat('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(num);
 
+        const priceKey = config.getSettingValue('combatStats_keyPricing') || 'ask';
+
         const statsRows = [
             { label: 'Duration', value: stats.durationFormatted || '0s' },
             { label: 'Encounters/Hour', value: formatNum(stats.encountersPerHour) },
             {
                 label: 'Income',
-                value: formatNum(stats.income.bid),
+                value: formatNum(stats.income[priceKey]),
                 ...(stats.isDungeonRun && stats.incomeBreakdown?.length > 0
                     ? { expandable: true, incomeBreakdown: stats.incomeBreakdown }
                     : {}),
             },
-            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome.bid)}/d` },
+            { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d` },
             {
                 label: 'Consumable Costs',
                 value: formatNumDecimals(stats.consumableCosts),
@@ -539,7 +560,7 @@ class CombatStatsUI {
                 ? [
                       {
                           label: 'Key Costs',
-                          value: formatNum(stats.keyCosts.bid),
+                          value: formatNum(stats.keyCosts[priceKey]),
                           color: '#ff6b6b',
                           expandable: true,
                           breakdown: stats.keyBreakdown,
@@ -560,8 +581,8 @@ class CombatStatsUI {
                 : []),
             {
                 label: 'Daily Profit',
-                value: `${formatNum(stats.dailyProfit.bid)}/d`,
-                color: stats.dailyProfit.bid >= 0 ? '#51cf66' : '#ff6b6b',
+                value: `${formatNum(stats.dailyProfit[priceKey])}/d`,
+                color: stats.dailyProfit[priceKey] >= 0 ? '#51cf66' : '#ff6b6b',
             },
             { label: 'Total EXP', value: formatNum(stats.totalExp) },
             { label: 'EXP/hour', value: `${formatNum(stats.expPerHour)}/h` },

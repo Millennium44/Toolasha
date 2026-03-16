@@ -670,11 +670,11 @@ export const settingsGroups = {
             },
             combatStats_keyPricing: {
                 id: 'combatStats_keyPricing',
-                label: 'Combat Statistics: Key cost pricing',
+                label: 'Combat Statistics: Pricing mode',
                 type: 'select',
                 default: 'ask',
                 options: ['ask', 'bid'],
-                help: 'Whether to use ask (instant buy) or bid (patient buy) prices for key costs. Use bid if you craft your own keys.',
+                help: 'Whether to use ask (instant buy) or bid (patient buy) prices for income, key costs, and profit calculations.',
             },
             combatStatsChatMessage: {
                 id: 'combatStatsChatMessage',

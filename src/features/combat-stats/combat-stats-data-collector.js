@@ -270,9 +270,10 @@ class CombatStatsDataCollector {
         this.partyConsumableTrackers = {};
         this.partyConsumableSnapshots = {};
         this.partyLastKnownConsumables = {};
-        await storage.setJSON('consumableTracker', null, 'combatStats');
-        await storage.setJSON('partyConsumableTrackers', null, 'combatStats');
-        await storage.setJSON('partyConsumableSnapshots', null, 'combatStats');
+        // Fire-and-forget: don't await debounced writes so callers aren't blocked
+        storage.setJSON('consumableTracker', null, 'combatStats');
+        storage.setJSON('partyConsumableTrackers', null, 'combatStats');
+        storage.setJSON('partyConsumableSnapshots', null, 'combatStats');
     }
 
     /**
