@@ -131,7 +131,6 @@ class InventorySort {
             clearTimeout(this.priceUpdateDebounceTimer);
             this.priceUpdateDebounceTimer = setTimeout(() => {
                 if (this.currentInventoryElem && this.isInitialized) {
-                    console.log('[InventorySort] Market prices updated, refreshing badges');
                     this.applyCurrentSort();
                 }
             }, 500); // 500ms debounce for price updates

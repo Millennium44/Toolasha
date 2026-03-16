@@ -74,7 +74,6 @@ class NetworthFeature {
             clearTimeout(this.priceUpdateDebounceTimer);
             this.priceUpdateDebounceTimer = setTimeout(() => {
                 if (this.isActive && connectionState.isConnected()) {
-                    console.log('[Networth] Market prices updated, recalculating');
                     this.recalculate();
                 }
             }, 1000); // 1 second debounce for price updates
