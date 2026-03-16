@@ -7,9 +7,11 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
+import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, numberFormatter } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 class LootLogStats {
     constructor() {
@@ -18,6 +20,7 @@ class LootLogStats {
         this.timerRegistry = createTimerRegistry();
         this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
+        this.itemsSpriteUrl = null;
     }
 
     /**
@@ -178,6 +181,17 @@ class LootLogStats {
                 continue;
             }
 
+            // Check for openable containers (caches, chests) — use expected value
+            const itemDetails = dataManager.getItemDetails(baseHrid);
+            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+                const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
+                if (evData && evData.expectedValue > 0) {
+                    askTotal += evData.expectedValue * count;
+                    bidTotal += evData.expectedValue * count;
+                    continue;
+                }
+            }
+
             // Get market prices
             const prices = getItemPrices(baseHrid, 0);
             if (!prices) continue;
@@ -246,12 +260,12 @@ class LootLogStats {
     }
 
     /**
-     * Inject total value into second div
+     * Inject expandable total value into second div
      * @param {HTMLElement} secondDiv - Second div element
      * @param {Object} logData - Log data object
      */
     injectTotalValue(secondDiv, logData) {
-        // Remove existing value span
+        // Remove existing value element
         const oldValue = secondDiv.querySelector('.mwi-loot-log-value');
         if (oldValue) oldValue.remove();
 
@@ -260,22 +274,202 @@ class LootLogStats {
         // Calculate total value
         const { askTotal, bidTotal } = this.calculateTotalValue(logData.drops);
 
-        // Create value span
-        const valueSpan = document.createElement('span');
-        valueSpan.className = 'mwi-loot-log-value';
+        // Create wrapper div
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mwi-loot-log-value';
+        wrapper.style.cssText = 'float: right; margin-left: 8px;';
+
+        // Create header (clickable total value line)
+        const header = document.createElement('span');
+        header.style.cssText = `color: ${config.COLOR_GOLD}; font-weight: bold;`;
 
         if (askTotal === 0 && bidTotal === 0) {
-            valueSpan.textContent = 'Total Value: —';
-        } else {
-            valueSpan.textContent = `Total Value: ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`;
+            header.textContent = 'Total Value: —';
+            wrapper.appendChild(header);
+            secondDiv.appendChild(wrapper);
+            return;
         }
 
-        valueSpan.style.float = 'right';
-        valueSpan.style.color = config.COLOR_GOLD;
-        valueSpan.style.fontWeight = 'bold';
-        valueSpan.style.marginLeft = '8px';
+        header.textContent = `▶ Total Value: ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`;
+        header.style.cursor = 'pointer';
+        wrapper.appendChild(header);
 
-        secondDiv.appendChild(valueSpan);
+        // Create details container (hidden by default)
+        const details = this.buildItemBreakdown(logData.drops);
+        details.style.display = 'none';
+        wrapper.appendChild(details);
+
+        // Toggle on click
+        header.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = details.style.display !== 'none';
+            details.style.display = isOpen ? 'none' : 'block';
+            const text = header.textContent;
+            header.textContent = isOpen ? text.replace('▼', '▶') : text.replace('▶', '▼');
+        });
+
+        secondDiv.appendChild(wrapper);
+    }
+
+    /**
+     * Build item breakdown table for the expandable details
+     * @param {Object} drops - Drops object { [itemHrid]: count, ... }
+     * @returns {HTMLElement} Details container element
+     */
+    buildItemBreakdown(drops) {
+        const container = document.createElement('div');
+        container.style.cssText = `
+            clear: both;
+            margin-top: 4px;
+            padding: 4px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-weight: normal;
+            font-size: 0.9em;
+        `;
+
+        // Build item rows with calculated values
+        const items = [];
+        for (const [hrid, count] of Object.entries(drops)) {
+            const baseHrid = hrid.replace(/::\d+$/, '');
+
+            let name;
+            let askPerItem = 0;
+            let bidPerItem = 0;
+
+            if (baseHrid === '/items/coin') {
+                name = 'Coins';
+                askPerItem = 1;
+                bidPerItem = 1;
+            } else {
+                const itemDetails = dataManager.getItemDetails(baseHrid);
+                name = itemDetails?.name || baseHrid.split('/').pop().replace(/_/g, ' ');
+
+                // Check for openable containers — use expected value
+                if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+                    const evData = expectedValueCalculator.calculateExpectedValue(baseHrid);
+                    if (evData && evData.expectedValue > 0) {
+                        askPerItem = evData.expectedValue;
+                        bidPerItem = evData.expectedValue;
+                    }
+                }
+
+                // Fall back to market prices
+                if (askPerItem === 0 && bidPerItem === 0) {
+                    const prices = getItemPrices(baseHrid, 0);
+                    if (prices) {
+                        askPerItem = prices.ask || 0;
+                        bidPerItem = prices.bid || 0;
+                    }
+                }
+            }
+
+            items.push({
+                hrid: baseHrid,
+                name,
+                count,
+                askPerItem,
+                bidPerItem,
+                askTotal: askPerItem * count,
+                bidTotal: bidPerItem * count,
+            });
+        }
+
+        // Sort by ask total descending
+        items.sort((a, b) => b.askTotal - a.askTotal);
+
+        // Build rows
+        for (const item of items) {
+            const row = document.createElement('div');
+            row.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 2px 0;
+                white-space: nowrap;
+            `;
+
+            // Item icon
+            const icon = this.createItemIcon(item.hrid, 16);
+            if (icon) {
+                row.appendChild(icon);
+            }
+
+            // Item name
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = item.name;
+            nameSpan.style.cssText = `
+                color: #fff;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                flex-shrink: 1;
+            `;
+            row.appendChild(nameSpan);
+
+            // Quantity
+            const qtySpan = document.createElement('span');
+            qtySpan.textContent = `×${numberFormatter(item.count)}`;
+            qtySpan.style.cssText = `color: #aaa; flex-shrink: 0;`;
+            row.appendChild(qtySpan);
+
+            // Spacer
+            const spacer = document.createElement('span');
+            spacer.style.cssText = 'flex: 1;';
+            row.appendChild(spacer);
+
+            // Stack total ask/bid
+            const totalSpan = document.createElement('span');
+            totalSpan.style.cssText = `color: ${config.COLOR_GOLD}; flex-shrink: 0; text-align: right;`;
+
+            if (item.askTotal > 0 || item.bidTotal > 0) {
+                totalSpan.textContent = `${formatKMB(item.askTotal)}/${formatKMB(item.bidTotal)}`;
+            } else {
+                totalSpan.textContent = '—';
+            }
+            row.appendChild(totalSpan);
+
+            container.appendChild(row);
+        }
+
+        return container;
+    }
+
+    /**
+     * Create an SVG item icon element
+     * @param {string} itemHrid - Item HRID
+     * @param {number} size - Icon size in pixels
+     * @returns {SVGElement|null} SVG element or null if sprite URL unavailable
+     */
+    createItemIcon(itemHrid, size) {
+        const spriteUrl = this.getItemsSpriteUrl();
+        if (!spriteUrl) return null;
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', String(size));
+        svg.setAttribute('height', String(size));
+        svg.style.flexShrink = '0';
+
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        const iconName = itemHrid.split('/').pop();
+        use.setAttribute('href', `${spriteUrl}#${iconName}`);
+        svg.appendChild(use);
+
+        return svg;
+    }
+
+    /**
+     * Get the items sprite URL (cached after first lookup)
+     * @returns {string|null} Sprite URL or null
+     */
+    getItemsSpriteUrl() {
+        if (!this.itemsSpriteUrl) {
+            const el = document.querySelector('use[href*="items_sprite"]');
+            if (el) {
+                const href = el.getAttribute('href');
+                this.itemsSpriteUrl = href ? href.split('#')[0] : null;
+            }
+        }
+        return this.itemsSpriteUrl;
     }
 
     /**
@@ -357,6 +551,7 @@ class LootLogStats {
         // Reset state
         this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
+        this.itemsSpriteUrl = null;
         this.initialized = false;
     }
 }
