@@ -7,6 +7,7 @@
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -147,11 +148,16 @@ function buildChart(chart) {
 
     // Build legend
     let legendHTML = '';
-    for (const d of hLegend) {
+    for (let i = 0; i < hLegend.length; i++) {
+        const d = hLegend[i];
         const leftPct = ((d.t - minT) / tDSum) * 100;
+        // Clamp first label left-aligned, last label right-aligned, middle labels centered
+        let labelTransform = 'translate(-50%, 0)';
+        if (i === 0 && leftPct < 10) labelTransform = 'translate(0, 0)';
+        else if (i === hLegend.length - 1 && leftPct > 90) labelTransform = 'translate(-100%, 0)';
         legendHTML += `<div style="position: absolute; top: 0; left: ${leftPct}%; flex-direction: column;">
             <div style="width: 1px; height: 8px; background-color: var(--color-space-300);"></div>
-            <div style="font-size: 10px; width: 80px; transform: translate(-50%, 0);">${new Date(d.t).toLocaleString()}</div>
+            <div style="font-size: 10px; white-space: nowrap; transform: ${labelTransform};">${new Date(d.t).toLocaleString()}</div>
         </div>`;
     }
 
@@ -161,10 +167,11 @@ function buildChart(chart) {
             grid-template-columns: auto auto 1fr;
             grid-template-rows: 1fr auto;
             width: calc(100% - 56px);
-            height: calc(100% - 70px);
+            height: calc(100% - 56px);
             margin-top: 28px;
             margin-left: 28px;
             gap: 2px;
+            overflow: hidden;
         ">
             <div style="display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
                 <div style="font-size: 10px; transform: translate(0, -50%);">${fNum(maxXPH)}</div>
@@ -181,7 +188,7 @@ function buildChart(chart) {
             </div>
             <div></div>
             <div></div>
-            <div style="flex: 0 0; position: relative; height: 28px;">
+            <div style="flex: 0 0; position: relative; height: 24px; overflow: visible;">
                 ${legendHTML}
             </div>
         </div>`;
@@ -599,6 +606,87 @@ class GuildXPDisplay {
                     return stat?.xp || 0;
                 },
             });
+        }
+
+        // Role column
+        const rolePriority = { Leader: 1, General: 2, Officer: 3, Member: 4 };
+        const roleHeader = Array.from(theadTr.children).find((el) => el.textContent.trim() === 'Role');
+        if (roleHeader && !roleHeader.querySelector(`.${CSS_PREFIX}__sort-icon`)) {
+            const roleColIndex = Array.from(theadTr.children).indexOf(roleHeader);
+            makeColumnSortable(roleHeader, {
+                sortId: 'role',
+                valueGetter: (trEl) => {
+                    const text = trEl.children[roleColIndex]?.textContent?.trim() || '';
+                    return rolePriority[text] ?? 99;
+                },
+            });
+        }
+
+        // Activity column
+        const activityHeader = Array.from(theadTr.children).find((el) => el.textContent.trim() === 'Activity');
+        if (activityHeader && !activityHeader.querySelector(`.${CSS_PREFIX}__sort-icon`)) {
+            const activityColIndex = Array.from(theadTr.children).indexOf(activityHeader);
+            makeColumnSortable(activityHeader, {
+                sortId: 'activity',
+                valueGetter: (trEl) => {
+                    const cell = trEl.children[activityColIndex];
+                    if (!cell) return Infinity;
+                    const text = cell.textContent?.trim() || '';
+                    // Parse "Xd ago" format
+                    const daysMatch = text.match(/(\d+)d\s*ago/);
+                    if (daysMatch) return parseInt(daysMatch[1], 10) * 1440;
+                    // Active players with icons — group by icon src
+                    const img = cell.querySelector('img');
+                    if (img) return img.src || img.alt || '';
+                    // Fallback
+                    return text || Infinity;
+                },
+            });
+        }
+
+        // Status column
+        const statusHeader = Array.from(theadTr.children).find((el) => el.textContent.trim() === 'Status');
+        if (statusHeader && !statusHeader.querySelector(`.${CSS_PREFIX}__sort-icon`)) {
+            const statusColIndex = Array.from(theadTr.children).indexOf(statusHeader);
+            makeColumnSortable(statusHeader, {
+                sortId: 'status',
+                valueGetter: (trEl) => {
+                    const text = trEl.children[statusColIndex]?.textContent?.trim() || '';
+                    return text === 'Online' ? 0 : 1;
+                },
+            });
+        }
+
+        // Highlight self-player row
+        const selfName = dataManager.getCurrentCharacterName();
+        if (selfName) {
+            for (const row of rows) {
+                if (row.children[0]?.textContent?.trim() === selfName) {
+                    row.style.backgroundColor = 'rgba(74, 222, 128, 0.1)';
+                    break;
+                }
+            }
+        }
+
+        // Highlight inactive players (orange for days inactive, red for 10d+)
+        if (activityHeader) {
+            const actColIndex = Array.from(theadTr.children).indexOf(activityHeader);
+            for (const row of rows) {
+                // Skip self-player row
+                if (selfName && row.children[0]?.textContent?.trim() === selfName) continue;
+                const cell = row.children[actColIndex];
+                if (!cell) continue;
+                const text = cell.textContent?.trim() || '';
+                const daysMatch = text.match(/(\d+)d\s*ago/);
+                if (daysMatch) {
+                    const days = parseInt(daysMatch[1], 10);
+                    if (days >= 10) {
+                        row.style.backgroundColor = 'rgba(239, 68, 68, 0.15)';
+                    } else {
+                        row.style.backgroundColor = 'rgba(251, 146, 60, 0.12)';
+                    }
+                }
+            }
         }
     }
 
