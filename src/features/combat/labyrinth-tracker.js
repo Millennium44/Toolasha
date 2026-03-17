@@ -8,8 +8,17 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 
-const STORAGE_KEY = 'monsterBestLevels';
+const STORAGE_KEY_PREFIX = 'monsterBestLevels';
 const STORE_NAME = 'labyrinth';
+/**
+ * Get character-scoped storage key for labyrinth best levels.
+ * @returns {string}
+ */
+function getStorageKey() {
+    const charId = dataManager.getCurrentCharacterId() || 'default';
+    return `${STORAGE_KEY_PREFIX}_${charId}`;
+}
+
 const COMBAT_ROOM_TYPE = '/labyrinth_room_types/combat';
 const SKILLING_ROOM_TYPE = '/labyrinth_room_types/skilling';
 
@@ -94,8 +103,11 @@ class LabyrinthTracker {
                 const wasTrackable =
                     (prev.roomType === COMBAT_ROOM_TYPE || prev.roomType === SKILLING_ROOM_TYPE) && !prev.isCleared;
                 const isNowCleared = curr.isCleared === true;
+                // Shrouded rooms go straight to cleared without entryCount;
+                // naturally cleared rooms always had entryCount set first
+                const wasEntered = prev.entryCount > 0;
 
-                if (wasTrackable && isNowCleared) {
+                if (wasTrackable && isNowCleared && wasEntered) {
                     this.recordClear(prev);
                 }
             }
@@ -145,7 +157,7 @@ class LabyrinthTracker {
      */
     async loadData() {
         try {
-            const data = await storage.getJSON(STORAGE_KEY, STORE_NAME, {});
+            const data = await storage.getJSON(getStorageKey(), STORE_NAME, {});
             this.monsterBestLevels = data || {};
         } catch (error) {
             console.error('[LabyrinthTracker] Failed to load data:', error);
@@ -158,7 +170,7 @@ class LabyrinthTracker {
      */
     async saveData() {
         try {
-            await storage.setJSON(STORAGE_KEY, this.monsterBestLevels, STORE_NAME, true);
+            await storage.setJSON(getStorageKey(), this.monsterBestLevels, STORE_NAME, true);
         } catch (error) {
             console.error('[LabyrinthTracker] Failed to save data:', error);
         }
