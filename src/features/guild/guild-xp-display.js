@@ -635,9 +635,12 @@ class GuildXPDisplay {
                     // Parse "Xd ago" format
                     const daysMatch = text.match(/(\d+)d\s*ago/);
                     if (daysMatch) return parseInt(daysMatch[1], 10) * 1440;
-                    // Active players with icons — group by icon src
-                    const img = cell.querySelector('img');
-                    if (img) return img.src || img.alt || '';
+                    // Active players with SVG activity icons — group by href fragment
+                    const useEl = cell.querySelector('use');
+                    if (useEl) {
+                        const href = useEl.getAttribute('href') || useEl.getAttribute('xlink:href') || '';
+                        return href;
+                    }
                     // Fallback
                     return text || Infinity;
                 },
