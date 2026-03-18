@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.42.2](https://github.com/Celasha/Toolasha/compare/v1.42.1...v1.42.2) (2026-03-18)
+
+### Bug Fixes
+
+- correct Guzzling Pouch lookup and increase decimal precision in breakdowns ([40ae49f](https://github.com/Celasha/Toolasha/commit/40ae49f36c94c014fa86cdcc81393f575426deee))
+- prevent enhancement tracker nav buttons from clipping on long session counters ([d1b1e7b](https://github.com/Celasha/Toolasha/commit/d1b1e7b266d5b5a5dbfc671a93f361bdf0e1fd0f))
+- restore guild XP chart label sizing and overflow from original ([e5ddd01](https://github.com/Celasha/Toolasha/commit/e5ddd01145f297d70e8cf56cb3074dc1ec35b339))
+- scope labyrinth best levels per character and ignore shroud clears ([f265f28](https://github.com/Celasha/Toolasha/commit/f265f283bfc6419d0f8d0bb3452d780be04799a5))
+
 ## [1.42.1](https://github.com/Celasha/Toolasha/compare/v1.42.0...v1.42.1) (2026-03-17)
 
 ### Bug Fixes
