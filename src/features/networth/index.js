@@ -12,6 +12,8 @@ import { networthHeaderDisplay, networthInventoryDisplay } from './networth-disp
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPauseRegistry } from '../../utils/pause-registry.js';
 import networthCache from './networth-cache.js';
+import networthHistory from './networth-history.js';
+import networthHistoryChart from './networth-history-chart.js';
 
 class NetworthFeature {
     constructor() {
@@ -59,6 +61,12 @@ class NetworthFeature {
         // Initial calculation
         if (connectionState.isConnected()) {
             await this.recalculate();
+        }
+
+        // Initialize networth history tracker (hourly snapshots for chart)
+        if (config.getSetting('networth_historyChart')) {
+            networthHistoryChart.setNetworthFeature(this);
+            await networthHistory.initialize(this);
         }
 
         this.isActive = true;
@@ -187,6 +195,8 @@ class NetworthFeature {
 
         networthHeaderDisplay.disable();
         networthInventoryDisplay.disable();
+        networthHistory.disable();
+        networthHistoryChart.closeModal();
 
         // Clear the enhancement cost cache (character-specific)
         networthCache.clear();

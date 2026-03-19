@@ -544,6 +544,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Move ability books from Fixed Assets to Current Assets inventory value. Useful if you plan to sell them.',
             },
+            networth_historyChart: {
+                id: 'networth_historyChart',
+                label: 'Enable networth history chart',
+                type: 'checkbox',
+                default: true,
+                help: 'Records hourly networth snapshots and shows a chart icon next to Total Networth. Disable to stop tracking and hide the chart button.',
+            },
             autoAllButton: {
                 id: 'autoAllButton',
                 label: 'Auto-click "All" button when opening loot boxes',

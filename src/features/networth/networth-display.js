@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { networthFormatter, formatKMB } from '../../utils/formatters.js';
+import networthHistoryChart from './networth-history-chart.js';
 
 /**
  * Header Display Component
@@ -320,10 +321,25 @@ class NetworthInventoryDisplay {
         });
 
         const totalNetworth = networthFormatter(Math.round(networthData.totalNetworth));
+        const showChartBtn = config.getSetting('networth_historyChart');
 
         this.container.innerHTML = `
-            <div style="cursor: pointer; font-weight: bold;" id="mwi-networth-toggle">
-                + Total Networth: ${totalNetworth}
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="cursor: pointer; font-weight: bold; flex: 1;" id="mwi-networth-toggle">
+                    + Total Networth: ${totalNetworth}
+                </div>
+                ${
+                    showChartBtn
+                        ? `<span id="mwi-networth-chart-btn" title="Networth History Chart" style="
+                    cursor: pointer;
+                    font-size: 14px;
+                    opacity: 0.7;
+                    padding: 2px 4px;
+                    border-radius: 3px;
+                    line-height: 1;
+                ">&#x1F4C8;</span>`
+                        : ''
+                }
             </div>
             <div id="mwi-networth-details" style="display: none; margin-left: 20px;">
                 <!-- Current Assets -->
@@ -556,6 +572,21 @@ class NetworthInventoryDisplay {
             'mwi-networth-details',
             `Total Networth: ${networthFormatter(Math.round(networthData.totalNetworth))}`
         );
+
+        // Chart button
+        const chartBtn = this.container.querySelector('#mwi-networth-chart-btn');
+        if (chartBtn) {
+            chartBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                networthHistoryChart.openModal();
+            });
+            chartBtn.addEventListener('mouseenter', () => {
+                chartBtn.style.opacity = '1';
+            });
+            chartBtn.addEventListener('mouseleave', () => {
+                chartBtn.style.opacity = '0.7';
+            });
+        }
 
         // Current assets toggle
         this.setupToggle(

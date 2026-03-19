@@ -1,0 +1,774 @@
+/**
+ * Networth History Chart
+ * Pop-out modal with Chart.js line chart showing networth over time.
+ * Supports time range selection, gap handling, and tooltip breakdown.
+ */
+
+import networthHistory, { GAP_THRESHOLD_MS } from './networth-history.js';
+import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
+import { networthFormatter } from '../../utils/formatters.js';
+
+const RANGE_MS = {
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000,
+    all: Infinity,
+};
+
+class NetworthHistoryChart {
+    constructor() {
+        this.chartInstance = null;
+        this.escHandler = null;
+        this.networthFeature = null;
+        this.activeRange = '7d'; // Track current active range
+    }
+
+    /**
+     * Set reference to networth feature for live data access
+     * @param {Object} feature - NetworthFeature instance
+     */
+    setNetworthFeature(feature) {
+        this.networthFeature = feature;
+    }
+
+    /**
+     * Open the chart modal
+     */
+    openModal() {
+        // Remove existing modal if any
+        const existing = document.getElementById('mwi-nw-chart-modal');
+        if (existing) {
+            existing.remove();
+        }
+
+        // Create modal container
+        const modal = document.createElement('div');
+        modal.id = 'mwi-nw-chart-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 1200px;
+            height: 80%;
+            max-height: 750px;
+            background: #1a1a1a;
+            border: 2px solid #555;
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 100000;
+            display: flex;
+            flex-direction: column;
+        `;
+
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        `;
+
+        const title = document.createElement('h3');
+        title.textContent = 'Networth History';
+        title.style.cssText = 'color: #ccc; margin: 0; font-size: 18px;';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '\u2715';
+        closeBtn.style.cssText = `
+            background: #a33;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+        `;
+        closeBtn.addEventListener('click', () => this.closeModal());
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+
+        // Time range row (buttons + date inputs)
+        const rangeRow = document.createElement('div');
+        rangeRow.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        `;
+
+        const ranges = ['24h', '7d', '30d', 'all'];
+        for (const range of ranges) {
+            const btn = document.createElement('button');
+            btn.textContent = range === 'all' ? 'All' : range.toUpperCase();
+            btn.dataset.range = range;
+            btn.className = 'mwi-nw-range-btn';
+            btn.style.cssText = `
+                background: ${range === '7d' ? '#444' : '#2a2a2a'};
+                color: ${range === '7d' ? '#fff' : '#999'};
+                border: 1px solid #555;
+                cursor: pointer;
+                padding: 4px 14px;
+                border-radius: 4px;
+                font-size: 13px;
+            `;
+            btn.addEventListener('click', () => {
+                this._selectPresetRange(btn, rangeRow, range);
+            });
+            rangeRow.appendChild(btn);
+        }
+
+        // Spacer
+        const spacer = document.createElement('div');
+        spacer.style.flex = '1';
+        rangeRow.appendChild(spacer);
+
+        // Date input styles (shared)
+        const dateInputStyle = `
+            background: #2a2a2a;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 12px;
+            color-scheme: dark;
+            cursor: pointer;
+        `;
+
+        // From label + input
+        const fromLabel = document.createElement('span');
+        fromLabel.textContent = 'From:';
+        fromLabel.style.cssText = 'color: #999; font-size: 12px;';
+        rangeRow.appendChild(fromLabel);
+
+        const fromInput = document.createElement('input');
+        fromInput.type = 'date';
+        fromInput.id = 'mwi-nw-date-from';
+        fromInput.style.cssText = dateInputStyle;
+        fromInput.addEventListener('change', () => {
+            this._onDateInputChange(rangeRow);
+        });
+        rangeRow.appendChild(fromInput);
+
+        // To label + input
+        const toLabel = document.createElement('span');
+        toLabel.textContent = 'To:';
+        toLabel.style.cssText = 'color: #999; font-size: 12px;';
+        rangeRow.appendChild(toLabel);
+
+        const toInput = document.createElement('input');
+        toInput.type = 'date';
+        toInput.id = 'mwi-nw-date-to';
+        toInput.style.cssText = dateInputStyle;
+        toInput.addEventListener('change', () => {
+            this._onDateInputChange(rangeRow);
+        });
+        rangeRow.appendChild(toInput);
+
+        // Summary stats row
+        const statsRow = document.createElement('div');
+        statsRow.id = 'mwi-nw-chart-stats';
+        statsRow.style.cssText = `
+            display: flex;
+            gap: 24px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #ccc;
+        `;
+
+        // Canvas container
+        const canvasContainer = document.createElement('div');
+        canvasContainer.style.cssText = `
+            flex: 1;
+            position: relative;
+            min-height: 0;
+        `;
+
+        const canvas = document.createElement('canvas');
+        canvas.id = 'mwi-nw-chart-canvas';
+        canvasContainer.appendChild(canvas);
+
+        // Assemble modal
+        modal.appendChild(header);
+        modal.appendChild(rangeRow);
+        modal.appendChild(statsRow);
+        modal.appendChild(canvasContainer);
+        document.body.appendChild(modal);
+
+        // ESC to close
+        this.escHandler = (e) => {
+            if (e.key === 'Escape') {
+                this.closeModal();
+            }
+        };
+        document.addEventListener('keydown', this.escHandler);
+
+        // Render default view
+        this.renderChart('7d');
+    }
+
+    /**
+     * Select a preset range button, clear date inputs, and render
+     * @param {HTMLElement} btn - Clicked button
+     * @param {HTMLElement} rangeRow - Row container for deselecting siblings
+     * @param {string} range - '24h', '7d', '30d', or 'all'
+     */
+    _selectPresetRange(btn, rangeRow, range) {
+        // Highlight selected button, deselect others
+        for (const sibling of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
+            sibling.style.background = '#2a2a2a';
+            sibling.style.color = '#999';
+        }
+        btn.style.background = '#444';
+        btn.style.color = '#fff';
+
+        // Clear date inputs
+        const fromInput = document.getElementById('mwi-nw-date-from');
+        const toInput = document.getElementById('mwi-nw-date-to');
+        if (fromInput) fromInput.value = '';
+        if (toInput) toInput.value = '';
+
+        this.activeRange = range;
+        this.renderChart(range);
+    }
+
+    /**
+     * Handle date input change — deselect preset buttons and render custom range
+     * @param {HTMLElement} rangeRow - Row container
+     */
+    _onDateInputChange(rangeRow) {
+        const fromInput = document.getElementById('mwi-nw-date-from');
+        const toInput = document.getElementById('mwi-nw-date-to');
+        if (!fromInput || !toInput) return;
+
+        // Only render if at least one date is set
+        if (!fromInput.value && !toInput.value) return;
+
+        // Deselect all preset buttons
+        for (const btn of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
+            btn.style.background = '#2a2a2a';
+            btn.style.color = '#999';
+        }
+
+        // Parse dates (from = start of day, to = end of day)
+        const fromMs = fromInput.value ? new Date(fromInput.value + 'T00:00:00').getTime() : 0;
+        const toMs = toInput.value ? new Date(toInput.value + 'T23:59:59').getTime() : Date.now();
+
+        this.activeRange = 'custom';
+        this.renderChart('custom', fromMs, toMs);
+    }
+
+    /**
+     * Render the chart for a given time range
+     * @param {string} range - '24h', '7d', '30d', 'all', or 'custom'
+     * @param {number} [customFrom] - Custom start timestamp (for 'custom' range)
+     * @param {number} [customTo] - Custom end timestamp (for 'custom' range)
+     */
+    renderChart(range, customFrom, customTo) {
+        const canvas = document.getElementById('mwi-nw-chart-canvas');
+        if (!canvas) return;
+
+        // Destroy existing chart
+        if (this.chartInstance) {
+            this.chartInstance.destroy();
+            this.chartInstance = null;
+        }
+
+        const history = networthHistory.getHistory();
+        if (history.length === 0) {
+            this.updateSummaryStats([]);
+            return;
+        }
+
+        // Filter by time range
+        const now = Date.now();
+        let filtered;
+        if (range === 'custom') {
+            const from = customFrom || 0;
+            const to = customTo || now;
+            filtered = history.filter((p) => p.t >= from && p.t <= to);
+        } else {
+            const cutoff = range === 'all' ? 0 : now - RANGE_MS[range];
+            filtered = history.filter((p) => p.t >= cutoff);
+        }
+
+        if (filtered.length === 0) {
+            this.updateSummaryStats([]);
+            return;
+        }
+
+        // Update summary stats
+        this.updateSummaryStats(filtered);
+
+        // Split into gap-separated segments
+        const segments = [];
+        let currentSegment = [filtered[0]];
+
+        for (let i = 1; i < filtered.length; i++) {
+            if (filtered[i].t - filtered[i - 1].t > GAP_THRESHOLD_MS) {
+                segments.push(currentSegment);
+                currentSegment = [filtered[i]];
+            } else {
+                currentSegment.push(filtered[i]);
+            }
+        }
+        segments.push(currentSegment);
+
+        // Build chart data with NaN gaps between segments
+        const chartData = [];
+        for (let i = 0; i < segments.length; i++) {
+            for (const point of segments[i]) {
+                chartData.push({ x: point.t, y: point.total, _raw: point });
+            }
+            // Insert NaN gap between segments (not after last)
+            if (i < segments.length - 1) {
+                const gapTime = segments[i][segments[i].length - 1].t + 1;
+                chartData.push({ x: gapTime, y: NaN });
+            }
+        }
+
+        // Determine if short range (use time-only x-axis labels)
+        const rangeSpanMs = filtered[filtered.length - 1].t - filtered[0].t;
+        const isShortRange = range === '24h' || (range === 'custom' && rangeSpanMs <= 48 * 60 * 60 * 1000);
+
+        // Create chart
+        const ctx = canvas.getContext('2d');
+        this.chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        label: 'Total Networth',
+                        data: chartData,
+                        borderColor: config.COLOR_ACCENT || '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: filtered.length > 200 ? 0 : 2,
+                        pointHoverRadius: 5,
+                        tension: 0.1,
+                        fill: true,
+                        spanGaps: false,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                parsing: false,
+                interaction: {
+                    mode: 'nearest',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: { display: false },
+                    datalabels: { display: false },
+                    tooltip: {
+                        filter: (tooltipItem) => {
+                            return !isNaN(tooltipItem.raw.y);
+                        },
+                        callbacks: {
+                            title: (tooltipItems) => {
+                                if (!tooltipItems.length) return '';
+                                const ts = tooltipItems[0].raw.x;
+                                return new Date(ts).toLocaleString([], {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                });
+                            },
+                            label: (context) => {
+                                const raw = context.raw._raw;
+                                if (!raw) return '';
+                                return `Total: ${networthFormatter(raw.total)}`;
+                            },
+                            afterLabel: (context) => {
+                                const raw = context.raw._raw;
+                                if (!raw) return '';
+                                const lines = [];
+                                if (raw.gold) lines.push(`Gold: ${networthFormatter(raw.gold)}`);
+                                if (raw.inventory) lines.push(`Inventory: ${networthFormatter(raw.inventory)}`);
+                                if (raw.equipment) lines.push(`Equipment: ${networthFormatter(raw.equipment)}`);
+                                if (raw.listings) lines.push(`Listings: ${networthFormatter(raw.listings)}`);
+                                if (raw.house) lines.push(`House: ${networthFormatter(raw.house)}`);
+                                if (raw.abilities) lines.push(`Abilities: ${networthFormatter(raw.abilities)}`);
+                                return lines;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        ticks: {
+                            color: '#999',
+                            maxTicksLimit: 10,
+                            callback: (value) => {
+                                const d = new Date(value);
+                                if (isShortRange) {
+                                    return d.toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                    });
+                                }
+                                return d.toLocaleDateString([], {
+                                    month: 'short',
+                                    day: 'numeric',
+                                });
+                            },
+                        },
+                        grid: { color: '#333' },
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Networth',
+                            color: '#ccc',
+                        },
+                        ticks: {
+                            color: '#999',
+                            callback: (value) => networthFormatter(value),
+                        },
+                        grid: { color: '#333' },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
+     * Update the summary stats row
+     * @param {Array} filtered - Filtered history data for the current range
+     */
+    updateSummaryStats(filtered) {
+        const statsRow = document.getElementById('mwi-nw-chart-stats');
+        if (!statsRow) return;
+
+        if (filtered.length === 0) {
+            statsRow.innerHTML = '<span style="color: #666;">No data available for this range</span>';
+            return;
+        }
+
+        // Current networth (prefer live data)
+        const currentTotal = this.networthFeature?.currentData?.totalNetworth ?? filtered[filtered.length - 1].total;
+
+        // 24h change
+        const now = Date.now();
+        const oneDayAgo = now - 24 * 60 * 60 * 1000;
+        const fullHistory = networthHistory.getHistory();
+        const oldestIn24h = fullHistory.find((p) => p.t >= oneDayAgo);
+        let change24h = null;
+        let changePercent = null;
+        if (oldestIn24h) {
+            change24h = currentTotal - oldestIn24h.total;
+            changePercent = oldestIn24h.total > 0 ? (change24h / oldestIn24h.total) * 100 : 0;
+        }
+
+        // Rate/hr for selected range
+        const first = filtered[0];
+        const last = filtered[filtered.length - 1];
+        const hoursElapsed = (last.t - first.t) / 3_600_000;
+        const ratePerHour = hoursElapsed > 0 ? (last.total - first.total) / hoursElapsed : 0;
+
+        // Build stats HTML
+        const parts = [];
+
+        // Current
+        parts.push(
+            `<span>Current: <strong style="color: ${config.COLOR_ACCENT};">${networthFormatter(Math.round(currentTotal))}</strong></span>`
+        );
+
+        // 24h change (clickable for item breakdown)
+        if (change24h !== null) {
+            const isPositive = change24h >= 0;
+            const color = isPositive ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const sign = isPositive ? '+' : '';
+            parts.push(
+                `<span id="mwi-nw-24h-toggle" style="cursor: pointer;" title="Click for item breakdown">24h: <strong style="color: ${color};">${sign}${networthFormatter(Math.round(change24h))} (${sign}${changePercent.toFixed(1)}%)</strong> <span style="font-size: 10px; color: #666;">▼</span></span>`
+            );
+        }
+
+        // Rate/hr
+        if (hoursElapsed >= 1) {
+            const isPositive = ratePerHour >= 0;
+            const color = isPositive ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const sign = isPositive ? '+' : '';
+            parts.push(
+                `<span>Rate: <strong style="color: ${color};">${sign}${networthFormatter(Math.round(ratePerHour))}/hr</strong></span>`
+            );
+        }
+
+        statsRow.innerHTML = parts.join('');
+
+        // Wire up 24h click handler for item breakdown toggle
+        const toggle24h = document.getElementById('mwi-nw-24h-toggle');
+        if (toggle24h) {
+            toggle24h.addEventListener('click', () => this.toggle24hBreakdown());
+        }
+    }
+
+    /**
+     * Toggle the 24h item-level breakdown popout
+     */
+    toggle24hBreakdown() {
+        // Close if already open
+        const existing = document.getElementById('mwi-nw-24h-breakdown');
+        if (existing) {
+            existing.remove();
+            return;
+        }
+
+        const toggle = document.getElementById('mwi-nw-24h-toggle');
+        if (!toggle) return;
+
+        // Create popout positioned below the 24h stat
+        const container = document.createElement('div');
+        container.id = 'mwi-nw-24h-breakdown';
+        container.style.cssText = `
+            position: absolute;
+            background: #222;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 10px 14px;
+            max-height: 300px;
+            width: 360px;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #ccc;
+            z-index: 100001;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        `;
+
+        // Position below the toggle element
+        const rect = toggle.getBoundingClientRect();
+        container.style.top = `${rect.bottom + 4}px`;
+        container.style.left = `${rect.left}px`;
+
+        this.render24hBreakdown(container);
+        document.body.appendChild(container);
+
+        // Close popout when clicking outside
+        const closeHandler = (e) => {
+            if (!container.contains(e.target) && e.target !== toggle && !toggle.contains(e.target)) {
+                container.remove();
+                document.removeEventListener('mousedown', closeHandler);
+            }
+        };
+        // Delay so the current click doesn't immediately close it
+        setTimeout(() => document.addEventListener('mousedown', closeHandler), 0);
+    }
+
+    /**
+     * Render the 24h item-level breakdown into the given container.
+     * Decomposes each item's change into activity impact (quantity changes)
+     * and market movement (price changes on existing holdings).
+     * @param {HTMLElement} container - Breakdown container element
+     */
+    render24hBreakdown(container) {
+        const currentData = this.networthFeature?.currentData;
+        if (!currentData) {
+            container.innerHTML = '<span style="color: #666;">No live data available</span>';
+            return;
+        }
+
+        const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+        const oldSnapshot = networthHistory.getDetailSnapshot(oneDayAgo);
+        if (!oldSnapshot) {
+            container.innerHTML =
+                '<span style="color: #666;">No detail snapshot available yet (data collected hourly)</span>';
+            return;
+        }
+
+        // Build current items map from live data
+        const currentItems = {};
+        const gameData = dataManager.getInitClientData();
+
+        // Gold
+        currentItems['/items/coin:0'] = {
+            count: Math.round(currentData.coins),
+            value: Math.round(currentData.coins),
+            name: 'Gold',
+        };
+
+        // Inventory items
+        for (const item of currentData.currentAssets.inventory.breakdown) {
+            if (!item.itemHrid) continue;
+            const key = `${item.itemHrid}:${item.enhancementLevel || 0}`;
+            currentItems[key] = {
+                count: item.count || 0,
+                value: Math.round(item.value || 0),
+                name: item.name,
+            };
+        }
+
+        // Equipped items
+        for (const item of currentData.currentAssets.equipped.breakdown) {
+            if (!item.itemHrid) continue;
+            const key = `${item.itemHrid}:${item.enhancementLevel || 0}`;
+            currentItems[key] = {
+                count: 1,
+                value: Math.round(item.value || 0),
+                name: item.name,
+            };
+        }
+
+        // Decompose each item into activity vs market impact
+        const activityItems = [];
+        const marketItems = [];
+        let activityTotal = 0;
+        let marketTotal = 0;
+
+        const allKeys = new Set([...Object.keys(currentItems), ...Object.keys(oldSnapshot.items)]);
+
+        for (const key of allKeys) {
+            const curr = currentItems[key] || { count: 0, value: 0 };
+            const old = oldSnapshot.items[key] || { count: 0, value: 0 };
+
+            const countDiff = curr.count - old.count;
+            const totalDiff = curr.value - old.value;
+
+            if (totalDiff === 0 && countDiff === 0) continue;
+
+            // Resolve display name
+            let name = curr.name;
+            if (!name) {
+                const [itemHrid, enhLevel] = key.split(':');
+                const details = gameData?.itemDetailMap?.[itemHrid];
+                const baseName = details?.name || itemHrid.replace('/items/', '');
+                name = Number(enhLevel) > 0 ? `${baseName} +${enhLevel}` : baseName;
+            }
+
+            // Per-unit prices
+            const oldPrice = old.count > 0 ? old.value / old.count : 0;
+            const currPrice = curr.count > 0 ? curr.value / curr.count : 0;
+
+            // Activity = countDiff × oldPrice (new/removed items use current price)
+            // Market = oldCount × (currPrice - oldPrice)
+            let activity = 0;
+            let market = 0;
+
+            if (old.count === 0) {
+                // Entirely new item — pure activity
+                activity = curr.value;
+            } else if (curr.count === 0) {
+                // Entirely removed item — pure activity (negative)
+                activity = -old.value;
+            } else {
+                activity = countDiff * oldPrice;
+                market = old.count * (currPrice - oldPrice);
+            }
+
+            activity = Math.round(activity);
+            market = Math.round(market);
+
+            if (activity !== 0) {
+                activityTotal += activity;
+                activityItems.push({ name, key, countDiff, value: activity });
+            }
+            if (market !== 0) {
+                marketTotal += market;
+                marketItems.push({ name, key, count: old.count, value: market });
+            }
+        }
+
+        if (activityItems.length === 0 && marketItems.length === 0) {
+            container.innerHTML = '<span style="color: #666;">No item-level changes in the last 24h</span>';
+            return;
+        }
+
+        // Sort both lists by absolute value descending
+        activityItems.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+        marketItems.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+        let html = '';
+
+        // Activity section
+        if (activityItems.length > 0) {
+            const actColor = activityTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const actSign = activityTotal >= 0 ? '+' : '';
+            html += `<div style="font-weight: bold; margin-bottom: 4px; display: flex; justify-content: space-between;">`;
+            html += `<span>Activity</span>`;
+            html += `<span style="color: ${actColor};">${actSign}${networthFormatter(activityTotal)}</span>`;
+            html += `</div>`;
+
+            for (const item of activityItems) {
+                const isPos = item.value >= 0;
+                const color = isPos ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                const sign = isPos ? '+' : '';
+
+                let countText = '';
+                if (item.countDiff !== 0 && item.key !== '/items/coin:0') {
+                    const countSign = item.countDiff > 0 ? '+' : '';
+                    countText = ` <span style="color: #888; font-size: 11px;">\u00d7${countSign}${item.countDiff}</span>`;
+                }
+
+                html += `<div style="display: flex; justify-content: space-between; padding: 1px 0 1px 12px;">`;
+                html += `<span>${item.name}${countText}</span>`;
+                html += `<span style="color: ${color}; white-space: nowrap; margin-left: 12px;">${sign}${networthFormatter(item.value)}</span>`;
+                html += `</div>`;
+            }
+        }
+
+        // Market movement section
+        if (marketItems.length > 0) {
+            const mktColor = marketTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const mktSign = marketTotal >= 0 ? '+' : '';
+            html += `<div style="font-weight: bold; margin-top: 8px; margin-bottom: 4px; display: flex; justify-content: space-between;${activityItems.length > 0 ? ' padding-top: 6px; border-top: 1px solid #333;' : ''}">`;
+            html += `<span>Market Movement</span>`;
+            html += `<span style="color: ${mktColor};">${mktSign}${networthFormatter(marketTotal)}</span>`;
+            html += `</div>`;
+
+            for (const item of marketItems) {
+                const isPos = item.value >= 0;
+                const color = isPos ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                const sign = isPos ? '+' : '';
+
+                html += `<div style="display: flex; justify-content: space-between; padding: 1px 0 1px 12px;">`;
+                html += `<span>${item.name} <span style="color: #888; font-size: 11px;">\u00d7${item.count}</span></span>`;
+                html += `<span style="color: ${color}; white-space: nowrap; margin-left: 12px;">${sign}${networthFormatter(item.value)}</span>`;
+                html += `</div>`;
+            }
+        }
+
+        // Snapshot age note
+        const ageHours = Math.round((Date.now() - oldSnapshot.t) / 3_600_000);
+        html += `<div style="color: #555; font-size: 10px; margin-top: 6px; text-align: right;">Compared to snapshot from ${ageHours}h ago</div>`;
+
+        container.innerHTML = html;
+    }
+
+    /**
+     * Close the modal and clean up
+     */
+    closeModal() {
+        if (this.chartInstance) {
+            this.chartInstance.destroy();
+            this.chartInstance = null;
+        }
+
+        // Remove 24h breakdown popout if open
+        const breakdown = document.getElementById('mwi-nw-24h-breakdown');
+        if (breakdown) {
+            breakdown.remove();
+        }
+
+        const modal = document.getElementById('mwi-nw-chart-modal');
+        if (modal) {
+            modal.remove();
+        }
+
+        if (this.escHandler) {
+            document.removeEventListener('keydown', this.escHandler);
+            this.escHandler = null;
+        }
+    }
+}
+
+const networthHistoryChart = new NetworthHistoryChart();
+
+export default networthHistoryChart;

@@ -616,6 +616,8 @@ export async function calculateNetworth() {
         equippedBreakdown.push({
             name: displayName,
             value,
+            itemHrid: item.itemHrid,
+            enhancementLevel: item.enhancementLevel || 0,
         });
     }
 
@@ -652,6 +654,8 @@ export async function calculateNetworth() {
             name: displayName,
             value,
             count: item.count,
+            itemHrid: item.itemHrid,
+            enhancementLevel: item.enhancementLevel || 0,
         };
 
         // Check if this is an ability book
