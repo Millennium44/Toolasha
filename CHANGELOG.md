@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.3](https://github.com/Celasha/Toolasha/compare/v1.42.2...v1.42.3) (2026-03-19)
+
+
+### Bug Fixes
+
+* handle guild switch corruption in XP tracking and task Go merge setting gate ([729e5a9](https://github.com/Celasha/Toolasha/commit/729e5a9c44615593ee0ff5d6f23c9517feadd8eb))
+
 ## [1.42.2](https://github.com/Celasha/Toolasha/compare/v1.42.1...v1.42.2) (2026-03-18)
 
 ### Bug Fixes
