@@ -642,4 +642,9 @@ if (isCombatSimulatorPage()) {
         status: (key) => config.isFeatureEnabled(key),
         info: (key) => config.getFeatureInfo(key),
     };
+
+    // Guild XP data management
+    targetWindow.Toolasha.guild = {
+        resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
+    };
 }

@@ -13,6 +13,7 @@ import networkAlert from './features/market/network-alert.js';
 import * as combatSimIntegration from './features/combat/combat-sim-integration.js';
 import settingsUI from './features/settings/settings-ui.js';
 import { setupScrollTooltipDismissal } from './utils/dom.js';
+import guildXPTrackerFeature from './features/guild/guild-xp-tracker.js';
 
 /**
  * Detect if running on Combat Simulator page
@@ -142,6 +143,11 @@ if (isCombatSimulatorPage()) {
             toggle: (key) => config.toggleFeature(key),
             status: (key) => config.isFeatureEnabled(key),
             info: (key) => config.getFeatureInfo(key),
+        },
+
+        // Guild XP data management
+        guild: {
+            resetMemberXP: () => guildXPTrackerFeature.resetMemberData(),
         },
     };
 }

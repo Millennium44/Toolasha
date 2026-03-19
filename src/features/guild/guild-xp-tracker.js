@@ -345,14 +345,22 @@ class GuildXPTracker {
      * Handle guild_characters_updated — record per-member XP.
      * @param {Object} data - guild_characters_updated message
      */
-    _onMembersUpdated(data) {
+    async _onMembersUpdated(data) {
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
 
-        // Update guild ID
+        // Detect guild change (same character, different guild)
         const charIds = Object.keys(guildCharacterMap);
-        if (charIds.length > 0) {
-            this.ownGuildID = guildCharacterMap[charIds[0]].guildID;
+        const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
+
+        if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
+            // Guild switched — clear stale member data and load fresh from storage
+            this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME, {});
+            this.memberMeta = {};
+        }
+
+        if (newGuildID) {
+            this.ownGuildID = newGuildID;
         }
 
         // Update member metadata
@@ -519,6 +527,16 @@ class GuildXPTracker {
     }
 
     /**
+     * Reset member XP history for the current guild.
+     * Used to clear corrupted data (e.g., after a guild switch).
+     */
+    async resetMemberData() {
+        if (!this.ownGuildID) return;
+        this.memberXPHistory = {};
+        await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME);
+    }
+
+    /**
      * Cleanup when disabled.
      */
     disable() {
@@ -543,6 +561,7 @@ export default {
     name: 'Guild XP Tracker',
     initialize: () => guildXPTracker.initialize(),
     cleanup: () => guildXPTracker.disable(),
+    resetMemberData: () => guildXPTracker.resetMemberData(),
 };
 
 export { guildXPTracker };
