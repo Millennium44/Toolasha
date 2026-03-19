@@ -435,9 +435,10 @@ class DungeonTracker {
                         const keyCountsMap = this.parseKeyCountsFromMessage(text);
 
                         if (Object.keys(keyCountsMap).length > 0) {
-                            // Try to extract timestamp from message display format: [MM/DD HH:MM:SS AM/PM] or [DD-M HH:MM:SS]
+                            // Try to extract timestamp from message display format:
+                            // [MM/DD HH:MM:SS AM/PM], [DD-M HH:MM:SS], or [D.M. HH:MM:SS]
                             const timestampMatch = text.match(
-                                /\[(\d{1,2})([-/])(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/
+                                /\[(\d{1,2})([-/.])(\d{1,2})\.?\s+(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/
                             );
 
                             if (timestampMatch) {
@@ -456,7 +457,7 @@ class DungeonTracker {
                                     month = part1;
                                     day = part2;
                                 } else {
-                                    // DD-M format (dash separator)
+                                    // DD-M or D.M. format (dash or dot separator)
                                     day = part1;
                                     month = part2;
                                 }

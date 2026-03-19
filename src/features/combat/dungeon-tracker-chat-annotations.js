@@ -703,7 +703,8 @@ class DungeonTrackerChatAnnotations {
 
     /**
      * Get timestamp from message DOM element
-     * Handles both American (M/D HH:MM:SS AM/PM) and international (DD-M HH:MM:SS) formats
+     * Handles American (M/D HH:MM:SS AM/PM), international (DD-M HH:MM:SS),
+     * and European dot (D.M. HH:MM:SS) formats
      * @param {HTMLElement} msg - Message element
      * @param {boolean} warnOnFailure - Whether to log warning if parsing fails (default: false)
      * @returns {Date|null} Parsed timestamp or null
@@ -720,6 +721,12 @@ class DungeonTrackerChatAnnotations {
             // Try international format: [DD-M HH:MM:SS] (24-hour)
             // Use \s* to handle potential spacing variations in dungeon chat
             match = text.match(/\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
+            isAmerican = false;
+        }
+
+        if (!match) {
+            // Try European dot format: [D.M. HH:MM:SS] (24-hour, trailing dot optional)
+            match = text.match(/\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\]/);
             isAmerican = false;
         }
 

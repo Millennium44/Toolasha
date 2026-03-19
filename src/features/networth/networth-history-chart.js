@@ -704,7 +704,7 @@ class NetworthHistoryChart {
                 let countText = '';
                 if (item.countDiff !== 0 && item.key !== '/items/coin:0') {
                     const countSign = item.countDiff > 0 ? '+' : '';
-                    countText = ` <span style="color: #888; font-size: 11px;">\u00d7${countSign}${item.countDiff}</span>`;
+                    countText = ` <span style="color: #888; font-size: 11px;">${countSign}${item.countDiff}</span>`;
                 }
 
                 html += `<div style="display: flex; justify-content: space-between; padding: 1px 0 1px 12px;">`;
