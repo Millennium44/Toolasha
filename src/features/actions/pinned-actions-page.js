@@ -447,6 +447,7 @@ class PinnedActionsPage {
             row.addEventListener('click', () => {
                 const game = getGameObject();
                 if (game?.handleGoToAction) {
+                    this.hidePage(true);
                     game.handleGoToAction(action.actionHrid);
                 }
             });
