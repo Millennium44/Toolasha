@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.43.2](https://github.com/Celasha/Toolasha/compare/v1.43.1...v1.43.2) (2026-03-20)
+
+### Bug Fixes
+
+- prevent duplicate run numbers in dungeon tracker annotations ([89400a6](https://github.com/Celasha/Toolasha/commit/89400a6d33b01cc0c9ae0908acbd1fa16f3b33f8))
+
 ## [1.43.1](https://github.com/Celasha/Toolasha/compare/v1.43.0...v1.43.1) (2026-03-19)
 
 ### Bug Fixes
