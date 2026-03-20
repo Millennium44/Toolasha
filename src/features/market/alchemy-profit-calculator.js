@@ -420,9 +420,8 @@ class AlchemyProfitCalculator {
             }
             const materialCost = pricePerItem * bulkMultiplier;
 
-            // Get coin cost per action attempt
-            // If not in action data, calculate as 1/5 of item's sell price per item
-            const coinCost = actionDetails.coinCost || Math.floor((itemDetails.sellPrice || 0) * 0.2) * bulkMultiplier;
+            // Coinify has no coin cost — items go in, coins come out
+            const coinCost = 0;
 
             // Calculate output value (coins produced)
             // Formula: sellPrice × bulkMultiplier × 5
