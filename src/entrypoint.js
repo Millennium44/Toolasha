@@ -270,6 +270,13 @@ function registerFeatures() {
             module: Actions.inventoryCountDisplay,
             async: false,
         },
+        {
+            key: 'pinnedActionsPage',
+            name: 'Pinned Actions Page',
+            category: 'Actions',
+            module: Actions.pinnedActionsPage,
+            async: false,
+        },
     ];
 
     // Combat Features

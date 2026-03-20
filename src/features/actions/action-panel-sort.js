@@ -15,6 +15,7 @@ class ActionPanelSort {
     constructor() {
         this.panels = new Map(); // actionPanel → {actionHrid, profitPerHour, expPerHour}
         this.pinnedActions = new Set(); // Set of pinned action HRIDs
+        this.cachedStats = {}; // actionHrid → { profitPerHour, expPerHour }
         this.sortMode = 'default'; // 'default' | 'profit' | 'xp' | 'coinsPerXp'
         this.sortTimeout = null; // Debounce timer
         this.initialized = false;
@@ -46,6 +47,7 @@ class ActionPanelSort {
     async onCharacterSwitch() {
         this.clearAllPanels();
         this.pinnedActions.clear();
+        this.cachedStats = {};
         this.initialized = false;
     }
 
@@ -84,6 +86,8 @@ class ActionPanelSort {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.profitPerHour = profitPerHour;
+            if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
+            this.cachedStats[data.actionHrid].profitPerHour = profitPerHour;
         }
     }
 
@@ -96,6 +100,8 @@ class ActionPanelSort {
         const data = this.panels.get(actionPanel);
         if (data) {
             data.expPerHour = expPerHour;
+            if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
+            this.cachedStats[data.actionHrid].expPerHour = expPerHour;
         }
     }
 
@@ -157,6 +163,15 @@ class ActionPanelSort {
      */
     getPinnedActions() {
         return this.pinnedActions;
+    }
+
+    /**
+     * Get cached profit/xp stats for an action
+     * @param {string} actionHrid - Action HRID
+     * @returns {Object|null} { profitPerHour, expPerHour } or null
+     */
+    getCachedStats(actionHrid) {
+        return this.cachedStats[actionHrid] || null;
     }
 
     /**

@@ -16,6 +16,7 @@ import requiredMaterials from '../features/actions/required-materials.js';
 import missingMaterialsButton from '../features/actions/missing-materials-button.js';
 import teaRecommendation from '../features/actions/tea-recommendation.js';
 import inventoryCountDisplay from '../features/actions/inventory-count-display.js';
+import pinnedActionsPage from '../features/actions/pinned-actions-page.js';
 
 // Alchemy features
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
@@ -40,6 +41,7 @@ toolashaRoot.Actions = {
     alchemyProfitDisplay,
     teaRecommendation,
     inventoryCountDisplay,
+    pinnedActionsPage,
 };
 
 console.log('[Toolasha] Actions library loaded');
