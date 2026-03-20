@@ -430,6 +430,11 @@ class DungeonTrackerChatAnnotations {
                         if (diff < dungeonStats.fastestTime) dungeonStats.fastestTime = diff;
                         if (diff > dungeonStats.slowestTime) dungeonStats.slowestTime = diff;
                         this.processedMessages.set(messageId, runNumber);
+
+                        // Register in storedRunNumbers so future annotateAllMessages()
+                        // calls include it in the merge and don't reuse its number slot
+                        if (!this.storedRunNumbers[statsKey]) this.storedRunNumbers[statsKey] = {};
+                        this.storedRunNumbers[statsKey][msgTs] = runNumber;
                     }
 
                     label = `Run #${runNumber}: ${label}`;
