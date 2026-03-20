@@ -113,9 +113,16 @@ class SkillExperiencePercentage {
      * @param {Element} progressBar - The progress bar element
      */
     updateSkillPercentage(progressBar) {
-        // Get the skill container
+        // Get the skill container (contentContainer)
         const skillContainer = progressBar.parentNode?.parentNode;
         if (!skillContainer) return;
+
+        // Constrain contentContainer width so the SVG icon keeps its space
+        // The nav is block layout; without this, our injected span makes
+        // contentContainer wider, squeezing the icon (e.g. Cheesesmithing)
+        if (!skillContainer.style.maxWidth) {
+            skillContainer.style.maxWidth = 'calc(100% - 30px)';
+        }
 
         // Get the level display container (first child of skill container)
         const levelContainer = skillContainer.children[0];
