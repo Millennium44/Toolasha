@@ -276,10 +276,6 @@ class XPTracker {
 
         this._updateNavBars();
     }
-
-    /**
-     * Inject or refresh XP/hr spans on all visible nav bar skill entries.
-     */
     _updateNavBars() {
         if (!config.getSetting('xpTracker', true)) return;
 
@@ -301,48 +297,41 @@ class XPTracker {
             const stats = calcStats(history);
             const rate = stats.lastXPH;
 
-            // Remove existing rate span (may be inline or standalone)
-            navEl.querySelector('.mwi-xp-rate')?.remove();
+            // Find or create our own container (separate from remaining-xp)
+            let rateContainer = navEl.querySelector('.mwi-xp-rate-container');
 
-            if (rate <= 0) return;
+            if (rate <= 0) {
+                // Remove container if rate is zero
+                rateContainer?.remove();
+                return;
+            }
 
             const rateText = `${formatKMB(rate)} xp/h`;
-            const rateSpan = document.createElement('span');
-            rateSpan.className = 'mwi-xp-rate';
-            rateSpan.textContent = rateText;
-            rateSpan.style.cssText = `
-                font-size: 11px;
-                color: ${config.COLOR_XP_RATE};
-                font-weight: 600;
-                pointer-events: none;
-                white-space: nowrap;
-            `;
 
-            // Always place inline in a flex row — create the container if XP Left feature is off
-            let remainingXPEl = navEl.querySelector('.mwi-remaining-xp');
-            if (!remainingXPEl) {
+            if (rateContainer) {
+                // Update existing text
+                rateContainer.textContent = rateText;
+            } else {
+                // Create new container
                 const progressContainer = navEl.querySelector('[class*="NavigationBar_currentExperience"]')?.parentNode;
                 if (!progressContainer) return;
-                remainingXPEl = document.createElement('span');
-                remainingXPEl.className = 'mwi-remaining-xp';
-                remainingXPEl.dataset.xpTrackerOwned = '1';
-                remainingXPEl.style.cssText = `
+
+                rateContainer = document.createElement('span');
+                rateContainer.className = 'mwi-xp-rate-container';
+                rateContainer.textContent = rateText;
+                rateContainer.style.cssText = `
                     font-size: 11px;
+                    color: ${config.COLOR_XP_RATE};
+                    font-weight: 600;
+                    pointer-events: none;
+                    white-space: nowrap;
                     display: block;
                     margin-top: -8px;
                     text-align: center;
                     width: 100%;
-                    pointer-events: none;
                 `;
-                progressContainer.insertBefore(
-                    remainingXPEl,
-                    progressContainer.querySelector('[class*="NavigationBar_currentExperience"]')?.nextSibling ?? null
-                );
+                progressContainer.appendChild(rateContainer);
             }
-            remainingXPEl.style.display = 'flex';
-            remainingXPEl.style.justifyContent = 'center';
-            remainingXPEl.style.gap = '6px';
-            remainingXPEl.appendChild(rateSpan);
         });
     }
 
@@ -411,9 +400,8 @@ class XPTracker {
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];
 
-        document.querySelectorAll('.mwi-xp-rate').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-xp-rate-container').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-xp-time-left').forEach((el) => el.remove());
-        document.querySelectorAll('.mwi-remaining-xp[data-xp-tracker-owned]').forEach((el) => el.remove());
 
         this.initialized = false;
     }
