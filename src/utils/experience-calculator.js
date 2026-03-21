@@ -53,7 +53,6 @@ export function calculateExpPerHour(actionHrid) {
         itemDetailMap: gameData.itemDetailMap,
         includeCommunityBuff: true,
         includeBreakdown: false,
-        floorActionLevel: true,
     });
 
     if (!stats) {

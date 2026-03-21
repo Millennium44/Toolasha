@@ -682,7 +682,6 @@ class QuickInputButtons {
             actionHrid: actionDetails.hrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: true,
-            floorActionLevel: true,
         });
 
         if (!stats) {
