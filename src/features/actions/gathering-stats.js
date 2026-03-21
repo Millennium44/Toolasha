@@ -239,6 +239,7 @@ class GatheringStats {
         // Calculate profit/hr
         const profitData = await calculateGatheringProfit(data.actionHrid);
         const profitPerHour = profitData?.profitPerHour || null;
+        const hasMissingPrices = profitData?.hasMissingPrices || false;
 
         // Calculate exp/hr using shared utility
         const expData = calculateExpPerHour(data.actionHrid);
@@ -247,6 +248,7 @@ class GatheringStats {
         // Store profit value for sorting and update shared sort manager
         data.profitPerHour = profitPerHour;
         data.expPerHour = expPerHour;
+        data.hasMissingPrices = hasMissingPrices;
         actionPanelSort.updateProfit(actionPanel, profitPerHour);
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
@@ -336,10 +338,10 @@ class GatheringStats {
                 continue;
             }
 
-            const { profitPerHour, expPerHour } = data;
+            const { profitPerHour, expPerHour, hasMissingPrices } = data;
 
-            // Find best profit/hr (allow negative to still mark highest)
-            if (profitPerHour !== null) {
+            // Skip actions with missing prices for profit comparison
+            if (!hasMissingPrices && profitPerHour !== null) {
                 if (bestProfit === null || profitPerHour > bestProfit) {
                     bestProfit = profitPerHour;
                     bestProfitPanels = [actionPanel];
@@ -359,7 +361,7 @@ class GatheringStats {
             }
 
             // Find best overall (profit × exp product)
-            if (profitPerHour !== null && expPerHour !== null && expPerHour > 0) {
+            if (!hasMissingPrices && profitPerHour !== null && expPerHour !== null && expPerHour > 0) {
                 const overallValue = profitPerHour * expPerHour;
                 if (bestOverall === null || overallValue > bestOverall) {
                     bestOverall = overallValue;

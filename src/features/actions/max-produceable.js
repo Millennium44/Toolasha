@@ -449,6 +449,7 @@ class MaxProduceable {
         data.profitPerHour = resolvedProfitPerHour;
         data.expPerHour = expPerHour;
         data.hasMissingPrices = hasMissingPrices;
+        data.outputPriceEstimated = outputPriceEstimated;
         actionPanelSort.updateExpPerHour(actionPanel, expPerHour);
 
         // Build display HTML using .mwi-action-stat-line divs so fitLineFontSizes
@@ -558,10 +559,11 @@ class MaxProduceable {
                 continue;
             }
 
-            const { profitPerHour, expPerHour, hasMissingPrices } = data;
+            const { profitPerHour, expPerHour, hasMissingPrices, outputPriceEstimated } = data;
+            const unreliablePrice = hasMissingPrices || outputPriceEstimated;
 
-            // Skip actions with missing prices for profit comparison
-            if (!hasMissingPrices && profitPerHour !== null && profitPerHour > 0) {
+            // Skip actions with missing or estimated prices for profit comparison
+            if (!unreliablePrice && profitPerHour !== null && profitPerHour > 0) {
                 if (bestProfit === null || profitPerHour > bestProfit) {
                     bestProfit = profitPerHour;
                     bestProfitPanels = [actionPanel];
@@ -582,7 +584,7 @@ class MaxProduceable {
 
             // Find best overall (profit × exp product)
             if (
-                !hasMissingPrices &&
+                !unreliablePrice &&
                 profitPerHour !== null &&
                 profitPerHour > 0 &&
                 expPerHour !== null &&
