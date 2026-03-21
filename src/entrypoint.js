@@ -553,7 +553,8 @@ if (isCombatSimulatorPage()) {
     Actions.initActionPanelObserver();
 
     // Initialize storage and config THIRD (async)
-    (async () => {
+    // Store the promise so character_initialized can wait for storage readiness
+    const storageReady = (async () => {
         try {
             // Initialize storage (opens IndexedDB)
             await storage.initialize();
@@ -589,6 +590,10 @@ if (isCombatSimulatorPage()) {
         // Initialize all features using the feature registry
         setTimeout(async () => {
             try {
+                // Ensure storage/config are initialized before loading character settings
+                // On Steam, character data can arrive before IndexedDB is open
+                await storageReady;
+
                 // Reload config settings with character-specific data
                 await config.loadSettings();
                 config.applyColorSettings();
