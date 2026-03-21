@@ -582,7 +582,6 @@ class ActionTimeDisplay {
             actionHrid: action.actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
-            floorActionLevel: true,
             levelRequirementOverride,
         });
 
@@ -1103,7 +1102,7 @@ class ActionTimeDisplay {
     }
 
     buildItemHridFromName(itemName) {
-        return `/items/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
+        return `/items/${itemName.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '_')}`;
     }
 
     /**
@@ -1283,7 +1282,6 @@ class ActionTimeDisplay {
             actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
-            floorActionLevel: true,
         });
     }
 
