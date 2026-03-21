@@ -132,8 +132,8 @@ class PinnedActionsPage {
      * Inject the "Pinned" nav button above the first skill in the nav bar
      */
     injectNavButton() {
-        const firstNav = document.querySelector('[class*="NavigationBar_nav"]');
-        if (!firstNav) return;
+        const navLinks = document.querySelector('[class*="NavigationBar_navigationLinks"]');
+        if (!navLinks) return;
 
         this.navInjected = true;
 
@@ -175,7 +175,7 @@ class PinnedActionsPage {
             }
         });
 
-        firstNav.parentElement.insertBefore(btn, firstNav);
+        navLinks.insertBefore(btn, navLinks.firstChild);
         this.navButton = btn;
     }
 
