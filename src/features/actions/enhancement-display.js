@@ -8,7 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import { calculateEnhancement, BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { getEnhancingSpeedBreakdown } from '../enhancement/enhancement-xp.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable } from '../../utils/formatters.js';
@@ -547,6 +547,40 @@ function formatEnhancementDisplay(
         lines.push(
             `<div style="color: #88ff88;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}%</div>`
         );
+
+        // Show base rate and final rate for current enhancement level
+        let currentLevel = null;
+
+        // Try to get level from the action queue first
+        const currentActions = dataManager.getCurrentActions();
+        const enhancingAction = currentActions.find((a) => a.actionHrid === '/actions/enhancing/enhance');
+        if (enhancingAction?.primaryItemHash) {
+            const parts = enhancingAction.primaryItemHash.split('::');
+            const lastPart = parts[parts.length - 1];
+            if (lastPart && !lastPart.startsWith('/')) {
+                const parsed = parseInt(lastPart, 10);
+                if (!isNaN(parsed)) currentLevel = parsed;
+            }
+        }
+
+        // Fallback: read from the enhancing input item name in the DOM (e.g., "Dairyhand's Top +5")
+        if (currentLevel === null) {
+            const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
+            if (inputItems.length > 0) {
+                const inputName = inputItems[0].textContent.trim();
+                const levelMatch = inputName.match(/\+(\d+)$/);
+                currentLevel = levelMatch ? parseInt(levelMatch[1], 10) : 0;
+            }
+        }
+
+        if (currentLevel !== null && currentLevel >= 0 && currentLevel < BASE_SUCCESS_RATES.length) {
+            const baseRate = BASE_SUCCESS_RATES[currentLevel];
+            const successMultiplier = 1 + totalSuccess / 100;
+            const finalRate = Math.min(100, baseRate * successMultiplier);
+            lines.push(
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">+${currentLevel} → +${currentLevel + 1}:</span> ${baseRate}% → ${finalRate.toFixed(2)}%</div>`
+            );
+        }
 
         // Show breakdown: equipment + house + level advantage
         const equipmentSuccess = params.equipmentSuccessBonus || 0;
