@@ -373,9 +373,15 @@ class Config {
     async loadSettings() {
         // Set character ID in settings storage for per-character settings
         const characterId = dataManager.getCurrentCharacterId();
-        if (characterId) {
-            settingsStorage.setCharacterId(characterId);
+
+        // Before character ID is known, only populate schema defaults (no storage access)
+        // This prevents loading from the wrong storage key during early initialization
+        if (!characterId) {
+            this.settingsMap = settingsStorage.buildDefaults();
+            return;
         }
+
+        settingsStorage.setCharacterId(characterId);
 
         // Load settings from settings-storage (which uses settings-schema as source of truth)
         this.settingsMap = await settingsStorage.loadSettings();

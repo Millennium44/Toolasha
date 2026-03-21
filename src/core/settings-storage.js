@@ -112,6 +112,46 @@ class SettingsStorage {
     }
 
     /**
+     * Build default settings from schema without touching storage
+     * Used during early initialization before character ID is known
+     * @returns {Object} Settings map with schema defaults only
+     */
+    buildDefaults() {
+        const settings = {};
+
+        for (const group of Object.values(settingsGroups)) {
+            for (const [settingId, settingDef] of Object.entries(group.settings)) {
+                settings[settingId] = {
+                    id: settingId,
+                    desc: settingDef.label,
+                    type: settingDef.type || 'checkbox',
+                };
+
+                if (settingDef.type === 'checkbox') {
+                    settings[settingId].isTrue = settingDef.default ?? false;
+                } else {
+                    settings[settingId].value = settingDef.default ?? '';
+                }
+
+                if (settingDef.options) {
+                    settings[settingId].options = settingDef.options;
+                }
+                if (settingDef.min !== undefined) {
+                    settings[settingId].min = settingDef.min;
+                }
+                if (settingDef.max !== undefined) {
+                    settings[settingId].max = settingDef.max;
+                }
+                if (settingDef.step !== undefined) {
+                    settings[settingId].step = settingDef.step;
+                }
+            }
+        }
+
+        return settings;
+    }
+
+    /**
      * Save all settings to storage
      * @param {Object} settings - Settings map
      * @returns {Promise<void>}
