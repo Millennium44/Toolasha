@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.44.7](https://github.com/Celasha/Toolasha/compare/v1.44.6...v1.44.7) (2026-03-21)
+
+### Bug Fixes
+
+- use schema defaults for early init instead of storage read ([bd58ca3](https://github.com/Celasha/Toolasha/commit/bd58ca3a723995148d7fae698a708481f9c3a718))
+
 ## [1.44.6](https://github.com/Celasha/Toolasha/compare/v1.44.5...v1.44.6) (2026-03-21)
 
 ### Bug Fixes
