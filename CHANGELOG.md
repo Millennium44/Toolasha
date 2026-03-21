@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.44.6](https://github.com/Celasha/Toolasha/compare/v1.44.5...v1.44.6) (2026-03-21)
+
+### Bug Fixes
+
+- add missing setting toggle for Marketplace Action button ([f23251d](https://github.com/Celasha/Toolasha/commit/f23251d17a336884f59d112abc62783a029f3fe3))
+- defer config loading until character ID is known ([077de91](https://github.com/Celasha/Toolasha/commit/077de91e56c507ca377e867b1785894e3dc81c56))
+- exclude unreliable-price actions from best profit/xp rankings ([9f7fc28](https://github.com/Celasha/Toolasha/commit/9f7fc28aed3651a313367b555a83cd16795182de))
+- remove simulationTime from loadout exports ([fe5c00b](https://github.com/Celasha/Toolasha/commit/fe5c00b591050863ab79899cbe89c9435abb61d2))
+- use correct path for character name in milkonomy export ([0abeb68](https://github.com/Celasha/Toolasha/commit/0abeb68e2a61be0918035477816b196f30756ee5))
+
 ## [1.44.5](https://github.com/Celasha/Toolasha/compare/v1.44.4...v1.44.5) (2026-03-21)
 
 ### Bug Fixes
