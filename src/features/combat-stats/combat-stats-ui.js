@@ -643,6 +643,7 @@ class CombatStatsUI {
                                 conservative: 'Conservative',
                                 hybrid: 'Hybrid',
                                 optimistic: 'Optimistic',
+                                patientBuy: 'Patient Buy',
                             };
                             const pricingNote = document.createElement('div');
                             pricingNote.style.cssText = `

@@ -22,8 +22,8 @@ export function selectPrice(
     const pricingMode = config.getSettingValue(modeSetting, 'conservative');
     const respectPricingMode = config.getSettingValue(respectSetting, true);
 
-    // If not respecting mode or mode is conservative, always use bid
-    if (!respectPricingMode || pricingMode === 'conservative') {
+    // If not respecting mode or mode is conservative/patientBuy, always use bid
+    if (!respectPricingMode || pricingMode === 'conservative' || pricingMode === 'patientBuy') {
         return priceData.bid || 0;
     }
 

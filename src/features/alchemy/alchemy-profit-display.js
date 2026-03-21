@@ -889,6 +889,7 @@ class AlchemyProfitDisplay {
                 conservative: 'Conservative',
                 hybrid: 'Hybrid',
                 optimistic: 'Optimistic',
+                patientBuy: 'Patient Buy',
             }[pricingMode] || 'Hybrid';
 
         const modeDiv = document.createElement('div');

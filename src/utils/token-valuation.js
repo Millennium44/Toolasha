@@ -47,8 +47,8 @@ export function calculateDungeonTokenValue(
 
         let marketPrice = 0;
         if (respectPricingMode) {
-            // Conservative: Bid, Hybrid/Optimistic: Ask
-            marketPrice = pricingMode === 'conservative' ? prices.bid : prices.ask;
+            // Conservative/Patient Buy: Bid, Hybrid/Optimistic: Ask
+            marketPrice = pricingMode === 'conservative' || pricingMode === 'patientBuy' ? prices.bid : prices.ask;
         } else {
             // Always conservative
             marketPrice = prices.bid;
@@ -83,7 +83,10 @@ export function calculateDungeonTokenValue(
 
                 let marketPrice = 0;
                 if (respectPricingMode) {
-                    marketPrice = pricingMode === 'conservative' ? essencePrice.bid : essencePrice.ask;
+                    marketPrice =
+                        pricingMode === 'conservative' || pricingMode === 'patientBuy'
+                            ? essencePrice.bid
+                            : essencePrice.ask;
                 } else {
                     marketPrice = essencePrice.bid;
                 }

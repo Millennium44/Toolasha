@@ -441,6 +441,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             conservative: 'Conservative',
             hybrid: 'Hybrid',
             optimistic: 'Optimistic',
+            patientBuy: 'Patient Buy',
         }[pricingMode] || 'Hybrid';
 
     const modeDiv = document.createElement('div');
@@ -1042,6 +1043,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             conservative: 'Conservative',
             hybrid: 'Hybrid',
             optimistic: 'Optimistic',
+            patientBuy: 'Patient Buy',
         }[pricingMode] || 'Hybrid';
 
     const modeDiv = document.createElement('div');
