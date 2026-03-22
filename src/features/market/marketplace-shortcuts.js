@@ -10,6 +10,8 @@ import dataManager from '../../core/data-manager.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { setReactInputValue } from '../../utils/react-input.js';
+import estimatedListingAge from './estimated-listing-age.js';
+import { formatRelativeTime } from '../../utils/formatters.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -119,8 +121,32 @@ class MarketplaceShortcuts {
         }
         toggle.classList.add('mwi-marketplace-dropdown-toggle');
         toggle.style.cssText = 'display: flex; justify-content: space-between; align-items: center; width: 100%;';
+        // Build top ask age subtitle if order book data is cached
+        let ageHtml = '';
+        const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
+        if (cacheEntry) {
+            const orderBookData = cacheEntry.data || cacheEntry;
+            const orderBooks = orderBookData?.orderBooks;
+            if (orderBooks) {
+                // Handle both array format (index = enhancement level) and object format
+                const orderBook = Array.isArray(orderBooks)
+                    ? orderBooks[enhancementLevel]
+                    : orderBooks[enhancementLevel];
+                const topAsk = orderBook?.asks?.[0];
+                if (topAsk?.createdTimestamp) {
+                    const ageMs = Date.now() - new Date(topAsk.createdTimestamp).getTime();
+                    if (ageMs > 0) {
+                        const ageStr = formatRelativeTime(ageMs);
+                        ageHtml = `<div style="font-size: 0.7em; opacity: 0.7; margin-top: 1px;">Top ask: ~${ageStr}</div>`;
+                    }
+                }
+            }
+        }
+
         toggle.innerHTML =
-            '<span style="flex: 1; text-align: center;">Marketplace Action</span>' +
+            '<span style="flex: 1; text-align: center;">Marketplace Action' +
+            ageHtml +
+            '</span>' +
             '<span class="mwi-mp-chevron" style="font-size: 0.65em; transition: transform 0.15s; display: inline-block;">▼</span>';
 
         // Create dropdown panel (hidden by default)
