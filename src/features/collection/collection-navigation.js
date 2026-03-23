@@ -201,7 +201,8 @@ class CollectionNavigation {
         const dictBtn = this.createNavButton('Item Dictionary', () => {
             this.dismissPopover();
             const game = getGameObject();
-            if (game?.handleOpenItemDictionary) {
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            if (game?.handleOpenItemDictionary && itemDetails) {
                 game.handleOpenItemDictionary(itemHrid);
             }
         });
@@ -295,7 +296,8 @@ class CollectionNavigation {
 
         const dictBtn = this.createNavButton('Item Dictionary', () => {
             const game = getGameObject();
-            if (game?.handleOpenItemDictionary) {
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            if (game?.handleOpenItemDictionary && itemDetails) {
                 game.handleOpenItemDictionary(itemHrid);
             }
         });
