@@ -22,6 +22,10 @@ class NetworthHistoryChart {
         this.escHandler = null;
         this.networthFeature = null;
         this.activeRange = '7d'; // Track current active range
+        this.connectGaps = false; // Toggle for connecting gaps in chart
+        this.currentRange = '7d';
+        this.currentCustomFrom = null;
+        this.currentCustomTo = null;
     }
 
     /**
@@ -122,6 +126,30 @@ class NetworthHistoryChart {
             });
             rangeRow.appendChild(btn);
         }
+
+        // Connect Gaps toggle
+        const gapToggle = document.createElement('button');
+        gapToggle.textContent = 'Connect Gaps';
+        gapToggle.className = 'mwi-nw-gap-toggle';
+        const updateGapToggleStyle = () => {
+            gapToggle.style.cssText = `
+                background: ${this.connectGaps ? '#444' : '#2a2a2a'};
+                color: ${this.connectGaps ? '#fff' : '#999'};
+                border: 1px solid #555;
+                cursor: pointer;
+                padding: 4px 14px;
+                border-radius: 4px;
+                font-size: 13px;
+                margin-left: 4px;
+            `;
+        };
+        updateGapToggleStyle();
+        gapToggle.addEventListener('click', () => {
+            this.connectGaps = !this.connectGaps;
+            updateGapToggleStyle();
+            this.renderChart(this.currentRange, this.currentCustomFrom, this.currentCustomTo);
+        });
+        rangeRow.appendChild(gapToggle);
 
         // Spacer
         const spacer = document.createElement('div');
@@ -270,6 +298,11 @@ class NetworthHistoryChart {
      * @param {number} [customTo] - Custom end timestamp (for 'custom' range)
      */
     renderChart(range, customFrom, customTo) {
+        // Store params for re-render on toggle
+        this.currentRange = range;
+        this.currentCustomFrom = customFrom;
+        this.currentCustomTo = customTo;
+
         const canvas = document.getElementById('mwi-nw-chart-canvas');
         if (!canvas) return;
 
@@ -305,30 +338,36 @@ class NetworthHistoryChart {
         // Update summary stats
         this.updateSummaryStats(filtered);
 
-        // Split into gap-separated segments
-        const segments = [];
-        let currentSegment = [filtered[0]];
+        // Build chart data — connect gaps or split into segments
+        let chartData;
+        if (this.connectGaps) {
+            chartData = filtered.map((p) => ({ x: p.t, y: p.total, _raw: p }));
+        } else {
+            // Split into gap-separated segments
+            const segments = [];
+            let currentSegment = [filtered[0]];
 
-        for (let i = 1; i < filtered.length; i++) {
-            if (filtered[i].t - filtered[i - 1].t > GAP_THRESHOLD_MS) {
-                segments.push(currentSegment);
-                currentSegment = [filtered[i]];
-            } else {
-                currentSegment.push(filtered[i]);
+            for (let i = 1; i < filtered.length; i++) {
+                if (filtered[i].t - filtered[i - 1].t > GAP_THRESHOLD_MS) {
+                    segments.push(currentSegment);
+                    currentSegment = [filtered[i]];
+                } else {
+                    currentSegment.push(filtered[i]);
+                }
             }
-        }
-        segments.push(currentSegment);
+            segments.push(currentSegment);
 
-        // Build chart data with NaN gaps between segments
-        const chartData = [];
-        for (let i = 0; i < segments.length; i++) {
-            for (const point of segments[i]) {
-                chartData.push({ x: point.t, y: point.total, _raw: point });
-            }
-            // Insert NaN gap between segments (not after last)
-            if (i < segments.length - 1) {
-                const gapTime = segments[i][segments[i].length - 1].t + 1;
-                chartData.push({ x: gapTime, y: NaN });
+            // Build chart data with NaN gaps between segments
+            chartData = [];
+            for (let i = 0; i < segments.length; i++) {
+                for (const point of segments[i]) {
+                    chartData.push({ x: point.t, y: point.total, _raw: point });
+                }
+                // Insert NaN gap between segments (not after last)
+                if (i < segments.length - 1) {
+                    const gapTime = segments[i][segments[i].length - 1].t + 1;
+                    chartData.push({ x: gapTime, y: NaN });
+                }
             }
         }
 
@@ -352,7 +391,7 @@ class NetworthHistoryChart {
                         pointHoverRadius: 5,
                         tension: 0.1,
                         fill: true,
-                        spanGaps: false,
+                        spanGaps: this.connectGaps,
                     },
                 ],
             },
