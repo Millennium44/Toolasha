@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.47.0](https://github.com/Celasha/Toolasha/compare/v1.46.1...v1.47.0) (2026-03-23)
+
+
+### Features
+
+* add bar overlay, moving average, and persist chart preferences ([da5d68f](https://github.com/Celasha/Toolasha/commit/da5d68f58d797c964db436a26298472fb3b067b9))
+* add connect gaps toggle to networth history chart ([f06ed25](https://github.com/Celasha/Toolasha/commit/f06ed253eab7f3719f711509e9a56a0639235241))
+
 ## [1.46.1](https://github.com/Celasha/Toolasha/compare/v1.46.0...v1.46.1) (2026-03-23)
 
 ### Bug Fixes
