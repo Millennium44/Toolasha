@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.4](https://github.com/Celasha/Toolasha/compare/v1.47.3...v1.47.4) (2026-03-24)
+
+
+### Bug Fixes
+
+* remove completed market listings to prevent networth accumulation ([6197b62](https://github.com/Celasha/Toolasha/commit/6197b6276dbe5736e0c12844bc8e2c1de20278b4))
+
 ## [1.47.3](https://github.com/Celasha/Toolasha/compare/v1.47.2...v1.47.3) (2026-03-24)
 
 ### Bug Fixes
