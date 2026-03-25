@@ -6,6 +6,8 @@
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
+import { getEnhancingParams } from './enhancement-config.js';
+import { calculateEnhancement } from './enhancement-calculator.js';
 
 export const ARTISAN_MATERIAL_MODE = {
     EXPECTED: 'expected',
@@ -242,4 +244,115 @@ function calculateArtisanBonus(actionDetails) {
         console.error('[Material Calculator] Error calculating artisan bonus:', error);
         return 0;
     }
+}
+
+/**
+ * Calculate material requirements for enhancement actions
+ * Uses Markov chain statistics to determine expected materials needed
+ * @param {string} itemHrid - Item HRID being enhanced
+ * @param {number} startLevel - Current enhancement level (0-19)
+ * @param {number} targetLevel - Target enhancement level (1-20)
+ * @param {string|null} protectionItemHrid - Protection item HRID or null
+ * @param {number} protectFromLevel - Level at which protection begins (0 = never)
+ * @returns {Array<Object>} Array of material requirement objects (same format as calculateMaterialRequirements)
+ */
+export function calculateEnhancementMaterialRequirements(
+    itemHrid,
+    startLevel,
+    targetLevel,
+    protectionItemHrid,
+    protectFromLevel
+) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData) {
+        return [];
+    }
+
+    const itemDetails = gameData.itemDetailMap[itemHrid];
+    if (!itemDetails) {
+        return [];
+    }
+
+    const enhancementCosts = itemDetails.enhancementCosts || [];
+    if (enhancementCosts.length === 0) {
+        return [];
+    }
+
+    // Get enhancing parameters (level, tool bonus, teas, etc.)
+    const params = getEnhancingParams();
+    const effectiveProtect = protectFromLevel >= 2 && protectFromLevel <= targetLevel ? protectFromLevel : 0;
+
+    // Single Markov chain call for the full level range
+    const calc = calculateEnhancement({
+        enhancingLevel: params.enhancingLevel,
+        houseLevel: params.houseLevel,
+        toolBonus: params.toolBonus,
+        speedBonus: params.speedBonus,
+        itemLevel: itemDetails.itemLevel || 1,
+        targetLevel: targetLevel,
+        startLevel: startLevel,
+        protectFrom: effectiveProtect,
+        blessedTea: params.teas.blessed,
+        guzzlingBonus: params.guzzlingBonus,
+    });
+
+    const inventory = dataManager.getInventory();
+    const materials = [];
+
+    // Process enhancement cost materials
+    for (const cost of enhancementCosts) {
+        // Skip coins — not tradeable, auto-deducted by the game
+        if (cost.itemHrid === '/items/coin') {
+            continue;
+        }
+
+        const matDetails = gameData.itemDetailMap[cost.itemHrid];
+        if (!matDetails) {
+            continue;
+        }
+
+        const totalQuantity = Math.ceil(cost.count * calc.attempts);
+        const inventoryItem = inventory.find((i) => i.itemHrid === cost.itemHrid);
+        const have = inventoryItem?.count || 0;
+        const missing = Math.max(0, totalQuantity - have);
+
+        materials.push({
+            itemHrid: cost.itemHrid,
+            itemName: matDetails.name,
+            required: totalQuantity,
+            have: have,
+            queued: 0,
+            available: have,
+            missing: missing,
+            isTradeable: matDetails.isTradable === true,
+            isUpgradeItem: false,
+        });
+    }
+
+    // Add protection item if applicable
+    // Skip Philosopher's Mirror — special mechanic, not consumed as standard protection
+    if (calc.protectionCount > 0 && protectionItemHrid && protectionItemHrid !== '/items/philosophers_mirror') {
+        const totalProtection = Math.ceil(calc.protectionCount);
+        const protDetails = gameData.itemDetailMap[protectionItemHrid];
+
+        if (protDetails) {
+            const inventoryItem = inventory.find((i) => i.itemHrid === protectionItemHrid);
+            const have = inventoryItem?.count || 0;
+            const missing = Math.max(0, totalProtection - have);
+
+            materials.push({
+                itemHrid: protectionItemHrid,
+                itemName: protDetails.name,
+                required: totalProtection,
+                have: have,
+                queued: 0,
+                available: have,
+                missing: missing,
+                isTradeable: protDetails.isTradable === true,
+                isUpgradeItem: false,
+            });
+        }
+    }
+
+    return materials;
 }

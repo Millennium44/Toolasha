@@ -1,6 +1,6 @@
 /**
  * Missing Materials Marketplace Button
- * Adds button to production panels that opens marketplace with tabs for missing materials
+ * Adds button to production and enhancement panels that opens marketplace with tabs for missing materials
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -8,7 +8,10 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { findActionInput, attachInputListeners, performInitialUpdate } from '../../utils/action-panel-helper.js';
-import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
+import {
+    calculateMaterialRequirements,
+    calculateEnhancementMaterialRequirements,
+} from '../../utils/material-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
@@ -18,6 +21,8 @@ import {
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
 } from '../../utils/marketplace-tabs.js';
+import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
 /**
  * Module-level state
@@ -25,12 +30,20 @@ import {
 let cleanupObserver = null;
 const currentMaterialsTabs = [];
 let domObserverUnregister = null;
+let enhancementDomObserverUnregister = null;
 let processedPanels = new WeakSet();
+let processedEnhancingPanels = new WeakSet();
 let inventoryUpdateHandler = null;
 let storedActionHrid = null;
 let storedNumActions = 0;
+let storedEnhancementContext = null;
 const timerRegistry = createTimerRegistry();
 const autofillManager = createAutofillManager('MissingMats-Actions');
+
+/**
+ * Enhancement panel debounce timeout
+ */
+let enhancementDebounceTimeout = null;
 
 /**
  * Production action types (where button should appear)
@@ -50,15 +63,23 @@ export function initialize() {
     cleanupObserver = setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentMaterialsTabs);
     autofillManager.initialize();
 
-    // Watch for action panels appearing
+    // Watch for production action panels appearing
     domObserverUnregister = domObserver.onClass(
         'MissingMaterialsButton-ActionPanel',
         'SkillActionDetail_skillActionDetail',
         () => processActionPanels()
     );
 
+    // Watch for enhancement panels appearing
+    enhancementDomObserverUnregister = domObserver.onClass(
+        'MissingMaterialsButton-EnhancingPanel',
+        'SkillActionDetail_enhancingComponent__17bOx',
+        (panel) => processEnhancingPanel(panel)
+    );
+
     // Process existing panels
     processActionPanels();
+    processExistingEnhancingPanels();
 }
 
 /**
@@ -68,6 +89,11 @@ export function cleanup() {
     if (domObserverUnregister) {
         domObserverUnregister();
         domObserverUnregister = null;
+    }
+
+    if (enhancementDomObserverUnregister) {
+        enhancementDomObserverUnregister();
+        enhancementDomObserverUnregister = null;
     }
 
     // Disconnect marketplace cleanup observer
@@ -83,6 +109,13 @@ export function cleanup() {
 
     // Clear processed panels
     processedPanels = new WeakSet();
+    processedEnhancingPanels = new WeakSet();
+
+    // Clear enhancement debounce
+    if (enhancementDebounceTimeout) {
+        clearTimeout(enhancementDebounceTimeout);
+        enhancementDebounceTimeout = null;
+    }
 
     timerRegistry.clearAll();
 }
@@ -236,6 +269,276 @@ function getActionHridFromName(actionName) {
 }
 
 /**
+ * Process existing enhancing panels on the page
+ */
+function processExistingEnhancingPanels() {
+    const panels = document.querySelectorAll('[class*="SkillActionDetail_enhancingComponent"]');
+    panels.forEach((panel) => processEnhancingPanel(panel));
+}
+
+/**
+ * Process an enhancing panel - set up mutation watcher and create button
+ * @param {HTMLElement} panel - Enhancing panel element
+ */
+function processEnhancingPanel(panel) {
+    if (!panel || processedEnhancingPanels.has(panel)) {
+        return;
+    }
+
+    processedEnhancingPanels.add(panel);
+
+    // Watch for changes (item swap, level change, protection change) with debounce
+    createMutationWatcher(
+        panel,
+        () => {
+            if (enhancementDebounceTimeout) {
+                clearTimeout(enhancementDebounceTimeout);
+            }
+            enhancementDebounceTimeout = setTimeout(() => {
+                enhancementDebounceTimeout = null;
+                updateEnhancementButton(panel);
+            }, 500);
+        },
+        { childList: true, subtree: true, attributes: true }
+    );
+
+    // Initial button creation (delay to let panel-observer set mwiItemHrid first)
+    setTimeout(() => updateEnhancementButton(panel), 600);
+}
+
+/**
+ * Get current enhancement level from action queue or DOM
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {number} Current enhancement level (0-19)
+ */
+function getCurrentEnhancementLevel(panel) {
+    // Try action queue first
+    const currentActions = dataManager.getCurrentActions();
+    const enhancingAction = currentActions.find((a) => a.actionHrid === '/actions/enhancing/enhance');
+    if (enhancingAction?.primaryItemHash) {
+        const parts = enhancingAction.primaryItemHash.split('::');
+        const lastPart = parts[parts.length - 1];
+        if (lastPart && !lastPart.startsWith('/')) {
+            const parsed = parseInt(lastPart, 10);
+            if (!isNaN(parsed)) return parsed;
+        }
+    }
+
+    // Fallback: read from DOM text (e.g., "Dairyhand's Top +5")
+    const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
+    if (inputItems.length > 0) {
+        const inputName = inputItems[0].textContent.trim();
+        const levelMatch = inputName.match(/\+(\d+)$/);
+        if (levelMatch) return parseInt(levelMatch[1], 10);
+    }
+
+    return 0;
+}
+
+/**
+ * Get target enhancement level from UI input
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {number|null} Target level (1-20) or null if not found
+ */
+function getTargetLevelFromUI(panel) {
+    const labels = Array.from(panel.querySelectorAll('*')).filter(
+        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
+    );
+
+    if (labels.length > 0) {
+        const parent = labels[0].parentElement;
+        const input = parent.querySelector('input[type="number"], input[type="text"]');
+        if (input && input.value) {
+            const value = parseInt(input.value, 10);
+            if (!isNaN(value)) return Math.max(1, Math.min(20, value));
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Update the missing materials button on an enhancement panel
+ * @param {HTMLElement} panel - Enhancing panel element
+ */
+function updateEnhancementButton(panel) {
+    // Remove existing button
+    const existingButton = panel.querySelector('#mwi-missing-mats-button');
+    if (existingButton) {
+        existingButton.remove();
+    }
+
+    if (!config.getSetting('actions_missingMaterialsButton')) {
+        return;
+    }
+
+    // Get item HRID (set by panel-observer.js)
+    const itemHrid = panel.dataset.mwiItemHrid;
+    if (!itemHrid) {
+        return;
+    }
+
+    // Get current and target levels
+    const startLevel = getCurrentEnhancementLevel(panel);
+    const targetLevel = getTargetLevelFromUI(panel);
+    if (targetLevel === null || targetLevel <= startLevel) {
+        return;
+    }
+
+    // Get protection settings from UI
+    const protectionItemHrid = getProtectionItemFromUI(panel);
+    const protectFromLevel = getProtectFromLevelFromUI(panel);
+
+    // Calculate missing materials
+    const missingMaterials = calculateEnhancementMaterialRequirements(
+        itemHrid,
+        startLevel,
+        targetLevel,
+        protectionItemHrid,
+        protectFromLevel
+    );
+
+    const disabled = missingMaterials.length === 0;
+
+    // Create button
+    const button = createEnhancementMissingMaterialsButton(
+        missingMaterials,
+        itemHrid,
+        startLevel,
+        targetLevel,
+        protectionItemHrid,
+        protectFromLevel,
+        disabled
+    );
+
+    // Find insertion point
+    const itemRequirements = panel.querySelector('.SkillActionDetail_itemRequirements__3SPnA');
+    if (itemRequirements) {
+        itemRequirements.parentNode.insertBefore(button, itemRequirements.nextSibling);
+    } else {
+        const enhancementStats = panel.querySelector('#mwi-enhancement-stats');
+        if (enhancementStats) {
+            enhancementStats.parentNode.insertBefore(button, enhancementStats);
+        } else {
+            panel.appendChild(button);
+        }
+    }
+}
+
+/**
+ * Create missing materials button for enhancement panels
+ * @param {Array} missingMaterials - Array of missing material objects
+ * @param {string} itemHrid - Item being enhanced
+ * @param {number} startLevel - Current enhancement level
+ * @param {number} targetLevel - Target enhancement level
+ * @param {string|null} protectionItemHrid - Protection item HRID
+ * @param {number} protectFromLevel - Protect from level
+ * @param {boolean} disabled - Whether button should be disabled
+ * @returns {HTMLElement} Button element
+ */
+function createEnhancementMissingMaterialsButton(
+    missingMaterials,
+    itemHrid,
+    startLevel,
+    targetLevel,
+    protectionItemHrid,
+    protectFromLevel,
+    disabled
+) {
+    const button = document.createElement('button');
+    button.id = 'mwi-missing-mats-button';
+    button.textContent = 'Missing Mats Marketplace';
+    button.disabled = disabled;
+    button.style.cssText = `
+        width: 100%;
+        padding: 10px 16px;
+        margin: 8px 0 16px 0;
+        background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
+        color: #ffffff;
+        border: 1px solid rgba(91, 141, 239, 0.4);
+        border-radius: 8px;
+        cursor: ${disabled ? 'default' : 'pointer'};
+        font-size: 14px;
+        font-weight: 600;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        opacity: ${disabled ? '0.45' : '1'};
+    `;
+
+    if (!disabled) {
+        button.addEventListener('mouseenter', () => {
+            button.style.background =
+                'linear-gradient(180deg, rgba(91, 141, 239, 0.35) 0%, rgba(91, 141, 239, 0.25) 100%)';
+            button.style.borderColor = 'rgba(91, 141, 239, 0.6)';
+            button.style.boxShadow = '0 3px 6px rgba(0, 0, 0, 0.3)';
+        });
+
+        button.addEventListener('mouseleave', () => {
+            button.style.background =
+                'linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%)';
+            button.style.borderColor = 'rgba(91, 141, 239, 0.4)';
+            button.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+        });
+
+        button.addEventListener('click', async () => {
+            await handleEnhancementMissingMaterialsClick(
+                missingMaterials,
+                itemHrid,
+                startLevel,
+                targetLevel,
+                protectionItemHrid,
+                protectFromLevel
+            );
+        });
+    }
+
+    return button;
+}
+
+/**
+ * Handle enhancement missing materials button click
+ * @param {Array} missingMaterials - Array of missing material objects
+ * @param {string} itemHrid - Item being enhanced
+ * @param {number} startLevel - Current enhancement level
+ * @param {number} targetLevel - Target enhancement level
+ * @param {string|null} protectionItemHrid - Protection item HRID
+ * @param {number} protectFromLevel - Protect from level
+ */
+async function handleEnhancementMissingMaterialsClick(
+    missingMaterials,
+    itemHrid,
+    startLevel,
+    targetLevel,
+    protectionItemHrid,
+    protectFromLevel
+) {
+    // Store context for live updates
+    storedEnhancementContext = { itemHrid, startLevel, targetLevel, protectionItemHrid, protectFromLevel };
+    storedActionHrid = null;
+    storedNumActions = 0;
+
+    // Navigate to marketplace
+    const success = await openMarketplacePage();
+    if (!success) {
+        console.error('[MissingMats] Failed to navigate to marketplace');
+        return;
+    }
+
+    // Wait a moment for marketplace to settle
+    await new Promise((resolve) => {
+        const delayTimeout = setTimeout(resolve, 200);
+        timerRegistry.registerTimeout(delayTimeout);
+    });
+
+    // Create custom tabs
+    createMissingMaterialTabs(missingMaterials);
+
+    // Setup inventory listener for live updates
+    setupInventoryListener();
+}
+
+/**
  * Create missing materials marketplace button
  * @param {Array} missingMaterials - Array of missing material objects
  * @param {string} actionHrid - Action HRID for recalculating materials
@@ -301,6 +604,7 @@ async function handleMissingMaterialsClick(missingMaterials, actionHrid, numActi
     // Store context for live updates
     storedActionHrid = actionHrid;
     storedNumActions = numActions;
+    storedEnhancementContext = null;
 
     // Navigate to marketplace
     const success = await openMarketplacePage();
@@ -468,20 +772,31 @@ function setupInventoryListener() {
  * Recalculates materials and updates badge display
  */
 function updateTabsOnInventoryChange() {
-    // Check if we have valid context
-    if (!storedActionHrid || storedNumActions <= 0) {
-        return;
-    }
-
     // Check if tabs still exist
     if (currentMaterialsTabs.length === 0) {
         return;
     }
 
-    // Recalculate materials with current inventory (respecting queue setting)
-    const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
-    const accountForQueue = !ignoreQueue;
-    const updatedMaterials = calculateMaterialRequirements(storedActionHrid, storedNumActions, accountForQueue);
+    let updatedMaterials;
+
+    if (storedEnhancementContext) {
+        // Enhancement mode
+        const ctx = storedEnhancementContext;
+        updatedMaterials = calculateEnhancementMaterialRequirements(
+            ctx.itemHrid,
+            ctx.startLevel,
+            ctx.targetLevel,
+            ctx.protectionItemHrid,
+            ctx.protectFromLevel
+        );
+    } else if (storedActionHrid && storedNumActions > 0) {
+        // Production mode
+        const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
+        const accountForQueue = !ignoreQueue;
+        updatedMaterials = calculateMaterialRequirements(storedActionHrid, storedNumActions, accountForQueue);
+    } else {
+        return;
+    }
 
     // Update each existing tab
     currentMaterialsTabs.forEach((tab) => {
@@ -569,6 +884,7 @@ function handleMarketplaceCleanup() {
     // Clear stored context
     storedActionHrid = null;
     storedNumActions = 0;
+    storedEnhancementContext = null;
     autofillManager.clearQuantity();
 }
 

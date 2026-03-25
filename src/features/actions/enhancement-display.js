@@ -32,7 +32,7 @@ function formatAttempts(num) {
  * @param {HTMLElement} panel - Enhancement action panel element
  * @returns {string|null} Protection item HRID or null if none equipped
  */
-function getProtectionItemFromUI(panel) {
+export function getProtectionItemFromUI(panel) {
     try {
         // Find the protection item container using the specific class
         const protectionContainer = panel.querySelector('[class*="protectionItemInputContainer"]');
@@ -435,7 +435,7 @@ function generateCostsByLevelTable(
  * @param {HTMLElement} panel - Enhancing panel
  * @returns {number} Protect from level (0 = never, 1-20)
  */
-function getProtectFromLevelFromUI(panel) {
+export function getProtectFromLevelFromUI(panel) {
     // Find the "Protect From Level" input
     const labels = Array.from(panel.querySelectorAll('*')).filter(
         (el) => el.textContent.trim() === 'Protect From Level' && el.children.length === 0
