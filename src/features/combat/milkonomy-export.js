@@ -267,9 +267,7 @@ function getProfileEquipment(wearableItemMap, gameData, slotType) {
                 hrid: item.itemHrid,
             };
 
-            if (typeof item.enhancementLevel === 'number' && item.enhancementLevel > 0) {
-                equipment.enhanceLevel = item.enhancementLevel;
-            }
+            equipment.enhanceLevel = item.enhancementLevel > 0 ? item.enhancementLevel : null;
 
             return equipment;
         }
