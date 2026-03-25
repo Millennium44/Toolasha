@@ -757,7 +757,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     if (itemHrid) {
         const marketPrice = getItemPrices(itemHrid, targetLevel);
         if (marketPrice && marketPrice.ask > 0) {
-            totalColor = optimalStrategy.totalCost < marketPrice.ask ? '#4ade80' : '#f87171';
+            totalColor =
+                optimalStrategy.totalCost < marketPrice.ask ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
         }
     }
     const totalStyle = 'font-weight: bold; margin-top: 4px;' + (totalColor ? ' color: ' + totalColor + ';' : '');
