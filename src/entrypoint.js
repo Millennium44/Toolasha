@@ -525,6 +525,7 @@ function registerFeatures() {
         name: feature.name,
         category: feature.category,
         initialize: () => feature.module.initialize(),
+        disable: typeof feature.module.disable === 'function' ? () => feature.module.disable() : undefined,
         async: feature.async,
     }));
 
