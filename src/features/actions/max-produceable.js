@@ -57,6 +57,7 @@ class MaxProduceable {
         this.itemsUpdatedHandler = null;
         this.actionCompletedHandler = null;
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
+        this.pricingModeHandler = null; // Handler for pricing mode changes
         this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
         this.actionNameToHridCache = null; // Cached reverse lookup map (name → hrid)
         this.isInitialized = false;
@@ -98,6 +99,11 @@ class MaxProduceable {
         // Event-driven updates (no polling needed)
         dataManager.on('items_updated', this.itemsUpdatedHandler);
         dataManager.on('character_switching', this.characterSwitchingHandler);
+
+        this.pricingModeHandler = () => {
+            this.updateAllCounts();
+        };
+        config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
     }
 
     /**
@@ -795,6 +801,11 @@ class MaxProduceable {
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;
+        }
+
+        if (this.pricingModeHandler) {
+            config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+            this.pricingModeHandler = null;
         }
 
         // Clear all DOM references

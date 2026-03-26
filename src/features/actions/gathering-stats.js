@@ -22,6 +22,7 @@ class GatheringStats {
         this.actionCompletedHandler = null;
         this.consumablesUpdatedHandler = null; // Handler for tea/drink changes
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
+        this.pricingModeHandler = null; // Handler for pricing mode changes
         this.isInitialized = false;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.consumablesUpdatedDebounceTimer = null; // Debounce timer for consumables_updated events
@@ -70,6 +71,11 @@ class GatheringStats {
         dataManager.on('items_updated', this.itemsUpdatedHandler);
         dataManager.on('consumables_updated', this.consumablesUpdatedHandler);
         dataManager.on('character_switching', this.characterSwitchingHandler);
+
+        this.pricingModeHandler = () => {
+            this.updateAllStats();
+        };
+        config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
     }
 
     /**
@@ -303,6 +309,13 @@ class GatheringStats {
 
         // Wait for all updates to complete
         await Promise.all(updatePromises);
+
+        // Re-render the stat text on each panel (skipRender only updated data, not DOM)
+        for (const [actionPanel, data] of this.actionElements.entries()) {
+            if (document.body.contains(actionPanel) && data.displayElement) {
+                this.renderIndicators(actionPanel, data);
+            }
+        }
 
         // Find best actions and add indicators
         this.scheduleIndicatorUpdate();
@@ -561,6 +574,11 @@ class GatheringStats {
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;
+        }
+
+        if (this.pricingModeHandler) {
+            config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+            this.pricingModeHandler = null;
         }
 
         // Clear all DOM references

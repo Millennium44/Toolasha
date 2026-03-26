@@ -478,7 +478,7 @@ class Config {
 
             // Trigger registered callbacks for this setting
             if (this.settingChangeCallbacks[key]) {
-                this.settingChangeCallbacks[key](value);
+                for (const cb of this.settingChangeCallbacks[key]) cb(value);
             }
         }
     }
@@ -500,27 +500,33 @@ class Config {
 
             // Trigger registered callbacks for this setting
             if (this.settingChangeCallbacks[key]) {
-                this.settingChangeCallbacks[key](value);
+                for (const cb of this.settingChangeCallbacks[key]) cb(value);
             }
         }
     }
 
     /**
-     * Register a callback to be called when a specific setting changes
+     * Register a callback to be called when a specific setting changes.
+     * Multiple callbacks per key are supported.
      * @param {string} key - Setting key to watch
      * @param {Function} callback - Callback function to call when setting changes
      */
     onSettingChange(key, callback) {
-        this.settingChangeCallbacks[key] = callback;
+        if (!this.settingChangeCallbacks[key]) {
+            this.settingChangeCallbacks[key] = [];
+        }
+        this.settingChangeCallbacks[key].push(callback);
     }
 
     /**
-     * Unregister a callback for a specific setting change
+     * Unregister a specific callback for a setting change
      * @param {string} key - Setting key to stop watching
-     * @param {Function} _callback - Callback function to remove (unused, kept for API consistency)
+     * @param {Function} callback - The exact callback reference to remove
      */
-    offSettingChange(key, _callback) {
-        delete this.settingChangeCallbacks[key];
+    offSettingChange(key, callback) {
+        if (this.settingChangeCallbacks[key]) {
+            this.settingChangeCallbacks[key] = this.settingChangeCallbacks[key].filter((cb) => cb !== callback);
+        }
     }
 
     /**

@@ -499,6 +499,8 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     const profitSection = createCollapsibleSection('💰', 'Profitability', summary, topLevelContent, false, 0);
     profitSection.id = 'mwi-foraging-profit';
     profitSection.setAttribute('data-mwi-profit-display', 'true');
+    profitSection.dataset.mwiActionHrid = actionHrid;
+    profitSection.dataset.mwiActionType = 'gathering';
 
     // Get the summary div to update it dynamically
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
@@ -1101,6 +1103,8 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     const profitSection = createCollapsibleSection('💰', 'Profitability', summary, topLevelContent, false, 0);
     profitSection.id = 'mwi-production-profit';
     profitSection.setAttribute('data-mwi-profit-display', 'true');
+    profitSection.dataset.mwiActionHrid = actionHrid;
+    profitSection.dataset.mwiActionType = 'production';
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
 
     // Set up listener to update summary with total profit when input changes
