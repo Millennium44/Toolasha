@@ -678,6 +678,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Tracks the highest recommended level enemy defeated per monster type and shows it in the Automation tab',
             },
+            labyrinthShopPrices: {
+                id: 'labyrinthShopPrices',
+                label: 'Labyrinth Shop: Show market prices',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows ask/bid market prices on tradeable items in the Labyrinth Shop tab',
+            },
             combatSummary: {
                 id: 'combatSummary',
                 label: 'Combat Summary: Show detailed statistics on return',

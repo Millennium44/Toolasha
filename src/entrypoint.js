@@ -355,6 +355,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthShopPrices',
+            name: 'Labyrinth Shop Prices',
+            category: 'Combat',
+            module: Combat.labyrinthShopPrices,
+            async: false,
+        },
+        {
             key: 'loadoutSort',
             name: 'Loadout Sort',
             category: 'Combat',

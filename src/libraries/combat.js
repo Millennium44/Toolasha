@@ -16,6 +16,7 @@ import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-ch
 import combatSummary from '../features/combat/combat-summary.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
+import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
@@ -49,6 +50,7 @@ toolashaRoot.Combat = {
     combatSummary,
     labyrinthTracker,
     labyrinthBestLevel,
+    labyrinthShopPrices,
     combatSimIntegration,
     combatSimExport: {
         constructExportObject,
