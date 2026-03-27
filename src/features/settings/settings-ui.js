@@ -390,7 +390,8 @@ class SettingsUI {
             for (const [settingId, settingDef] of Object.entries(group.settings)) {
                 if (!settingDef.disabledBy) continue;
 
-                const parentValue = this.config.getSetting(settingDef.disabledBy);
+                const parentSetting = this.currentSettings[settingDef.disabledBy];
+                const parentValue = parentSetting?.isTrue ?? false;
                 const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
                 if (!settingEl) continue;
 
