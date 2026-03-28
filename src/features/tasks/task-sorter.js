@@ -188,11 +188,10 @@ class TaskSorter {
         const orderA = this.getTaskOrder(cardA);
         const orderB = this.getTaskOrder(cardB);
 
-        // Completed tasks always last
+        // Completed tasks always first
         if (orderA.isCompleted !== orderB.isCompleted) {
-            return orderA.isCompleted ? 1 : -1;
+            return orderA.isCompleted ? -1 : 1;
         }
-
         const profitA = cardA.querySelector(TOOLASHA.TASK_PROFIT);
         const profitB = cardB.querySelector(TOOLASHA.TASK_PROFIT);
         const secondsA = profitA?.dataset.completionSeconds ? parseFloat(profitA.dataset.completionSeconds) : null;
@@ -222,9 +221,9 @@ class TaskSorter {
         const orderA = this.getTaskOrder(cardA);
         const orderB = this.getTaskOrder(cardB);
 
-        // First: Sort by completion status (incomplete tasks first, completed tasks last)
+        // First: Sort by completion status (completed tasks first, incomplete tasks last)
         if (orderA.isCompleted !== orderB.isCompleted) {
-            return orderA.isCompleted ? 1 : -1;
+            return orderA.isCompleted ? -1 : 1;
         }
 
         // Second: Sort by skill type (combat vs non-combat)
