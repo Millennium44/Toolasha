@@ -1528,7 +1528,7 @@ function buildProductionPerActionBreakdown(profitData) {
     const bonusRevenuePerAction = (bonusRevenueTotal * efficiencyMultiplier) / actionsPerHour;
     const revenuePerAction = baseRevenuePerAction + gourmetRevenuePerAction + bonusRevenuePerAction;
     const marketTaxPerAction = revenuePerAction * MARKET_TAX;
-    const materialCostPerAction = profitData.materialCostPerHour / actionsPerHour;
+    const materialCostPerAction = profitData.totalMaterialCost; // per-action cost is fixed, unaffected by efficiency
     const teaCostPerAction = profitData.totalTeaCostPerHour / actionsPerHour;
     const costsPerAction = materialCostPerAction + teaCostPerAction + marketTaxPerAction;
     const profitPerAction = profitData.profitPerAction;
@@ -1671,15 +1671,15 @@ function buildProductionPerActionBreakdown(profitData) {
     const materialCostsContent = document.createElement('div');
     if (profitData.materialCosts && profitData.materialCosts.length > 0) {
         for (const material of profitData.materialCosts) {
-            const amountPerAction = material.amount * efficiencyMultiplier;
-            const costPerAction = material.totalCost * efficiencyMultiplier;
+            const amountPerAction = material.amount; // per-action quantity is fixed, unaffected by efficiency
+            const costPerAction = material.totalCost; // per-action cost is fixed, unaffected by efficiency
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
 
             let materialText = `• ${material.itemName}: ${amountPerAction.toFixed(2)}/action`;
 
             if (profitData.artisanBonus > 0 && material.baseAmount && material.amount !== material.baseAmount) {
-                const baseAmountPerAction = material.baseAmount * efficiencyMultiplier;
+                const baseAmountPerAction = material.baseAmount; // per-action quantity is fixed, unaffected by efficiency
                 materialText += ` (${baseAmountPerAction.toFixed(2)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
             }
 

@@ -316,6 +316,10 @@ class ProfitCalculator {
         // Total costs per hour (materials + teas + market tax)
         const totalCostPerHour = materialCostPerHour + totalTeaCostPerHour + marketTax;
 
+        // Total costs per action (fixed, unaffected by efficiency)
+        const totalCostPerAction =
+            totalMaterialCost + totalTeaCostPerHour / actionsPerHour + marketTax / actionsPerHour;
+
         // Profit per hour (revenue + bonus revenue - total costs)
         const profitPerHour = revenuePerHour + efficiencyBoostedBonusRevenue - totalCostPerHour;
 
@@ -336,6 +340,7 @@ class ProfitCalculator {
             materialCosts,
             totalMaterialCost,
             materialCostPerHour, // Material costs per hour (with efficiency)
+            totalCostPerAction, // Total cost per action (materials + tea + tax, no efficiency)
             teaCosts, // Tea consumption costs breakdown
             totalTeaCostPerHour, // Total tea costs per hour
             costPerItem,
