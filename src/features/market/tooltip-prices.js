@@ -14,6 +14,7 @@ import {
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
     buildEnhancementMilestonesHTML,
+    getProductionCost,
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -585,10 +586,21 @@ class TooltipPrices {
 
                 const marketPrice = marketAPI.getPrice(itemHrid, 0);
 
+                if (marketPrice?.ask > 0 || marketPrice?.bid > 0) {
+                    return {
+                        ...material,
+                        askPrice: marketPrice.ask > 0 ? marketPrice.ask : 0,
+                        bidPrice: marketPrice.bid > 0 ? marketPrice.bid : 0,
+                    };
+                }
+
+                // Fallback: production cost, then 0
+                const prodAsk = getProductionCost(itemHrid, 'ask') || 0;
+                const prodBid = getProductionCost(itemHrid, 'bid') || 0;
                 return {
                     ...material,
-                    askPrice: marketPrice?.ask && marketPrice.ask > 0 ? marketPrice.ask : 0,
-                    bidPrice: marketPrice?.bid && marketPrice.bid > 0 ? marketPrice.bid : 0,
+                    askPrice: prodAsk,
+                    bidPrice: prodBid,
                 };
             });
 

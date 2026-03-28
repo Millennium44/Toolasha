@@ -396,9 +396,9 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
                     price = ask;
                     bidPrice = bid;
                 } else {
-                    // Fallback to sellPrice if no market data
-                    price = materialDetail?.sellPrice || 0;
-                    bidPrice = price;
+                    // Fallback: production cost, then NPC sell price
+                    price = getProductionCost(material.itemHrid, 'ask') || materialDetail?.sellPrice || 0;
+                    bidPrice = getProductionCost(material.itemHrid, 'bid') || materialDetail?.sellPrice || 0;
                 }
             }
             perActionCost += price * material.count;
@@ -507,7 +507,7 @@ export function getRealisticBaseItemPrice(itemHrid) {
  * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
  * @private
  */
-function getProductionCost(itemHrid, mode = 'ask') {
+export function getProductionCost(itemHrid, mode = 'ask') {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
