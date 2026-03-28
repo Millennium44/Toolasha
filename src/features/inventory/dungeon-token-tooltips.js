@@ -7,7 +7,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import dom from '../../utils/dom.js';
-import { numberFormatter } from '../../utils/formatters.js';
+import { formatKMB } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
 
 /**
@@ -239,9 +239,9 @@ class DungeonTokenTooltips {
 
             html += `<tr style="${rowStyle}">`;
             html += `<td style="padding: 2px 4px;">${item.name}</td>`;
-            html += `<td style="text-align: right; padding: 2px 4px;">${numberFormatter(item.cost)}</td>`;
-            html += `<td style="text-align: right; padding: 2px 4px;">${numberFormatter(item.askPrice)}</td>`;
-            html += `<td style="text-align: right; padding: 2px 4px; font-weight: ${isBestValue ? 'bold' : 'normal'};">${numberFormatter(Math.floor(item.goldPerToken))}</td>`;
+            html += `<td style="text-align: right; padding: 2px 4px;">${formatKMB(item.cost)}</td>`;
+            html += `<td style="text-align: right; padding: 2px 4px;">${formatKMB(item.askPrice)}</td>`;
+            html += `<td style="text-align: right; padding: 2px 4px; font-weight: ${isBestValue ? 'bold' : 'normal'};">${formatKMB(Math.floor(item.goldPerToken))}</td>`;
             html += '</tr>';
         });
 

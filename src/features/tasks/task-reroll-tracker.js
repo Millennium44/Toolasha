@@ -3,7 +3,7 @@
  * Tracks and displays reroll costs for tasks using WebSocket messages
  */
 
-import { numberFormatter } from '../../utils/formatters.js';
+import { formatKMB } from '../../utils/formatters.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
@@ -400,7 +400,7 @@ class TaskRerollTracker {
             parts.push(`${cowbellSpent}🔔`);
         }
         if (goldSpent > 0) {
-            parts.push(`${numberFormatter(goldSpent)}💰`);
+            parts.push(`${formatKMB(goldSpent)}💰`);
         }
 
         if (parts.length > 0) {

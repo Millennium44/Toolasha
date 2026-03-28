@@ -525,7 +525,7 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            html += `<div style="color: ${profitColor}; font-weight: bold;">Net: ${numberFormatter(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)</div>`;
+            html += `<div style="color: ${profitColor}; font-weight: bold;">Net: ${formatKMB(profitData.profitPerHour)}/hr (${formatKMB(profitPerDay)}/day)</div>`;
 
             // Show detailed breakdown if enabled
             if (showDetailed) {
@@ -538,7 +538,7 @@ class TooltipPrices {
             if (showDetailed) {
                 html += this.buildDetailedProfitDisplay(profitData, false);
             } else {
-                html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${numberFormatter(profitData.totalMaterialCost)}/item</div>`;
+                html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${formatKMB(profitData.totalMaterialCost)}/item</div>`;
             }
         }
 
@@ -626,7 +626,7 @@ class TooltipPrices {
             const profitPerDay = profitData.profitPerDay;
             const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-            html += `<div style="color: ${profitColor};">Profit: ${numberFormatter(profitPerAction)}/action, ${numberFormatter(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day</div>`;
+            html += `<div style="color: ${profitColor};">Profit: ${formatKMB(profitPerAction)}/action, ${formatKMB(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day</div>`;
             html += '</div>';
         }
 
@@ -980,12 +980,12 @@ class TooltipPrices {
             const profit = allProfits[i];
             const label = profit.actionType.charAt(0).toUpperCase() + profit.actionType.slice(1);
             const color = profit.profitPerHour >= 0 ? config.COLOR_TOOLTIP_INFO : config.COLOR_TOOLTIP_LOSS;
-            html += `<div style="color: ${color};">• ${label}: ${numberFormatter(profit.profitPerHour)}/hr`;
+            html += `<div style="color: ${color};">• ${label}: ${formatKMB(profit.profitPerHour)}/hr`;
 
             // Show profit per action for alchemy actions
             if (profit.netProfitPerAttempt !== undefined) {
                 const perActionColor = profit.netProfitPerAttempt >= 0 ? 'inherit' : config.COLOR_TOOLTIP_LOSS;
-                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${numberFormatter(profit.netProfitPerAttempt)}/action)</span>`;
+                html += ` <span style="opacity: 0.7; color: ${perActionColor};">(${formatKMB(profit.netProfitPerAttempt)}/action)</span>`;
             }
 
             // Show item icons for the winning catalyst and/or tea (silence = no modifiers needed)

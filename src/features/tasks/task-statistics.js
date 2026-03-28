@@ -10,7 +10,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateTaskProfit, calculateTaskTokenValue, calculateTaskRewardValue } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
-import { numberFormatter, timeReadable } from '../../utils/formatters.js';
+import { timeReadable, formatKMB } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
 class TaskStatistics {
@@ -515,23 +515,23 @@ class TaskStatistics {
     createRewardsSection(rewards, textColor) {
         const section = this.createSection('Expected Rewards');
 
-        section.appendChild(this.createRow('Total Coins', numberFormatter(rewards.totalCoins), config.COLOR_GOLD));
+        section.appendChild(this.createRow('Total Coins', formatKMB(rewards.totalCoins), config.COLOR_GOLD));
         section.appendChild(this.createRow('Total Task Tokens', String(rewards.totalTokens), textColor));
 
         if (!rewards.rewardValue.error) {
-            const tokenValueStr = `${numberFormatter(Math.round(rewards.rewardValue.breakdown.tokenValue))} each`;
+            const tokenValueStr = `${formatKMB(Math.round(rewards.rewardValue.breakdown.tokenValue))} each`;
             section.appendChild(this.createRow('Token Value', tokenValueStr, config.COLOR_TEXT_SECONDARY));
             section.appendChild(
                 this.createRow(
                     'Tokens Value',
-                    numberFormatter(Math.round(rewards.rewardValue.taskTokens)),
+                    formatKMB(Math.round(rewards.rewardValue.taskTokens)),
                     config.COLOR_PROFIT
                 )
             );
             section.appendChild(
                 this.createRow(
                     "Purple's Gift",
-                    numberFormatter(Math.round(rewards.rewardValue.purpleGift)),
+                    formatKMB(Math.round(rewards.rewardValue.purpleGift)),
                     config.COLOR_ESSENCE
                 )
             );
@@ -544,7 +544,7 @@ class TaskStatistics {
             section.appendChild(
                 this.createRow(
                     'Total Reward Value',
-                    numberFormatter(Math.round(rewards.rewardValue.total)),
+                    formatKMB(Math.round(rewards.rewardValue.total)),
                     config.COLOR_ACCENT
                 )
             );
@@ -567,7 +567,7 @@ class TaskStatistics {
             const profitStr = detail.isCombat
                 ? 'N/A (combat)'
                 : detail.actionProfit !== null
-                  ? numberFormatter(Math.round(detail.actionProfit))
+                  ? formatKMB(Math.round(detail.actionProfit))
                   : 'N/A';
 
             const profitColor = detail.isCombat
@@ -586,8 +586,7 @@ class TaskStatistics {
         separator.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
         section.appendChild(separator);
 
-        const totalStr =
-            rewards.totalActionProfit !== null ? numberFormatter(Math.round(rewards.totalActionProfit)) : 'N/A';
+        const totalStr = rewards.totalActionProfit !== null ? formatKMB(Math.round(rewards.totalActionProfit)) : 'N/A';
         const totalColor =
             rewards.totalActionProfit !== null && rewards.totalActionProfit >= 0
                 ? config.COLOR_PROFIT
@@ -603,7 +602,7 @@ class TaskStatistics {
         section.appendChild(separator2);
 
         section.appendChild(
-            this.createRow('Combined Total', numberFormatter(Math.round(rewards.combinedTotal)), config.COLOR_ACCENT)
+            this.createRow('Combined Total', formatKMB(Math.round(rewards.combinedTotal)), config.COLOR_ACCENT)
         );
 
         return section;

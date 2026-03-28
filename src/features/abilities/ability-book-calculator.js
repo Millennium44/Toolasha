@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import { numberFormatter } from '../../utils/formatters.js';
+import { numberFormatter, formatKMB } from '../../utils/formatters.js';
 import dom from '../../utils/dom.js';
 import domObserver from '../../core/dom-observer.js';
 
@@ -236,7 +236,7 @@ class AbilityBookCalculator {
             <div id="tillLevelNumber" style="font-size: 0.95em;">
                 Books needed: <strong>${numberFormatter(booksNeeded)}</strong>
                 <br>
-                Cost: ${numberFormatter(Math.ceil(booksNeeded * ask))} / ${numberFormatter(Math.ceil(booksNeeded * bid))} (ask / bid)
+                Cost: ${formatKMB(Math.ceil(booksNeeded * ask))} / ${formatKMB(Math.ceil(booksNeeded * bid))} (ask / bid)
             </div>
             <div style="font-size: 0.85em; color: #999; margin-top: 8px; font-style: italic;">
                 Refresh page to update current level
@@ -255,7 +255,7 @@ class AbilityBookCalculator {
                 display.innerHTML = `
                     Books needed: <strong>${numberFormatter(books)}</strong>
                     <br>
-                    Cost: ${numberFormatter(Math.ceil(books * ask))} / ${numberFormatter(Math.ceil(books * bid))} (ask / bid)
+                    Cost: ${formatKMB(Math.ceil(books * ask))} / ${formatKMB(Math.ceil(books * bid))} (ask / bid)
                 `;
             } else {
                 display.innerHTML = '<span style="color: ${config.COLOR_LOSS};">Invalid target level</span>';
