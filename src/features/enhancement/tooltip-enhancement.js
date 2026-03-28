@@ -14,6 +14,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber, numberFormatter, formatKMB } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 
 /**
  * Calculate optimal enhancement path for an item
@@ -440,7 +441,7 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
     const baseCost = getRealisticBaseItemPrice(itemHrid);
     const baseItemPrices = getItemPrices(itemHrid, 0);
     const baseAskPrice = baseItemPrices?.ask > 0 ? baseItemPrices.ask : baseCost;
-    const baseBidPrice = baseItemPrices?.bid > 0 ? baseItemPrices.bid : baseCost;
+    const baseBidPrice = baseItemPrices?.bid > 0 ? baseItemPrices.bid : getProductionCost(itemHrid, 'bid');
 
     return {
         baseCost,
@@ -502,9 +503,11 @@ export function getRealisticBaseItemPrice(itemHrid) {
 /**
  * Calculate production cost from crafting recipe
  * Matches original MWI Tools v25.0 getBaseItemProductionCost logic
+ * @param {string} itemHrid
+ * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
  * @private
  */
-function getProductionCost(itemHrid) {
+function getProductionCost(itemHrid, mode = 'ask') {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -533,27 +536,34 @@ function getProductionCost(itemHrid) {
     const action = gameData.actionDetailMap[actionHrid];
     let totalPrice = 0;
 
-    // Sum up input material costs
+    // Compute artisan tea reduction dynamically (same approach as material-calculator.js)
+    let artisanBonus = 0;
+    try {
+        const equipment = dataManager.getEquipment();
+        const itemDetailMap = gameData.itemDetailMap || {};
+        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
+        const activeDrinks = dataManager.getActionDrinkSlots(action.type);
+        artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+    } catch {
+        // Fall back to no reduction if data unavailable
+    }
+
+    // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
     if (action.inputItems) {
         for (const input of action.inputItems) {
-            let inputPrice = getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
-            // Recursively calculate production cost if no market price
+            let inputPrice = getItemPrice(input.itemHrid, { mode }) || 0;
             if (inputPrice === 0) {
-                inputPrice = getProductionCost(input.itemHrid);
+                inputPrice = getProductionCost(input.itemHrid, mode);
             }
-            totalPrice += inputPrice * input.count;
+            totalPrice += inputPrice * input.count * (1 - artisanBonus);
         }
     }
 
-    // Apply Artisan Tea reduction (0.9x)
-    totalPrice *= 0.9;
-
-    // Add upgrade item cost if this is an upgrade recipe (for refined items)
+    // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
     if (action.upgradeItemHrid) {
-        let upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
-        // Recursively calculate production cost if no market price
+        let upgradePrice = getItemPrice(action.upgradeItemHrid, { mode }) || 0;
         if (upgradePrice === 0) {
-            upgradePrice = getProductionCost(action.upgradeItemHrid);
+            upgradePrice = getProductionCost(action.upgradeItemHrid, mode);
         }
         totalPrice += upgradePrice;
     }
