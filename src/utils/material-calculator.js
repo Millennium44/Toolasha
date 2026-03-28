@@ -159,8 +159,11 @@ export function calculateMaterialRequirements(actionHrid, numActions, accountFor
             // Calculate total materials needed for requested actions
             const totalRequired = calculateTotalRequired(basePerAction, artisanBonus, numActions, artisanMode);
 
-            const inventoryItem = inventory.find((i) => i.itemHrid === input.itemHrid);
-            const have = inventoryItem?.count || 0;
+            // Only count unenhanced items — enhanced copies are distinct items the player
+            // would not want consumed as crafting materials
+            const have = inventory
+                .filter((i) => i.itemHrid === input.itemHrid && !i.enhancementLevel)
+                .reduce((sum, i) => sum + (i.count || 0), 0);
 
             // Calculate queued and available amounts
             const queued = queuedMaterialsMap.get(input.itemHrid) || 0;
@@ -191,8 +194,9 @@ export function calculateMaterialRequirements(actionHrid, numActions, accountFor
         // Upgrade items always need exactly 1 per action, no artisan reduction
         const totalRequired = numActions;
 
-        const inventoryItem = inventory.find((i) => i.itemHrid === actionDetails.upgradeItemHrid);
-        const have = inventoryItem?.count || 0;
+        const have = inventory
+            .filter((i) => i.itemHrid === actionDetails.upgradeItemHrid && !i.enhancementLevel)
+            .reduce((sum, i) => sum + (i.count || 0), 0);
 
         // Calculate queued and available amounts
         const queued = queuedMaterialsMap.get(actionDetails.upgradeItemHrid) || 0;
