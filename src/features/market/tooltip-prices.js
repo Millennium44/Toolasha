@@ -532,14 +532,14 @@ class TooltipPrices {
                 html += this.buildDetailedProfitDisplay(profitData);
             }
         } else {
-            // No market data - show cost
+            // No market data - show cost summary (compact) or materials table (detailed)
             html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
-            const teaCostPerItem = profitData.totalTeaCostPerHour / profitData.itemsPerHour;
-            const productionCost = profitData.totalMaterialCost + teaCostPerItem;
-
-            html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${numberFormatter(productionCost)}/item</div>`;
-            html += `<div style="color: ${config.COLOR_TEXT_SECONDARY}; font-style: italic; margin-top: 4px;">No market data available</div>`;
+            if (showDetailed) {
+                html += this.buildDetailedProfitDisplay(profitData, false);
+            } else {
+                html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${numberFormatter(profitData.totalMaterialCost)}/item</div>`;
+            }
         }
 
         html += '</div>';
@@ -554,7 +554,7 @@ class TooltipPrices {
      * @param {Object} profitData - Profit calculation data
      * @returns {string} HTML string for detailed display
      */
-    buildDetailedProfitDisplay(profitData) {
+    buildDetailedProfitDisplay(profitData, showProfitSummary = true) {
         let html = '';
 
         // Materials table
@@ -619,14 +619,16 @@ class TooltipPrices {
             html += '</div>';
         }
 
-        // Detailed profit breakdown
-        html += '<div style="margin-top: 8px; font-size: 0.85em;">';
-        const profitPerAction = profitData.profitPerAction;
-        const profitPerDay = profitData.profitPerDay;
-        const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
+        // Detailed profit breakdown (only when output has market data)
+        if (showProfitSummary) {
+            html += '<div style="margin-top: 8px; font-size: 0.85em;">';
+            const profitPerAction = profitData.profitPerAction;
+            const profitPerDay = profitData.profitPerDay;
+            const profitColor = profitData.profitPerHour >= 0 ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS;
 
-        html += `<div style="color: ${profitColor};">Profit: ${numberFormatter(profitPerAction)}/action, ${numberFormatter(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day</div>`;
-        html += '</div>';
+            html += `<div style="color: ${profitColor};">Profit: ${numberFormatter(profitPerAction)}/action, ${numberFormatter(profitData.profitPerHour)}/hour, ${formatKMB(profitPerDay)}/day</div>`;
+            html += '</div>';
+        }
 
         return html;
     }
