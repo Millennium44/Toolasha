@@ -640,10 +640,10 @@ class CombatStatsUI {
                             // Pricing mode label
                             const pricingMode = config.getSettingValue('profitCalc_pricingMode') || 'hybrid';
                             const pricingLabels = {
-                                conservative: 'Conservative',
-                                hybrid: 'Hybrid',
-                                optimistic: 'Optimistic',
-                                patientBuy: 'Patient Buy',
+                                conservative: 'Buy: Ask / Sell: Bid',
+                                hybrid: 'Buy: Ask / Sell: Ask',
+                                optimistic: 'Buy: Bid / Sell: Ask',
+                                patientBuy: 'Buy: Bid / Sell: Bid',
                             };
                             const pricingNote = document.createElement('div');
                             pricingNote.style.cssText = `

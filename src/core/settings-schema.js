@@ -509,10 +509,10 @@ export const settingsGroups = {
                 type: 'select',
                 default: 'hybrid',
                 options: [
-                    { value: 'conservative', label: 'Conservative (Ask/Bid - instant trading)' },
-                    { value: 'hybrid', label: 'Hybrid (Ask/Ask - instant buy, patient sell)' },
-                    { value: 'optimistic', label: 'Optimistic (Bid/Ask - patient trading)' },
-                    { value: 'patientBuy', label: 'Patient Buy (Bid/Bid - patient buy, instant sell)' },
+                    { value: 'conservative', label: 'Buy: Ask / Sell: Bid (Instant Buy / Instant Sell)' },
+                    { value: 'hybrid', label: 'Buy: Ask / Sell: Ask (Instant Buy / Patient Sell)' },
+                    { value: 'optimistic', label: 'Buy: Bid / Sell: Ask (Patient Buy / Patient Sell)' },
+                    { value: 'patientBuy', label: 'Buy: Bid / Sell: Bid (Patient Buy / Instant Sell)' },
                 ],
             },
             actions_artisanMaterialMode: {

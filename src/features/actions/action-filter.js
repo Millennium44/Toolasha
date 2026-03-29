@@ -156,10 +156,10 @@ class ActionFilter {
         // Create profit mode toggle button
         const PROFIT_MODES = ['hybrid', 'conservative', 'optimistic', 'patientBuy'];
         const PROFIT_MODE_LABELS = {
-            hybrid: 'Mode: Hybrid',
-            conservative: 'Mode: Conservative',
-            optimistic: 'Mode: Optimistic',
-            patientBuy: 'Mode: Patient Buy',
+            hybrid: 'Mode: Buy: Ask / Sell: Ask',
+            conservative: 'Mode: Buy: Ask / Sell: Bid',
+            optimistic: 'Mode: Buy: Bid / Sell: Ask',
+            patientBuy: 'Mode: Buy: Bid / Sell: Bid',
         };
         const modeBtn = document.createElement('button');
         modeBtn.id = 'mwi-action-profit-mode';

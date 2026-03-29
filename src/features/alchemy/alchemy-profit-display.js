@@ -886,11 +886,11 @@ class AlchemyProfitDisplay {
         const pricingMode = profitData.pricingMode || 'hybrid';
         const modeLabel =
             {
-                conservative: 'Conservative',
-                hybrid: 'Hybrid',
-                optimistic: 'Optimistic',
-                patientBuy: 'Patient Buy',
-            }[pricingMode] || 'Hybrid';
+                conservative: 'Buy: Ask / Sell: Bid',
+                hybrid: 'Buy: Ask / Sell: Ask',
+                optimistic: 'Buy: Bid / Sell: Ask',
+                patientBuy: 'Buy: Bid / Sell: Bid',
+            }[pricingMode] || 'Buy: Ask / Sell: Ask';
 
         const modeDiv = document.createElement('div');
         modeDiv.style.cssText = `
