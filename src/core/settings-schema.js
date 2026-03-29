@@ -285,10 +285,10 @@ export const settingsGroups = {
             },
             enhanceSim_baseItemCraftingCost: {
                 id: 'enhanceSim_baseItemCraftingCost',
-                label: 'Enhancement path: Use crafting cost for base item',
+                label: 'Enhancement path: Use crafting cost for base item if cheaper',
                 type: 'checkbox',
                 default: false,
-                help: 'When enabled, the base item in enhancement path calculations uses its crafting/production cost instead of the market ask price',
+                help: 'When enabled, uses the lower of crafting cost or market price for the base item in enhancement path calculations, applied independently to both the Ask and Bid columns',
             },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',

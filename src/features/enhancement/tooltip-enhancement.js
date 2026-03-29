@@ -11,6 +11,7 @@
 
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
+const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber, numberFormatter, formatKMB } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
@@ -80,8 +81,9 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const targetCosts = new Array(currentEnhancementLevel + 1);
     const targetTimes = new Array(currentEnhancementLevel + 1);
     const targetAttempts = new Array(currentEnhancementLevel + 1);
-    targetCosts[0] = config.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
-        ? getProductionCost(itemHrid)
+    targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
+        ? Math.min(getProductionCost(itemHrid) || Infinity, getItemPrices(itemHrid, 0)?.ask || Infinity) ||
+          getRealisticBaseItemPrice(itemHrid)
         : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
@@ -148,6 +150,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             baseCost: optimalTraditional.baseCost,
             baseAskPrice: optimalTraditional.baseAskPrice,
             baseBidPrice: optimalTraditional.baseBidPrice,
+            baseAskIsCrafted: optimalTraditional.baseAskIsCrafted,
+            baseBidIsCrafted: optimalTraditional.baseBidIsCrafted,
             materialCost: optimalTraditional.materialCost,
             materialBreakdown: optimalTraditional.materialBreakdown,
             protectionCost: optimalTraditional.protectionCost,
@@ -439,18 +443,29 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
         }
     }
 
-    // Base item cost (initial investment) — market price or crafting cost per setting
-    const baseCost = config.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
-        ? getProductionCost(itemHrid)
-        : getRealisticBaseItemPrice(itemHrid);
+    // Base item cost (initial investment) — market price or min(crafting, market) per setting
+    const craftingCostAsk = getProductionCost(itemHrid, 'ask');
+    const craftingCostBid = getProductionCost(itemHrid, 'bid');
     const baseItemPrices = getItemPrices(itemHrid, 0);
-    const baseAskPrice = baseItemPrices?.ask > 0 ? baseItemPrices.ask : baseCost;
-    const baseBidPrice = baseItemPrices?.bid > 0 ? baseItemPrices.bid : getProductionCost(itemHrid, 'bid');
+    const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
+    const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
+    const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
+    const baseAskPrice = useCraftingCost
+        ? Math.min(craftingCostAsk || Infinity, marketAsk || Infinity) || getRealisticBaseItemPrice(itemHrid)
+        : marketAsk || getRealisticBaseItemPrice(itemHrid);
+    const baseBidPrice = useCraftingCost
+        ? Math.min(craftingCostBid || Infinity, marketBid || Infinity) || getRealisticBaseItemPrice(itemHrid)
+        : marketBid || getProductionCost(itemHrid, 'bid');
+    const baseCost = baseAskPrice;
+    const baseAskIsCrafted = useCraftingCost && craftingCostAsk > 0 && craftingCostAsk <= (marketAsk || Infinity);
+    const baseBidIsCrafted = useCraftingCost && craftingCostBid > 0 && craftingCostBid <= (marketBid || Infinity);
 
     return {
         baseCost,
         baseAskPrice,
         baseBidPrice,
+        baseAskIsCrafted,
+        baseBidIsCrafted,
         materialCost,
         materialBreakdown,
         protectionCost,
@@ -770,8 +785,18 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         const rows = [];
 
         // Base item row
+        const baseAskLabel = optimalStrategy.baseAskIsCrafted
+            ? ' <span style="color:' + toolashaConfig.COLOR_MIRROR + ';font-size:10px;">(Crafted)</span>'
+            : ' <span style="color:' + toolashaConfig.COLOR_MIRROR + ';font-size:10px;">(Market)</span>';
+        const baseBidLabel = optimalStrategy.baseBidIsCrafted
+            ? ' <span style="color:' + toolashaConfig.COLOR_MIRROR + ';font-size:10px;">(Crafted)</span>'
+            : ' <span style="color:' + toolashaConfig.COLOR_MIRROR + ';font-size:10px;">(Market)</span>';
+        const baseItemLabel =
+            baseAskLabel === baseBidLabel
+                ? `Base Item${baseAskLabel}`
+                : `Base Item <span style="color:${toolashaConfig.COLOR_MIRROR};font-size:10px;">(Ask: ${optimalStrategy.baseAskIsCrafted ? 'Crafted' : 'Market'} / Bid: ${optimalStrategy.baseBidIsCrafted ? 'Crafted' : 'Market'})</span>`;
         rows.push({
-            name: 'Base Item',
+            name: toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost') ? baseItemLabel : 'Base Item',
             count: 1,
             askPrice: optimalStrategy.baseAskPrice || optimalStrategy.baseCost,
             bidPrice: optimalStrategy.baseBidPrice || optimalStrategy.baseCost,
