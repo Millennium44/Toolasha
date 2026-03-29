@@ -283,6 +283,13 @@ export const settingsGroups = {
                 default: false,
                 help: "When enabled, shows base/materials/protection breakdown for each consumed item in Philosopher's Mirror calculations",
             },
+            enhanceSim_baseItemCraftingCost: {
+                id: 'enhanceSim_baseItemCraftingCost',
+                label: 'Enhancement path: Use crafting cost for base item',
+                type: 'checkbox',
+                default: false,
+                help: 'When enabled, the base item in enhancement path calculations uses its crafting/production cost instead of the market ask price',
+            },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
                 label: 'Show gathering sources and profit',

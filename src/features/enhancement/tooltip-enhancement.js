@@ -80,7 +80,9 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const targetCosts = new Array(currentEnhancementLevel + 1);
     const targetTimes = new Array(currentEnhancementLevel + 1);
     const targetAttempts = new Array(currentEnhancementLevel + 1);
-    targetCosts[0] = getRealisticBaseItemPrice(itemHrid); // Level 0: base item
+    targetCosts[0] = config.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
+        ? getProductionCost(itemHrid)
+        : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
 
@@ -437,8 +439,10 @@ function calculateTotalCost(itemHrid, targetLevel, protectFrom, config) {
         }
     }
 
-    // Base item cost (initial investment) using realistic pricing
-    const baseCost = getRealisticBaseItemPrice(itemHrid);
+    // Base item cost (initial investment) — market price or crafting cost per setting
+    const baseCost = config.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
+        ? getProductionCost(itemHrid)
+        : getRealisticBaseItemPrice(itemHrid);
     const baseItemPrices = getItemPrices(itemHrid, 0);
     const baseAskPrice = baseItemPrices?.ask > 0 ? baseItemPrices.ask : baseCost;
     const baseBidPrice = baseItemPrices?.bid > 0 ? baseItemPrices.bid : getProductionCost(itemHrid, 'bid');
