@@ -749,7 +749,11 @@ class CollectionFilters {
             this.catsObserver.disconnect();
             this.catsObserver = null;
         }
-        if (catsEl) {
+        // Only register when catsEl is empty — once tiles are present there is no need to watch
+        // for further mutations, and doing so causes spurious re-renders (e.g. when the game
+        // adds/removes tiles in response to the Show Uncollected toggle).
+        const hasTiles = catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO').length > 0;
+        if (catsEl && !hasTiles) {
             this.catsObserver = new MutationObserver(() => {
                 const tileCount = catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO').length;
                 if (tileCount > 0) {
