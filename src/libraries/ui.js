@@ -14,6 +14,7 @@ import externalLinks from '../features/ui/external-links.js';
 // Navigation features
 import altClickNavigation from '../features/navigation/alt-click-navigation.js';
 import collectionNavigation from '../features/collection/collection-navigation.js';
+import collectionFilters from '../features/collection/collection-filters.js';
 
 // Chat features
 import chatCommands from '../features/chat/chat-commands.js';
@@ -77,6 +78,7 @@ toolashaRoot.UI = {
     externalLinks,
     altClickNavigation,
     collectionNavigation,
+    collectionFilters,
     chatCommands,
     mentionTracker,
     popOutChat,

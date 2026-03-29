@@ -9,7 +9,7 @@ class Storage {
         this.db = null;
         this.available = false;
         this.dbName = 'ToolashaDB';
-        this.dbVersion = 13; // Bumped for networthHistory store
+        this.dbVersion = 14; // Bumped for collections store
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
@@ -148,6 +148,11 @@ class Storage {
                 // Create networthHistory store if it doesn't exist (for networth chart)
                 if (!db.objectStoreNames.contains('networthHistory')) {
                     db.createObjectStore('networthHistory');
+                }
+
+                // Create collections store if it doesn't exist (for collection filters feature)
+                if (!db.objectStoreNames.contains('collections')) {
+                    db.createObjectStore('collections');
                 }
             };
         });

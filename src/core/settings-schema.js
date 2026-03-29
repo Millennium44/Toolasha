@@ -1368,6 +1368,27 @@ export const settingsGroups = {
             },
         },
     },
+
+    collectionFilters: {
+        title: 'Collection Filters',
+        icon: '⭐',
+        settings: {
+            collectionFilters: {
+                id: 'collectionFilters',
+                label: 'Enable Collection Filters & Favorites',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds count-range filters, dungeon/skilling-outfit checkboxes, and favorites (★) to the Collections panel',
+            },
+            collectionFilters_skillingBadges: {
+                id: 'collectionFilters_skillingBadges',
+                label: 'Show collection count badges on skilling action tiles',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays your collection count on skilling actions (open Collections once to populate counts)',
+            },
+        },
+    },
 };
 
 /**
