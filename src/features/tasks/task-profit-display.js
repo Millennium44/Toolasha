@@ -727,8 +727,13 @@ class TaskProfitDisplay {
 
         // Create main profit display (Option B format: compact with time)
         const profitLine = document.createElement('div');
+        const profitLineColor = profitData.hasMissingPrices
+            ? config.COLOR_ACCENT
+            : profitData.totalProfit >= 0
+              ? '#4ade80'
+              : config.COLOR_LOSS;
         profitLine.style.cssText = `
-            color: ${config.COLOR_ACCENT};
+            color: ${profitLineColor};
             cursor: pointer;
             user-select: none;
         `;
@@ -847,14 +852,16 @@ class TaskProfitDisplay {
 
         if (!config.getSetting('taskEfficiencyGradient')) {
             ratingLines.forEach((line) => {
-                line.style.color = config.COLOR_ACCENT;
+                const value = Number.parseFloat(line.dataset.ratingValue);
+                line.style.color = value < 0 ? config.COLOR_LOSS : config.COLOR_ACCENT;
             });
             return;
         }
 
         if (ratingValues.length === 1) {
             ratingLines.forEach((line) => {
-                line.style.color = config.COLOR_ACCENT;
+                const value = Number.parseFloat(line.dataset.ratingValue);
+                line.style.color = value < 0 ? config.COLOR_LOSS : config.COLOR_ACCENT;
             });
             return;
         }
@@ -1191,8 +1198,13 @@ class TaskProfitDisplay {
 
         // Total
         lines.push('<div style="border-top: 1px solid #555; margin-top: 6px; padding-top: 4px;"></div>');
+        const totalProfitColor = profitData.hasMissingPrices
+            ? config.COLOR_ACCENT
+            : profitData.totalProfit >= 0
+              ? '#4ade80'
+              : config.COLOR_LOSS;
         lines.push(
-            `<div style="font-weight: bold; color: ${config.COLOR_ACCENT};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
+            `<div style="font-weight: bold; color: ${totalProfitColor};">Total Profit: ${formatTotalValue(profitData.totalProfit)}</div>`
         );
 
         return lines.join('');
