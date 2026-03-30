@@ -371,19 +371,20 @@ class DungeonTrackerStorage {
 
         // Group by dungeonName + teamKey
         const groups = new Map();
-        for (const run of allRuns) {
+        for (let i = 0; i < allRuns.length; i++) {
+            const run = allRuns[i];
             const key = `${run.dungeonName}||${run.teamKey}`;
             if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(run);
+            groups.get(key).push({ run, index: i });
         }
 
-        const outlierIds = new Set();
+        const outlierIndices = new Set();
 
-        for (const [groupKey, runs] of groups) {
-            if (runs.length < 5) continue;
+        for (const [groupKey, entries] of groups) {
+            if (entries.length < 5) continue;
 
-            const durations = runs
-                .map((r) => r.duration || r.totalTime || 0)
+            const durations = entries
+                .map((e) => e.run.duration || e.run.totalTime || 0)
                 .filter((d) => d > 0)
                 .sort((a, b) => a - b);
 
@@ -394,10 +395,10 @@ class DungeonTrackerStorage {
 
             const threshold = median * 3;
 
-            for (const run of runs) {
+            for (const { run, index } of entries) {
                 const duration = run.duration || run.totalTime || 0;
                 if (duration > threshold) {
-                    outlierIds.add(run);
+                    outlierIndices.add(index);
                     console.warn(
                         `[DungeonTrackerStorage] Scrubbing outlier run: ${groupKey} ` +
                             `duration=${Math.round(duration)}s median=${Math.round(median)}s threshold=${Math.round(threshold)}s`
@@ -406,12 +407,12 @@ class DungeonTrackerStorage {
             }
         }
 
-        if (outlierIds.size === 0) return 0;
+        if (outlierIndices.size === 0) return 0;
 
-        const cleaned = allRuns.filter((r) => !outlierIds.has(r));
+        const cleaned = allRuns.filter((_, i) => !outlierIndices.has(i));
         await storage.setJSON('allRuns', cleaned, this.unifiedStoreName, true);
-        console.log(`[DungeonTrackerStorage] Scrubbed ${outlierIds.size} outlier run(s) from storage`);
-        return outlierIds.size;
+        console.log(`[DungeonTrackerStorage] Scrubbed ${outlierIndices.size} outlier run(s) from storage`);
+        return outlierIndices.size;
     }
 
     /**

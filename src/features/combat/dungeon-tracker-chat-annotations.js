@@ -22,6 +22,7 @@ class DungeonTrackerChatAnnotations {
         this.initComplete = false; // Flag to ensure storage loads before annotation
         this.timerRegistry = createTimerRegistry();
         this.tabClickHandlers = new Map(); // Store tab click handlers for cleanup
+        this._pendingAnnotateTimeout = null; // Debounce timer for annotateAllMessages
     }
 
     /**
@@ -178,6 +179,7 @@ class DungeonTrackerChatAnnotations {
         this.observer = createMutationWatcher(
             document.body,
             (mutations) => {
+                let hasNewMessage = false;
                 for (const mutation of mutations) {
                     for (const node of mutation.addedNodes) {
                         if (!(node instanceof HTMLElement)) continue;
@@ -186,13 +188,25 @@ class DungeonTrackerChatAnnotations {
                             ? node
                             : node.querySelector?.('[class^="ChatMessage_chatMessage"]');
 
-                        if (!msg) continue;
-
-                        // Re-run batch annotation on any new message (matches working DRT script)
-                        const annotateTimeout = setTimeout(() => this.annotateAllMessages(), 100);
-                        this.timerRegistry.registerTimeout(annotateTimeout);
+                        if (msg) {
+                            hasNewMessage = true;
+                            break;
+                        }
                     }
+                    if (hasNewMessage) break;
                 }
+
+                if (!hasNewMessage) return;
+
+                // Debounce: clear any pending call and schedule a single new one
+                if (this._pendingAnnotateTimeout) {
+                    clearTimeout(this._pendingAnnotateTimeout);
+                }
+                this._pendingAnnotateTimeout = setTimeout(() => {
+                    this._pendingAnnotateTimeout = null;
+                    this.annotateAllMessages();
+                }, 100);
+                this.timerRegistry.registerTimeout(this._pendingAnnotateTimeout);
             },
             {
                 childList: true,
@@ -792,9 +806,9 @@ class DungeonTrackerChatAnnotations {
      * @param {boolean} isAverage - Whether this is an average annotation
      */
     insertAnnotation(label, color, msg, isAverage = false) {
-        // Check using dataset attribute (matches working DRT script pattern)
-        const datasetKey = isAverage ? 'avgAppended' : 'timerAppended';
-        if (msg.dataset[datasetKey] === '1') {
+        // Check for existing annotation spans in the DOM (authoritative deduplication)
+        const spanClass = isAverage ? 'dungeon-timer-average' : 'dungeon-timer-annotation';
+        if (msg.querySelector('.' + spanClass)) {
             return;
         }
 
@@ -811,9 +825,6 @@ class DungeonTrackerChatAnnotations {
         timerSpan.style.marginLeft = '4px';
 
         messageSpan.appendChild(timerSpan);
-
-        // Mark as appended (matches working DRT script)
-        msg.dataset[datasetKey] = '1';
     }
 
     /**
@@ -857,6 +868,12 @@ class DungeonTrackerChatAnnotations {
             button.removeEventListener('click', handler);
         }
         this.tabClickHandlers.clear();
+
+        // Clear pending annotation debounce
+        if (this._pendingAnnotateTimeout) {
+            clearTimeout(this._pendingAnnotateTimeout);
+            this._pendingAnnotateTimeout = null;
+        }
 
         this.timerRegistry.clearAll();
 
