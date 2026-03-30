@@ -34,6 +34,7 @@ class DataManager {
         // Character tracking for switch detection
         this.currentCharacterId = null;
         this.currentCharacterName = null;
+        this.currentCharacterGameMode = null;
         this.isCharacterSwitching = false;
         this.lastCharacterSwitchTime = 0; // Prevent rapid-fire switch loops
 
@@ -208,6 +209,7 @@ class DataManager {
                 // Update character tracking
                 this.currentCharacterId = newCharacterId;
                 this.currentCharacterName = newCharacterName;
+                this.currentCharacterGameMode = data.character?.gameMode || null;
 
                 // Clear old character data
                 this.characterData = null;
@@ -233,6 +235,7 @@ class DataManager {
                 // First load - set character tracking
                 this.currentCharacterId = newCharacterId;
                 this.currentCharacterName = newCharacterName;
+                this.currentCharacterGameMode = data.character?.gameMode || null;
             }
 
             // Process new character data normally
@@ -621,6 +624,14 @@ class DataManager {
      */
     getCurrentCharacterName() {
         return this.currentCharacterName;
+    }
+
+    /**
+     * Get current character game mode
+     * @returns {string|null} Game mode ('ironcow', 'standard', etc.) or null
+     */
+    getCurrentCharacterGameMode() {
+        return this.currentCharacterGameMode;
     }
 
     /**
