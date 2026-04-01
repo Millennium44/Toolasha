@@ -21,6 +21,7 @@ import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
 
 /**
  * Calculate the value of a single item
@@ -135,7 +136,18 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
         if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
             const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
             if (evData && evData.expectedValue > 0) {
-                return evData.expectedValue;
+                let netValue = evData.expectedValue;
+
+                // Deduct chest key cost for dungeon chests
+                const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                if (chestKeyHrid) {
+                    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                    const keyPrices = marketAPI.getPrice(chestKeyHrid);
+                    const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
+                    netValue -= keyPrice;
+                }
+
+                return netValue;
             }
         }
 

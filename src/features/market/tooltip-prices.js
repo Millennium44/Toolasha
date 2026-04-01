@@ -22,6 +22,7 @@ import { numberFormatter, formatKMB, networthFormatter, formatPercentage } from 
 import { getItemPrices } from '../../utils/market-data.js';
 import dom from '../../utils/dom.js';
 import { parseItemCount } from '../../utils/number-parser.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
@@ -222,7 +223,24 @@ class TooltipPrices {
         if (itemDetails.isOpenable && config.getSetting('itemTooltip_expectedValue')) {
             const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
             if (evData) {
-                this.injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip);
+                // Compute chest key deduction for dungeon chests
+                let keyPrice = 0;
+                const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                if (chestKeyHrid) {
+                    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                    const keyPrices = marketAPI.getPrice(chestKeyHrid);
+                    const keyDetails = dataManager.getItemDetails(chestKeyHrid);
+                    keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
+                    this.injectExpectedValueDisplay(
+                        tooltipElement,
+                        evData,
+                        isCollectionTooltip,
+                        keyPrice,
+                        keyDetails?.name
+                    );
+                } else {
+                    this.injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip);
+                }
             }
             // Fix tooltip overflow before returning
             dom.fixTooltipOverflow(tooltipElement);
@@ -651,7 +669,7 @@ class TooltipPrices {
      * @param {Object} evData - Expected value calculation data
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
      */
-    injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip = false) {
+    injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip = false, keyPrice = 0, keyName = null) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
             : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
@@ -680,6 +698,11 @@ class TooltipPrices {
 
         // Expected value (simple display)
         html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${formatTooltipPrice(evData.expectedValue)}</div>`;
+        if (keyPrice > 0) {
+            const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
+            html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS};">- ${keyLabel}: ${formatTooltipPrice(keyPrice)}</div>`;
+            html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Net Value: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+        }
 
         html += '</div>'; // Close summary section
 
@@ -723,6 +746,9 @@ class TooltipPrices {
             // Show total
             html += '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin: 4px 0;"></div>';
             html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Total from ${evData.drops.length} drops: ${formatTooltipPrice(evData.expectedValue)}</div>`;
+            if (keyPrice > 0) {
+                html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Net after key: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+            }
         }
 
         html += '</div>'; // Close main container

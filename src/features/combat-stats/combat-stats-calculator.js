@@ -17,7 +17,7 @@ const DUNGEON_CHEST_KEYS = {
 };
 
 // Maps dungeon chest HRIDs (regular and refinement) to their required chest key HRIDs (1:1 relationship)
-const DUNGEON_CHEST_CHEST_KEYS = {
+export const DUNGEON_CHEST_CHEST_KEYS = {
     '/items/chimerical_chest': '/items/chimerical_chest_key',
     '/items/sinister_chest': '/items/sinister_chest_key',
     '/items/enchanted_chest': '/items/enchanted_chest_key',
