@@ -15,6 +15,7 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
 /**
  * InventoryBadgeManager class manages all inventory item badges from multiple features
@@ -64,26 +65,29 @@ class InventoryBadgeManager {
         // Watch for MuiTooltip-popperInteractive closing (item click popup) and re-render badges.
         // When an inventory item is clicked, the game shows an interactive popper.
         // When that popper closes, React may have re-rendered the item container, wiping badges.
-        const interactivePopperObserver = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const node of mutation.addedNodes) {
-                    if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                    if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                        setTimeout(() => this.renderAllBadges(), 50);
-                        return;
+        const unwatchPopper = createMutationWatcher(
+            document.body,
+            (mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                        if (node.classList?.contains('MuiTooltip-popperInteractive')) {
+                            setTimeout(() => this.renderAllBadges(), 50);
+                            return;
+                        }
+                    }
+                    for (const node of mutation.removedNodes) {
+                        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                        if (node.classList?.contains('MuiTooltip-popperInteractive')) {
+                            setTimeout(() => this.renderAllBadges(), 50);
+                            return;
+                        }
                     }
                 }
-                for (const node of mutation.removedNodes) {
-                    if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                    if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                        setTimeout(() => this.renderAllBadges(), 50);
-                        return;
-                    }
-                }
-            }
-        });
-        interactivePopperObserver.observe(document.body, { childList: true });
-        this.unregisterHandlers.push(() => interactivePopperObserver.disconnect());
+            },
+            { childList: true }
+        );
+        this.unregisterHandlers.push(unwatchPopper);
     }
 
     /**

@@ -228,6 +228,36 @@ export function calculatePriceAfterTax(price, taxRate = MARKET_TAX) {
 }
 
 /**
+ * Create a memoized price lookup closure backed by a fresh Map per calculation.
+ * Caches results keyed on itemHrid + side + enhancementLevel to avoid redundant
+ * market API calls within a single profit calculation pass.
+ *
+ * @param {Function} getItemPriceFn - Price resolver function (itemHrid, options) => number|null
+ * @returns {Function} getCachedPrice(itemHrid, options) closure
+ *
+ * @example
+ * const getCachedPrice = createPriceCache(getItemPrice);
+ * const price = getCachedPrice('/items/cotton', { context: 'profit', side: 'sell' });
+ */
+export function createPriceCache(getItemPriceFn) {
+    const priceCache = new Map();
+
+    return function getCachedPrice(itemHrid, options) {
+        const side = options?.side || '';
+        const enhancementLevel = options?.enhancementLevel ?? '';
+        const cacheKey = `${itemHrid}|${side}|${enhancementLevel}`;
+
+        if (priceCache.has(cacheKey)) {
+            return priceCache.get(cacheKey);
+        }
+
+        const price = getItemPriceFn(itemHrid, options);
+        priceCache.set(cacheKey, price);
+        return price;
+    };
+}
+
+/**
  * Calculate action-based totals for production actions
  * Uses per-action base inputs (efficiency only affects time)
  *
@@ -387,6 +417,7 @@ export default {
     calculateDrinksPerHour,
     calculateTeaCostsPerHour,
     calculatePriceAfterTax,
+    createPriceCache,
 
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,

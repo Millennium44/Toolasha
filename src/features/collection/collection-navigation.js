@@ -9,6 +9,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { navigateToItem } from '../../utils/item-navigation.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
 /**
  * Get game object via React fiber tree traversal
@@ -88,7 +89,7 @@ class CollectionNavigation {
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
         if (this.panelObserver) {
-            this.panelObserver.disconnect();
+            this.panelObserver();
             this.panelObserver = null;
         }
         this.isInitialized = false;
@@ -103,10 +104,13 @@ class CollectionNavigation {
         if (this.panelObserver) {
             return; // Already attached
         }
-        this.panelObserver = new MutationObserver(() => {
-            this.rescanGrayTiles(panel);
-        });
-        this.panelObserver.observe(panel, { childList: true, subtree: true });
+        this.panelObserver = createMutationWatcher(
+            panel,
+            () => {
+                this.rescanGrayTiles(panel);
+            },
+            { childList: true, subtree: true }
+        );
     }
 
     /**

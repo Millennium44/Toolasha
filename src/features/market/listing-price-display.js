@@ -16,6 +16,40 @@ import { coinFormatter, formatRelativeTime } from '../../utils/formatters.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 
+/**
+ * Create a styled table cell for the listings table.
+ * @param {string|null} content - Text content for the span
+ * @param {string} color - CSS color string for the span
+ * @param {Object} [options={}] - Optional overrides
+ * @param {string} [options.fontSize] - e.g. '0.9em'
+ * @param {string} [options.title] - Tooltip title attribute
+ * @returns {HTMLElement} <td> element with a styled <span> inside
+ */
+function createStyledCell(content, color, options = {}) {
+    const cell = document.createElement('td');
+    cell.classList.add('mwi-listing-price-cell');
+
+    const span = document.createElement('span');
+    span.classList.add('mwi-listing-price-value');
+
+    if (content !== null && content !== undefined) {
+        span.textContent = content;
+    }
+
+    span.style.color = color;
+
+    if (options.fontSize) {
+        span.style.fontSize = options.fontSize;
+    }
+
+    if (options.title) {
+        span.title = options.title;
+    }
+
+    cell.appendChild(span);
+    return cell;
+}
+
 class ListingPriceDisplay {
     constructor() {
         this.allListings = {}; // Maintained listing state
@@ -636,12 +670,6 @@ class ListingPriceDisplay {
      * @returns {HTMLElement} Table cell element
      */
     createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache) {
-        const cell = document.createElement('td');
-        cell.classList.add('mwi-listing-price-cell');
-
-        const span = document.createElement('span');
-        span.classList.add('mwi-listing-price-value');
-
         // PRIMARY: Get price from order book cache (same source as Top Order Age)
         let topOrderPrice = null;
         let lastUpdated = null;
@@ -676,29 +704,32 @@ class ListingPriceDisplay {
             topOrderPrice = marketPrice ? (isSell ? marketPrice.ask : marketPrice.bid) : null;
         }
 
+        let content;
+        let color;
+        let title;
+
         if (topOrderPrice === null || topOrderPrice === -1) {
-            span.textContent = coinFormatter(null);
-            span.style.color = '#004FFF'; // Blue for no data
+            content = coinFormatter(null);
+            color = '#004FFF'; // Blue for no data
         } else {
-            span.textContent = coinFormatter(topOrderPrice);
+            content = coinFormatter(topOrderPrice);
 
             // Color coding based on competitiveness
             if (isSell) {
                 // Sell order: green if our price is lower (better), red if higher (undercut)
-                span.style.color = topOrderPrice < price ? '#FF0000' : '#00FF00';
+                color = topOrderPrice < price ? '#FF0000' : '#00FF00';
             } else {
                 // Buy order: green if our price is higher (better), red if lower (undercut)
-                span.style.color = topOrderPrice > price ? '#FF0000' : '#00FF00';
+                color = topOrderPrice > price ? '#FF0000' : '#00FF00';
             }
 
             // Add staleness indicator via tooltip if using order book cache
             if (lastUpdated) {
-                span.title = estimatedListingAge.getStalenessTooltip(lastUpdated);
+                title = estimatedListingAge.getStalenessTooltip(lastUpdated);
             }
         }
 
-        cell.appendChild(span);
-        return cell;
+        return createStyledCell(content, color, { title });
     }
 
     /**
@@ -709,22 +740,12 @@ class ListingPriceDisplay {
      * @returns {HTMLElement} Table cell element
      */
     createTopOrderAgeCell(itemHrid, enhancementLevel, isSell) {
-        const cell = document.createElement('td');
-        cell.classList.add('mwi-listing-price-cell');
-
-        const span = document.createElement('span');
-        span.classList.add('mwi-listing-price-value');
-
         // Get order book data from estimatedListingAge module (shared cache)
         const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
 
         if (!cacheEntry) {
             // No order book data available
-            span.textContent = 'N/A';
-            span.style.color = '#666666';
-            span.style.fontSize = '0.9em';
-            cell.appendChild(span);
-            return cell;
+            return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
         }
 
         // Support both old format (direct data) and new format ({data, lastUpdated})
@@ -733,11 +754,7 @@ class ListingPriceDisplay {
 
         if (!orderBookData || !orderBookData.orderBooks || orderBookData.orderBooks.length === 0) {
             // No order book data available
-            span.textContent = 'N/A';
-            span.style.color = '#666666';
-            span.style.fontSize = '0.9em';
-            cell.appendChild(span);
-            return cell;
+            return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
         }
 
         // Find matching order book for this enhancement level
@@ -750,11 +767,7 @@ class ListingPriceDisplay {
         }
 
         if (!orderBook) {
-            span.textContent = 'N/A';
-            span.style.color = '#666666';
-            span.style.fontSize = '0.9em';
-            cell.appendChild(span);
-            return cell;
+            return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
         }
 
         // Get top order (first in array)
@@ -762,11 +775,7 @@ class ListingPriceDisplay {
 
         if (!topOrders || topOrders.length === 0) {
             // No competing orders
-            span.textContent = 'None';
-            span.style.color = '#00FF00'; // Green = you're the only one
-            span.style.fontSize = '0.9em';
-            cell.appendChild(span);
-            return cell;
+            return createStyledCell('None', '#00FF00', { fontSize: '0.9em' }); // Green = you're the only one
         }
 
         const topOrder = topOrders[0];
@@ -779,19 +788,10 @@ class ListingPriceDisplay {
         const ageMs = Date.now() - estimatedTimestamp;
         const formatted = formatRelativeTime(ageMs);
 
-        span.textContent = `~${formatted}`;
-
-        // Apply staleness color based on when order book data was fetched
-        span.style.color = estimatedListingAge.getStalenessColor(lastUpdated);
-        span.style.fontSize = '0.9em';
-
-        // Add tooltip with staleness info
-        if (lastUpdated) {
-            span.title = estimatedListingAge.getStalenessTooltip(lastUpdated);
-        }
-
-        cell.appendChild(span);
-        return cell;
+        return createStyledCell(`~${formatted}`, estimatedListingAge.getStalenessColor(lastUpdated), {
+            fontSize: '0.9em',
+            title: lastUpdated ? estimatedListingAge.getStalenessTooltip(lastUpdated) : undefined,
+        });
     }
 
     /**
@@ -814,12 +814,6 @@ class ListingPriceDisplay {
         unclaimedCoinCount,
         unclaimedItemCount
     ) {
-        const cell = document.createElement('td');
-        cell.classList.add('mwi-listing-price-cell');
-
-        const span = document.createElement('span');
-        span.classList.add('mwi-listing-price-value');
-
         let totalPrice;
 
         // For filled listings, show unclaimed amount
@@ -838,14 +832,7 @@ class ListingPriceDisplay {
             totalPrice = (orderQuantity - filledQuantity) * Math.floor(calculatePriceAfterTax(price, taxRate));
         }
 
-        // Format and color code
-        span.textContent = coinFormatter(totalPrice);
-
-        // Color based on amount
-        span.style.color = this.getAmountColor(totalPrice);
-
-        cell.appendChild(span);
-        return cell;
+        return createStyledCell(coinFormatter(totalPrice), this.getAmountColor(totalPrice));
     }
 
     /**
@@ -854,22 +841,10 @@ class ListingPriceDisplay {
      * @returns {HTMLElement} Table cell element
      */
     createListedAgeCell(createdTimestamp) {
-        const cell = document.createElement('td');
-        cell.classList.add('mwi-listing-price-cell');
-
-        const span = document.createElement('span');
-        span.classList.add('mwi-listing-price-value');
-
         // Calculate age in milliseconds
         const createdDate = new Date(createdTimestamp);
         const ageMs = Date.now() - createdDate.getTime();
-
-        // Format relative time
-        span.textContent = formatRelativeTime(ageMs);
-        span.style.color = '#AAAAAA'; // Gray for time display
-
-        cell.appendChild(span);
-        return cell;
+        return createStyledCell(formatRelativeTime(ageMs), config.COLOR_TEXT_SECONDARY); // Gray for time display
     }
 
     /**
@@ -877,17 +852,7 @@ class ListingPriceDisplay {
      * @returns {HTMLElement} Empty table cell element
      */
     createPlaceholderCell() {
-        const cell = document.createElement('td');
-        cell.classList.add('mwi-listing-price-cell');
-
-        const span = document.createElement('span');
-        span.classList.add('mwi-listing-price-value');
-        span.textContent = 'N/A';
-        span.style.color = '#666666'; // Gray for placeholder
-        span.style.fontSize = '0.9em';
-
-        cell.appendChild(span);
-        return cell;
+        return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
     }
 
     /**
@@ -896,10 +861,10 @@ class ListingPriceDisplay {
      * @returns {string} Color code
      */
     getAmountColor(amount) {
-        if (amount >= 1000000) return '#FFD700'; // Gold for 1M+
-        if (amount >= 100000) return '#00FF00'; // Green for 100K+
-        if (amount >= 10000) return '#FFFFFF'; // White for 10K+
-        return '#AAAAAA'; // Gray for small amounts
+        if (amount >= 1000000) return config.COLOR_MIRROR; // Gold for 1M+
+        if (amount >= 100000) return config.COLOR_ACCENT; // Green for 100K+
+        if (amount >= 10000) return config.COLOR_TEXT_PRIMARY; // White for 10K+
+        return config.COLOR_TEXT_SECONDARY; // Gray for small amounts
     }
 
     /**

@@ -11,30 +11,17 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
-import {
-    parseEquipmentSpeedBonuses,
-    parseEquipmentEfficiencyBonuses,
-    parseEquipmentEfficiencyBreakdown,
-} from '../../utils/equipment-parser.js';
-import {
-    parseTeaEfficiency,
-    parseGourmetBonus,
-    parseProcessingBonus,
-    parseGatheringBonus,
-    getDrinkConcentration,
-    parseTeaSkillLevelBonus,
-} from '../../utils/tea-parser.js';
 import { formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { GATHERING_TYPES, PRODUCTION_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
-import { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { GATHERING_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
+import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import {
     calculateProfitPerAction,
     calculateProfitPerDay,
     calculateActionsPerHour,
     calculateTeaCostsPerHour,
+    createPriceCache,
 } from '../../utils/profit-helpers.js';
 
 /**
@@ -103,90 +90,40 @@ export async function calculateGatheringProfit(actionHrid) {
         processingConversionCache = buildProcessingConversionCache(gameData);
     }
 
-    const priceCache = new Map();
-    const getCachedPrice = (itemHrid, options) => {
-        const side = options?.side || '';
-        const enhancementLevel = options?.enhancementLevel ?? '';
-        const cacheKey = `${itemHrid}|${side}|${enhancementLevel}`;
-
-        if (priceCache.has(cacheKey)) {
-            return priceCache.get(cacheKey);
-        }
-
-        const price = getItemPrice(itemHrid, options);
-        priceCache.set(cacheKey, price);
-        return price;
-    };
+    const getCachedPrice = createPriceCache(getItemPrice);
 
     // Note: Market API is pre-loaded by caller (max-produceable.js)
     // No need to check or fetch here
 
-    // Get character data
-    const equipment = loadoutSnapshot.getSnapshotForSkill(actionDetail.type) ?? dataManager.getEquipment();
-    const skills = dataManager.getSkills();
-    const houseRooms = Array.from(dataManager.getHouseRooms().values());
-    const _activeBuffs = []; // Not currently used
+    const effCtx = getActionEfficiencyContext(actionDetail, { isProduction: false, gameData });
 
-    // Calculate action time per action (with speed bonuses)
-    const baseTimePerActionSec = actionDetail.baseTimeCost / 1000000000;
-    const speedBonus = parseEquipmentSpeedBonuses(equipment, actionDetail.type, gameData.itemDetailMap);
-    const personalSpeedBonus = dataManager.getPersonalBuffFlatBoost(actionDetail.type, '/buff_types/action_speed');
-    // speedBonus is already a decimal (e.g., 0.15 for 15%), don't divide by 100
-    const actualTimePerActionSec = baseTimePerActionSec / (1 + speedBonus + personalSpeedBonus);
+    const {
+        equipment,
+        drinkSlots,
+        drinkConcentration,
+        actionTime: actualTimePerActionSec,
+        speedBonus,
+        gourmetBonus,
+        processingBonus,
+        equipmentEfficiency,
+        equipmentEfficiencyItems,
+        houseEfficiency,
+        teaEfficiency,
+        achievementEfficiency,
+        personalEfficiency,
+        totalGathering,
+        gatheringDetails,
+        efficiencyBreakdown,
+        efficiencyMultiplier,
+    } = effCtx;
 
-    // Calculate actions per hour
-    const actionsPerHour = calculateActionsPerHour(actualTimePerActionSec);
-
-    // Get character's actual equipped drink slots for this action type (from WebSocket data)
-    const drinkSlots =
-        loadoutSnapshot.getSnapshotDrinksForSkill(actionDetail.type) ??
-        dataManager.getActionDrinkSlots(actionDetail.type);
-
-    // Get drink concentration from equipment
-    const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
-
-    // Parse tea buffs
-    const teaEfficiency = parseTeaEfficiency(actionDetail.type, drinkSlots, gameData.itemDetailMap, drinkConcentration);
-
-    // Gourmet Tea only applies to production skills (Brewing, Cooking, Cheesesmithing, Crafting, Tailoring)
-    // NOT gathering skills (Foraging, Woodcutting, Milking)
-    const gourmetBonus = PRODUCTION_TYPES.includes(actionDetail.type)
-        ? parseGourmetBonus(drinkSlots, gameData.itemDetailMap, drinkConcentration) +
-          dataManager.getPersonalBuffFlatBoost(actionDetail.type, '/buff_types/gourmet')
-        : 0;
-
-    // Processing Tea: 15% base chance to convert raw → processed (Cotton → Cotton Fabric, etc.)
-    // Only applies to gathering skills (Foraging, Woodcutting, Milking)
-    const processingBonus = GATHERING_TYPES.includes(actionDetail.type)
-        ? parseProcessingBonus(drinkSlots, gameData.itemDetailMap, drinkConcentration) +
-          dataManager.getPersonalBuffFlatBoost(actionDetail.type, '/buff_types/processing')
-        : 0;
-
-    // Gathering Quantity: Increases item drop amounts (min/max)
-    // Sources: Gathering Tea (15% base), Community Buff (20% base + 0.5%/level), Achievement Tiers
-    // Only applies to gathering skills (Foraging, Woodcutting, Milking)
-    let totalGathering = 0;
-    let gatheringTea = 0;
-    let communityGathering = 0;
-    let achievementGathering = 0;
-    let personalGathering = 0;
-    if (GATHERING_TYPES.includes(actionDetail.type)) {
-        // Parse Gathering Tea bonus
-        gatheringTea = parseGatheringBonus(drinkSlots, gameData.itemDetailMap, drinkConcentration);
-
-        // Get Community Buff level for gathering quantity
-        const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-        communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
-
-        // Get Achievement buffs for this action type (Beginner tier: +2% Gathering Quantity)
-        achievementGathering = dataManager.getAchievementBuffFlatBoost(actionDetail.type, '/buff_types/gathering');
-
-        // Get personal buff (Seal of Gathering)
-        personalGathering = dataManager.getPersonalBuffFlatBoost(actionDetail.type, '/buff_types/gathering');
-
-        // Stack all bonuses additively
-        totalGathering = gatheringTea + communityGathering + achievementGathering + personalGathering;
-    }
+    const { totalEfficiency, levelEfficiency } = efficiencyBreakdown;
+    const {
+        gatheringTea = 0,
+        communityGathering = 0,
+        achievementGathering = 0,
+        personalGathering = 0,
+    } = gatheringDetails ?? {};
 
     const teaCostData = calculateTeaCostsPerHour({
         drinkSlots,
@@ -203,64 +140,7 @@ export async function calculateGatheringProfit(actionHrid) {
         missingPrice: tea.missingPrice,
     }));
 
-    // Calculate level efficiency bonus
-    if (!actionDetail.levelRequirement) {
-        console.error(`[GatheringProfit] Action has no levelRequirement: ${actionDetail.hrid}`);
-    }
-    const requiredLevel = actionDetail.levelRequirement?.level || 1;
-    const skillHrid = actionDetail.levelRequirement?.skillHrid;
-    let currentLevel = requiredLevel;
-    for (const skill of skills) {
-        if (skill.skillHrid === skillHrid) {
-            currentLevel = skill.level;
-            break;
-        }
-    }
-
-    // Calculate tea skill level bonus (e.g., +5 Foraging from Ultra Foraging Tea)
-    const teaSkillLevelBonus = parseTeaSkillLevelBonus(
-        actionDetail.type,
-        drinkSlots,
-        gameData.itemDetailMap,
-        drinkConcentration
-    );
-
-    // Calculate house efficiency bonus
-    let houseEfficiency = 0;
-    for (const room of houseRooms) {
-        const roomDetail = gameData.houseRoomDetailMap?.[room.houseRoomHrid];
-        if (roomDetail?.usableInActionTypeMap?.[actionDetail.type]) {
-            houseEfficiency += (room.level || 0) * 1.5;
-        }
-    }
-
-    // Calculate equipment efficiency bonus (uses equipment-parser utility)
-    const equipmentEfficiency = parseEquipmentEfficiencyBonuses(equipment, actionDetail.type, gameData.itemDetailMap);
-    const equipmentEfficiencyItems = parseEquipmentEfficiencyBreakdown(
-        equipment,
-        actionDetail.type,
-        gameData.itemDetailMap
-    );
-    const achievementEfficiency =
-        dataManager.getAchievementBuffFlatBoost(actionDetail.type, '/buff_types/efficiency') * 100;
-    const personalEfficiency = dataManager.getPersonalBuffFlatBoost(actionDetail.type, '/buff_types/efficiency') * 100;
-
-    const efficiencyBreakdown = calculateEfficiencyBreakdown({
-        requiredLevel,
-        skillLevel: currentLevel,
-        teaSkillLevelBonus,
-        houseEfficiency,
-        teaEfficiency,
-        equipmentEfficiency,
-        achievementEfficiency,
-        personalEfficiency,
-    });
-    const totalEfficiency = efficiencyBreakdown.totalEfficiency;
-    const levelEfficiency = efficiencyBreakdown.levelEfficiency;
-
-    // Calculate efficiency multiplier (matches production profit calculator pattern)
-    // Efficiency "repeats the action" - we apply it to item outputs, not action rate
-    const efficiencyMultiplier = calculateEfficiencyMultiplier(totalEfficiency);
+    const actionsPerHour = calculateActionsPerHour(actualTimePerActionSec);
 
     // Calculate revenue from drop table
     // Processing happens PER ACTION (before efficiency multiplies the count)

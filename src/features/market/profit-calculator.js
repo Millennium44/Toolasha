@@ -5,24 +5,9 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import marketAPI from '../../api/marketplace.js';
-import {
-    parseEquipmentSpeedBonuses,
-    parseEquipmentEfficiencyBonuses,
-    parseEquipmentEfficiencyBreakdown,
-} from '../../utils/equipment-parser.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
-import { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
-import {
-    parseTeaEfficiency,
-    getDrinkConcentration,
-    parseArtisanBonus,
-    parseGourmetBonus,
-    parseProcessingBonus,
-    parseActionLevelBonus,
-    parseTeaSkillLevelBonus,
-} from '../../utils/tea-parser.js';
+import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
@@ -32,6 +17,7 @@ import {
     calculateProfitPerAction,
     calculateProfitPerDay,
     calculateTeaCostsPerHour,
+    createPriceCache,
 } from '../../utils/profit-helpers.js';
 
 /**
@@ -111,20 +97,7 @@ class ProfitCalculator {
         }
 
         // Initialize price cache for this calculation
-        const priceCache = new Map();
-        const getCachedPrice = (itemHridParam, options) => {
-            const side = options?.side || '';
-            const enhancementLevelParam = options?.enhancementLevel ?? '';
-            const cacheKey = `${itemHridParam}|${side}|${enhancementLevelParam}`;
-
-            if (priceCache.has(cacheKey)) {
-                return priceCache.get(cacheKey);
-            }
-
-            const price = getItemPrice(itemHridParam, options);
-            priceCache.set(cacheKey, price);
-            return price;
-        };
+        const getCachedPrice = createPriceCache(getItemPrice);
 
         // Calculate base action time
         // Game uses NANOSECONDS (1e9 = 1 second)
@@ -133,104 +106,40 @@ class ProfitCalculator {
         // Get character level for the action's skill
         const skillLevel = this.getSkillLevel(skills, actionDetails.type);
 
-        // Get equipped items for efficiency bonus calculation
-        const characterEquipment =
-            loadoutSnapshot.getSnapshotForSkill(actionDetails.type) ?? dataManager.getEquipment();
-        const itemDetailMap = this.getItemDetailMap();
-
-        // Get Drink Concentration from equipment
-        const drinkConcentration = getDrinkConcentration(characterEquipment, itemDetailMap);
-
-        // Get active drinks for this action type
-        const activeDrinks =
-            loadoutSnapshot.getSnapshotDrinksForSkill(actionDetails.type) ??
-            dataManager.getActionDrinkSlots(actionDetails.type);
-
-        // Calculate Action Level bonus from teas (e.g., Artisan Tea: +5 Action Level)
-        // This lowers the effective requirement, not increases skill level
-        const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration);
-
-        // Calculate efficiency components
-        // Action Level bonus increases the effective requirement
-        if (!actionDetails.levelRequirement) {
-            console.error(`[ProfitCalculator] Action has no levelRequirement: ${actionDetails.hrid}`);
-        }
-        const baseRequirement = actionDetails.levelRequirement?.level || 1;
-        // Calculate tea skill level bonus (e.g., +8 Cheesesmithing from Ultra Cheesesmithing Tea)
-        const teaSkillLevelBonus = parseTeaSkillLevelBonus(
-            actionDetails.type,
-            activeDrinks,
-            itemDetailMap,
-            drinkConcentration
-        );
-
-        // Calculate artisan material cost reduction
-        const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
-
-        // Calculate gourmet bonus (Brewing/Cooking extra items)
-        const gourmetBonus =
-            parseGourmetBonus(activeDrinks, itemDetailMap, drinkConcentration) +
-            dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gourmet');
-
-        // Calculate processing bonus (Milking/Foraging/Woodcutting conversions)
-        const processingBonus =
-            parseProcessingBonus(activeDrinks, itemDetailMap, drinkConcentration) +
-            dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/processing');
-
-        // Get community buff bonus (Production Efficiency)
+        // Community efficiency must be computed here (uses class-internal cache)
         const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/production_efficiency');
         const communityEfficiency = this.calculateCommunityBuffBonus(communityBuffLevel, actionDetails.type);
 
-        // Total efficiency bonus (all sources additive)
-        const houseEfficiency = calculateHouseEfficiency(actionDetails.type);
-
-        // Calculate equipment efficiency bonus
-        const equipmentEfficiency = parseEquipmentEfficiencyBonuses(
-            characterEquipment,
-            actionDetails.type,
-            itemDetailMap
-        );
-        const equipmentEfficiencyItems = parseEquipmentEfficiencyBreakdown(
-            characterEquipment,
-            actionDetails.type,
-            itemDetailMap
-        );
-
-        // Calculate tea efficiency bonus
-        const teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
-
-        const achievementEfficiency =
-            dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
-
-        const personalEfficiency =
-            dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/efficiency') * 100;
-
-        const efficiencyBreakdown = calculateEfficiencyBreakdown({
-            requiredLevel: baseRequirement,
-            skillLevel,
-            teaSkillLevelBonus,
-            actionLevelBonus,
-            houseEfficiency,
-            equipmentEfficiency,
-            teaEfficiency,
+        const effCtx = getActionEfficiencyContext(actionDetails, {
+            isProduction: true,
             communityEfficiency,
-            achievementEfficiency,
-            personalEfficiency,
         });
 
-        const totalEfficiency = efficiencyBreakdown.totalEfficiency;
-        const levelEfficiency = efficiencyBreakdown.levelEfficiency;
-        const effectiveRequirement = efficiencyBreakdown.effectiveRequirement;
+        const {
+            equipment: characterEquipment,
+            drinkSlots: activeDrinks,
+            drinkConcentration,
+            itemDetailMap,
+            actionTime,
+            artisanBonus,
+            gourmetBonus,
+            processingBonus,
+            equipmentEfficiency,
+            equipmentEfficiencyItems,
+            houseEfficiency,
+            teaEfficiency,
+            achievementEfficiency,
+            personalEfficiency,
+            actionLevelBonus,
+            teaSkillLevelBonus,
+            baseRequirement,
+            speedBonus: equipmentSpeedBonus,
+            personalSpeedBonus,
+            efficiencyBreakdown,
+            efficiencyMultiplier,
+        } = effCtx;
 
-        // Calculate equipment speed bonus
-        const equipmentSpeedBonus = parseEquipmentSpeedBonuses(characterEquipment, actionDetails.type, itemDetailMap);
-        const personalSpeedBonus = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/action_speed');
-
-        // Calculate action time with ONLY speed bonuses
-        // Efficiency does NOT reduce time - it gives bonus actions
-        // Formula: baseTime / (1 + speedBonus)
-        // Example: 60s / (1 + 0.15) = 52.17s
-        const actionTime = baseTime / (1 + equipmentSpeedBonus + personalSpeedBonus);
+        const { totalEfficiency, levelEfficiency, effectiveRequirement } = efficiencyBreakdown;
 
         // Build time breakdown for display
         const timeBreakdown = this.calculateTimeBreakdown(baseTime, equipmentSpeedBonus + personalSpeedBonus);
@@ -242,10 +151,7 @@ class ProfitCalculator {
         // Use 'count' field from action output
         const outputAmount = action.count || action.baseAmount || 1;
 
-        // Calculate efficiency multiplier
-        // Formula matches original MWI Tools: 1 + efficiency%
-        // Example: 150% efficiency → 1 + 1.5 = 2.5x multiplier
-        const efficiencyMultiplier = calculateEfficiencyMultiplier(totalEfficiency);
+        // efficiencyMultiplier comes from effCtx destructuring above
 
         // Items produced per hour (with efficiency multiplier)
         const itemsPerHour = actionsPerHour * outputAmount * efficiencyMultiplier;
