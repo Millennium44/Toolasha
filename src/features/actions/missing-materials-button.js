@@ -290,7 +290,14 @@ function processEnhancingPanel(panel) {
     // Watch for changes (item swap, level change, protection change) with debounce
     createMutationWatcher(
         panel,
-        () => {
+        (mutations) => {
+            // Ignore mutations caused by our own button insertion/removal
+            const isOwnButton = mutations.every((m) => {
+                const nodes = [...m.addedNodes, ...m.removedNodes];
+                return nodes.length > 0 && nodes.every((n) => n.id === 'mwi-missing-mats-button');
+            });
+            if (isOwnButton) return;
+
             if (enhancementDebounceTimeout) {
                 clearTimeout(enhancementDebounceTimeout);
             }
