@@ -318,6 +318,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows expected cost and XP to reach +5, +7, +10, and +12 on unenhanced equipment tooltips',
             },
+            itemTooltip_pinTop: {
+                id: 'itemTooltip_pinTop',
+                label: 'Pin tooltips to top-center of screen',
+                type: 'checkbox',
+                default: false,
+                help: 'Forces item tooltips to always appear centered at the top of the screen instead of near the hovered item',
+            },
         },
     },
 

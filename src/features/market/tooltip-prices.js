@@ -243,7 +243,7 @@ class TooltipPrices {
                 }
             }
             // Fix tooltip overflow before returning
-            dom.fixTooltipOverflow(tooltipElement);
+            dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
             return; // Skip price/profit display for containers
         }
 
@@ -332,7 +332,7 @@ class TooltipPrices {
         }
 
         // Fix tooltip overflow (ensure it stays in viewport)
-        dom.fixTooltipOverflow(tooltipElement);
+        dom.fixTooltipOverflow(tooltipElement, { forceTop: config.getSetting('itemTooltip_pinTop') });
     }
 
     /**

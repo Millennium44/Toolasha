@@ -314,8 +314,10 @@ export function setupScrollTooltipDismissal() {
 /**
  * Fix tooltip overflow to ensure it stays within viewport
  * @param {Element} tooltipElement - The tooltip popper element
+ * @param {Object} [options={}]
+ * @param {boolean} [options.forceTop=false] - Pin the tooltip centered at the top of the viewport
  */
-export function fixTooltipOverflow(tooltipElement) {
+export function fixTooltipOverflow(tooltipElement, { forceTop = false } = {}) {
     // Use triple requestAnimationFrame to ensure MUI positioning is complete
     // Frame 1: MUI does initial positioning
     // Frame 2: Content finishes rendering (especially for long lists)
@@ -329,9 +331,36 @@ export function fixTooltipOverflow(tooltipElement) {
 
                 const bBox = tooltipElement.getBoundingClientRect();
                 const viewportHeight = window.innerHeight;
+                const viewportWidth = window.innerWidth;
 
                 // Find the actual tooltip content element (child of popper)
                 const tooltipContent = tooltipElement.querySelector('.MuiTooltip-tooltip');
+
+                if (forceTop) {
+                    const transformString = tooltipElement.style.transform;
+                    const match = transformString?.match(REGEX_TRANSFORM3D);
+
+                    if (match) {
+                        const currentX = parseFloat(match[1]);
+                        const currentY = parseFloat(match[2]);
+                        const z = match[3];
+
+                        const targetTop = 10;
+                        const targetLeft = Math.round((viewportWidth - bBox.width) / 2);
+                        // Adjust relative to current transform so visual position = target
+                        const newX = Math.round(currentX - bBox.left + targetLeft);
+                        const newY = Math.round(currentY - bBox.top + targetTop);
+
+                        tooltipElement.style.transform = `translate3d(${newX}px, ${newY}px, ${z})`;
+                    }
+
+                    // Cap height if tooltip is taller than viewport
+                    if (tooltipContent && bBox.height >= viewportHeight - 20) {
+                        tooltipContent.style.maxHeight = `${viewportHeight - 20}px`;
+                        tooltipContent.style.overflowY = 'auto';
+                    }
+                    return;
+                }
 
                 // Check if tooltip extends beyond viewport
                 if (bBox.top < 0 || bBox.bottom > viewportHeight) {
