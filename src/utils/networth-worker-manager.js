@@ -284,10 +284,7 @@ function calculateStrategyRealCost(
     // Get protection item price using realistic pricing (like main thread)
     let protectionPrice = 0;
     if (protections > 0) {
-        // Only use the item itself as protection if it is not a refined item
-        if (!itemHrid.includes('_refined')) {
-            protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, actionDetailMap);
-        }
+        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, actionDetailMap);
 
         // Check mirror of protection
         const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, actionDetailMap);
@@ -295,10 +292,9 @@ function calculateStrategyRealCost(
             protectionPrice = mirrorPrice;
         }
 
-        // Check specific protection items (excluding refined items)
+        // Check specific protection items
         if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
             for (const protHrid of itemDetails.protectionItemHrids) {
-                if (protHrid.includes('_refined')) continue;
                 const protPrice = getRealisticPrice(protHrid, null, priceMap, actionDetailMap);
                 if (protPrice > 0 && protPrice < protectionPrice) {
                     protectionPrice = protPrice;
