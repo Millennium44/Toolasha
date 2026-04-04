@@ -100,11 +100,14 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Find the base (non-refined) item HRID for the Philosopher's Mirror path.
     // The mirror path consumes copies of the item at lower enhancement levels; for refined items
     // those copies are the non-refined base item, so we compute a separate cost array for it.
+    // Only applies to actual refined items (HRID contains '_refined').
     let mirrorItemHrid = itemHrid;
-    for (const action of Object.values(gameData.actionDetailMap)) {
-        if (action.outputItems?.[0]?.itemHrid === itemHrid && action.upgradeItemHrid) {
-            mirrorItemHrid = action.upgradeItemHrid;
-            break;
+    if (itemHrid.includes('_refined')) {
+        for (const action of Object.values(gameData.actionDetailMap)) {
+            if (action.outputItems?.[0]?.itemHrid === itemHrid && action.upgradeItemHrid) {
+                mirrorItemHrid = action.upgradeItemHrid;
+                break;
+            }
         }
     }
 
