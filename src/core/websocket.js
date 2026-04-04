@@ -326,6 +326,7 @@ class WebSocketHook {
         const skipDedup =
             messageType === 'quests_updated' ||
             messageType === 'action_completed' ||
+            messageType === 'actions_updated' ||
             messageType === 'items_updated' ||
             messageType === 'market_item_order_books_updated' ||
             messageType === 'market_listings_updated' ||
