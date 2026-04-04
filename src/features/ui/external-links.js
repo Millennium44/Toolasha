@@ -79,6 +79,10 @@ class ExternalLinks {
                 label: "Socko's Combat Tracker",
                 url: 'https://sockosnewcombattracker.pages.dev/',
             },
+            {
+                label: 'mwilinks',
+                url: 'https://www.mwilinks.site/',
+            },
         ];
 
         // Add each link (in reverse order so they appear in correct order when prepended)
