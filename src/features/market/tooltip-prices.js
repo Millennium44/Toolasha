@@ -227,7 +227,7 @@ class TooltipPrices {
                 let keyPrice = 0;
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
-                    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                     const keyPrices = marketAPI.getPrice(chestKeyHrid);
                     const keyDetails = dataManager.getItemDetails(chestKeyHrid);
                     keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;

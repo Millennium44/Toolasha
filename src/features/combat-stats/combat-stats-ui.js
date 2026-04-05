@@ -134,7 +134,7 @@ class CombatStatsUI {
     shareStatsToChat(stats) {
         // Get chat message format from config (use getSettingValue for template type)
         const messageTemplate = config.getSettingValue('combatStatsChatMessage');
-        const priceKey = config.getSettingValue('combatStats_keyPricing') || 'ask';
+        const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
 
         // Convert array format to string if needed
         let message = '';
@@ -528,7 +528,7 @@ class CombatStatsUI {
                 ? coinFormatter(Math.round(num))
                 : new Intl.NumberFormat('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(num);
 
-        const priceKey = config.getSettingValue('combatStats_keyPricing') || 'ask';
+        const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
 
         const statsRows = [
             { label: 'Duration', value: stats.durationFormatted || '0s' },
@@ -801,7 +801,7 @@ class CombatStatsUI {
                         } else if (row.breakdown && row.breakdown.length > 0) {
                             // Add key pricing note if applicable
                             if (row.showKeyPricingNote) {
-                                const keyPricing = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                                const keyPricing = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                                 const keyPricingNote = document.createElement('div');
                                 keyPricingNote.style.cssText = `
                                     font-size: 11px;

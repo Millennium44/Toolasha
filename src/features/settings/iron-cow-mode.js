@@ -52,8 +52,7 @@ export const IRON_COW_SETTINGS = new Set([
     'itemTooltip_detailedProfit',
     'itemTooltip_multiActionProfit',
     'taskProfitCalculator',
-    'combatStats_keyPricing',
-    // Prices in tooltips / UI
+    'profitCalc_keyPricingMode', // Prices in tooltips / UI
     'itemTooltip_prices',
     'itemTooltip_expectedValue',
     'expectedValue_showDrops',

@@ -736,7 +736,7 @@ class NetworthInventoryDisplay {
             let keyPrice = 0;
             let keyName = null;
             if (chestKeyHrid) {
-                const setting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                const setting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                 const keyPrices = marketAPI.getPrice(chestKeyHrid);
                 keyPrice = keyPrices?.[setting] ?? keyPrices?.ask ?? 0;
                 keyName = dataManager.getItemDetails(chestKeyHrid)?.name;

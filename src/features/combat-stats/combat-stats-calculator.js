@@ -131,7 +131,7 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
         return { ask: 0, bid: 0, dailyCost: 0, breakdown: [] };
     }
 
-    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
 
     for (const loot of Object.values(lootMap)) {
         const keyHrid = DUNGEON_CHEST_KEYS[loot.itemHrid];

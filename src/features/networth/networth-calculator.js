@@ -141,7 +141,7 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
                 // Deduct chest key cost for dungeon chests
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
-                    const keyPricingSetting = config.getSettingValue('combatStats_keyPricing') || 'ask';
+                    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
                     const keyPrices = marketAPI.getPrice(chestKeyHrid);
                     const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
                     netValue -= keyPrice;
