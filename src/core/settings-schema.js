@@ -4,6 +4,19 @@
  */
 
 export const settingsGroups = {
+    ironCow: {
+        title: 'Iron Cow Mode',
+        icon: '🐄',
+        settings: {
+            ironCow_enabled: {
+                id: 'ironCow_enabled',
+                label: 'Iron Cow Mode',
+                type: 'checkbox',
+                default: false,
+                help: 'Disable all market and profit features for a no-marketplace playthrough.',
+            },
+        },
+    },
     general: {
         title: 'General Settings',
         icon: '⚙️',

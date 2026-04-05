@@ -13,6 +13,7 @@ import settingsCSS from './settings-styles.css?raw';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
@@ -313,6 +314,9 @@ class SettingsUI {
         // Add search box at the top
         this.addSearchBox(card);
 
+        // Add Iron Cow mode toggle banner
+        this.addIronCowToggle(card);
+
         // Generate settings from config
         this.generateSettings(card);
 
@@ -402,6 +406,22 @@ class SettingsUI {
                     settingEl.style.opacity = '';
                     settingEl.style.pointerEvents = '';
                 }
+            }
+        }
+
+        // Iron Cow locking pass
+        const ironCowActive = ironCowMode.isEnabled();
+        for (const id of IRON_COW_SETTINGS) {
+            const el = document.querySelector(`.toolasha-setting[data-setting-id="${id}"]`);
+            if (!el) continue;
+            if (ironCowActive) {
+                el.style.opacity = '0.35';
+                el.style.pointerEvents = 'none';
+                el.dataset.ironCowLocked = 'true';
+            } else if (el.dataset.ironCowLocked) {
+                delete el.dataset.ironCowLocked;
+                el.style.opacity = '';
+                el.style.pointerEvents = '';
             }
         }
     }
@@ -842,6 +862,9 @@ class SettingsUI {
         if (!input.id) return;
 
         const settingId = input.id;
+
+        // Block changes to locked settings while Iron Cow mode is active
+        if (ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(settingId)) return;
         const type = input.closest('.toolasha-setting')?.dataset.type || 'checkbox';
 
         let value;
@@ -1483,6 +1506,118 @@ class SettingsUI {
         itemEl.appendChild(deleteBtn);
 
         return itemEl;
+    }
+
+    /**
+     * Add Iron Cow mode toggle banner above settings groups.
+     * @param {HTMLElement} container - The card/panel container
+     */
+    addIronCowToggle(container) {
+        const enabled = ironCowMode.isEnabled();
+
+        const wrapper = document.createElement('div');
+        wrapper.id = 'toolasha-iron-cow-toggle';
+        wrapper.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin: 0 0 12px 0;
+            padding: 10px 14px;
+            border-radius: 6px;
+            border: 1px solid ${enabled ? '#7c5c20' : '#3a3a3a'};
+            background: ${enabled ? '#2a1e0a' : '#1e1e1e'};
+            cursor: default;
+        `;
+
+        const emoji = document.createElement('span');
+        emoji.textContent = '🐄';
+        emoji.style.cssText = 'font-size: 22px; line-height: 1; flex-shrink: 0; margin-top: 2px;';
+
+        const textBlock = document.createElement('div');
+        textBlock.style.cssText = 'flex: 1; min-width: 0;';
+
+        const title = document.createElement('div');
+        title.style.cssText = `font-weight: 700; font-size: 14px; color: ${enabled ? '#d4900a' : '#c0c0c0'};`;
+        title.textContent = 'Iron Cow Mode';
+
+        const desc = document.createElement('div');
+        desc.style.cssText = 'font-size: 12px; color: #888; margin-top: 2px;';
+        desc.innerHTML = enabled
+            ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
+            : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
+
+        textBlock.appendChild(title);
+        textBlock.appendChild(desc);
+
+        // Toggle switch
+        const label = document.createElement('label');
+        label.style.cssText =
+            'display: flex; align-items: center; gap: 0; cursor: pointer; flex-shrink: 0; margin-top: 2px;';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = enabled;
+        checkbox.style.cssText = 'width: 36px; height: 20px; cursor: pointer;';
+
+        checkbox.addEventListener('change', async (e) => {
+            e.stopPropagation();
+            const enabling = e.target.checked;
+            config.setSetting('ironCow_enabled', enabling);
+            if (enabling) {
+                await ironCowMode.enable();
+            } else {
+                await ironCowMode.disable();
+            }
+            this._refreshIronCowToggleAppearance(wrapper, enabling);
+            this._syncIronCowSettingInputs();
+            this.applyDisabledByState();
+        });
+
+        label.appendChild(checkbox);
+
+        wrapper.appendChild(emoji);
+        wrapper.appendChild(textBlock);
+        wrapper.appendChild(label);
+
+        container.appendChild(wrapper);
+    }
+
+    /**
+     * Update the Iron Cow toggle banner appearance without re-creating it.
+     * @param {HTMLElement} wrapper - The banner wrapper element
+     * @param {boolean} enabled - Whether Iron Cow is now active
+     */
+    _refreshIronCowToggleAppearance(wrapper, enabled) {
+        wrapper.style.border = `1px solid ${enabled ? '#7c5c20' : '#3a3a3a'}`;
+        wrapper.style.background = enabled ? '#2a1e0a' : '#1e1e1e';
+
+        const title = wrapper.querySelector('div > div:first-child');
+        if (title) title.style.color = enabled ? '#d4900a' : '#c0c0c0';
+
+        const desc = wrapper.querySelector('div > div:last-child');
+        if (desc) {
+            desc.innerHTML = enabled
+                ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
+                : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
+        }
+    }
+
+    /**
+     * Sync all Iron Cow-locked setting DOM inputs to match their current config values.
+     * Called after enabling or disabling Iron Cow so the UI reflects forced values.
+     */
+    _syncIronCowSettingInputs() {
+        for (const id of IRON_COW_SETTINGS) {
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            const input = document.getElementById(id);
+            if (!input) continue;
+            if (entry.type === 'checkbox') {
+                input.checked = entry.isTrue ?? false;
+            } else {
+                input.value = entry.value ?? '';
+            }
+        }
     }
 
     /**
