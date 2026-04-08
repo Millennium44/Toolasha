@@ -659,6 +659,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Hides the native Inventory tab and automatically activates the Toolasha tab whenever the character panel opens.',
             },
+            inventoryTabs_loadoutIncludeConsumables: {
+                id: 'inventoryTabs_loadoutIncludeConsumables',
+                label: 'Custom Inventory Tabs: Include food & drinks when adding from loadout',
+                type: 'checkbox',
+                default: false,
+                help: 'When adding items from a loadout to a tab, also include food and drink items.',
+            },
         },
     },
 

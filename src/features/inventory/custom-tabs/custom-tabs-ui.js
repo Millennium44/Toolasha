@@ -15,6 +15,7 @@ import domObserver from '../../../core/dom-observer.js';
 import dataManager from '../../../core/data-manager.js';
 import inventorySort from '../inventory-sort.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
+import loadoutSnapshot from '../../combat/loadout-snapshot.js';
 import {
     loadConfig,
     saveConfig,
@@ -1309,6 +1310,9 @@ export default class CustomTabsUI {
             <label>Add Category</label>
             <div class="toolasha-ct-categories"></div>
 
+            <label>From Loadout</label>
+            <div class="toolasha-ct-loadouts"></div>
+
             <label>Items</label>
             <div class="toolasha-ct-search-row">
                 <input type="search" class="toolasha-ct-editor-search" placeholder="Search items to add...">
@@ -1358,6 +1362,7 @@ export default class CustomTabsUI {
         }
 
         this._renderCategoryButtons(modal.querySelector('.toolasha-ct-categories'), tabId);
+        this._renderLoadoutButtons(modal.querySelector('.toolasha-ct-loadouts'), tabId);
         this._populateCategoryFilter(modal.querySelector('.toolasha-ct-cat-filter'));
 
         const searchInput = modal.querySelector('.toolasha-ct-editor-search');
@@ -1705,6 +1710,74 @@ export default class CustomTabsUI {
                     if (modal) this._renderAssignedItems(modal.querySelector('.toolasha-ct-assigned-list'), tabId);
                 });
             }
+            container.appendChild(btn);
+        }
+    }
+
+    _renderLoadoutButtons(container, tabId) {
+        container.innerHTML = '';
+        const snapshots = loadoutSnapshot.snapshots;
+        const entries = Object.values(snapshots);
+
+        if (entries.length === 0) {
+            const msg = document.createElement('span');
+            msg.style.cssText = 'font-size:11px;color:#888;';
+            msg.textContent = 'No loadout snapshots — open your loadout panel first.';
+            container.appendChild(msg);
+            return;
+        }
+
+        const includeConsumables = config.getSetting('inventoryTabs_loadoutIncludeConsumables');
+        const currentTab = findTab(this._config, tabId)?.tab;
+        const currentItems = new Set(currentTab?.items || []);
+
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+
+        for (const snapshot of entries) {
+            const skillLabel = snapshot.actionTypeHrid
+                ? snapshot.actionTypeHrid
+                      .split('/')
+                      .pop()
+                      .replace(/_/g, ' ')
+                      .replace(/\b\w/g, (c) => c.toUpperCase())
+                : 'All Skills';
+
+            const loadoutItems = [];
+            for (const eq of snapshot.equipment || []) {
+                if (!eq.itemHrid) continue;
+                const hrid = eq.enhancementLevel > 0 ? `${eq.itemHrid}+${eq.enhancementLevel}` : eq.itemHrid;
+                loadoutItems.push(hrid);
+            }
+            if (includeConsumables) {
+                for (const f of snapshot.food || []) {
+                    if (f.itemHrid) loadoutItems.push(f.itemHrid);
+                }
+                for (const d of snapshot.drinks || []) {
+                    if (d.itemHrid) loadoutItems.push(d.itemHrid);
+                }
+            }
+
+            const newItems = loadoutItems.filter((h) => !currentItems.has(h));
+            const allAdded = newItems.length === 0 && loadoutItems.length > 0;
+
+            const btn = document.createElement('button');
+            btn.className = 'toolasha-ct-cat-btn' + (allAdded ? ' toolasha-ct-cat-btn--added' : '');
+            btn.textContent = `${snapshot.name} (${skillLabel})`;
+            btn.title = allAdded
+                ? `All items from "${snapshot.name}" already added`
+                : `Add ${newItems.length} item(s) from "${snapshot.name}"`;
+
+            btn.addEventListener('click', () => {
+                for (const hrid of newItems) {
+                    this._config = addItem(this._config, tabId, hrid);
+                    currentItems.add(hrid);
+                }
+                this._save();
+                this._renderLoadoutButtons(container, tabId);
+                const modal = container.closest('.toolasha-ct-modal');
+                if (modal) this._renderAssignedItems(modal.querySelector('.toolasha-ct-assigned-list'), tabId);
+            });
+
             container.appendChild(btn);
         }
     }
