@@ -302,6 +302,16 @@ const PANEL_CSS = `
     font-size: 12px;
 }
 .toolasha-ct-close-btn:hover { background: #444; }
+.toolasha-ct-clear-btn {
+    background: #3a2a0a;
+    color: #f0b040;
+    border: 1px solid #6a4a10;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.toolasha-ct-clear-btn:hover { background: #5a3a10; }
 
 /* ---------- Category buttons ---------- */
 .toolasha-ct-categories {
@@ -325,9 +335,9 @@ const PANEL_CSS = `
     background: #1a3a2a;
     color: #6c6;
     border-color: #2a5a3a;
-    cursor: default;
-    opacity: 0.7;
+    cursor: pointer;
 }
+.toolasha-ct-cat-btn--added:hover { background: #2a5a3a; }
 
 /* ---------- Category filter ---------- */
 .toolasha-ct-search-row {
@@ -1136,6 +1146,7 @@ export default class CustomTabsUI {
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay && mousedownOnOverlay) {
                 overlay.remove();
+                this._removeInjectedEls();
                 this._applyLayout();
             }
         });
@@ -1166,6 +1177,7 @@ export default class CustomTabsUI {
 
             <div class="toolasha-ct-modal-footer">
                 <button class="toolasha-ct-delete-btn">Delete Tab</button>
+                <button class="toolasha-ct-clear-btn">Clear All</button>
                 <button class="toolasha-ct-close-btn">Close</button>
             </div>
         `;
@@ -1225,6 +1237,7 @@ export default class CustomTabsUI {
                 this._config = removeTab(this._config, tabId);
                 this._save();
                 overlay.remove();
+                this._removeInjectedEls();
                 this._applyLayout();
             } else {
                 this._deleteConfirmId = tabId;
@@ -1233,8 +1246,32 @@ export default class CustomTabsUI {
             }
         });
 
+        let clearConfirm = false;
+        const clearBtn = modal.querySelector('.toolasha-ct-clear-btn');
+        clearBtn.addEventListener('click', () => {
+            if (clearConfirm) {
+                const currentTab = findTab(this._config, tabId)?.tab;
+                if (currentTab) {
+                    for (const hrid of [...currentTab.items]) {
+                        this._config = removeItem(this._config, tabId, hrid);
+                    }
+                    this._save();
+                    this._renderCategoryButtons(modal.querySelector('.toolasha-ct-categories'), tabId);
+                    this._renderAssignedItems(modal.querySelector('.toolasha-ct-assigned-list'), tabId);
+                }
+                clearBtn.textContent = 'Clear All';
+                clearBtn.style.background = '';
+                clearConfirm = false;
+            } else {
+                clearConfirm = true;
+                clearBtn.textContent = 'Confirm Clear?';
+                clearBtn.style.background = '#6a3a00';
+            }
+        });
+
         modal.querySelector('.toolasha-ct-close-btn').addEventListener('click', () => {
             overlay.remove();
+            this._removeInjectedEls();
             this._applyLayout();
         });
     }
@@ -1367,10 +1404,23 @@ export default class CustomTabsUI {
             btn.className = 'toolasha-ct-cat-btn' + (allAlreadyAdded ? ' toolasha-ct-cat-btn--added' : '');
             btn.textContent = cat.name;
             btn.title = allAlreadyAdded
-                ? `All ${catItems.length} items already added`
+                ? `Click to remove ${catItems.length} items from ${cat.name}`
                 : `Add ${catItems.length} items from ${cat.name}`;
 
-            if (!allAlreadyAdded) {
+            if (allAlreadyAdded) {
+                btn.addEventListener('click', () => {
+                    for (const hrid of catItems) {
+                        if (currentItems.has(hrid)) {
+                            this._config = removeItem(this._config, tabId, hrid);
+                            currentItems.delete(hrid);
+                        }
+                    }
+                    this._save();
+                    this._renderCategoryButtons(container, tabId);
+                    const modal = container.closest('.toolasha-ct-modal');
+                    if (modal) this._renderAssignedItems(modal.querySelector('.toolasha-ct-assigned-list'), tabId);
+                });
+            } else {
                 btn.addEventListener('click', () => {
                     for (const hrid of catItems) {
                         if (!currentItems.has(hrid)) {
