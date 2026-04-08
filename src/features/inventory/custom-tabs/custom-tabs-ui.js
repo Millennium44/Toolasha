@@ -874,12 +874,72 @@ export default class CustomTabsUI {
         const topbar = document.createElement('div');
         topbar.className = 'toolasha-ct-topbar';
         topbar.innerHTML = '<span style="font-size:12px;color:#888;">Custom Tabs</span>';
+
         const addBtn = document.createElement('button');
         addBtn.className = 'toolasha-ct-add-btn';
         addBtn.textContent = '+ Tab';
         addBtn.addEventListener('click', () => this._onAddTab(null));
+
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'toolasha-ct-add-btn';
+        exportBtn.textContent = 'Export';
+        exportBtn.addEventListener('click', () => this._exportLayout());
+
+        const importBtn = document.createElement('button');
+        importBtn.className = 'toolasha-ct-add-btn';
+        importBtn.textContent = 'Import';
+        importBtn.addEventListener('click', () => this._importLayout());
+
         topbar.appendChild(addBtn);
+        topbar.appendChild(exportBtn);
+        topbar.appendChild(importBtn);
         return topbar;
+    }
+
+    /**
+     * Serialize the current layout to a JSON file and trigger a download.
+     */
+    _exportLayout() {
+        const payload = { _toolasha: 'tabs-v1', ...this._config };
+        const json = JSON.stringify(payload, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'toolasha-tabs.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    /**
+     * Open a file picker, read the selected JSON, validate it, and replace the current layout.
+     */
+    _importLayout() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                if (parsed._toolasha !== 'tabs-v1' || !Array.isArray(parsed.tabs)) {
+                    alert('[Toolasha] Invalid layout file.');
+                    console.error('[CustomTabs] Import failed: missing _toolasha marker or tabs array', parsed);
+                    return;
+                }
+                const { _toolasha: _, ...config } = parsed;
+                this._config = config;
+                await this._save();
+                this._removeInjectedEls();
+                this._applyLayout();
+            } catch (err) {
+                alert('[Toolasha] Failed to read layout file.');
+                console.error('[CustomTabs] Import error:', err);
+            }
+        });
+        input.click();
     }
 
     /**
