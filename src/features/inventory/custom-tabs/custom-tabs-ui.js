@@ -257,6 +257,21 @@ const PANEL_CSS = `
     height: 24px;
     flex-shrink: 0;
 }
+.toolasha-ct-search-group-header { font-weight: 500; }
+.toolasha-ct-search-level-row { padding-left: 32px; }
+.toolasha-ct-level-badges {
+    color: #888;
+    font-size: 11px;
+    margin-left: 4px;
+    flex-shrink: 0;
+}
+.toolasha-ct-expand-btn {
+    margin-left: auto;
+    color: #666;
+    font-size: 11px;
+    flex-shrink: 0;
+    padding: 0 2px;
+}
 .toolasha-ct-assigned-list {
     margin-top: 8px;
 }
@@ -412,6 +427,7 @@ export default class CustomTabsUI {
         this._deleteConfirmId = null;
         this._dragInProgress = false; // Suppress click-toggles immediately after a drag-drop
         this._inventoryTabEl = null; // Ref to native Inventory tab button (for restore on cleanup)
+        this._expandedSearchHrids = null; // Set of base hrids expanded in the item picker
     }
 
     // -----------------------------------------------------------------------
@@ -750,7 +766,8 @@ export default class CustomTabsUI {
             const assignedSet = getAssignedItemSet(this._config);
             const unorgTiles = [];
             for (const [hrid, tiles] of tileMap) {
-                if (!assignedSet.has(hrid)) {
+                const baseHrid = hrid.replace(/\+\d+$/, '');
+                if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
                     for (const tile of tiles) unorgTiles.push(tile);
                 }
             }
@@ -772,10 +789,7 @@ export default class CustomTabsUI {
             if (tab.open) {
                 const sectionTiles = [];
                 for (const hrid of tab.items) {
-                    const tiles = tileMap.get(hrid);
-                    if (!tiles) continue;
-                    for (const tile of tiles) sectionTiles.push(tile);
-                    tileMap.delete(hrid);
+                    for (const tile of this._claimTilesForHrid(hrid, tileMap)) sectionTiles.push(tile);
                 }
                 this._assignTileOrders(sectionTiles, headerOrder + 1);
 
@@ -873,15 +887,50 @@ export default class CustomTabsUI {
         for (const tile of tiles) {
             const svg = tile.querySelector('svg[aria-label]');
             if (!svg) continue;
-            const label = svg.getAttribute('aria-label');
-            // Strip enhancement suffix (e.g. "Cheese Boots +3" → "Cheese Boots")
-            const baseName = label.replace(/\s+\+\d+$/, '');
+            const baseName = svg.getAttribute('aria-label');
             const hrid = this._nameToHrid(baseName);
             if (!hrid) continue;
+            // Always register under base hrid (matches all enhancement levels)
             if (!map.has(hrid)) map.set(hrid, []);
             map.get(hrid).push(tile);
+            // Check for enhancement level badge element
+            const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
+            if (enhEl) {
+                const level = parseInt(enhEl.textContent.trim().replace('+', ''), 10);
+                if (!isNaN(level) && level > 0) {
+                    const enhancedHrid = `${hrid}+${level}`;
+                    if (!map.has(enhancedHrid)) map.set(enhancedHrid, []);
+                    map.get(enhancedHrid).push(tile);
+                }
+            }
         }
         return map;
+    }
+
+    /**
+     * Claim tiles for a given hrid from the tileMap.
+     * - Base hrid (/items/foo): claims all tiles (all enhancement levels)
+     * - Enhanced hrid (/items/foo+3): claims only +3 tiles and removes them from the base key too
+     * @param {string} hrid
+     * @param {Map} tileMap
+     * @returns {HTMLElement[]}
+     */
+    _claimTilesForHrid(hrid, tileMap) {
+        const entries = tileMap.get(hrid);
+        if (!entries) return [];
+        tileMap.delete(hrid);
+        if (/\+\d+$/.test(hrid)) {
+            // Enhanced hrid: also remove these tiles from the base key to prevent double-claim
+            const baseHrid = hrid.replace(/\+\d+$/, '');
+            const baseEntries = tileMap.get(baseHrid);
+            if (baseEntries) {
+                const claimedSet = new Set(entries);
+                const remaining = baseEntries.filter((t) => !claimedSet.has(t));
+                if (remaining.length > 0) tileMap.set(baseHrid, remaining);
+                else tileMap.delete(baseHrid);
+            }
+        }
+        return entries;
     }
 
     /**
@@ -1035,10 +1084,7 @@ export default class CustomTabsUI {
             // Collect all tiles for this tab's items
             const sectionTiles = [];
             for (const hrid of tab.items) {
-                const tiles = tileMap.get(hrid);
-                if (!tiles) continue;
-                for (const tile of tiles) sectionTiles.push(tile);
-                tileMap.delete(hrid);
+                for (const tile of this._claimTilesForHrid(hrid, tileMap)) sectionTiles.push(tile);
             }
 
             // Sort tiles by value if a sort mode is active, then assign orders
@@ -1073,7 +1119,7 @@ export default class CustomTabsUI {
      */
     _removeTilesFromMapForChildren(tabs, tileMap) {
         for (const tab of tabs) {
-            for (const hrid of tab.items) tileMap.delete(hrid);
+            for (const hrid of tab.items) this._claimTilesForHrid(hrid, tileMap);
             if (tab.children.length > 0) this._removeTilesFromMapForChildren(tab.children, tileMap);
         }
     }
@@ -1116,7 +1162,9 @@ export default class CustomTabsUI {
         const assignedSet = getAssignedItemSet(this._config);
         const remainingEntries = [];
         for (const [hrid, tiles] of tileMap) {
-            if (!assignedSet.has(hrid)) {
+            // An enhanced key (e.g. /items/foo+3) is also covered if the base hrid is assigned
+            const baseHrid = hrid.replace(/\+\d+$/, '');
+            if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
                 remainingEntries.push({ hrid, tiles });
             }
         }
@@ -1150,6 +1198,7 @@ export default class CustomTabsUI {
     _openEditor(tabId) {
         this._editorTabId = tabId;
         this._deleteConfirmId = null;
+        this._expandedSearchHrids = new Set();
         const result = findTab(this._config, tabId);
         if (!result) return;
         const tab = result.tab;
@@ -1305,6 +1354,16 @@ export default class CustomTabsUI {
         const currentItems = new Set(currentTab?.items || []);
         const addAllItems = config.getSettingValue('inventoryTabs_categoryAddAll');
         const ownedHrids = addAllItems ? null : this._getOwnedItemHrids();
+
+        // Build map: baseHrid → Set<enhancementLevel> from current inventory
+        const levelMap = new Map();
+        for (const item of dataManager.getInventory() || []) {
+            if (item.itemLocationHrid === '/item_locations/inventory') {
+                if (!levelMap.has(item.itemHrid)) levelMap.set(item.itemHrid, new Set());
+                levelMap.get(item.itemHrid).add(item.enhancementLevel || 0);
+            }
+        }
+
         let count = 0;
 
         for (const [hrid, details] of Object.entries(initData.itemDetailMap)) {
@@ -1315,19 +1374,78 @@ export default class CustomTabsUI {
             if (lowerQuery && !details.name.toLowerCase().includes(lowerQuery)) continue;
             if (ownedHrids && !ownedHrids.has(hrid)) continue;
 
-            const row = document.createElement('div');
-            row.className = 'toolasha-ct-search-result';
             const iconId = hrid.replace('/items/', '');
             const spriteUrl = getSpriteBaseUrl();
             const iconHref = spriteUrl ? `${spriteUrl}#${iconId}` : `#${iconId}`;
-            row.innerHTML = `<svg viewBox="0 0 32 32"><use href="${iconHref}"></use></svg><span>${this._escHtml(details.name)}</span>`;
-            row.addEventListener('click', () => {
-                this._config = addItem(this._config, tabId, hrid);
-                this._save();
-                row.remove();
-                this._renderAssignedItems(container.parentElement.querySelector('.toolasha-ct-assigned-list'), tabId);
-            });
-            container.appendChild(row);
+
+            const ownedLevels = levelMap.get(hrid);
+            const hasEnhanced = ownedLevels && [...ownedLevels].some((l) => l > 0);
+            const isExpanded = this._expandedSearchHrids?.has(hrid);
+
+            if (hasEnhanced) {
+                if (isExpanded) {
+                    // Collapse header row
+                    const headerRow = document.createElement('div');
+                    headerRow.className = 'toolasha-ct-search-result toolasha-ct-search-group-header';
+                    headerRow.innerHTML = `<svg viewBox="0 0 32 32"><use href="${iconHref}"></use></svg><span>${this._escHtml(details.name)}</span><span class="toolasha-ct-expand-btn">▲</span>`;
+                    headerRow.addEventListener('click', () => {
+                        this._expandedSearchHrids.delete(hrid);
+                        this._renderSearchResults(container, query, tabId, categoryFilter);
+                    });
+                    container.appendChild(headerRow);
+
+                    // One row per owned enhancement level
+                    for (const level of [...ownedLevels].sort((a, b) => a - b)) {
+                        const levelHrid = level === 0 ? hrid : `${hrid}+${level}`;
+                        if (currentItems.has(levelHrid)) continue;
+
+                        const levelRow = document.createElement('div');
+                        levelRow.className = 'toolasha-ct-search-result toolasha-ct-search-level-row';
+                        const displayName = level === 0 ? details.name : `${details.name} +${level}`;
+                        levelRow.innerHTML = `<svg viewBox="0 0 32 32"><use href="${iconHref}"></use></svg><span>${this._escHtml(displayName)}</span>`;
+                        levelRow.addEventListener('click', () => {
+                            this._config = addItem(this._config, tabId, levelHrid);
+                            this._save();
+                            this._renderSearchResults(container, query, tabId, categoryFilter);
+                            this._renderAssignedItems(
+                                container.parentElement.querySelector('.toolasha-ct-assigned-list'),
+                                tabId
+                            );
+                        });
+                        container.appendChild(levelRow);
+                    }
+                } else {
+                    // Collapsed group row — shows owned levels as badge, expand on click
+                    const sortedLevels = [...ownedLevels].sort((a, b) => a - b);
+                    const levelBadges = sortedLevels.map((l) => `+${l}`).join(' ');
+
+                    const row = document.createElement('div');
+                    row.className = 'toolasha-ct-search-result toolasha-ct-search-group-header';
+                    row.innerHTML = `<svg viewBox="0 0 32 32"><use href="${iconHref}"></use></svg><span>${this._escHtml(details.name)}</span><span class="toolasha-ct-level-badges">${this._escHtml(levelBadges)}</span><span class="toolasha-ct-expand-btn">▶</span>`;
+                    row.addEventListener('click', () => {
+                        if (!this._expandedSearchHrids) this._expandedSearchHrids = new Set();
+                        this._expandedSearchHrids.add(hrid);
+                        this._renderSearchResults(container, query, tabId, categoryFilter);
+                    });
+                    container.appendChild(row);
+                }
+            } else {
+                // Flat row — no enhanced variants in inventory
+                const row = document.createElement('div');
+                row.className = 'toolasha-ct-search-result';
+                row.innerHTML = `<svg viewBox="0 0 32 32"><use href="${iconHref}"></use></svg><span>${this._escHtml(details.name)}</span>`;
+                row.addEventListener('click', () => {
+                    this._config = addItem(this._config, tabId, hrid);
+                    this._save();
+                    row.remove();
+                    this._renderAssignedItems(
+                        container.parentElement.querySelector('.toolasha-ct-assigned-list'),
+                        tabId
+                    );
+                });
+                container.appendChild(row);
+            }
+
             count++;
         }
 
@@ -1347,9 +1465,13 @@ export default class CustomTabsUI {
         let dragFromIndex = null;
 
         tab.items.forEach((hrid, index) => {
-            const details = dataManager.getItemDetails(hrid);
-            const name = details?.name || hrid;
-            const iconId = hrid.replace('/items/', '');
+            const enhanceMatch = hrid.match(/\+(\d+)$/);
+            const baseHrid = enhanceMatch ? hrid.slice(0, hrid.length - enhanceMatch[0].length) : hrid;
+            const level = enhanceMatch ? parseInt(enhanceMatch[1], 10) : 0;
+            const details = dataManager.getItemDetails(baseHrid);
+            const baseName = details?.name || baseHrid;
+            const name = level > 0 ? `${baseName} +${level}` : baseName;
+            const iconId = baseHrid.replace('/items/', '');
             const spriteUrl = getSpriteBaseUrl();
             const iconHref = spriteUrl ? `${spriteUrl}#${iconId}` : `#${iconId}`;
 
@@ -1450,7 +1572,12 @@ export default class CustomTabsUI {
         const inventory = dataManager.getInventory() || [];
         const set = new Set();
         for (const item of inventory) {
-            if (item.itemLocationHrid === '/item_locations/inventory') set.add(item.itemHrid);
+            if (item.itemLocationHrid === '/item_locations/inventory') {
+                set.add(item.itemHrid);
+                if (item.enhancementLevel > 0) {
+                    set.add(`${item.itemHrid}+${item.enhancementLevel}`);
+                }
+            }
         }
         return set;
     }
