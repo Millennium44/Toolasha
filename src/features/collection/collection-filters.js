@@ -881,9 +881,6 @@ class CollectionFilters {
             const outputCount = actionDetails.outputItems[0].count ?? 1;
             // totalGathering is 0 for production actions (efficiency.js zeroes it out)
             const rate = (3600 / ctx.actionTime) * ctx.efficiencyMultiplier * (1 + ctx.totalGathering) * outputCount;
-            console.log(
-                `[CollectionFilters] ${itemId}: actionTime=${ctx.actionTime?.toFixed(2)}s, effMult=${ctx.efficiencyMultiplier?.toFixed(2)}, gathering=${ctx.totalGathering?.toFixed(2)}, outputCount=${outputCount}, rate=${rate.toFixed(1)}/hr`
-            );
             return rate;
         } catch (err) {
             console.warn(`[CollectionFilters] _getEffectiveItemsPerHour error for ${itemId}:`, err);

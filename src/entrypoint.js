@@ -195,6 +195,13 @@ function registerFeatures() {
             module: Market.autoAllButton,
             async: false,
         },
+        {
+            key: 'inventoryTabs',
+            name: 'Custom Inventory Tabs',
+            category: 'Inventory',
+            module: Market.customTabsFeature,
+            async: true,
+        },
     ];
 
     // Actions Features

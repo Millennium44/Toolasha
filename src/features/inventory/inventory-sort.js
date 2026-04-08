@@ -328,6 +328,13 @@ class InventorySort {
         // Trigger badge manager to calculate prices and render badges
         await inventoryBadgeManager.renderAllBadges();
 
+        // Skip order assignments when custom tabs has taken over the layout —
+        // badges are still updated above, but tile order is managed by custom tabs.
+        if (inventoryElem.classList.contains('toolasha-ct-active')) {
+            this.isCalculating = false;
+            return;
+        }
+
         // Process each category
         for (const categoryDiv of inventoryElem.children) {
             // Get category name
