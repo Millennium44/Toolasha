@@ -206,8 +206,15 @@ const PANEL_CSS = `
     padding: 16px;
     width: 380px;
     max-height: 80vh;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     color: #d4d4d4;
+}
+.toolasha-ct-modal-body {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 .toolasha-ct-modal * { box-sizing: border-box; }
 .toolasha-ct-modal h3 {
@@ -1366,28 +1373,30 @@ export default class CustomTabsUI {
         modal.className = 'toolasha-ct-modal';
 
         modal.innerHTML = `
-            <h3>Edit Tab</h3>
-            <label>Name</label>
-            <input type="text" class="toolasha-ct-editor-name" value="${this._escHtml(tab.name)}">
+            <div class="toolasha-ct-modal-body">
+                <h3>Edit Tab</h3>
+                <label>Name</label>
+                <input type="text" class="toolasha-ct-editor-name" value="${this._escHtml(tab.name)}">
 
-            <label>Color</label>
-            <div class="toolasha-ct-swatches"></div>
+                <label>Color</label>
+                <div class="toolasha-ct-swatches"></div>
 
-            <label>Add Category</label>
-            <div class="toolasha-ct-categories"></div>
+                <label>Add Category</label>
+                <div class="toolasha-ct-categories"></div>
 
-            <label>From Loadout</label>
-            <div class="toolasha-ct-loadouts"></div>
+                <label>From Loadout</label>
+                <div class="toolasha-ct-loadouts"></div>
 
-            <label>Items</label>
-            <div class="toolasha-ct-search-row">
-                <input type="search" class="toolasha-ct-editor-search" placeholder="Search items to add...">
-                <select class="toolasha-ct-cat-filter">
-                    <option value="">All</option>
-                </select>
+                <label>Items</label>
+                <div class="toolasha-ct-search-row">
+                    <input type="search" class="toolasha-ct-editor-search" placeholder="Search items to add...">
+                    <select class="toolasha-ct-cat-filter">
+                        <option value="">All</option>
+                    </select>
+                </div>
+                <div class="toolasha-ct-search-results"></div>
+                <div class="toolasha-ct-assigned-list"></div>
             </div>
-            <div class="toolasha-ct-search-results"></div>
-            <div class="toolasha-ct-assigned-list"></div>
 
             <div class="toolasha-ct-modal-footer">
                 <button class="toolasha-ct-delete-btn">Delete Tab</button>
