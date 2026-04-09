@@ -517,6 +517,12 @@ export default class CustomTabsUI {
         });
         this._unregisterHandlers.push(unregisterDefaultTab);
 
+        // Live setting change for tile gap
+        const unregisterTileGap = config.onSettingChange('inventoryTabs_tileGap', () => {
+            if (this._isActive) this._applyTileGap();
+        });
+        this._unregisterHandlers.push(unregisterTileGap);
+
         // Re-apply layout when inventory changes
         let debounceTimer = null;
         this._onItemsUpdated = () => {
@@ -645,6 +651,16 @@ export default class CustomTabsUI {
         }
     }
 
+    /**
+     * Apply tile gap to the active inventory container based on the setting.
+     * @param {HTMLElement} [container]
+     */
+    _applyTileGap(container) {
+        const el = container || this._invContainer;
+        if (!el) return;
+        el.style.gap = `${config.getSettingValue('inventoryTabs_tileGap', 4)}px`;
+    }
+
     _activatePanel() {
         if (this._isActive) return;
         this._isActive = true;
@@ -754,6 +770,7 @@ export default class CustomTabsUI {
             // applies display:contents to category wrappers, hides category labels,
             // and hides ALL tiles by default (via CSS).
             invContainer.classList.add('toolasha-ct-active');
+            this._applyTileGap(invContainer);
 
             // Ensure the Inventory panel is visible
             this._showInventoryPanel();
