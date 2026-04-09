@@ -855,9 +855,22 @@ export default class CustomTabsUI {
             const assignedSet = getAssignedItemSet(this._config);
             const unorgTiles = [];
             for (const [hrid, tiles] of tileMap) {
-                const baseHrid = hrid.replace(/\+\d+$/, '');
-                if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
-                    for (const tile of tiles) unorgTiles.push(tile);
+                if (/\+\d+$/.test(hrid)) {
+                    // Enhanced key: skip if exact hrid or its base is assigned
+                    const baseHrid = hrid.replace(/\+\d+$/, '');
+                    if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
+                        for (const tile of tiles) unorgTiles.push(tile);
+                    }
+                } else {
+                    // Base key: skip if base hrid is assigned; otherwise filter per-tile
+                    // so only tiles whose specific enhancement level is assigned are excluded
+                    if (assignedSet.has(hrid)) continue;
+                    for (const tile of tiles) {
+                        const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
+                        const level = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) : 0;
+                        const tileHrid = level > 0 ? `${hrid}+${level}` : hrid;
+                        if (!assignedSet.has(tileHrid)) unorgTiles.push(tile);
+                    }
                 }
             }
             this._assignTileOrders(unorgTiles, unorgOrder + 1);
@@ -1392,10 +1405,25 @@ export default class CustomTabsUI {
         const assignedSet = getAssignedItemSet(this._config);
         const remainingEntries = [];
         for (const [hrid, tiles] of tileMap) {
-            // An enhanced key (e.g. /items/foo+3) is also covered if the base hrid is assigned
-            const baseHrid = hrid.replace(/\+\d+$/, '');
-            if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
-                remainingEntries.push({ hrid, tiles });
+            if (/\+\d+$/.test(hrid)) {
+                // Enhanced key: skip if exact hrid or its base is assigned
+                const baseHrid = hrid.replace(/\+\d+$/, '');
+                if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
+                    remainingEntries.push({ hrid, tiles });
+                }
+            } else {
+                // Base key: skip if base hrid is assigned; otherwise filter per-tile
+                // so only tiles whose specific enhancement level is assigned are excluded
+                if (assignedSet.has(hrid)) continue;
+                const unassignedTiles = tiles.filter((tile) => {
+                    const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
+                    const level = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) : 0;
+                    const tileHrid = level > 0 ? `${hrid}+${level}` : hrid;
+                    return !assignedSet.has(tileHrid);
+                });
+                if (unassignedTiles.length > 0) {
+                    remainingEntries.push({ hrid, tiles: unassignedTiles });
+                }
             }
         }
         if (remainingEntries.length === 0) return orderCounter;
