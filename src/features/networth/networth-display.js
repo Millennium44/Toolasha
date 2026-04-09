@@ -266,7 +266,8 @@ class NetworthInventoryDisplay {
             text-align: left;
             color: ${config.COLOR_ACCENT};
             font-size: 0.875rem;
-            margin-bottom: 12px;
+            margin-top: -10px;
+            margin-bottom: 0;
         `;
 
         // Insert before inventory items
@@ -278,7 +279,7 @@ class NetworthInventoryDisplay {
         } else {
             this.container.innerHTML = `
                 <div style="font-weight: bold; cursor: pointer;">
-                    + Total Networth: Loading...
+                    Networth: Loading...
                 </div>
             `;
         }
@@ -341,7 +342,7 @@ class NetworthInventoryDisplay {
         this.container.innerHTML = `
             <div style="display: flex; align-items: center; gap: 6px;">
                 <div style="cursor: pointer; font-weight: bold; flex: 1;" id="mwi-networth-toggle">
-                    + Total Networth: ${totalNetworth}
+                    Networth: ${totalNetworth}
                 </div>
                 ${
                     showChartBtn

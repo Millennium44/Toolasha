@@ -47,6 +47,7 @@ const PANEL_CSS = `
     flex-wrap: wrap;
     align-content: flex-start;
     gap: 0;
+    padding-top: 0 !important;
 }
 /* Flatten game category wrappers so tiles become direct flex children.
    Exclude our own injected elements (they have class starting with toolasha-). */
@@ -73,37 +74,33 @@ const PANEL_CSS = `
     display: flex !important;
 }
 
-/* ---------- Top bar (injected into Inventory_items) ---------- */
+/* ---------- Top bar (injected into Inventory_items, Toolasha tab only) ---------- */
 .toolasha-ct-topbar {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 6px 10px;
-    border-bottom: 1px solid #333;
+    padding: 2px 0 4px;
     flex-basis: 100%;
     flex-shrink: 0;
     box-sizing: border-box;
-    color: #d4d4d4;
-    font-family: inherit;
-    font-size: 13px;
+    gap: 4px;
 }
 .toolasha-ct-add-btn {
-    background: #2a5a3a;
-    color: #9fd;
-    border: 1px solid #3a7a4a;
+    background: #444;
+    color: #aaa;
+    border: none;
     border-radius: 4px;
     padding: 2px 8px;
     cursor: pointer;
     font-size: 12px;
 }
-.toolasha-ct-add-btn:hover { background: #3a7a4a; }
+.toolasha-ct-add-btn:hover { background: #555; }
 
 /* ---------- Accordion header (injected into Inventory_items) ---------- */
 .toolasha-ct-section-header {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px 6px calc(10px + var(--depth, 0) * 20px);
+    padding: 3px 10px 3px calc(10px + var(--depth, 0) * 20px);
     cursor: pointer;
     user-select: none;
     flex-basis: 100%;
@@ -480,6 +477,7 @@ export default class CustomTabsUI {
         this._expandedSearchHrids = null; // Set of base hrids expanded in the item picker
         this._isApplying = false; // Guard against concurrent _applyLayout calls
         this._needsAnotherPass = false; // Deferred layout re-run flag
+        this._actionBtnsEl = null; // +Tab/Export/Import appended to sort controls row on Toolasha tab
     }
 
     // -----------------------------------------------------------------------
@@ -558,6 +556,8 @@ export default class CustomTabsUI {
         this._unregisterHandlers = [];
 
         this._tabBtn?.remove();
+        this._actionBtnsEl?.remove();
+        this._actionBtnsEl = null;
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
         this._isActive = false;
@@ -788,13 +788,15 @@ export default class CustomTabsUI {
             }
 
             if (needsFullRebuild) {
-                // Full rebuild: inject topbar, headers, and set tile order/visibility
+                // Full rebuild: inject action buttons + headers
                 let orderCounter = 0;
 
-                const topbar = this._createTopbar();
-                topbar.style.order = orderCounter++;
-                invContainer.appendChild(topbar);
-                this._injectedEls.push(topbar);
+                const topbar = this._injectActionButtons();
+                if (topbar) {
+                    topbar.style.order = orderCounter++;
+                    invContainer.appendChild(topbar);
+                    this._injectedEls.push(topbar);
+                }
 
                 if (this._config.tabs.length === 0) {
                     const empty = document.createElement('div');
@@ -941,20 +943,30 @@ export default class CustomTabsUI {
      * Remove all elements we injected into invContainer
      */
     _removeInjectedEls() {
+        this._actionBtnsEl?.remove();
+        this._actionBtnsEl = null;
         for (const el of this._injectedEls) {
             el.remove();
         }
         this._injectedEls = [];
     }
-
     /**
-     * Create the top bar element
+     * Create the top bar with sort proxy buttons and tab action buttons.
+     * Shown only on the Toolasha tab; hides the external sort controls row.
      * @returns {HTMLElement}
      */
-    _createTopbar() {
-        const topbar = document.createElement('div');
-        topbar.className = 'toolasha-ct-topbar';
-        topbar.innerHTML = '<span style="font-size:12px;color:#888;">Custom Tabs</span>';
+    /**
+     * Create the tab action buttons and place them to the right of the sort controls row.
+     * Falls back to a topbar inside the inventory container if sort controls aren't present.
+     * @param {HTMLElement} invContainer
+     * @returns {HTMLElement|null} topbar element if fallback was used, null if appended to sort controls
+     */
+    _injectActionButtons() {
+        this._actionBtnsEl?.remove();
+
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'toolasha-ct-action-btns';
+        actionsDiv.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
 
         const addBtn = document.createElement('button');
         addBtn.className = 'toolasha-ct-add-btn';
@@ -971,9 +983,22 @@ export default class CustomTabsUI {
         importBtn.textContent = 'Import';
         importBtn.addEventListener('click', () => this._importLayout());
 
-        topbar.appendChild(addBtn);
-        topbar.appendChild(exportBtn);
-        topbar.appendChild(importBtn);
+        actionsDiv.appendChild(addBtn);
+        actionsDiv.appendChild(exportBtn);
+        actionsDiv.appendChild(importBtn);
+        this._actionBtnsEl = actionsDiv;
+
+        const sortControls = document.querySelector('.mwi-inventory-sort-controls');
+        if (sortControls) {
+            actionsDiv.style.marginLeft = 'auto';
+            sortControls.appendChild(actionsDiv);
+            return null; // no topbar needed
+        }
+
+        // Fallback: no sort controls — use a topbar inside the container
+        const topbar = document.createElement('div');
+        topbar.className = 'toolasha-ct-topbar';
+        topbar.appendChild(actionsDiv);
         return topbar;
     }
 

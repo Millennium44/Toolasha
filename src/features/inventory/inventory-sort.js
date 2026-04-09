@@ -220,15 +220,16 @@ class InventorySort {
             color: ${config.COLOR_ACCENT};
             font-size: 0.875rem;
             text-align: left;
-            margin-bottom: 8px;
+            margin-top: -8px;
+            margin-bottom: 0;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 3px;
         `;
 
         // Sort label and buttons
         const sortLabel = document.createElement('span');
-        sortLabel.textContent = 'Sort: ';
+        sortLabel.textContent = 'Sort:';
 
         const askButton = this.createSortButton('Ask', 'ask');
         const bidButton = this.createSortButton('Bid', 'bid');
@@ -258,11 +259,11 @@ class InventorySort {
         button.textContent = label;
         button.dataset.mode = mode;
         button.style.cssText = `
-            border-radius: 3px;
-            padding: 4px 12px;
+            border-radius: 4px;
+            padding: 2px 8px;
             border: none;
             cursor: pointer;
-            font-size: 0.875rem;
+            font-size: 12px;
             transition: all 0.2s;
         `;
 
@@ -289,7 +290,7 @@ class InventorySort {
                 button.style.fontWeight = 'bold';
             } else {
                 button.style.backgroundColor = '#444';
-                button.style.color = '${config.COLOR_TEXT_SECONDARY}';
+                button.style.color = '#aaa';
                 button.style.fontWeight = 'normal';
             }
         });
