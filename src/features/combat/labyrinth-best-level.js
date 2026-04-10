@@ -5,6 +5,7 @@
 
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import labyrinthTracker from './labyrinth-tracker.js';
 
 class LabyrinthBestLevel {
@@ -150,21 +151,69 @@ class LabyrinthBestLevel {
     }
 
     /**
-     * Inject a "Best: N" badge into the skip threshold cell
+     * Get the character's current level for a skill HRID.
+     * @param {string} skillHrid - e.g. "/skills/milking"
+     * @returns {number|null}
+     */
+    _getCharSkillLevel(skillHrid) {
+        const skills = dataManager.getSkills();
+        if (!skills) return null;
+        const skill = skills.find((s) => s.skillHrid === skillHrid);
+        return skill?.level ?? null;
+    }
+
+    /**
+     * Inject a "Best: N" badge into the skip threshold cell.
+     * For skilling rows, also shows "(+offset)" where offset = bestLevel - charLevel - 15
+     * (the 15 accounts for the Expert Tea Crate +15 skilling level bonus on Labyrinth entry).
      * @param {Element} cell - The LabyrinthPanel_skipThreshold div
      * @param {number} bestLevel - Best level to display
+     * @param {string|null} roomHrid - Room HRID (e.g. "/skills/milking" or "/monsters/...")
      */
-    injectBadge(cell, bestLevel) {
+    injectBadge(cell, bestLevel, roomHrid) {
+        let text = `Best: ${bestLevel}`;
+        let tooltip = null;
+
+        if (roomHrid && roomHrid.startsWith('/skills/')) {
+            const charLevel = this._getCharSkillLevel(roomHrid);
+            if (charLevel !== null) {
+                const EXPERT_TEA_CRATE_BONUS = 15;
+                const effectiveLevel = charLevel + EXPERT_TEA_CRATE_BONUS;
+                const offset = bestLevel - effectiveLevel;
+                if (offset > 0) {
+                    text += ` (+${offset})`;
+                    tooltip =
+                        `Your level: ${charLevel}\n` +
+                        `Expert Tea Crate: +${EXPERT_TEA_CRATE_BONUS}\n` +
+                        `Effective: ${effectiveLevel}\n` +
+                        `\n` +
+                        `Best: ${bestLevel}\n` +
+                        `Gap: +${offset}`;
+                }
+            }
+        }
+
         const existing = cell.querySelector('.mwi-labyrinth-best');
         if (existing) {
-            existing.textContent = `Best: ${bestLevel}`;
+            existing.textContent = text;
+            if (tooltip) {
+                existing.title = tooltip;
+                existing.style.cursor = 'help';
+            } else {
+                existing.removeAttribute('title');
+                existing.style.cursor = '';
+            }
             return;
         }
 
         const badge = document.createElement('span');
         badge.className = 'mwi-labyrinth-best';
-        badge.textContent = `Best: ${bestLevel}`;
+        badge.textContent = text;
         badge.style.cssText = 'font-size:0.75rem;opacity:0.75;margin-right:6px;';
+        if (tooltip) {
+            badge.title = tooltip;
+            badge.style.cursor = 'help';
+        }
 
         cell.insertBefore(badge, cell.firstChild);
     }
@@ -181,7 +230,7 @@ class LabyrinthBestLevel {
 
             const bestLevel = labyrinthTracker.getBestLevel(monsterHrid);
             if (bestLevel !== null) {
-                this.injectBadge(cell, bestLevel);
+                this.injectBadge(cell, bestLevel, monsterHrid);
             }
         });
     }
