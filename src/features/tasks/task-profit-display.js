@@ -181,6 +181,10 @@ class TaskProfitDisplay {
                 this.initialize();
             } else {
                 this.disable();
+                // Re-initialize if other features hosted by this module are still enabled
+                if (config.getSetting('taskGoMerge') || config.getSetting('taskQueuedIndicator')) {
+                    this.initialize();
+                }
             }
         });
 
