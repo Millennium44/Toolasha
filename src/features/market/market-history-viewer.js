@@ -29,7 +29,7 @@ class MarketHistoryViewer {
         this.sortDirection = 'desc'; // Most recent first
         this.searchTerm = '';
         this.typeFilter = 'all'; // 'all', 'buy', 'sell'
-        this.statusFilter = 'all'; // 'all', 'active', 'filled', 'canceled', 'expired', 'unknown'
+        this.statusFilter = 'all'; // 'all', 'active', 'filled', 'filled_active', 'canceled', 'expired', 'unknown'
         this.useKMBFormat = false; // K/M/B formatting toggle
         this.storageKey = 'marketListingTimestamps';
         this.timerRegistry = createTimerRegistry();
@@ -429,8 +429,12 @@ class MarketHistoryViewer {
             }
 
             // Status filter
-            if (hasStatusFilter && listing.status !== this.statusFilter) {
-                return false;
+            if (hasStatusFilter) {
+                if (this.statusFilter === 'filled_active') {
+                    if (listing.status !== 'filled' && listing.status !== 'active') return false;
+                } else if (listing.status !== this.statusFilter) {
+                    return false;
+                }
             }
 
             // Search term filter (with cached item names)
@@ -859,6 +863,7 @@ class MarketHistoryViewer {
             { value: 'all', label: 'All Statuses' },
             { value: 'active', label: 'Active Only' },
             { value: 'filled', label: 'Filled Only' },
+            { value: 'filled_active', label: 'Filled or Active' },
             { value: 'canceled', label: 'Canceled Only' },
             { value: 'expired', label: 'Expired Only' },
             { value: 'unknown', label: 'Unknown Only' },
