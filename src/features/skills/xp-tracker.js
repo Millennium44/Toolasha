@@ -189,7 +189,7 @@ class XPTracker {
 
     async initialize() {
         if (this.initialized) return;
-        if (!config.getSetting('xpTracker', true)) return;
+        if (!config.getSetting('xpTracker', true) && !config.getSetting('xpTracker_timeTillLevel', true)) return;
 
         const characterInitHandler = async (data) => {
             await this._onCharacterInit(data);
@@ -365,7 +365,6 @@ class XPTracker {
      * @param {HTMLElement} tooltipEl
      */
     _addTimeTillLevelUp(tooltipEl) {
-        if (!config.getSetting('xpTracker', true)) return;
         if (!config.getSetting('xpTracker_timeTillLevel', true)) return;
 
         // Tooltip structure: div[0]=name, div[1]=level, div[2]=xp progress, div[3]="XP to next level: N"
