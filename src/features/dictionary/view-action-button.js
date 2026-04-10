@@ -5,7 +5,10 @@
 
 import domObserver from '../../core/dom-observer.js';
 import { navigateToItem, findActionForItem } from '../../utils/item-navigation.js';
+import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import dataManager from '../../core/data-manager.js';
+import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 
 /**
  * ViewActionButton class manages action button in Item Dictionary
@@ -16,6 +19,7 @@ class ViewActionButton {
         this.isInitialized = false;
         this.injectTimeout = null;
         this.timerRegistry = createTimerRegistry();
+        this.pendingActionCount = null; // Pre-fill count for next action panel navigation
     }
 
     /**
@@ -81,7 +85,11 @@ class ViewActionButton {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            this.pendingActionCount = this._extractRequiredCount(actionMenu, itemHrid, itemName);
             navigateToItem(itemHrid);
+            if (this.pendingActionCount !== null) {
+                this._fillActionCountAfterNavigation();
+            }
         });
 
         actionMenu.appendChild(btn);
@@ -191,6 +199,108 @@ class ViewActionButton {
                 gap: 8px;
             `;
         }
+    }
+
+    /**
+     * Extract the required craft count by finding the item in the main page DOM
+     * (not the tooltip portal) and reading the "X / Y" sibling quantity text.
+     * @param {string} itemName - Display name of the item (e.g. "Reptile Leather")
+     * @returns {number|null}
+     */
+    _extractRequiredCount(actionMenu, itemHrid, itemName) {
+        // Primary: calculate from game data using the same logic as Missing Mats button
+        const count = this._calcMissingFromGameData(itemHrid);
+        if (count !== null) return count;
+
+        // Fallback: read the split "X" / "/ Y" sibling elements in the action requirements row
+        const svgs = document.querySelectorAll(`svg[aria-label="${itemName}"]`);
+        for (const svg of svgs) {
+            const itemContainer = svg.closest('[class*="Item_itemContainer"]');
+            if (!itemContainer) continue;
+            const parent = itemContainer.parentElement;
+            if (!parent) continue;
+
+            const children = [...parent.children].filter((c) => c !== itemContainer && !c.contains(itemContainer));
+            for (let i = 0; i < children.length; i++) {
+                const haveText = children[i].textContent.trim();
+                const needText = children[i + 1]?.textContent.trim();
+                if (!needText) continue;
+                const haveMatch = haveText.match(/^[\d,]+(?:\.\d+)?$/);
+                const needMatch = needText.match(/^\/\s*([\d,]+(?:\.\d+)?)$/);
+                if (haveMatch && needMatch) {
+                    const have = parseFloat(haveText.replace(/,/g, ''));
+                    const need = parseFloat(needMatch[1].replace(/,/g, ''));
+                    if (!isNaN(have) && !isNaN(need) && need > 0) {
+                        return Math.ceil(need - have);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Calculate the missing count for an item using the same game data
+     * calculation as the Missing Mats button.
+     * @param {string} itemHrid
+     * @returns {number|null}
+     */
+    _calcMissingFromGameData(itemHrid) {
+        // Find current action name from the panel
+        const nameEl = document.querySelector('[class*="SkillActionDetail_name"]');
+        if (!nameEl) return null;
+        const actionName = Array.from(nameEl.childNodes)
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .map((n) => n.textContent)
+            .join('')
+            .trim();
+
+        // Resolve action HRID from name
+        const gameData = dataManager.getInitClientData();
+        let actionHrid = null;
+        for (const [hrid, detail] of Object.entries(gameData?.actionDetailMap || {})) {
+            if (detail.name === actionName) {
+                actionHrid = hrid;
+                break;
+            }
+        }
+        if (!actionHrid) return null;
+
+        // Read current numActions from the count input
+        const input = document.querySelector('[class*="maxActionCountInput"] input');
+        const numActions = parseInt(input?.value) || 0;
+        if (numActions <= 0) return null;
+
+        // Use the same calculation as the Missing Mats button
+        const materials = calculateMaterialRequirements(actionHrid, numActions, true);
+        const mat = materials.find((m) => m.itemHrid === itemHrid);
+        if (mat && mat.missing > 0) return Math.ceil(mat.missing);
+
+        return null;
+    }
+
+    /**
+     * Poll for the action count input after navigation and fill it with pendingActionCount.
+     */
+    _fillActionCountAfterNavigation() {
+        let retries = 0;
+        const tryFill = () => {
+            const container = document.querySelector('[class*="maxActionCountInput"]');
+            const input = container?.querySelector('input');
+            if (input && this.pendingActionCount !== null) {
+                setReactInputValue(input, this.pendingActionCount, { focus: false });
+                this.pendingActionCount = null;
+                return;
+            }
+            if (++retries < 15) {
+                const t = setTimeout(tryFill, 100);
+                this.timerRegistry.registerTimeout(t);
+            } else {
+                this.pendingActionCount = null;
+            }
+        };
+        const t = setTimeout(tryFill, 100);
+        this.timerRegistry.registerTimeout(t);
     }
 
     /**
