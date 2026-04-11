@@ -2161,18 +2161,6 @@ export default class CustomTabsUI {
         const snapshots = loadoutSnapshot.snapshots;
         const entries = Object.values(snapshots);
 
-        console.log(
-            '[CustomTabs] _renderLoadoutButtons:',
-            'isInitialized=',
-            loadoutSnapshot.isInitialized,
-            'snapshotKeys=',
-            Object.keys(snapshots),
-            'entryCount=',
-            entries.length,
-            'snapshotsRef===loadoutSnapshot.snapshots?',
-            snapshots === loadoutSnapshot.snapshots
-        );
-
         if (entries.length === 0) {
             const msg = document.createElement('span');
             msg.style.cssText = 'font-size:11px;color:#888;';
