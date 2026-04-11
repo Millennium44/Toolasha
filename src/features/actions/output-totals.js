@@ -240,7 +240,11 @@ class OutputTotals {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
-            clone.innerText = `${expectedMin} - ${expectedMax}`;
+            const expectedAvg = (((minOutput + maxOutput) / 2) * amount * dropRate).toLocaleString('en-US', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+            });
+            clone.innerText = `${expectedMin} - ${expectedMax} (${expectedAvg})`;
         } else {
             // Single value output
             const value = parseFloat(output[0].trim());
