@@ -149,7 +149,11 @@ class EstimatedListingAge {
     async loadOrderBooksCache() {
         try {
             const stored = await storage.getJSON(this.orderBooksCacheKey, 'marketListings', {});
-            this.orderBooksCache = stored || {};
+            const raw = stored || {};
+            const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
+            this.orderBooksCache = Object.fromEntries(
+                Object.entries(raw).filter(([, entry]) => entry.lastUpdated && entry.lastUpdated >= cutoff)
+            );
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load order books cache:', error);
             this.orderBooksCache = {};
@@ -172,7 +176,7 @@ class EstimatedListingAge {
      */
     async saveOrderBooksCache() {
         try {
-            await storage.setJSON(this.orderBooksCacheKey, this.orderBooksCache, 'marketListings', true);
+            await storage.setJSON(this.orderBooksCacheKey, this.orderBooksCache, 'marketListings');
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to save order books cache:', error);
         }
