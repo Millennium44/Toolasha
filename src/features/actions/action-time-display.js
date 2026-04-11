@@ -2051,7 +2051,7 @@ class ActionTimeDisplay {
                                     ? config.getSettingValue('color_profit', '#4ade80')
                                     : config.getSettingValue('color_loss', '#f87171');
                             const profitSign = actionProfit >= 0 ? '+' : '';
-                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatWithSeparator(Math.round(actionProfit))}</span>`;
+                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${this.formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
                         }
                     }
                 }
@@ -2071,7 +2071,7 @@ class ActionTimeDisplay {
                         : config.getSettingValue('color_loss', '#f87171');
                 const valueSign = totalProfit >= 0 ? '+' : '';
                 const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
-                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatWithSeparator(Math.round(totalProfit))}</span>`;
+                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${this.formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>`;
                 totalDiv.innerHTML = baseText + valueText;
             }
         } catch (error) {

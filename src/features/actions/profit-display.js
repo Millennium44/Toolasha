@@ -715,7 +715,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     const baseRevenue = profitData.itemsPerHour * profitData.outputPrice;
     const gourmetRevenue = profitData.gourmetBonusItems * profitData.outputPrice;
     const primaryRevenue = baseRevenue + gourmetRevenue;
-    const primaryRevenueLabel = outputMissing ? '-- ⚠' : formatWithSeparator(Math.round(primaryRevenue));
+    const primaryRevenueLabel = outputMissing ? '-- ⚠' : formatLargeNumber(Math.round(primaryRevenue));
     const gourmetLabel =
         profitData.gourmetBonus > 0 ? ` (${formatPercentage(profitData.gourmetBonus, 1)} gourmet)` : '';
     const primaryOutputSection = createCollapsibleSection(
