@@ -2129,7 +2129,7 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         bonusDrops,
         materialCosts: profitData.materialCosts,
         totalTeaCostPerHour: profitData.totalTeaCostPerHour,
-        efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+        efficiencyMultiplier,
     });
     const totalRevenue = Math.round(totals.totalRevenue);
     const totalMarketTax = Math.round(totals.totalMarketTax);
@@ -2282,8 +2282,8 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
     const materialCostsContent = document.createElement('div');
     if (profitData.materialCosts && profitData.materialCosts.length > 0) {
         for (const material of profitData.materialCosts) {
-            const totalMaterial = material.amount * actionsCount * efficiencyMultiplier;
-            const totalMaterialCost = material.totalCost * actionsCount * efficiencyMultiplier;
+            const totalMaterial = material.amount * actionsCount;
+            const totalMaterialCost = material.totalCost * actionsCount;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
 
@@ -2291,7 +2291,7 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
 
             // Add Artisan reduction info if present
             if (profitData.artisanBonus > 0 && material.baseAmount && material.amount !== material.baseAmount) {
-                const baseTotalAmount = material.baseAmount * actionsCount * efficiencyMultiplier;
+                const baseTotalAmount = material.baseAmount * actionsCount;
                 materialText += ` (${baseTotalAmount.toFixed(2)} base -${formatPercentage(profitData.artisanBonus, 1)} 🍵)`;
             }
 
