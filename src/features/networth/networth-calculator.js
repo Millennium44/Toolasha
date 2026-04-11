@@ -22,6 +22,7 @@ import networthCache from './networth-cache.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { getShopCoinCost } from '../../utils/game-lookups.js';
 
 /**
  * Calculate the value of a single item
@@ -158,34 +159,9 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
         }
 
         // Try shop cost as final fallback (for shop-only items)
-        const shopCost = getShopCost(itemHrid);
+        const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0) {
             return shopCost;
-        }
-    }
-
-    return 0;
-}
-
-/**
- * Get shop cost for an item (if purchaseable with coins)
- * @param {string} itemHrid - Item HRID
- * @returns {number} Coin cost, or 0 if not in shop or not purchaseable with coins
- */
-function getShopCost(itemHrid) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
-
-    // Find shop item for this itemHrid
-    for (const shopItem of Object.values(gameData.shopItemDetailMap || {})) {
-        if (shopItem.itemHrid === itemHrid) {
-            // Check if purchaseable with coins
-            if (shopItem.costs && shopItem.costs.length > 0) {
-                const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
-                if (coinCost) {
-                    return coinCost.count;
-                }
-            }
         }
     }
 

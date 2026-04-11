@@ -85,3 +85,27 @@ export function getItemHridFromName(itemName) {
 
     return null;
 }
+
+/**
+ * Get the coin cost of an item from the in-game shop.
+ * Returns 0 if the item is not available in the shop or not purchasable with coins.
+ * @param {string} itemHrid - Item HRID
+ * @returns {number} Coin cost, or 0 if not available in shop
+ */
+export function getShopCoinCost(itemHrid) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.shopItemDetailMap) return 0;
+
+    for (const shopItem of Object.values(gameData.shopItemDetailMap)) {
+        if (shopItem.itemHrid === itemHrid) {
+            if (shopItem.costs && shopItem.costs.length > 0) {
+                const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
+                if (coinCost) {
+                    return coinCost.count;
+                }
+            }
+        }
+    }
+
+    return 0;
+}

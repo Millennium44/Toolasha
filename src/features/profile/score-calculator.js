@@ -14,6 +14,7 @@ import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
+import { getShopCoinCost } from '../../utils/game-lookups.js';
 
 /**
  * Token-based item data for untradeable back slot items (capes/cloaks/quivers)
@@ -211,34 +212,9 @@ function getMarketPriceWithFallback(itemHrid, enhancementLevel = 0) {
         }
 
         // Try shop cost as final fallback (for shop-only items)
-        const shopCost = getShopCost(itemHrid, gameData);
+        const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0) {
             return shopCost;
-        }
-    }
-
-    return 0;
-}
-
-/**
- * Get shop cost for an item (if purchaseable with coins)
- * @param {string} itemHrid - Item HRID
- * @param {Object} gameData - Game data object
- * @returns {number} Coin cost, or 0 if not in shop or not purchaseable with coins
- */
-function getShopCost(itemHrid, gameData) {
-    if (!gameData) return 0;
-
-    // Find shop item for this itemHrid
-    for (const shopItem of Object.values(gameData.shopItemDetailMap || {})) {
-        if (shopItem.itemHrid === itemHrid) {
-            // Check if purchaseable with coins
-            if (shopItem.costs && shopItem.costs.length > 0) {
-                const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
-                if (coinCost) {
-                    return coinCost.count;
-                }
-            }
         }
     }
 

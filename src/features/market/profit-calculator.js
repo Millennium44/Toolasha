@@ -10,6 +10,7 @@ import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
     calculateActionsPerHour,
@@ -369,6 +370,13 @@ class ProfitCalculator {
                     isMissing = false;
                 }
 
+                // Use shop price if cheaper than marketplace
+                const shopCost = getShopCoinCost(actionDetails.upgradeItemHrid);
+                if (shopCost > 0 && (isMissing || shopCost < finalPrice)) {
+                    finalPrice = shopCost;
+                    isMissing = false;
+                }
+
                 // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
                 const reducedAmount = 1;
 
@@ -409,6 +417,13 @@ class ProfitCalculator {
                 let isMissing = isPriceMissing;
                 if (input.itemHrid === '/items/coin' && finalPrice === 0) {
                     finalPrice = 1; // 1 coin = 1 gold value
+                    isMissing = false;
+                }
+
+                // Use shop price if cheaper than marketplace
+                const shopCost = getShopCoinCost(input.itemHrid);
+                if (shopCost > 0 && (isMissing || shopCost < finalPrice)) {
+                    finalPrice = shopCost;
                     isMissing = false;
                 }
 
