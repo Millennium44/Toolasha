@@ -35,7 +35,7 @@ const PRODUCTION_SKILLS = ['cheesesmithing', 'crafting', 'tailoring', 'cooking',
  * @param {string} goal - 'xp' or 'gold'
  * @returns {Object} { skillTeas: [], generalTeas: [] }
  */
-function getRelevantTeas(skillName, goal) {
+export function getRelevantTeas(skillName, goal) {
     const skill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(skill);
 
@@ -85,13 +85,17 @@ function getRelevantTeas(skillName, goal) {
  * @param {Object} teaGroups - { skillTeas: [], generalTeas: [] }
  * @returns {Array<Array<string>>} Array of valid tea combinations
  */
-function generateCombinations(teaGroups) {
+function generateCombinations(teaGroups, constraints = null) {
     const { skillTeas, generalTeas } = teaGroups;
     const combinations = [];
 
     // Helper to add combination if valid
     const addCombo = (combo) => {
         if (combo.length > 0 && combo.length <= 3) {
+            if (constraints) {
+                if ([...constraints.pinned].some((t) => !combo.includes(t))) return;
+                if (combo.some((t) => constraints.banned.has(t))) return;
+            }
             combinations.push(combo);
         }
     };
@@ -645,7 +649,7 @@ function getOtherEfficiencySources(actionType) {
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @returns {Object} Optimization result
  */
-export function findOptimalTeas(skillName, goal, locationName = null, actionNameFilter = null) {
+export function findOptimalTeas(skillName, goal, locationName = null, actionNameFilter = null, constraints = null) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
     const isProduction = PRODUCTION_SKILLS.includes(normalizedSkill);
@@ -676,7 +680,7 @@ export function findOptimalTeas(skillName, goal, locationName = null, actionName
 
     // Get relevant teas and generate combinations
     const relevantTeas = getRelevantTeas(normalizedSkill, goal);
-    const combinations = generateCombinations(relevantTeas);
+    const combinations = generateCombinations(relevantTeas, constraints);
 
     // Get actions for this skill (available and excluded)
     const actionData = getActionsForSkill(normalizedSkill, playerLevel);
@@ -963,5 +967,6 @@ function formatBuffWithDC(scaledValue, dcBonus, suffix, isPercent) {
 
 export default {
     findOptimalTeas,
+    getRelevantTeas,
     getTeaBuffDescription,
 };
