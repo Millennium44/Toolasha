@@ -499,6 +499,7 @@ export default class CustomTabsUI {
         this._expandedSearchHrids = null; // Set of base hrids expanded in the item picker
         this._isApplying = false; // Guard against concurrent _applyLayout calls
         this._needsAnotherPass = false; // Deferred layout re-run flag
+        this._lastRebuildTileCount = 0; // Tile count at last full rebuild (detects inventory changes)
         this._actionBtnsEl = null; // +Tab/Export/Import appended to sort controls row on Toolasha tab
     }
 
@@ -784,7 +785,7 @@ export default class CustomTabsUI {
             const isSameNode = invContainer === this._invContainer;
             const injectedStillPresent =
                 this._injectedEls.length > 0 && this._injectedEls[0].parentElement === invContainer;
-            const needsFullRebuild = !isSameNode || !injectedStillPresent;
+            let needsFullRebuild = !isSameNode || !injectedStillPresent;
 
             this._invContainer = invContainer;
 
@@ -826,6 +827,14 @@ export default class CustomTabsUI {
                 tile.style.order = '';
             }
 
+            // Force full rebuild when tile count changed — the lightweight path
+            // reuses stale header order values that don't have enough order-space
+            // for new tiles, causing items to visually cascade into wrong sections.
+            if (!needsFullRebuild && allTiles.length !== this._lastRebuildTileCount) {
+                needsFullRebuild = true;
+                this._removeInjectedEls();
+            }
+
             if (needsFullRebuild) {
                 // Full rebuild: inject action buttons + headers
                 let orderCounter = 0;
@@ -857,6 +866,8 @@ export default class CustomTabsUI {
                 if (config.getSettingValue('inventoryTabs_showUnorganized')) {
                     orderCounter = this._injectUnorganized(invContainer, tileMap, orderCounter);
                 }
+
+                this._lastRebuildTileCount = allTiles.length;
             } else {
                 // Lightweight update: headers already exist, just re-apply tile order/visibility
                 this._updateTileVisibility(invContainer, tileMap);
