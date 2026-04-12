@@ -178,6 +178,18 @@ class NetworthHistory {
     }
 
     /**
+     * Delete a snapshot by timestamp and persist the change to storage.
+     * @param {number} timestamp - The `t` value of the snapshot to remove
+     */
+    async deleteSnapshot(timestamp) {
+        const idx = this.history.findIndex((s) => s.t === timestamp);
+        if (idx === -1) return;
+        this.history.splice(idx, 1);
+        const storageKey = `networth_${this.characterId}`;
+        await storage.set(storageKey, this.history, STORE_NAME);
+    }
+
+    /**
      * Cleanup when disabled
      */
     disable() {

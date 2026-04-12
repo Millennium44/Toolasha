@@ -47,6 +47,8 @@ class NetworthHistoryChart {
         this.currentRange = '7d';
         this.currentCustomFrom = null;
         this.currentCustomTo = null;
+        this._deletePopup = null;
+        this._deletePopupOutsideHandler = null;
         this._loadChartPrefs();
     }
 
@@ -702,6 +704,9 @@ class NetworthHistoryChart {
                 responsive: true,
                 maintainAspectRatio: false,
                 parsing: false,
+                onClick: (event, elements) => {
+                    this._onChartClick(event, elements);
+                },
                 interaction: {
                     mode: 'nearest',
                     intersect: false,
@@ -1115,7 +1120,107 @@ class NetworthHistoryChart {
     /**
      * Close the modal and clean up
      */
+    /**
+     * Handle a click on the chart — show delete popup for the nearest data point.
+     * @param {Object} event - Chart.js event object
+     * @param {Array} elements - Active elements at click position
+     */
+    _onChartClick(event, elements) {
+        this._dismissDeletePopup();
+        if (!elements || elements.length === 0) return;
+
+        const raw = elements[0].element.$context?.raw;
+        if (!raw || isNaN(raw.x)) return;
+
+        // _raw is present on Total line points; category lines share the same timestamp
+        const snapshot = raw._raw || networthHistory.getHistory().find((s) => s.t === raw.x);
+        if (!snapshot) return;
+
+        this._showDeletePopup(event.native, snapshot);
+    }
+
+    /**
+     * Show a small popup near the click offering to delete the datapoint.
+     * @param {MouseEvent} nativeEvent - Native DOM mouse event for positioning
+     * @param {Object} snapshot - The snapshot object to potentially delete
+     */
+    _showDeletePopup(nativeEvent, snapshot) {
+        const popup = document.createElement('div');
+        popup.id = 'mwi-nw-delete-popup';
+
+        const left = Math.min(nativeEvent.clientX + 12, window.innerWidth - 210);
+        const top = nativeEvent.clientY - 10;
+
+        popup.style.cssText = `
+            position: fixed;
+            z-index: 100002;
+            background: #1e1e2e;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #ccc;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+            left: ${left}px;
+            top: ${top}px;
+            min-width: 180px;
+        `;
+
+        const date = new Date(snapshot.t).toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+
+        popup.innerHTML = `
+            <div style="margin-bottom:4px;font-weight:500;color:#fff;">${date}</div>
+            <div style="margin-bottom:10px;color:${config.COLOR_ACCENT};">${networthFormatter(snapshot.total)}</div>
+            <button id="mwi-nw-delete-confirm" style="background:#ef4444;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-right:6px;">Delete point</button>
+            <button id="mwi-nw-delete-cancel" style="background:#2a2a2a;color:#999;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
+        `;
+
+        document.body.appendChild(popup);
+        this._deletePopup = popup;
+
+        popup.querySelector('#mwi-nw-delete-confirm').addEventListener('click', async () => {
+            await networthHistory.deleteSnapshot(snapshot.t);
+            this._dismissDeletePopup();
+            this.renderChart(this.currentRange, this.currentCustomFrom, this.currentCustomTo);
+        });
+
+        popup.querySelector('#mwi-nw-delete-cancel').addEventListener('click', () => {
+            this._dismissDeletePopup();
+        });
+
+        // Dismiss on outside click (defer to avoid catching the current click)
+        setTimeout(() => {
+            this._deletePopupOutsideHandler = (e) => {
+                if (!popup.contains(e.target)) {
+                    this._dismissDeletePopup();
+                }
+            };
+            document.addEventListener('click', this._deletePopupOutsideHandler);
+        }, 0);
+    }
+
+    /**
+     * Remove the delete popup and clean up its outside-click listener.
+     */
+    _dismissDeletePopup() {
+        if (this._deletePopup) {
+            this._deletePopup.remove();
+            this._deletePopup = null;
+        }
+        if (this._deletePopupOutsideHandler) {
+            document.removeEventListener('click', this._deletePopupOutsideHandler);
+            this._deletePopupOutsideHandler = null;
+        }
+    }
+
     closeModal() {
+        this._dismissDeletePopup();
+
         if (this.chartInstance) {
             this.chartInstance.destroy();
             this.chartInstance = null;
