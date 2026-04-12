@@ -77,6 +77,8 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+        config.onSettingChange('actionPanel_showProfitPerHour', () => this.updateAllStats());
+        config.onSettingChange('actionPanel_showExpPerHour', () => this.updateAllStats());
     }
 
     /**
@@ -444,6 +446,10 @@ class GatheringStats {
         }
 
         data.displayElement.innerHTML = html;
+        if (!html) {
+            data.displayElement.style.display = 'none';
+            return;
+        }
         data.displayElement.style.display = 'block';
         data.displayElement.style.visibility = 'hidden';
         this.fitLineFontSizes(actionPanel, data.displayElement);

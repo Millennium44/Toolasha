@@ -104,6 +104,9 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+        config.onSettingChange('actionPanel_maxProduceable', () => this.updateAllCounts());
+        config.onSettingChange('actionPanel_showProfitPerHour', () => this.updateAllCounts());
+        config.onSettingChange('actionPanel_showExpPerHour', () => this.updateAllCounts());
     }
 
     /**
@@ -473,26 +476,43 @@ class MaxProduceable {
         // Build display HTML using .mwi-action-stat-line divs so fitLineFontSizes
         // can size each line immediately — avoids the multi-second flash of tiny
         // unsized text that occurred when sizing was deferred to addBestActionIndicators.
-        let html = `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-        html += `<span style="color: ${canProduceColor};">Can produce: ${maxCrafts.toLocaleString()}</span></div>`;
+        const showMaxProduceable = config.getSetting('actionPanel_maxProduceable');
+        const showProfit = config.getSetting('actionPanel_showProfitPerHour');
+        const showExp = config.getSetting('actionPanel_showExpPerHour');
 
-        if (hasMissingPrices) {
+        let html = '';
+
+        if (showMaxProduceable) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="profit" style="color: ${config.SCRIPT_COLOR_ALERT};">Profit/hr: -- ⚠</span></div>`;
-        } else if (resolvedProfitPerHour !== null) {
-            const profitColor = resolvedProfitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
-            const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
-            const estimatedNote = outputPriceEstimated ? ' ⚠' : '';
-            html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}</span></div>`;
+            html += `<span style="color: ${canProduceColor};">Can produce: ${maxCrafts.toLocaleString()}</span></div>`;
         }
 
-        if (expPerHour !== null && expPerHour > 0) {
+        if (showProfit) {
+            if (hasMissingPrices) {
+                html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
+                html += `<span data-stat="profit" style="color: ${config.SCRIPT_COLOR_ALERT};">Profit/hr: -- ⚠</span></div>`;
+            } else if (resolvedProfitPerHour !== null) {
+                const profitColor = resolvedProfitPerHour >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                const profitSign = resolvedProfitPerHour >= 0 ? '' : '-';
+                const estimatedNote = outputPriceEstimated ? ' ⚠' : '';
+                html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
+                html += `<span data-stat="profit" style="color: ${profitColor};">Profit/hr: ${profitSign}${formatKMB(Math.abs(resolvedProfitPerHour))}${estimatedNote}</span></div>`;
+            }
+        }
+
+        if (showExp && expPerHour !== null && expPerHour > 0) {
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
             html += `<span data-stat="exp" style="color: #fff;">Exp/hr: ${formatKMB(expPerHour)}</span></div>`;
         }
 
-        if (!hasMissingPrices && resolvedProfitPerHour !== null && expPerHour !== null && expPerHour > 0) {
+        if (
+            showProfit &&
+            showExp &&
+            !hasMissingPrices &&
+            resolvedProfitPerHour !== null &&
+            expPerHour !== null &&
+            expPerHour > 0
+        ) {
             const coinsPerXp = resolvedProfitPerHour / expPerHour;
             const efficiencyColor = coinsPerXp >= 0 ? config.COLOR_INFO : config.COLOR_WARNING;
             const efficiencySign = coinsPerXp >= 0 ? '' : '-';
@@ -500,9 +520,13 @@ class MaxProduceable {
             html += `<span data-stat="overall" style="color: ${efficiencyColor};">Profit/XP: ${efficiencySign}${formatKMB(Math.abs(coinsPerXp))}</span></div>`;
         }
 
+        data.displayElement.innerHTML = html;
+        if (!html) {
+            data.displayElement.style.display = 'none';
+            return;
+        }
         data.displayElement.style.display = 'block';
         data.displayElement.style.visibility = 'hidden';
-        data.displayElement.innerHTML = html;
         this.fitLineFontSizes(actionPanel, data.displayElement);
     }
 
