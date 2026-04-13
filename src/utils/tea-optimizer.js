@@ -51,9 +51,14 @@ export function getRelevantTeas(skillName, goal) {
     // Artisan tea - action level helps everyone, artisan buff helps production gold
     generalTeas.add('/items/artisan_tea');
 
+    // Wisdom tea - always shown so users can evaluate the XP/gold trade-off in any mode
+    generalTeas.add('/items/wisdom_tea');
+
     if (goal === 'xp') {
-        // Wisdom tea for XP multiplier
-        generalTeas.add('/items/wisdom_tea');
+        if (skill === 'cooking' || skill === 'brewing') {
+            // Gourmet tea shown on XP tab too — users may want to run it alongside XP teas
+            generalTeas.add('/items/gourmet_tea');
+        }
     } else if (goal === 'gold') {
         if (isGathering) {
             // Gathering-specific gold teas
