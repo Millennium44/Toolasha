@@ -346,7 +346,7 @@ class NetworthInventoryDisplay {
                 </div>
                 ${
                     showChartBtn
-                        ? `<span id="mwi-networth-chart-btn" title="Networth History Chart" style="
+                        ? `<span id="mwi-networth-chart-btn" title="Net Worth History Chart" style="
                     cursor: pointer;
                     font-size: 14px;
                     opacity: 0.7;
@@ -598,7 +598,7 @@ class NetworthInventoryDisplay {
         this.setupToggle(
             'mwi-networth-toggle',
             'mwi-networth-details',
-            `Total Networth: ${networthFormatter(Math.round(networthData.totalNetworth))}`
+            `Total Net Worth: ${networthFormatter(Math.round(networthData.totalNetworth))}`
         );
 
         // Chart button

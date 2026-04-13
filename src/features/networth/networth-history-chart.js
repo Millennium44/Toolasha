@@ -140,7 +140,7 @@ class NetworthHistoryChart {
         `;
 
         const title = document.createElement('h3');
-        title.textContent = 'Networth History';
+        title.textContent = 'Net Worth History';
         title.style.cssText = 'color: #ccc; margin: 0; font-size: 18px;';
 
         const closeBtn = document.createElement('button');
@@ -610,7 +610,7 @@ class NetworthHistoryChart {
             const barData = chartData.filter((p) => !isNaN(p.y));
             datasets.push({
                 type: 'bar',
-                label: 'Networth (bars)',
+                label: 'Net Worth (bars)',
                 data: barData,
                 backgroundColor: 'rgba(34, 197, 94, 0.3)',
                 borderColor: 'transparent',
@@ -625,7 +625,7 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showTotal) {
             datasets.push({
                 type: 'line',
-                label: 'Total Networth',
+                label: 'Total Net Worth',
                 data: chartData,
                 borderColor: config.COLOR_ACCENT || '#22c55e',
                 backgroundColor: 'rgba(34, 197, 94, 0.1)',
@@ -693,7 +693,7 @@ class NetworthHistoryChart {
 
         const visibleCategories = CATEGORIES.filter((c) => this.categoryVisibility[c.key]);
         const yAxisTitle =
-            !this.categoryVisibility.showTotal && visibleCategories.length > 0 ? 'Category Value' : 'Networth';
+            !this.categoryVisibility.showTotal && visibleCategories.length > 0 ? 'Category Value' : 'Net Worth';
 
         this.chartInstance = new Chart(ctx, {
             type: 'line',
@@ -718,7 +718,7 @@ class NetworthHistoryChart {
                         filter: (tooltipItem) => {
                             if (tooltipItem.dataset.type === 'bar') return false;
                             if (isNaN(tooltipItem.raw?.y)) return false;
-                            if (tooltipItem.dataset.label === 'Total Networth') return true;
+                            if (tooltipItem.dataset.label === 'Total Net Worth') return true;
                             const cat = CATEGORIES.find((c) => c.label === tooltipItem.dataset.label);
                             return cat ? this.categoryVisibility[cat.key] : false;
                         },
@@ -734,14 +734,14 @@ class NetworthHistoryChart {
                                 });
                             },
                             label: (context) => {
-                                if (context.dataset.label === 'Total Networth') {
+                                if (context.dataset.label === 'Total Net Worth') {
                                     const raw = context.raw._raw;
                                     return raw ? `Total: ${networthFormatter(raw.total)}` : '';
                                 }
                                 return `${context.dataset.label}: ${networthFormatter(Math.round(context.raw.y))}`;
                             },
                             afterLabel: (context) => {
-                                if (context.dataset.label !== 'Total Networth') return [];
+                                if (context.dataset.label !== 'Total Net Worth') return [];
                                 const raw = context.raw._raw;
                                 if (!raw) return [];
                                 const lines = [];
