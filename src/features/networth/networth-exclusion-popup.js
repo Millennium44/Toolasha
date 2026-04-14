@@ -78,12 +78,15 @@ class NetworthExclusionPopup {
      */
     _buildSearchList(networthData) {
         const entries = [];
-        const seen = new Set();
+        const seen = new Map();
         const add = (entry) => {
             const key = `${entry.type}:${entry.value}`;
-            if (!seen.has(key)) {
-                seen.add(key);
+            const existing = seen.get(key);
+            if (!existing) {
+                seen.set(key, entry);
                 entries.push(entry);
+            } else if (entry.amount > existing.amount) {
+                existing.amount = entry.amount;
             }
         };
 
