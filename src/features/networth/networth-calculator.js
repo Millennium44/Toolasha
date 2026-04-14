@@ -703,7 +703,8 @@ export async function calculateNetworth() {
             trackExcluded('item', item.itemHrid, displayName, value);
             continue;
         }
-        if (isExcluded('category', categoryHrid)) {
+        // Coin is never excluded by category — it must be excluded individually
+        if (item.itemHrid !== '/items/coin' && isExcluded('category', categoryHrid)) {
             const categoryName = gameData.itemCategoryDetailMap?.[categoryHrid]?.name || 'Other';
             trackExcluded('category', categoryHrid, `${categoryName} (category)`, value);
             continue;
@@ -722,19 +723,21 @@ export async function calculateNetworth() {
             inventoryValue += value;
             inventoryBreakdown.push(itemData);
 
-            // Categorize item
-            const categoryName = gameData.itemCategoryDetailMap?.[categoryHrid]?.name || 'Other';
+            // Coin is always listed individually — never bucketed into a category
+            if (item.itemHrid !== '/items/coin') {
+                const categoryName = gameData.itemCategoryDetailMap?.[categoryHrid]?.name || 'Other';
 
-            if (!inventoryByCategory[categoryName]) {
-                inventoryByCategory[categoryName] = {
-                    items: [],
-                    totalValue: 0,
-                    categoryHrid,
-                };
+                if (!inventoryByCategory[categoryName]) {
+                    inventoryByCategory[categoryName] = {
+                        items: [],
+                        totalValue: 0,
+                        categoryHrid,
+                    };
+                }
+
+                inventoryByCategory[categoryName].items.push(itemData);
+                inventoryByCategory[categoryName].totalValue += value;
             }
-
-            inventoryByCategory[categoryName].items.push(itemData);
-            inventoryByCategory[categoryName].totalValue += value;
         }
     }
 
