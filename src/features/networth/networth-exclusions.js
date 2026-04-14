@@ -99,3 +99,12 @@ export async function removeExclusion(type, value) {
         storage.setJSON(getStorageKey(), list, 'settings');
     }
 }
+
+/**
+ * Remove all exclusions. Persists to storage.
+ * @returns {Promise<void>}
+ */
+export async function clearExclusions() {
+    cache = [];
+    storage.setJSON(getStorageKey(), [], 'settings');
+}

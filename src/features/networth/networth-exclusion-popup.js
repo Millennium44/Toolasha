@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { networthFormatter } from '../../utils/formatters.js';
-import { getExclusions, isExcluded, addExclusion, removeExclusion } from './networth-exclusions.js';
+import { getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions } from './networth-exclusions.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 class NetworthExclusionPopup {
@@ -90,22 +90,28 @@ class NetworthExclusionPopup {
             }
         };
 
-        // Asset types (always present, value from networthData where available)
+        // Asset types — only show if not already excluded and have remaining value
         const ca = networthData?.currentAssets;
         const fa = networthData?.fixedAssets;
-        add({ type: 'assetType', value: 'equipped', name: 'All Equipped Items', amount: ca?.equipped?.value ?? 0 });
-        add({ type: 'assetType', value: 'listings', name: 'All Market Listings', amount: ca?.listings?.value ?? 0 });
-        add({ type: 'assetType', value: 'houses', name: 'All Houses', amount: fa?.houses?.totalCost ?? 0 });
-        add({ type: 'assetType', value: 'abilities', name: 'All Abilities', amount: fa?.abilities?.totalCost ?? 0 });
-        add({
-            type: 'assetType',
-            value: 'abilityBooks',
-            name: 'All Ability Books',
-            amount: fa?.abilityBooks?.totalCost ?? 0,
-        });
+        if (!isExcluded('assetType', 'equipped') && (ca?.equipped?.value ?? 0) > 0)
+            add({ type: 'assetType', value: 'equipped', name: 'All Equipped Items', amount: ca.equipped.value });
+        if (!isExcluded('assetType', 'listings') && (ca?.listings?.value ?? 0) > 0)
+            add({ type: 'assetType', value: 'listings', name: 'All Market Listings', amount: ca.listings.value });
+        if (!isExcluded('assetType', 'houses') && (fa?.houses?.totalCost ?? 0) > 0)
+            add({ type: 'assetType', value: 'houses', name: 'All Houses', amount: fa.houses.totalCost });
+        if (!isExcluded('assetType', 'abilities') && (fa?.abilities?.totalCost ?? 0) > 0)
+            add({ type: 'assetType', value: 'abilities', name: 'All Abilities', amount: fa.abilities.totalCost });
+        if (!isExcluded('assetType', 'abilityBooks') && (fa?.abilityBooks?.totalCost ?? 0) > 0)
+            add({
+                type: 'assetType',
+                value: 'abilityBooks',
+                name: 'All Ability Books',
+                amount: fa.abilityBooks.totalCost,
+            });
 
-        // Inventory categories
+        // Inventory categories — byCategory already reflects post-exclusion items
         for (const [catName, catData] of Object.entries(ca?.inventory?.byCategory ?? {})) {
+            if (isExcluded('category', catData.categoryHrid)) continue;
             add({
                 type: 'category',
                 value: catData.categoryHrid,
@@ -114,7 +120,7 @@ class NetworthExclusionPopup {
             });
         }
 
-        // Individual items — inventory + equipped breakdowns (deduplicated by hrid)
+        // Individual items — post-exclusion breakdowns only contain included items
         const itemAmounts = new Map();
         for (const item of [...(ca?.inventory?.breakdown ?? []), ...(ca?.equipped?.breakdown ?? [])]) {
             if (!item.itemHrid) continue;
@@ -123,36 +129,30 @@ class NetworthExclusionPopup {
             itemAmounts.set(item.itemHrid, cur);
         }
         for (const [itemHrid, { name, amount }] of itemAmounts) {
+            if (isExcluded('item', itemHrid)) continue;
             add({ type: 'item', value: itemHrid, name, amount });
         }
 
-        // Individual house rooms
+        // Individual house rooms — breakdown already reflects post-exclusion
         for (const room of fa?.houses?.breakdown ?? []) {
-            if (!room.hrid) continue;
+            if (!room.hrid || isExcluded('houseRoom', room.hrid)) continue;
             add({ type: 'houseRoom', value: room.hrid, name: room.name, amount: room.cost });
         }
 
-        // Individual abilities
+        // Individual abilities — breakdown already reflects post-exclusion
         for (const ability of fa?.abilities?.breakdown ?? []) {
-            if (!ability.hrid) continue;
+            if (!ability.hrid || isExcluded('ability', ability.hrid)) continue;
             add({ type: 'ability', value: ability.hrid, name: ability.name, amount: ability.cost });
         }
 
-        // Loadout snapshots
+        // Loadout snapshots — only show if not already excluded
         for (const snapshot of loadoutSnapshot.getAllSnapshots()) {
-            if (!snapshot.name) continue;
-            // Estimate value: sum ask prices of equipment items
+            if (!snapshot.name || isExcluded('loadout', snapshot.name)) continue;
             const amount = snapshot.equipment.reduce((sum, eq) => {
                 const price = marketAPI.getPrice(eq.itemHrid);
                 return sum + (price?.ask ?? 0);
             }, 0);
             add({ type: 'loadout', value: snapshot.name, name: `Loadout: ${snapshot.name}`, amount });
-        }
-
-        // Also include entries that are currently excluded (so they still appear in search)
-        const excluded = networthData?.excluded?.items ?? [];
-        for (const exc of excluded) {
-            add({ type: exc.type, value: exc.value, name: exc.name, amount: exc.amount });
         }
 
         // Sort by amount descending
@@ -248,15 +248,17 @@ class NetworthExclusionPopup {
     _refreshContent() {
         const body = this.container?.querySelector('#mwi-nex-body');
         if (!body) return;
+        const prevQuery = body.querySelector('input[type="search"]')?.value ?? '';
         body.innerHTML = '';
-        this._renderBody(body);
+        this._renderBody(body, prevQuery);
     }
 
     /**
      * Render the full body: current exclusions + search.
      * @param {HTMLElement} body
+     * @param {string} [initialQuery=''] - Pre-fill search query (preserved across refreshes)
      */
-    _renderBody(body) {
+    _renderBody(body, initialQuery = '') {
         const exclusions = getExclusions();
 
         // ── Current exclusions section ──
@@ -264,8 +266,42 @@ class NetworthExclusionPopup {
         currentSection.style.cssText = `margin-bottom: 10px;`;
 
         const currentLabel = document.createElement('div');
-        currentLabel.style.cssText = `font-size: 0.75rem; color: rgba(255,255,255,0.45); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;`;
-        currentLabel.textContent = exclusions.length > 0 ? 'Current Exclusions' : 'No exclusions configured';
+        currentLabel.style.cssText = `font-size: 0.75rem; color: rgba(255,255,255,0.45); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; justify-content: space-between;`;
+
+        const labelText = document.createElement('span');
+        labelText.textContent = exclusions.length > 0 ? 'Current Exclusions' : 'No exclusions configured';
+        currentLabel.appendChild(labelText);
+
+        if (exclusions.length > 0) {
+            const clearBtn = document.createElement('button');
+            clearBtn.textContent = 'Clear All';
+            clearBtn.style.cssText = `
+                background: transparent;
+                border: 1px solid rgba(255,100,100,0.4);
+                color: rgba(255,100,100,0.7);
+                border-radius: 3px;
+                padding: 1px 7px;
+                font-size: 0.7rem;
+                cursor: pointer;
+                text-transform: none;
+                letter-spacing: 0;
+            `;
+            clearBtn.addEventListener('mouseenter', () => {
+                clearBtn.style.borderColor = 'rgba(255,100,100,0.9)';
+                clearBtn.style.color = 'rgba(255,100,100,1)';
+            });
+            clearBtn.addEventListener('mouseleave', () => {
+                clearBtn.style.borderColor = 'rgba(255,100,100,0.4)';
+                clearBtn.style.color = 'rgba(255,100,100,0.7)';
+            });
+            clearBtn.addEventListener('click', async () => {
+                await clearExclusions();
+                this._refreshContent();
+                if (this.onChangeFn) this.onChangeFn();
+            });
+            currentLabel.appendChild(clearBtn);
+        }
+
         currentSection.appendChild(currentLabel);
 
         if (exclusions.length > 0) {
@@ -305,13 +341,14 @@ class NetworthExclusionPopup {
         `;
         searchInput.addEventListener('focus', () => (searchInput.style.borderColor = config.COLOR_ACCENT));
         searchInput.addEventListener('blur', () => (searchInput.style.borderColor = 'rgba(255,255,255,0.15)'));
+        searchInput.value = initialQuery;
         body.appendChild(searchInput);
 
         const results = document.createElement('div');
         results.id = 'mwi-nex-results';
         body.appendChild(results);
 
-        this._renderResults(results, '');
+        this._renderResults(results, initialQuery);
 
         searchInput.addEventListener('input', () => {
             clearTimeout(this.searchTimeout);
