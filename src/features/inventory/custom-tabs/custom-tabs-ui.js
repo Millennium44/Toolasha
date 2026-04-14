@@ -106,6 +106,7 @@ const PANEL_CSS = `
 
 /* ---------- Accordion header (injected into Inventory_items) ---------- */
 .toolasha-ct-section-header {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -129,23 +130,33 @@ const PANEL_CSS = `
     flex-shrink: 0;
 }
 .toolasha-ct-section-name {
-    flex: 1;
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 13px;
     font-weight: 500;
     color: #e0e0e0;
+    pointer-events: none;
+}
+.toolasha-ct-section-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    z-index: 1;
 }
 .toolasha-ct-section-count {
     font-size: 11px;
     color: #666;
-    margin-left: 4px;
 }
 .toolasha-ct-section-value {
     font-size: 11px;
     color: #aaa;
-    margin-left: 6px;
 }
 .toolasha-ct-section-actions {
     display: none;
@@ -1303,12 +1314,17 @@ export default class CustomTabsUI {
         name.textContent = tab.name;
         header.appendChild(name);
 
+        const rightGroup = document.createElement('span');
+        rightGroup.className = 'toolasha-ct-section-right';
+
         if (tab.items.filter((h) => h !== LINEBREAK_HRID).length > 0) {
             const countBadge = document.createElement('span');
             countBadge.className = 'toolasha-ct-section-count';
             countBadge.textContent = `(${tab.items.filter((h) => h !== LINEBREAK_HRID).length})`;
-            header.appendChild(countBadge);
+            rightGroup.appendChild(countBadge);
         }
+
+        header.appendChild(rightGroup);
 
         const actions = document.createElement('span');
         actions.className = 'toolasha-ct-section-actions';
@@ -1438,8 +1454,8 @@ export default class CustomTabsUI {
                     const valueBadge = document.createElement('span');
                     valueBadge.className = 'toolasha-ct-section-value';
                     valueBadge.textContent = formatKMB(total, 2);
-                    const actionsEl = header.querySelector('.toolasha-ct-section-actions');
-                    if (actionsEl) header.insertBefore(valueBadge, actionsEl);
+                    const rightEl = header.querySelector('.toolasha-ct-section-right');
+                    if (rightEl) rightEl.appendChild(valueBadge);
                     else header.appendChild(valueBadge);
                 }
             }
@@ -1484,8 +1500,8 @@ export default class CustomTabsUI {
                     const valueBadge = document.createElement('span');
                     valueBadge.className = 'toolasha-ct-section-value';
                     valueBadge.textContent = formatKMB(total, 2);
-                    const actionsEl = header.querySelector('.toolasha-ct-section-actions');
-                    if (actionsEl) header.insertBefore(valueBadge, actionsEl);
+                    const rightEl = header.querySelector('.toolasha-ct-section-right');
+                    if (rightEl) rightEl.appendChild(valueBadge);
                     else header.appendChild(valueBadge);
                 }
             }
