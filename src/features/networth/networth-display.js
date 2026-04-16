@@ -418,7 +418,7 @@ class NetworthInventoryDisplay {
                         + Inventory value: ${networthFormatter(Math.round(ca.inventory.value))}
                     </div>
                     <div id="mwi-inventory-breakdown" style="display: none; margin-left: 20px;">
-                        ${this.renderInventoryBreakdown(ca.inventory.byCategory)}
+                        ${this.renderInventoryBreakdown(ca.inventory)}
                     </div>
                     `
                             : ''
@@ -645,34 +645,35 @@ class NetworthInventoryDisplay {
     }
 
     /**
-     * Render inventory breakdown HTML (grouped by category)
-     * @param {Object} byCategory - Object with category names as keys
+     * Render inventory breakdown HTML (grouped by category, with Coin as a top-level line item)
+     * @param {Object} inventory - inventory object with byCategory and breakdown
      * @returns {string} HTML string
      */
-    renderInventoryBreakdown(byCategory) {
-        if (!byCategory || Object.keys(byCategory).length === 0) {
+    renderInventoryBreakdown(inventory) {
+        const byCategory = inventory.byCategory ?? {};
+        const coinItem = inventory.breakdown?.find((item) => item.itemHrid === '/items/coin') ?? null;
+
+        if (Object.keys(byCategory).length === 0 && !coinItem) {
             return '<div>No inventory</div>';
         }
 
         // Sort categories by total value descending
         const sortedCategories = Object.entries(byCategory).sort((a, b) => b[1].totalValue - a[1].totalValue);
 
-        return sortedCategories
-            .map(([categoryName, categoryData]) => {
-                const categoryId = `mwi-inventory-${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
-                const categoryToggleId = `${categoryId}-toggle`;
+        const renderCategory = ([categoryName, categoryData]) => {
+            const categoryId = `mwi-inventory-${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
+            const categoryToggleId = `${categoryId}-toggle`;
 
-                // Build items HTML
-                const itemsHTML = categoryData.items
-                    .map((item) => {
-                        if (item.isOpenable && item.itemHrid) {
-                            return this.renderOpenableItemRow(item);
-                        }
-                        return `<div>${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}</div>`;
-                    })
-                    .join('');
+            const itemsHTML = categoryData.items
+                .map((item) => {
+                    if (item.isOpenable && item.itemHrid) {
+                        return this.renderOpenableItemRow(item);
+                    }
+                    return `<div>${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}</div>`;
+                })
+                .join('');
 
-                return `
+            return `
                 <div style="cursor: pointer; margin-top: 4px; font-size: 0.85rem;" id="${categoryToggleId}">
                     + ${categoryName}: ${networthFormatter(Math.round(categoryData.totalValue))}
                 </div>
@@ -680,8 +681,27 @@ class NetworthInventoryDisplay {
                     ${itemsHTML}
                 </div>
             `;
-            })
-            .join('');
+        };
+
+        const coinHTML = coinItem
+            ? `<div style="margin-top: 4px; font-size: 0.85rem;">Coin x${formatKMB(coinItem.count)}: ${networthFormatter(Math.round(coinItem.value))}</div>`
+            : '';
+
+        // Insert coin at the right position based on value (sorted descending with categories)
+        let html = '';
+        let coinInserted = !coinItem;
+        for (const entry of sortedCategories) {
+            if (!coinInserted && coinItem.value >= entry[1].totalValue) {
+                html += coinHTML;
+                coinInserted = true;
+            }
+            html += renderCategory(entry);
+        }
+        if (!coinInserted) {
+            html += coinHTML;
+        }
+
+        return html;
     }
 
     /**
