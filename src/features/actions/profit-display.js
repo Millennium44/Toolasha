@@ -346,7 +346,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         effRows.push(`+${profitData.details.achievementEfficiency.toFixed(2)}% Achievement`);
     }
     if (profitData.details.personalEfficiency > 0) {
-        effRows.push(`+${profitData.details.personalEfficiency.toFixed(2)}% Seal of Efficiency`);
+        effRows.push(`+${profitData.details.personalEfficiency.toFixed(2)}% Scroll of Efficiency`);
     }
     if (effRows.length > 0) {
         modifierSummaryParts.push(`+${profitData.totalEfficiency.toFixed(2)}% eff`);
@@ -368,7 +368,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             gatherRows.push(`+${(profitData.details.achievementGathering * 100).toFixed(2)}% Achievement`);
         }
         if (profitData.details.personalGathering > 0) {
-            gatherRows.push(`+${(profitData.details.personalGathering * 100).toFixed(2)}% Seal of Gathering`);
+            gatherRows.push(`+${(profitData.details.personalGathering * 100).toFixed(2)}% Scroll of Gathering`);
         }
         const gatherTotal = `${(profitData.gatheringQuantity * 100).toFixed(2)}%`;
         modifierSummaryParts.push(`+${(profitData.gatheringQuantity * 100).toFixed(2)}% gather`);
@@ -391,7 +391,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             rareRows.push(`+${rareFindBreakdown.achievement.toFixed(2)}% Achievement`);
         }
         if (rareFindBreakdown.personal > 0) {
-            rareRows.push(`+${rareFindBreakdown.personal.toFixed(2)}% Seal of Rare Find`);
+            rareRows.push(`+${rareFindBreakdown.personal.toFixed(2)}% Scroll of Rare Find`);
         }
         modifierSummaryParts.push(`+${rareFindBonus.toFixed(2)}% rare`);
         modifierSubSections.push(makeModifierSection('Rare Find', `${rareFindBonus.toFixed(2)}%`, rareRows));
@@ -943,7 +943,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         effRows.push(`+${profitData.achievementEfficiency.toFixed(2)}% Achievement`);
     }
     if (profitData.personalEfficiency > 0) {
-        effRows.push(`+${profitData.personalEfficiency.toFixed(2)}% Seal of Efficiency`);
+        effRows.push(`+${profitData.personalEfficiency.toFixed(2)}% Scroll of Efficiency`);
     }
     if (effRows.length > 0) {
         modifierSummaryParts.push(`+${profitData.totalEfficiency.toFixed(2)}% eff`);
@@ -968,7 +968,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             rareRows.push(`+${productionRareFindBreakdown.achievement.toFixed(2)}% Achievement`);
         }
         if (productionRareFindBreakdown.personal > 0) {
-            rareRows.push(`+${productionRareFindBreakdown.personal.toFixed(2)}% Seal of Rare Find`);
+            rareRows.push(`+${productionRareFindBreakdown.personal.toFixed(2)}% Scroll of Rare Find`);
         }
         modifierSummaryParts.push(`+${productionRareFindBonus.toFixed(2)}% rare`);
         modifierSubSections.push(

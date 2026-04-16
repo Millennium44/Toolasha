@@ -634,10 +634,10 @@ export const settingsGroups = {
             },
             autoAllButton_excludeSeals: {
                 id: 'autoAllButton_excludeSeals',
-                label: 'Auto-click "All": Skip Seal of... items',
+                label: 'Auto-click "All": Skip Scroll of... items',
                 type: 'checkbox',
                 default: true,
-                help: 'When enabled, Seal of... items from the Labyrinth are not auto-opened',
+                help: 'When enabled, Scroll of... items from the Labyrinth are not auto-opened',
             },
         },
     },

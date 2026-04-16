@@ -232,9 +232,9 @@ class QuickInputButtons {
                         speedLines.push(`  - ${item.name}: +${item.speed.toFixed(2)}%${detailText}`);
                     }
 
-                    // Personal buff (Seal of Action Speed)
+                    // Personal buff (Scroll of Action Speed)
                     if (personalSpeedBonus > 0) {
-                        speedLines.push(`  - Seal of Action Speed: +${formatPercentage(personalSpeedBonus, 1)}`);
+                        speedLines.push(`  - Scroll of Action Speed: +${formatPercentage(personalSpeedBonus, 1)}`);
                     }
                 }
 
@@ -1166,9 +1166,9 @@ class QuickInputButtons {
                     lines.push(`    • Achievement: +${xpData.breakdown.achievementWisdom.toFixed(2)}%`);
                 }
 
-                // Personal buff (Seal of Wisdom)
+                // Personal buff (Scroll of Wisdom)
                 if (xpData.breakdown.personalWisdom > 0) {
-                    lines.push(`    • Seal of Wisdom: +${xpData.breakdown.personalWisdom.toFixed(2)}%`);
+                    lines.push(`    • Scroll of Wisdom: +${xpData.breakdown.personalWisdom.toFixed(2)}%`);
                 }
             }
 
