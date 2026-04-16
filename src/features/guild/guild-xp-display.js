@@ -388,8 +388,8 @@ class GuildXPDisplay {
         // Live refresh on data updates
         this._boundRefreshOverview = () => this._refreshOverviewIfVisible();
         this._boundRefreshMembers = () => this._refreshMembersIfVisible();
-        this._boundRefreshLeaderboard = (data) => {
-            if (data.leaderboardCategory === 'guild') this._refreshLeaderboardIfVisible();
+        this._boundRefreshLeaderboard = (_data) => {
+            this._refreshLeaderboardIfVisible();
         };
 
         webSocketHook.on('guild_updated', this._boundRefreshOverview);
@@ -703,8 +703,12 @@ class GuildXPDisplay {
         // Skip if already rendered
         if (tableEl.querySelector(`.${CSS_PREFIX}`)) return;
 
-        const allHistories = guildXPTracker.getAllGuildHistories();
-        if (!allHistories || Object.keys(allHistories).length === 0) return;
+        const isGuildLeaderboard = !!tableEl.closest('[class*="GuildPanel"]');
+
+        if (isGuildLeaderboard) {
+            const allHistories = guildXPTracker.getAllGuildHistories();
+            if (!allHistories || Object.keys(allHistories).length === 0) return;
+        }
 
         // Widen container
         const containerEl = tableEl.closest('[class*="LeaderboardPanel_content"]');
@@ -719,12 +723,16 @@ class GuildXPDisplay {
         const theadTr = tableEl.querySelector('thead tr');
         if (!theadTr) return;
 
-        // Calculate stats for each guild row
+        // Calculate stats for each row
         const allStats = [];
         for (const row of rows) {
             // Leaderboard: col[0]=Rank, col[1]=Name
             const name = row.children[1]?.textContent?.trim();
-            const stats = name ? guildXPTracker.getGuildStats(name) : { lastXPH: 0, lastDayXPH: 0 };
+            const stats = name
+                ? isGuildLeaderboard
+                    ? guildXPTracker.getGuildStats(name)
+                    : guildXPTracker.getPlayerStats(name)
+                : { lastXPH: 0, lastDayXPH: 0 };
             allStats.push({
                 name,
                 lastXPH: stats.lastXPH,
