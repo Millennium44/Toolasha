@@ -680,13 +680,8 @@ class ListingPriceDisplay {
             lastUpdated = cacheEntry.lastUpdated;
 
             if (orderBookData && orderBookData.orderBooks) {
-                // Find matching order book for this enhancement level
-                let orderBook = orderBookData.orderBooks.find((ob) => ob.enhancementLevel === enhancementLevel);
-
-                // For non-enhanceable items (enh level 0), use first entry
-                if (!orderBook && enhancementLevel === 0 && orderBookData.orderBooks.length > 0) {
-                    orderBook = orderBookData.orderBooks[0];
-                }
+                // orderBooks is indexed by enhancement level (same structure as processOrderBook)
+                const orderBook = orderBookData.orderBooks[enhancementLevel] ?? null;
 
                 if (orderBook) {
                     const topOrders = isSell ? orderBook.asks : orderBook.bids;
