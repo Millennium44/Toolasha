@@ -73,7 +73,7 @@ class ExternalLinks {
             },
             {
                 label: 'Milkonomy',
-                url: 'https://milkonomy.pages.dev/#/dashboard',
+                url: 'https://hyhfish.github.io/milkonomy/#/dashboard',
             },
             {
                 label: "Socko's Combat Tracker",
