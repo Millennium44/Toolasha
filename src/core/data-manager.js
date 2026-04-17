@@ -346,6 +346,10 @@ class DataManager {
         // Handle items_updated (inventory/equipment changes)
         this.webSocketHook.on('items_updated', (data) => {
             if (data.endCharacterItems) {
+                if (!this.characterItems) {
+                    this.emit('items_updated', data);
+                    return;
+                }
                 // Update inventory items in-place (endCharacterItems contains only changed items, not full inventory)
                 for (const item of data.endCharacterItems) {
                     const index = this.characterItems.findIndex((invItem) => invItem.id === item.id);
