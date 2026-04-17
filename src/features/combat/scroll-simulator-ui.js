@@ -10,6 +10,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import scrollSimulator from './scroll-simulator.js';
+import loadoutSnapshot from './loadout-snapshot.js';
 import { SCROLL_BUFF_ITEMS, SCROLL_BUFF_LABELS } from '../../utils/scroll-buff-values.js';
 
 const BUTTON_ID = 'toolasha-scroll-sim-btn';
@@ -324,6 +325,10 @@ function injectButton(navButtons) {
     if (document.getElementById(BUTTON_ID)) return;
 
     const loadoutName = getLoadoutName(navButtons);
+
+    // Hide for combat loadouts — scroll buffs don't apply to combat
+    const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === loadoutName);
+    if (snapshot?.actionTypeHrid === '/action_types/combat') return;
 
     const button = document.createElement('button');
     button.id = BUTTON_ID;

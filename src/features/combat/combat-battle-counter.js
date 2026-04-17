@@ -35,6 +35,9 @@ class CombatBattleCounter {
         this.newBattleHandler = (data) => this._onNewBattle(data);
         webSocketHook.on('new_battle', this.newBattleHandler);
 
+        this._onActionsUpdated = () => this._checkCombatEnded();
+        dataManager.on('actions_updated', this._onActionsUpdated);
+
         this.unregisterObserver = domObserver.onClass('CombatBattleCounter', 'Header_actionName', () =>
             this._injectOrUpdate()
         );
@@ -42,11 +45,25 @@ class CombatBattleCounter {
         this.initialized = true;
     }
 
-    _isInDungeon() {
+    _checkCombatEnded() {
+        if (!this._isInDungeon() && !this._isInCombat()) {
+            this.battleId = 0;
+            this.currentWave = 0;
+            this.isDungeon = false;
+            document.getElementById(COUNTER_ID)?.remove();
+        }
+    }
+
+    _isInCombat() {
         const actions = dataManager.getCurrentActions();
         if (!actions || actions.length === 0) return false;
         const active = actions[0];
-        if (!active.actionHrid?.startsWith('/actions/combat/') || active.isDone) return false;
+        return active.actionHrid?.startsWith('/actions/combat/') && !active.isDone;
+    }
+
+    _isInDungeon() {
+        if (!this._isInCombat()) return false;
+        const active = dataManager.getCurrentActions()[0];
         return dataManager.getActionDetails(active.actionHrid)?.combatZoneInfo?.isDungeon === true;
     }
 
@@ -85,6 +102,10 @@ class CombatBattleCounter {
         if (this.newBattleHandler) {
             webSocketHook.off('new_battle', this.newBattleHandler);
             this.newBattleHandler = null;
+        }
+        if (this._onActionsUpdated) {
+            dataManager.off('actions_updated', this._onActionsUpdated);
+            this._onActionsUpdated = null;
         }
         if (this.unregisterObserver) {
             this.unregisterObserver();
