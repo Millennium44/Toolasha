@@ -952,6 +952,7 @@ class ActionTimeDisplay {
         const realisticActions =
             queuedActions === Infinity ? expectedAttempts : Math.min(queuedActions, expectedAttempts);
         const realisticTime = realisticActions * perActionTime;
+        const materialTime = materialLimit !== null ? materialLimit * perActionTime : null;
 
         // Apply CSS overrides for non-combat display
         if (displayMode === 'compact') {
@@ -1034,7 +1035,12 @@ class ActionTimeDisplay {
                 });
             }
 
-            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeStr} → ${clockTime}`;
+            const materialSuffix =
+                materialTime !== null && materialLimit > 0
+                    ? ` · 🧱 ${timeReadable(materialTime)} (${formatWithSeparator(materialLimit)} actions)`
+                    : '';
+
+            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeStr} → ${clockTime}${materialSuffix}`;
         } else {
             this.displayElement.innerHTML = '';
         }
