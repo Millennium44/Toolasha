@@ -71,7 +71,7 @@ class DungeonTrackerUIState {
     updatePosition(container) {
         const baseStyle = `
             position: fixed;
-            z-index: ${config.Z_FLOATING_PANEL};
+            z-index: ${config.Z_HUD};
             background: rgba(0, 0, 0, 0.85);
             border: 2px solid #4a9eff;
             border-radius: 8px;
