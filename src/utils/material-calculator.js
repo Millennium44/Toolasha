@@ -265,7 +265,8 @@ export function calculateEnhancementMaterialRequirements(
     startLevel,
     targetLevel,
     protectionItemHrid,
-    protectFromLevel
+    protectFromLevel,
+    repeatCount
 ) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) {
@@ -315,7 +316,7 @@ export function calculateEnhancementMaterialRequirements(
             continue;
         }
 
-        const totalQuantity = Math.ceil(cost.count * calc.attempts);
+        const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
         const inventoryItem = inventory.find((i) => i.itemHrid === cost.itemHrid);
         const have = inventoryItem?.count || 0;
         const missing = Math.max(0, totalQuantity - have);
