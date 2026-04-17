@@ -309,17 +309,44 @@ class CombatScore {
             </div>
 
             <div id="mwi-button-container" style="margin-top: 12px; display: flex; flex-direction: column; gap: 6px;">
-                <button id="mwi-combat-sim-export-btn" style="
-                    padding: 8px 12px;
-                    background: ${config.COLOR_ACCENT};
-                    color: black;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-weight: bold;
-                    font-size: 0.85rem;
-                    width: 100%;
-                ">Combat Sim Export</button>
+                <div id="mwi-combat-sim-wrapper" style="position: relative; display: flex; gap: 4px;">
+                    <button id="mwi-combat-sim-export-btn" style="
+                        padding: 8px 12px;
+                        background: ${config.COLOR_ACCENT};
+                        color: black;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-weight: bold;
+                        font-size: 0.85rem;
+                        flex: 1;
+                    ">Combat Sim Export</button>
+                    <button id="mwi-combat-sim-loadout-btn" style="
+                        padding: 8px 10px;
+                        background: ${config.COLOR_ACCENT};
+                        color: black;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-weight: bold;
+                        font-size: 0.85rem;
+                        display: none;
+                    ">▾</button>
+                    <div id="mwi-combat-sim-loadout-dropdown" style="
+                        display: none;
+                        position: absolute;
+                        top: 100%;
+                        left: 0;
+                        right: 0;
+                        background: rgba(30, 30, 30, 0.98);
+                        border: 1px solid #555;
+                        border-radius: 4px;
+                        z-index: 10001;
+                        margin-top: 2px;
+                        max-height: 160px;
+                        overflow-y: auto;
+                    "></div>
+                </div>
                 <button id="mwi-milkonomy-export-btn" style="
                     padding: 8px 12px;
                     background: ${config.COLOR_ACCENT};
@@ -480,6 +507,77 @@ class CombatScore {
             combatSimBtn.addEventListener('mouseleave', () => {
                 combatSimBtn.style.opacity = '1';
             });
+        }
+
+        // Combat Sim loadout dropdown for own character only
+        const combatSimLoadoutBtn = panel.querySelector('#mwi-combat-sim-loadout-btn');
+        const combatSimLoadoutDropdown = panel.querySelector('#mwi-combat-sim-loadout-dropdown');
+        if (combatSimLoadoutBtn && combatSimLoadoutDropdown) {
+            const profileCharId =
+                profileData?.profile?.sharableCharacter?.id ||
+                profileData?.profile?.characterSkills?.[0]?.characterID ||
+                profileData?.profile?.character?.id;
+            const isOwnCharacter = profileCharId === dataManager.getCurrentCharacterId();
+            if (isOwnCharacter) {
+                const combatSnapshots = loadoutSnapshot
+                    .getAllSnapshots()
+                    .filter((s) => s.actionTypeHrid === '/action_types/combat');
+                if (combatSnapshots.length > 0) {
+                    combatSimLoadoutBtn.style.display = '';
+
+                    combatSimLoadoutDropdown.innerHTML = combatSnapshots
+                        .map(
+                            (s) =>
+                                `<div class="mwi-combat-sim-loadout-option" data-name="${s.name.replace(/"/g, '&quot;')}" style="
+                                padding: 6px 10px;
+                                cursor: pointer;
+                                font-size: 0.8rem;
+                                border-bottom: 1px solid #333;
+                                color: #ddd;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                            ">${s.name}</div>`
+                        )
+                        .join('');
+
+                    combatSimLoadoutBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        combatSimLoadoutDropdown.style.display =
+                            combatSimLoadoutDropdown.style.display === 'none' ? 'block' : 'none';
+                    });
+                    combatSimLoadoutBtn.addEventListener('mouseenter', () => {
+                        combatSimLoadoutBtn.style.opacity = '0.8';
+                    });
+                    combatSimLoadoutBtn.addEventListener('mouseleave', () => {
+                        combatSimLoadoutBtn.style.opacity = '1';
+                    });
+
+                    combatSimLoadoutDropdown.querySelectorAll('.mwi-combat-sim-loadout-option').forEach((opt) => {
+                        opt.addEventListener('click', async () => {
+                            combatSimLoadoutDropdown.style.display = 'none';
+                            await this.handleCombatSimExportFromSnapshot(opt.dataset.name, combatSimBtn);
+                        });
+                        opt.addEventListener('mouseenter', () => {
+                            opt.style.background = 'rgba(255,255,255,0.1)';
+                        });
+                        opt.addEventListener('mouseleave', () => {
+                            opt.style.background = '';
+                        });
+                    });
+
+                    const closeCombatSimDropdown = (e) => {
+                        if (!document.body.contains(combatSimLoadoutDropdown)) {
+                            document.removeEventListener('click', closeCombatSimDropdown);
+                            return;
+                        }
+                        if (!combatSimLoadoutDropdown.contains(e.target) && e.target !== combatSimLoadoutBtn) {
+                            combatSimLoadoutDropdown.style.display = 'none';
+                        }
+                    };
+                    document.addEventListener('click', closeCombatSimDropdown);
+                }
+            }
         }
 
         // Milkonomy Export button
@@ -821,6 +919,111 @@ class CombatScore {
             this.timerRegistry.registerTimeout(resetTimeout);
         } catch (error) {
             console.error('[Combat Score] Combat Sim export failed:', error);
+            button.textContent = '✗ Failed';
+            button.style.background = '${config.COLOR_LOSS}';
+            const resetTimeout = setTimeout(() => {
+                button.textContent = originalText;
+                button.style.background = originalBg;
+            }, 3000);
+            this.timerRegistry.registerTimeout(resetTimeout);
+        }
+    }
+
+    /**
+     * Handle Combat Sim Export from a loadout snapshot
+     * @param {string} snapshotName - Loadout snapshot name
+     * @param {Element} button - The main export button (for visual feedback)
+     */
+    async handleCombatSimExportFromSnapshot(snapshotName, button) {
+        const originalText = button.textContent;
+        const originalBg = button.style.background;
+
+        try {
+            const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
+            if (!snapshot) {
+                console.error('[Combat Score] Snapshot not found:', snapshotName);
+                return;
+            }
+
+            // Get base export (skills, house, achievements, triggers)
+            const exportData = await constructExportObject(null, true);
+            if (!exportData) {
+                button.textContent = '✗ No Data';
+                button.style.background = '${config.COLOR_LOSS}';
+                const resetTimeout = setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = originalBg;
+                }, 3000);
+                this.timerRegistry.registerTimeout(resetTimeout);
+                return;
+            }
+
+            const playerObj = exportData.exportObj;
+            const clientObj = dataManager.getInitClientData();
+
+            // Override equipment from snapshot
+            playerObj.player.equipment = snapshot.equipment;
+
+            // Override abilities from snapshot
+            // Build ability level lookup from current character data
+            const characterData = dataManager.characterData;
+            const abilityLevelMap = {};
+            for (const ab of characterData?.combatUnit?.combatAbilities || []) {
+                if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
+            }
+
+            // Map snapshot abilities to sim format (slot 0 = special, slots 1-4 = normal)
+            playerObj.abilities = [
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+            ];
+            let normalAbilityIndex = 1;
+            for (const ability of snapshot.abilities) {
+                if (!ability.abilityHrid) continue;
+                const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+                const level = abilityLevelMap[ability.abilityHrid] || 1;
+
+                if (isSpecial) {
+                    playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level };
+                } else if (normalAbilityIndex < 5) {
+                    playerObj.abilities[normalAbilityIndex++] = {
+                        abilityHrid: ability.abilityHrid,
+                        level,
+                    };
+                }
+            }
+
+            // Override food from snapshot
+            playerObj.food = { '/action_types/combat': [] };
+            for (let i = 0; i < 3; i++) {
+                playerObj.food['/action_types/combat'][i] = {
+                    itemHrid: snapshot.food?.[i]?.itemHrid || '',
+                };
+            }
+
+            // Override drinks from snapshot
+            playerObj.drinks = { '/action_types/combat': [] };
+            for (let i = 0; i < 3; i++) {
+                playerObj.drinks['/action_types/combat'][i] = {
+                    itemHrid: snapshot.drinks?.[i]?.itemHrid || '',
+                };
+            }
+
+            const exportString = JSON.stringify(playerObj);
+            await navigator.clipboard.writeText(exportString);
+
+            button.textContent = '✓ Copied';
+            button.style.background = '${config.COLOR_PROFIT}';
+            const resetTimeout = setTimeout(() => {
+                button.textContent = originalText;
+                button.style.background = originalBg;
+            }, 3000);
+            this.timerRegistry.registerTimeout(resetTimeout);
+        } catch (error) {
+            console.error('[Combat Score] Combat Sim snapshot export failed:', error);
             button.textContent = '✗ Failed';
             button.style.background = '${config.COLOR_LOSS}';
             const resetTimeout = setTimeout(() => {

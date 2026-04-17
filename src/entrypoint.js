@@ -305,13 +305,6 @@ function registerFeatures() {
             async: false,
         },
         {
-            key: 'loadoutExportButton',
-            name: 'Loadout Export Button',
-            category: 'Combat',
-            module: Combat.loadoutExportButton,
-            async: false,
-        },
-        {
             key: 'loadoutEnhancementDisplay',
             name: 'Loadout Enhancement Display',
             category: 'Combat',

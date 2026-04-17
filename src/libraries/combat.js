@@ -7,7 +7,6 @@
 
 // Combat features
 import zoneIndices from '../features/combat/zone-indices.js';
-import loadoutExportButton from '../features/combat/loadout-export-button.js';
 import loadoutEnhancementDisplay from '../features/combat/loadout-enhancement-display.js';
 import loadoutSort from '../features/combat/loadout-sort.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
@@ -45,7 +44,6 @@ if (typeof unsafeWindow !== 'undefined') {
 
 toolashaRoot.Combat = {
     zoneIndices,
-    loadoutExportButton,
     loadoutEnhancementDisplay,
     loadoutSort,
     loadoutSnapshot,
