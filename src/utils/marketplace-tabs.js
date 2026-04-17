@@ -5,7 +5,6 @@
  */
 
 import { formatWithSeparator } from './formatters.js';
-import { createMutationWatcher } from './dom-observer-helpers.js';
 
 /**
  * Create a custom material tab for the marketplace
@@ -113,76 +112,33 @@ export function removeMaterialTabs() {
  * @returns {Function} Unregister function to stop observing
  */
 export function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
-    let debounceTimer = null;
+    let pollInterval = null;
 
-    const cleanupObserver = createMutationWatcher(
-        document.body,
-        () => {
-            // Only check if we have custom tabs
-            if (!tabsArray || tabsArray.length === 0) {
-                return;
-            }
+    function poll() {
+        if (!tabsArray || tabsArray.length === 0) return;
 
-            // Clear existing debounce timer
-            if (debounceTimer) {
-                clearTimeout(debounceTimer);
-                debounceTimer = null;
-            }
-
-            // Debounce to avoid false positives from rapid DOM changes
-            debounceTimer = setTimeout(() => {
-                // Check if we still have custom tabs
-                if (!tabsArray || tabsArray.length === 0) {
-                    return;
-                }
-
-                // Check if our custom tabs still exist in the DOM
-                const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
-
-                // If our tabs were removed from DOM, clean up
-                if (!hasCustomTabsInDOM) {
-                    if (onCleanup) {
-                        onCleanup();
-                    }
-                    return;
-                }
-
-                // Check if marketplace navbar is active
-                const marketplaceNavActive = Array.from(document.querySelectorAll('.NavigationBar_nav__3uuUl')).some(
-                    (nav) => {
-                        const svg = nav.querySelector('svg[aria-label="navigationBar.marketplace"]');
-                        return svg && nav.classList.contains('NavigationBar_active__2Oj_e');
-                    }
-                );
-
-                // Check if tabs container still exists (marketplace panel is open)
-                const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
-                const hasMarketListingsTab =
-                    tabsContainer &&
-                    Array.from(tabsContainer.children).some((btn) => btn.textContent.includes('Market Listings'));
-
-                // Only cleanup if BOTH navbar is inactive AND marketplace tabs are gone
-                // This prevents cleanup during transitions when navbar might briefly be inactive
-                if (!marketplaceNavActive && !hasMarketListingsTab) {
-                    if (onCleanup) {
-                        onCleanup();
-                    }
-                }
-            }, 100);
-        },
-        {
-            childList: true,
-            subtree: true,
+        // If custom tabs were removed from DOM, clean up
+        const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
+        if (!hasCustomTabsInDOM) {
+            if (onCleanup) onCleanup();
+            return;
         }
-    );
 
-    // Return cleanup function that also clears the debounce timer
+        // If marketplace panel is hidden (navigated away), clean up
+        const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
+        const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
+        if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
+            if (onCleanup) onCleanup();
+        }
+    }
+
+    pollInterval = setInterval(poll, 1000);
+
     return () => {
-        if (debounceTimer) {
-            clearTimeout(debounceTimer);
-            debounceTimer = null;
+        if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
         }
-        cleanupObserver();
     };
 }
 
