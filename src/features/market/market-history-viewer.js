@@ -1283,6 +1283,7 @@ class MarketHistoryViewer {
             { key: 'orderQuantity', label: 'Quantity' },
             { key: 'filledQuantity', label: 'Filled' },
             { key: 'total', label: 'Total' },
+            { key: '_delete', label: '' },
         ];
 
         columns.forEach((col) => {
@@ -1306,24 +1307,29 @@ class MarketHistoryViewer {
             // Label and sort indicator
             const labelSpan = document.createElement('span');
             labelSpan.textContent = col.label;
-            labelSpan.style.cursor = 'pointer';
 
-            // Sort indicator
-            if (this.sortColumn === col.key) {
-                labelSpan.textContent += this.sortDirection === 'asc' ? ' ▲' : ' ▼';
-            }
+            if (col.key === '_delete') {
+                th.style.width = '30px';
+            } else {
+                labelSpan.style.cursor = 'pointer';
 
-            // Sort click handler
-            labelSpan.addEventListener('click', () => {
+                // Sort indicator
                 if (this.sortColumn === col.key) {
-                    this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-                } else {
-                    this.sortColumn = col.key;
-                    this.sortDirection = 'desc';
+                    labelSpan.textContent += this.sortDirection === 'asc' ? ' ▲' : ' ▼';
                 }
-                this.applyFilters();
-                this.renderTable();
-            });
+
+                // Sort click handler
+                labelSpan.addEventListener('click', () => {
+                    if (this.sortColumn === col.key) {
+                        this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        this.sortColumn = col.key;
+                        this.sortDirection = 'desc';
+                    }
+                    this.applyFilters();
+                    this.renderTable();
+                });
+            }
 
             headerContent.appendChild(labelSpan);
 
@@ -1486,6 +1492,37 @@ class MarketHistoryViewer {
                 totalCell.textContent = this.formatNumber(totalValue);
                 totalCell.style.padding = '4px 10px';
                 row.appendChild(totalCell);
+
+                // Delete button
+                const deleteCell = document.createElement('td');
+                deleteCell.style.cssText = 'padding: 4px 6px; text-align: center;';
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = '✕';
+                deleteBtn.title = 'Delete this listing';
+                deleteBtn.style.cssText = `
+                    background: none;
+                    border: none;
+                    color: #666;
+                    cursor: pointer;
+                    font-size: 13px;
+                    padding: 2px 5px;
+                    border-radius: 3px;
+                    line-height: 1;
+                `;
+                deleteBtn.addEventListener('mouseenter', () => {
+                    deleteBtn.style.color = '#f87171';
+                    deleteBtn.style.background = 'rgba(248,113,113,0.15)';
+                });
+                deleteBtn.addEventListener('mouseleave', () => {
+                    deleteBtn.style.color = '#666';
+                    deleteBtn.style.background = 'none';
+                });
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.deleteListing(listing.id);
+                });
+                deleteCell.appendChild(deleteBtn);
+                row.appendChild(deleteCell);
 
                 tbody.appendChild(row);
             });
@@ -1962,6 +1999,17 @@ class MarketHistoryViewer {
             console.error('[MarketHistoryViewer] Import error:', error);
             throw error;
         }
+    }
+
+    /**
+     * Delete a single listing by its ID
+     * @param {number} listingId
+     */
+    async deleteListing(listingId) {
+        this.listings = this.listings.filter((l) => l.id !== listingId);
+        await storage.setJSON(this.storageKey, this.listings, 'marketListings', true);
+        this.applyFilters();
+        this.renderTable();
     }
 
     /**
