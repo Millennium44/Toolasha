@@ -752,10 +752,12 @@ export async function calculateNetworth() {
     // Calculate market listings value
     let listingsValue = 0;
     const listingsBreakdown = [];
+    const clientData = dataManager.getInitClientData();
 
     for (const listing of marketListings) {
         const quantity = listing.orderQuantity - listing.filledQuantity;
         const enhancementLevel = listing.enhancementLevel || 0;
+        const itemName = clientData?.itemDetailMap?.[listing.itemHrid]?.name || listing.itemHrid;
 
         if (listing.isSell) {
             // Selling: value is locked in listing + unclaimed coins
@@ -767,7 +769,9 @@ export async function calculateNetworth() {
                 priceCache
             );
 
-            listingsValue += value * (1 - fee) + listing.unclaimedCoinCount;
+            const listingValue = value * (1 - fee) + listing.unclaimedCoinCount;
+            listingsValue += listingValue;
+            listingsBreakdown.push({ name: itemName, isSell: true, value: listingValue });
         } else {
             // Buying: value is locked coins + unclaimed items
             const unclaimedValue = await calculateItemValue(
@@ -775,9 +779,13 @@ export async function calculateNetworth() {
                 priceCache
             );
 
-            listingsValue += quantity * listing.price + unclaimedValue;
+            const listingValue = quantity * listing.price + unclaimedValue;
+            listingsValue += listingValue;
+            listingsBreakdown.push({ name: itemName, isSell: false, value: listingValue });
         }
     }
+
+    listingsBreakdown.sort((a, b) => b.value - a.value);
 
     // Apply listings exclusion
     if (isExcluded('assetType', 'listings') && listingsValue > 0) {
