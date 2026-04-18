@@ -948,10 +948,6 @@ class ActionTimeDisplay {
             }
         }
 
-        // Realistic time: min of queued actions and expected attempts
-        const realisticActions =
-            queuedActions === Infinity ? expectedAttempts : Math.min(queuedActions, expectedAttempts);
-        const realisticTime = realisticActions * perActionTime;
         const materialTime = materialLimit !== null ? materialLimit * perActionTime : null;
 
         // Apply CSS overrides for non-combat display
@@ -1006,12 +1002,12 @@ class ActionTimeDisplay {
 
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
-        // Line 2: Time estimate (always show for enhancing since expectedAttempts gives a realistic time)
-        if (realisticActions > 0 && realisticTime > 0 && isFinite(realisticTime)) {
-            const timeStr = timeReadable(realisticTime);
+        // Line 2: Time estimate — always material-based for enhancing (stable, not volatile)
+        if (materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
+            const timeStr = timeReadable(materialTime);
 
             const completionTime = new Date();
-            completionTime.setSeconds(completionTime.getSeconds() + realisticTime);
+            completionTime.setSeconds(completionTime.getSeconds() + materialTime);
 
             const now = new Date();
             const isToday = completionTime.toDateString() === now.toDateString();
@@ -1035,12 +1031,7 @@ class ActionTimeDisplay {
                 });
             }
 
-            const materialSuffix =
-                materialTime !== null && materialLimit > 0
-                    ? ` · 🧱 ${timeReadable(materialTime)} (${formatWithSeparator(materialLimit)} actions)`
-                    : '';
-
-            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeStr} → ${clockTime}${materialSuffix}`;
+            this.displayElement.innerHTML = `🧱 ${timeStr} → ${clockTime} (${formatWithSeparator(materialLimit)} actions)`;
         } else {
             this.displayElement.innerHTML = '';
         }
