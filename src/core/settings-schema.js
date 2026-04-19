@@ -49,6 +49,19 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a button to the chat panel to open chat in a separate browser window with multi-channel split view',
             },
+            chatHistoryExtender: {
+                id: 'chatHistoryExtender',
+                label: 'Chat: Extend chat history',
+                type: 'checkbox',
+                default: true,
+                help: 'Preserves messages that the game removes from the live buffer, keeping them visible above the live chat',
+            },
+            chatHistoryExtender_maxHistory: {
+                id: 'chatHistoryExtender_maxHistory',
+                label: 'Chat: Max messages to retain per tab',
+                type: 'text',
+                default: '150',
+            },
             altClickNavigation: {
                 id: 'altClickNavigation',
                 label: 'Alt+click items to navigate to crafting/gathering or dictionary',

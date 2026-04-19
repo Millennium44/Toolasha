@@ -22,6 +22,7 @@ import chatCommands from '../features/chat/chat-commands.js';
 import mentionTracker from '../features/chat/mention-tracker.js';
 import popOutChat from '../features/chat/pop-out-chat.js';
 import chatBlockList from '../features/chat/chat-block-list.js';
+import chatHistoryExtender from '../features/chat/chat-history-extender.js';
 
 // Task features
 import taskProfitDisplay from '../features/tasks/task-profit-display.js';
@@ -86,6 +87,7 @@ toolashaRoot.UI = {
     mentionTracker,
     popOutChat,
     chatBlockList,
+    chatHistoryExtender,
     taskProfitDisplay,
     taskRerollTracker,
     taskSorter,

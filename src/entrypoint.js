@@ -448,6 +448,13 @@ function registerFeatures() {
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
         {
+            key: 'chatHistoryExtender',
+            name: 'Chat History Extender',
+            category: 'Chat',
+            module: UI.chatHistoryExtender,
+            async: false,
+        },
+        {
             key: 'taskProfitDisplay',
             name: 'Task Profit Display',
             category: 'Tasks',
