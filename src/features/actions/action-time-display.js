@@ -898,6 +898,7 @@ class ActionTimeDisplay {
         // Determine queue count
         let queuedActions;
         let materialLimit = null;
+        let limitingItemHrid = null;
 
         if (action.hasMaxCount) {
             queuedActions = action.maxCount - action.currentCount;
@@ -909,6 +910,10 @@ class ActionTimeDisplay {
             if (limitResult) {
                 materialLimit = limitResult.maxActions;
                 queuedActions = materialLimit;
+                // Extract item HRID from limitType (e.g. "material:/items/foo" → "/items/foo")
+                if (limitResult.limitType?.startsWith('material:')) {
+                    limitingItemHrid = limitResult.limitType.slice('material:'.length);
+                }
             } else {
                 queuedActions = Infinity;
             }
@@ -942,6 +947,7 @@ class ActionTimeDisplay {
                         if (maxAttemptsFromProtection < queuedActions) {
                             queuedActions = maxAttemptsFromProtection;
                             materialLimit = maxAttemptsFromProtection;
+                            limitingItemHrid = protectionItemHrid;
                         }
                     }
                 }
@@ -1031,7 +1037,9 @@ class ActionTimeDisplay {
                 });
             }
 
-            this.displayElement.innerHTML = `🧱 ${timeStr} → ${clockTime} (${formatWithSeparator(materialLimit)} actions)`;
+            const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
+            const matsLabel = itemIconHtml ? `${itemIconHtml}:` : 'Mats:';
+            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${matsLabel} ${timeStr} → ${clockTime} (${formatWithSeparator(materialLimit)} actions)`;
         } else {
             this.displayElement.innerHTML = '';
         }
@@ -1307,6 +1315,23 @@ class ActionTimeDisplay {
     /**
      * Build inventory lookup maps for fast material queries
      * @param {Array} inventory - Character inventory items
+    /**
+     * Build an inline SVG icon HTML string for an item HRID.
+     * Returns an empty string if the sprite URL cannot be found or no HRID given.
+     * @param {string|null} itemHrid - e.g. "/items/mirror_of_protection"
+     * @returns {string} HTML string with an inline <svg> element, or ''
+     */
+    getItemIconHtml(itemHrid) {
+        if (!itemHrid) return '';
+        const spriteEl = document.querySelector('use[href*="items_sprite"]');
+        if (!spriteEl) return '';
+        const spriteUrl = spriteEl.getAttribute('href')?.split('#')[0];
+        if (!spriteUrl) return '';
+        const symbolId = itemHrid.replace('/items/', '');
+        return `<svg width="16" height="16" style="vertical-align: middle; margin: 0 1px;"><use href="${spriteUrl}#${symbolId}"></use></svg>`;
+    }
+
+    /**
      * @returns {Object} Lookup maps by HRID and enhancement
      */
     buildInventoryLookup(inventory) {
