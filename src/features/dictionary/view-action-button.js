@@ -88,9 +88,7 @@ class ViewActionButton {
             e.stopPropagation();
             this.pendingActionCount = this._extractRequiredCount(actionMenu, itemHrid, itemName);
             navigateToItem(itemHrid);
-            if (this.pendingActionCount !== null) {
-                this._fillActionCountAfterNavigation();
-            }
+            this._fillActionCountAfterNavigation();
         });
 
         actionMenu.appendChild(btn);
@@ -233,7 +231,8 @@ class ViewActionButton {
                     const have = parseFloat(haveText.replace(/,/g, ''));
                     const need = parseFloat(needMatch[1].replace(/,/g, ''));
                     if (!isNaN(have) && !isNaN(need) && need > 0) {
-                        return Math.ceil(need - have);
+                        const missing = Math.ceil(need - have);
+                        return missing > 0 ? missing : null;
                     }
                 }
             }
@@ -275,16 +274,20 @@ class ViewActionButton {
     }
 
     /**
-     * Poll for the action count input after navigation and fill it with pendingActionCount.
+     * Poll for the action count input after navigation, fill it with pendingActionCount if set,
+     * and always focus it.
      */
     _fillActionCountAfterNavigation() {
         let retries = 0;
         const tryFill = () => {
             const container = document.querySelector('[class*="maxActionCountInput"]');
             const input = container?.querySelector('input');
-            if (input && this.pendingActionCount !== null) {
-                setReactInputValue(input, this.pendingActionCount, { focus: false });
-                this.pendingActionCount = null;
+            if (input) {
+                if (this.pendingActionCount !== null) {
+                    setReactInputValue(input, this.pendingActionCount, { focus: false });
+                    this.pendingActionCount = null;
+                }
+                input.focus();
                 return;
             }
             if (++retries < 15) {
