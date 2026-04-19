@@ -29,7 +29,7 @@ import {
     parseTeaEfficiencyBreakdown,
     parseTeaSkillLevelBonus,
 } from '../../utils/tea-parser.js';
-import { formatPercentage, timeReadable, formatWithSeparator } from '../../utils/formatters.js';
+import { formatPercentage, timeReadable, formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { stackAdditive } from '../../utils/efficiency.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
@@ -84,6 +84,48 @@ class QuickInputButtons {
         // Start observing for action panels
         this.startObserving();
         this.isInitialized = true;
+    }
+
+    /**
+     * Format an hours value into a compact combined label e.g. "1mo2w3d4h30m"
+     * @param {number} totalHours
+     * @returns {string}
+     */
+    _formatHoursLabel(totalHours) {
+        const months = Math.floor(totalHours / 720);
+        let rem = totalHours % 720;
+        const weeks = Math.floor(rem / 168);
+        rem %= 168;
+        const days = Math.floor(rem / 24);
+        rem %= 24;
+        const hours = Math.floor(rem);
+        const mins = Math.round((rem - hours) * 60);
+
+        let result = '';
+        if (months) result += `${months}mo`;
+        if (weeks) result += `${weeks}w`;
+        if (days) result += `${days}d`;
+        if (hours) result += `${hours}h`;
+        if (mins) result += `${mins}m`;
+        return result || '0h';
+    }
+
+    /**
+     * Parse a comma-separated preset string into a sorted array of positive numbers.
+     * Returns defaults if the string is blank or yields no valid values.
+     * Capped at 8 entries to avoid UI overflow.
+     * @param {string} raw - Comma-separated string from settings
+     * @param {number[]} defaults - Fallback values
+     * @returns {number[]}
+     */
+    _parsePresets(raw, defaults) {
+        if (!raw || !raw.trim()) return defaults;
+        const parsed = raw
+            .split(',')
+            .map((s) => parseFloat(s.trim()))
+            .filter((n) => isFinite(n) && n > 0);
+        if (parsed.length === 0) return defaults;
+        return [...new Set(parsed)].sort((a, b) => a - b).slice(0, 8);
     }
 
     /**
@@ -558,8 +600,12 @@ class QuickInputButtons {
                 // FIRST ROW: Time-based buttons (hours)
                 queueContent.appendChild(document.createTextNode('Do '));
 
-                this.presetHours.forEach((hours) => {
-                    const button = this.createButton(hours === 0.5 ? '0.5' : hours.toString(), () => {
+                const activePresetHours = this._parsePresets(
+                    config.getSettingValue('actionPanel_quickInputs_hourPresets', ''),
+                    [0.5, 1, 2, 3, 4, 5, 6, 10, 12, 24]
+                );
+                activePresetHours.forEach((hours) => {
+                    const button = this.createButton(this._formatHoursLabel(hours), () => {
                         // How many actions fit in X hours?
                         // With efficiency, queued actions complete more quickly
                         // Time (seconds) = hours × 3600
@@ -574,7 +620,7 @@ class QuickInputButtons {
                     queueContent.appendChild(button);
                 });
 
-                queueContent.appendChild(document.createTextNode(' hours'));
+                queueContent.appendChild(document.createTextNode(' '));
                 queueContent.appendChild(document.createElement('div')); // Line break
 
                 // SECOND ROW: Count-based buttons (times)
@@ -617,8 +663,12 @@ class QuickInputButtons {
 
                 queueContent.appendChild(document.createTextNode('Do '));
 
-                this.presetValues.forEach((value) => {
-                    const button = this.createButton(value.toLocaleString(), () => {
+                const activePresetValues = this._parsePresets(
+                    config.getSettingValue('actionPanel_quickInputs_countPresets', ''),
+                    [10, 100, 1000]
+                );
+                activePresetValues.forEach((value) => {
+                    const button = this.createButton(formatKMB(value), () => {
                         if (this.addMode) {
                             const current = parseInt(numberInput.value) || 0;
                             this.setInputValue(numberInput, current + value);

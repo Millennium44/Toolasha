@@ -94,6 +94,18 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionPanel_quickInputs_countPresets: {
+                id: 'actionPanel_quickInputs_countPresets',
+                label: 'Action panel: Custom count presets (comma-separated, e.g. 100,1000,1000000)',
+                type: 'text',
+                default: '',
+            },
+            actionPanel_quickInputs_hourPresets: {
+                id: 'actionPanel_quickInputs_hourPresets',
+                label: 'Action panel: Custom hour presets (comma-separated, e.g. 0.5,1,24,168,720)',
+                type: 'text',
+                default: '',
+            },
             actionPanel_foragingTotal: {
                 id: 'actionPanel_foragingTotal',
                 label: 'Action panel: Overall profit for multi-outcome foraging',
