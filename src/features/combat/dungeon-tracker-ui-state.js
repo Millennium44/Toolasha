@@ -69,9 +69,10 @@ class DungeonTrackerUIState {
      * @param {HTMLElement} container - Container element
      */
     updatePosition(container) {
+        const zIndex = this.isCollapsed ? config.Z_HUD : config.Z_FLOATING_PANEL;
         const baseStyle = `
             position: fixed;
-            z-index: ${config.Z_HUD};
+            z-index: ${zIndex};
             background: rgba(0, 0, 0, 0.85);
             border: 2px solid #4a9eff;
             border-radius: 8px;
