@@ -1021,6 +1021,12 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds quick links to Combat Sim, Market Tracker, Enhancelator, and Milkonomy',
             },
+            hideLabyrinthBadge: {
+                id: 'hideLabyrinthBadge',
+                label: 'Left sidebar: Hide Labyrinth ping badge',
+                type: 'checkbox',
+                default: false,
+            },
             expPercentage: {
                 id: 'expPercentage',
                 label: 'Left sidebar: Show skill XP percentages',

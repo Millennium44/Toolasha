@@ -416,6 +416,13 @@ function registerFeatures() {
         },
         { key: 'externalLinks', name: 'External Links', category: 'UI', module: UI.externalLinks, async: false },
         {
+            key: 'hideLabyrinthBadge',
+            name: 'Hide Labyrinth Badge',
+            category: 'UI',
+            module: UI.hideLabyrinthBadge,
+            async: false,
+        },
+        {
             key: 'altClickNavigation',
             name: 'Alt+Click Navigation',
             category: 'Navigation',
