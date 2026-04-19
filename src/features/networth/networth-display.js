@@ -314,6 +314,7 @@ class NetworthInventoryDisplay {
             'mwi-current-assets-details',
             'mwi-equipment-breakdown',
             'mwi-inventory-breakdown',
+            'mwi-listings-breakdown',
             'mwi-fixed-assets-details',
             'mwi-houses-breakdown',
             'mwi-abilities-details',
