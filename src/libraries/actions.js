@@ -14,6 +14,7 @@ import maxProduceable from '../features/actions/max-produceable.js';
 import gatheringStats from '../features/actions/gathering-stats.js';
 import requiredMaterials from '../features/actions/required-materials.js';
 import missingMaterialsButton from '../features/actions/missing-materials-button.js';
+import budgetCalculator from '../features/actions/budget-calculator.js';
 import teaRecommendation from '../features/actions/tea-recommendation.js';
 import inventoryCountDisplay from '../features/actions/inventory-count-display.js';
 import pinnedActionsPage from '../features/actions/pinned-actions-page.js';
@@ -38,6 +39,7 @@ toolashaRoot.Actions = {
     gatheringStats,
     requiredMaterials,
     missingMaterialsButton,
+    budgetCalculator,
     alchemyProfitDisplay,
     teaRecommendation,
     inventoryCountDisplay,

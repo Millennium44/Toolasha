@@ -250,6 +250,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'budgetCalculator',
+            name: 'Budget Calculator',
+            category: 'Actions',
+            module: Actions.budgetCalculator,
+            async: false,
+        },
+        {
             key: 'alchemyProfitDisplay',
             name: 'Alchemy Profit Display',
             category: 'Alchemy',

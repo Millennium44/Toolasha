@@ -219,6 +219,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'When enabled, missing materials calculation only considers current action request, ignoring materials already reserved by queued actions. Default (off) accounts for queue.',
             },
+            actions_budgetCalculator: {
+                id: 'actions_budgetCalculator',
+                label: 'Action panel: Budget calculator',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price.',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
