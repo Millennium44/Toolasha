@@ -906,8 +906,9 @@ class TooltipPrices {
             for (const action of gatheringData.soloActions) {
                 const itemsPerHourStr = action.itemsPerHour ? Math.round(action.itemsPerHour) : '?';
                 const profitStr = action.profitPerHour ? formatKMB(Math.round(action.profitPerHour)) : '?';
+                const profitDayStr = action.profitPerHour ? formatKMB(Math.round(action.profitPerHour * 24)) : '?';
 
-                html += `<div style="margin-left: 8px;">• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr} gold/hr</div>`;
+                html += `<div style="margin-left: 8px;">• ${action.actionName}: ${itemsPerHourStr} items/hr | ${profitStr}/hr (${profitDayStr}/day)</div>`;
             }
 
             html += '</div>';
