@@ -693,7 +693,9 @@ class ListingPriceDisplay {
                 if (orderBook) {
                     const topOrders = isSell ? orderBook.asks : orderBook.bids;
                     if (topOrders && topOrders.length > 0) {
-                        topOrderPrice = topOrders[0].price;
+                        // Asks are sorted ascending (lowest = best ask = index 0)
+                        // Bids are sorted ascending (highest = best bid = last index)
+                        topOrderPrice = isSell ? topOrders[0].price : topOrders[topOrders.length - 1].price;
                     }
                 }
             }
@@ -766,7 +768,7 @@ class ListingPriceDisplay {
             return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
         }
 
-        // Get top order (first in array)
+        // Get top order — asks sorted ascending (best = index 0), bids sorted ascending (best = last index)
         const topOrders = isSell ? orderBook.asks : orderBook.bids;
 
         if (!topOrders || topOrders.length === 0) {
@@ -774,7 +776,7 @@ class ListingPriceDisplay {
             return createStyledCell('None', '#00FF00', { fontSize: '0.9em' }); // Green = you're the only one
         }
 
-        const topOrder = topOrders[0];
+        const topOrder = isSell ? topOrders[0] : topOrders[topOrders.length - 1];
         const topListingId = topOrder.listingId;
 
         // Estimate timestamp using existing logic
