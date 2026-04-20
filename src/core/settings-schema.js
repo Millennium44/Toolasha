@@ -498,6 +498,25 @@ export const settingsGroups = {
                 default: false,
                 help: 'Hide tracker when not on the Enhancing screen',
             },
+            enhancementXPH: {
+                id: 'enhancementXPH',
+                label: 'Enhancement: XPH calculator',
+                type: 'checkbox',
+                default: true,
+                help: 'Ranks all enhanceable items by expected XP per hour at your current stats',
+            },
+            enhancementXPH_maxLevel: {
+                id: 'enhancementXPH_maxLevel',
+                label: 'Enhancement XPH: Default max enhancement level (1–20)',
+                type: 'text',
+                default: '6',
+            },
+            enhancementXPH_protectFrom: {
+                id: 'enhancementXPH_protectFrom',
+                label: 'Enhancement XPH: Default protect from level (0 = no protection)',
+                type: 'text',
+                default: '0',
+            },
         },
     },
 

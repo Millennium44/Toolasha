@@ -58,6 +58,7 @@ import coinifyHistoryViewer from '../features/alchemy/coinify-history-viewer.js'
 
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
+import xphCalculator from '../features/enhancement/xph-calculator.js';
 
 // Guild
 import guildXPTracker from '../features/guild/guild-xp-tracker.js';
@@ -107,6 +108,7 @@ toolashaRoot.UI = {
     coinifyHistoryTracker,
     coinifyHistoryViewer,
     enhancementFeature,
+    xphCalculator,
     guildXPTracker,
     guildXPDisplay,
     emptyQueueNotification,

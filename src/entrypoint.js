@@ -550,6 +550,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'enhancementXPH',
+            name: 'Enhancement XPH Calculator',
+            category: 'Enhancement',
+            module: UI.xphCalculator,
+            async: false,
+        },
+        {
             key: 'guildXPTracker',
             name: 'Guild XP Tracker',
             category: 'Guild',
