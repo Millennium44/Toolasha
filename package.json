@@ -31,6 +31,8 @@
     "author": "bot7420",
     "license": "CC-BY-NC-SA-4.0",
     "devDependencies": {
+        "@commitlint/cli": "^19.8.0",
+        "@commitlint/config-conventional": "^19.8.0",
         "@rollup/plugin-commonjs": "^25.0.7",
         "@rollup/plugin-node-resolve": "^15.2.3",
         "@rollup/plugin-terser": "^0.4.4",
@@ -47,9 +49,7 @@
         "prettier": "^3.8.1",
         "rollup": "^4.9.5",
         "rollup-plugin-banner2": "^1.2.2",
-        "vitest": "^4.0.18",
-        "@commitlint/cli": "^19.8.0",
-        "@commitlint/config-conventional": "^19.8.0"
+        "vitest": "^4.0.18"
     },
     "lint-staged": {
         "src/**/*.js": [

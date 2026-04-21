@@ -23,6 +23,7 @@ import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
+import combatSim from '../features/combat-sim/combat-sim.js';
 
 // Combat stats
 import combatStats from '../features/combat-stats/combat-stats.js';
@@ -66,6 +67,7 @@ toolashaRoot.Combat = {
     abilityBookCalculator,
     combatScore,
     characterCardButton,
+    combatSim,
 };
 
 console.log('[Toolasha] Combat library loaded');

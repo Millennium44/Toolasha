@@ -1,5 +1,6 @@
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
+import { rollup } from 'rollup';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, normalize } from 'path';
@@ -110,6 +111,58 @@ function cssRawPlugin() {
     };
 }
 
+/**
+ * Custom plugin to bundle JS worker entry points into inline strings.
+ * Import with '?worker' suffix: import code from './my-worker.js?worker';
+ * The imported value is the bundled worker source as a string.
+ */
+function workerBundlePlugin() {
+    const suffix = '?worker';
+    const cache = new Map();
+    return {
+        name: 'worker-bundle',
+        resolveId(source, importer) {
+            if (source.endsWith(suffix)) {
+                if (importer) {
+                    const basePath = dirname(importer);
+                    const workerPath = join(basePath, source.replace(suffix, ''));
+                    return workerPath + suffix;
+                }
+            }
+            return null;
+        },
+        async load(id) {
+            if (!id.endsWith(suffix)) return null;
+
+            const entryPath = id.replace(suffix, '');
+
+            // Cache to avoid re-bundling on watch rebuilds within same run
+            if (cache.has(entryPath)) return cache.get(entryPath);
+
+            // Bundle the worker entry with its own rollup build
+            const bundle = await rollup({
+                input: entryPath,
+                plugins: [resolve({ browser: true, preferBuiltins: false }), commonjs()],
+                // Suppress circular dependency warnings from heap-js
+                onwarn(warning, warn) {
+                    if (warning.code === 'CIRCULAR_DEPENDENCY') return;
+                    warn(warning);
+                },
+            });
+
+            const { output } = await bundle.generate({
+                format: 'iife',
+                name: 'CombatSimWorker',
+            });
+
+            const code = output[0].code;
+            const result = `export default ${JSON.stringify(code)};`;
+            cache.set(entryPath, result);
+            return result;
+        },
+    };
+}
+
 // Check if we should build for production (multi-bundle)
 const isProduction = process.env.BUILD_MODE === 'production';
 const buildTarget = process.env.BUILD_TARGET || 'dev';
@@ -129,6 +182,7 @@ const devConfig = {
     },
     plugins: [
         cssRawPlugin(),
+        workerBundlePlugin(),
         resolve({
             browser: true,
             preferBuiltins: false,
@@ -246,6 +300,7 @@ const prodConfig = [
             },
             plugins: [
                 cssRawPlugin(),
+                workerBundlePlugin(),
                 resolve({
                     browser: true,
                     preferBuiltins: false,

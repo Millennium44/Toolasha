@@ -1,0 +1,592 @@
+/**
+ * Combat Simulator Adapter
+ * Bridges Toolasha's live data to the combat sim engine.
+ *
+ * Extracts game data maps, builds player DTOs, and provides
+ * combat zone metadata for the simulation UI.
+ */
+
+import dataManager from '../../core/data-manager.js';
+import webSocketHook from '../../core/websocket.js';
+import { getCurrentProfile } from '../../core/profile-manager.js';
+
+/**
+ * Extract all required game data maps from initClientData for the sim engine.
+ * @returns {Object|null} Plain object with all 13 game data maps, or null if data unavailable
+ */
+export function buildGameDataPayload() {
+    const clientData = dataManager.getInitClientData();
+    if (!clientData) {
+        console.error('[CombatSimAdapter] No initClientData available');
+        return null;
+    }
+
+    return {
+        itemDetailMap: clientData.itemDetailMap,
+        actionDetailMap: clientData.actionDetailMap,
+        abilityDetailMap: clientData.abilityDetailMap,
+        combatMonsterDetailMap: clientData.combatMonsterDetailMap,
+        combatStyleDetailMap: clientData.combatStyleDetailMap,
+        damageTypeDetailMap: clientData.damageTypeDetailMap,
+        houseRoomDetailMap: clientData.houseRoomDetailMap,
+        combatTriggerDependencyDetailMap: clientData.combatTriggerDependencyDetailMap,
+        combatTriggerConditionDetailMap: clientData.combatTriggerConditionDetailMap,
+        combatTriggerComparatorDetailMap: clientData.combatTriggerComparatorDetailMap,
+        enhancementLevelTotalBonusMultiplierTable: clientData.enhancementLevelTotalBonusMultiplierTable,
+        abilitySlotsLevelRequirementList: clientData.abilitySlotsLevelRequirementList,
+        openableLootDropMap: clientData.openableLootDropMap,
+    };
+}
+
+/**
+ * Build a player DTO from the current character data.
+ * Outputs the format expected by Player.createFromDTO():
+ *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
+ *     food: [{hrid, triggers}], drinks: [{hrid, triggers}],
+ *     abilities: [{hrid, level, triggers}], houseRooms: {'/house_rooms/x': level},
+ *     hrid: 'player1', debuffOnLevelGap: 0 }
+ * @returns {Object|null} Player DTO in sim engine format, or null if data unavailable
+ */
+export function buildPlayerDTO() {
+    const characterData = dataManager.characterData;
+    const clientData = dataManager.getInitClientData();
+
+    if (!characterData) {
+        console.error('[CombatSimAdapter] No character data available');
+        return null;
+    }
+
+    const dto = {
+        staminaLevel: 1,
+        intelligenceLevel: 1,
+        attackLevel: 1,
+        meleeLevel: 1,
+        defenseLevel: 1,
+        rangedLevel: 1,
+        magicLevel: 1,
+        hrid: 'player1',
+        debuffOnLevelGap: 0,
+        equipment: {},
+        food: [],
+        drinks: [],
+        abilities: [],
+        houseRooms: {},
+    };
+
+    // Extract combat skill levels
+    for (const skill of characterData.characterSkills || []) {
+        const skillName = skill.skillHrid.split('/').pop();
+        const key = skillName + 'Level';
+        if (dto[key] !== undefined) {
+            dto[key] = skill.level;
+        }
+    }
+
+    // Extract equipped items → keyed by equipment type
+    // Use the item's equipmentDetail.type (already /equipment_types/ format) as the key
+    const itemDetailMap = clientData?.itemDetailMap || {};
+
+    if (Array.isArray(characterData.characterItems)) {
+        for (const item of characterData.characterItems) {
+            if (!item.itemLocationHrid || item.itemLocationHrid.includes('/item_locations/inventory')) continue;
+            const itemDetail = itemDetailMap[item.itemHrid];
+            if (!itemDetail?.equipmentDetail?.type) continue;
+            dto.equipment[itemDetail.equipmentDetail.type] = {
+                hrid: item.itemHrid,
+                enhancementLevel: item.enhancementLevel || 0,
+            };
+        }
+    } else if (characterData.characterEquipment) {
+        for (const key in characterData.characterEquipment) {
+            const item = characterData.characterEquipment[key];
+            const itemDetail = itemDetailMap[item.itemHrid];
+            if (!itemDetail?.equipmentDetail?.type) continue;
+            dto.equipment[itemDetail.equipmentDetail.type] = {
+                hrid: item.itemHrid,
+                enhancementLevel: item.enhancementLevel || 0,
+            };
+        }
+    }
+
+    // Build trigger map (ability + consumable triggers combined)
+    const triggerMap = {
+        ...(characterData.abilityCombatTriggersMap || {}),
+        ...(characterData.consumableCombatTriggersMap || {}),
+    };
+
+    /**
+     * Convert raw trigger data to DTOs for Trigger.createFromDTO.
+     * @param {string} hrid - Ability or consumable HRID
+     * @returns {Array<Object>} Trigger DTOs
+     */
+    const buildTriggerDTOs = (hrid) => {
+        const rawTriggers = triggerMap[hrid];
+        if (!Array.isArray(rawTriggers)) return [];
+
+        return rawTriggers.map((t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        }));
+    };
+
+    // Extract food slots → array of { hrid, triggers }
+    const foodSlots = characterData.actionTypeFoodSlotsMap?.['/action_types/combat'] || [];
+    for (let i = 0; i < 3; i++) {
+        const item = foodSlots[i];
+        if (item?.itemHrid) {
+            dto.food.push({ hrid: item.itemHrid, triggers: buildTriggerDTOs(item.itemHrid) });
+        } else {
+            dto.food.push(null);
+        }
+    }
+
+    // Extract drink slots → array of { hrid, triggers }
+    const drinkSlots = characterData.actionTypeDrinkSlotsMap?.['/action_types/combat'] || [];
+    for (let i = 0; i < 3; i++) {
+        const item = drinkSlots[i];
+        if (item?.itemHrid) {
+            dto.drinks.push({ hrid: item.itemHrid, triggers: buildTriggerDTOs(item.itemHrid) });
+        } else {
+            dto.drinks.push(null);
+        }
+    }
+
+    // Extract equipped abilities → array of { hrid, level, triggers }
+    const equippedAbilities = characterData.combatUnit?.combatAbilities || [];
+    // Slot 0 = special ability, slots 1-4 = normal abilities
+    for (let i = 0; i < 5; i++) {
+        dto.abilities.push(null);
+    }
+
+    let normalAbilityIndex = 1;
+    for (const ability of equippedAbilities) {
+        if (!ability?.abilityHrid) continue;
+
+        const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+        const abilityDTO = {
+            hrid: ability.abilityHrid,
+            level: ability.level || 1,
+            triggers: buildTriggerDTOs(ability.abilityHrid),
+        };
+
+        if (isSpecial) {
+            dto.abilities[0] = abilityDTO;
+        } else if (normalAbilityIndex < 5) {
+            dto.abilities[normalAbilityIndex++] = abilityDTO;
+        }
+    }
+
+    // Extract house room levels
+    for (const house of Object.values(characterData.characterHouseRoomMap || {})) {
+        dto.houseRooms[house.houseRoomHrid] = house.level;
+    }
+
+    return dto;
+}
+
+/**
+ * Build a player DTO from a cached party member profile.
+ * @param {Object} profile - Profile data with .profile sub-object
+ * @param {Object} clientData - initClientData
+ * @param {Object} battleData - Battle data (optional, for consumable detection)
+ * @returns {Object} Player DTO in engine format
+ */
+function buildPartyMemberDTO(profile, clientData, battleData) {
+    const itemDetailMap = clientData?.itemDetailMap || {};
+
+    const dto = {
+        staminaLevel: 1,
+        intelligenceLevel: 1,
+        attackLevel: 1,
+        meleeLevel: 1,
+        defenseLevel: 1,
+        rangedLevel: 1,
+        magicLevel: 1,
+        hrid: 'player',
+        debuffOnLevelGap: 0,
+        equipment: {},
+        food: [],
+        drinks: [],
+        abilities: [],
+        houseRooms: {},
+    };
+
+    // Extract skill levels
+    for (const skill of profile.profile?.characterSkills || []) {
+        const skillName = skill.skillHrid?.split('/').pop();
+        const key = skillName + 'Level';
+        if (dto[key] !== undefined) {
+            dto[key] = skill.level || 1;
+        }
+    }
+
+    // Extract equipment from wearableItemMap → keyed by equipmentDetail.type
+    if (profile.profile?.wearableItemMap) {
+        for (const key in profile.profile.wearableItemMap) {
+            const item = profile.profile.wearableItemMap[key];
+            const itemDetail = itemDetailMap[item.itemHrid];
+            if (!itemDetail?.equipmentDetail?.type) continue;
+            dto.equipment[itemDetail.equipmentDetail.type] = {
+                hrid: item.itemHrid,
+                enhancementLevel: item.enhancementLevel || 0,
+            };
+        }
+    }
+
+    // Build trigger map from profile
+    const triggerMap = {
+        ...(profile.profile?.abilityCombatTriggersMap || {}),
+        ...(profile.profile?.consumableCombatTriggersMap || {}),
+    };
+
+    // Try to get consumables from battle data first
+    let battlePlayer = null;
+    if (battleData?.players) {
+        battlePlayer = battleData.players.find((p) => p.character?.id === profile.characterID);
+    }
+
+    const buildTriggerDTOs = (hrid) => {
+        const rawTriggers = triggerMap[hrid];
+        if (!Array.isArray(rawTriggers)) return [];
+        return rawTriggers.map((t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        }));
+    };
+
+    // Consumables: prefer battle data, fall back to trigger map keys
+    if (battlePlayer?.combatConsumables) {
+        let foodIndex = 0;
+        let drinkIndex = 0;
+        for (const consumable of battlePlayer.combatConsumables) {
+            const hrid = consumable.itemHrid;
+            const isDrink =
+                hrid.includes('/drinks/') ||
+                hrid.includes('coffee') ||
+                itemDetailMap[hrid]?.categoryHrid?.includes('drink');
+            if (isDrink && drinkIndex < 3) {
+                dto.drinks.push({ hrid, triggers: buildTriggerDTOs(hrid) });
+                drinkIndex++;
+            } else if (!isDrink && foodIndex < 3) {
+                dto.food.push({ hrid, triggers: buildTriggerDTOs(hrid) });
+                foodIndex++;
+            }
+        }
+    } else {
+        // Fall back to trigger map keys for consumable HRIDs
+        const consumableHrids = Object.keys(profile.profile?.consumableCombatTriggersMap || {});
+        let foodIndex = 0;
+        let drinkIndex = 0;
+        for (const hrid of consumableHrids) {
+            const isDrink =
+                hrid.includes('/drinks/') ||
+                hrid.includes('coffee') ||
+                itemDetailMap[hrid]?.categoryHrid?.includes('drink');
+            if (isDrink && drinkIndex < 3) {
+                dto.drinks.push({ hrid, triggers: buildTriggerDTOs(hrid) });
+                drinkIndex++;
+            } else if (!isDrink && foodIndex < 3) {
+                dto.food.push({ hrid, triggers: buildTriggerDTOs(hrid) });
+                foodIndex++;
+            }
+        }
+    }
+
+    // Pad remaining slots with null
+    while (dto.food.length < 3) dto.food.push(null);
+    while (dto.drinks.length < 3) dto.drinks.push(null);
+
+    // Extract abilities
+    for (let i = 0; i < 5; i++) dto.abilities.push(null);
+    let normalAbilityIndex = 1;
+    const equippedAbilities = profile.profile?.equippedAbilities || [];
+    for (const ability of equippedAbilities) {
+        if (!ability?.abilityHrid) continue;
+        const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+        const abilityDTO = {
+            hrid: ability.abilityHrid,
+            level: ability.level || 1,
+            triggers: buildTriggerDTOs(ability.abilityHrid),
+        };
+        if (isSpecial) {
+            dto.abilities[0] = abilityDTO;
+        } else if (normalAbilityIndex < 5) {
+            dto.abilities[normalAbilityIndex++] = abilityDTO;
+        }
+    }
+
+    // House rooms
+    if (profile.profile?.characterHouseRoomMap) {
+        for (const house of Object.values(profile.profile.characterHouseRoomMap)) {
+            dto.houseRooms[house.houseRoomHrid] = house.level;
+        }
+    }
+
+    return dto;
+}
+
+/**
+ * Calculate combat level for level gap debuff.
+ * @param {Object} dto - Player DTO
+ * @returns {number} Combat level
+ */
+function calcCombatLevel(dto) {
+    const base = (dto.staminaLevel + dto.intelligenceLevel + dto.defenseLevel) / 4;
+    const melee = (dto.attackLevel + dto.meleeLevel) / 2;
+    const ranged = (dto.attackLevel + dto.rangedLevel) / 2;
+    const magic = (dto.attackLevel + dto.magicLevel) / 2;
+    return Math.floor(base + Math.max(melee, ranged, magic));
+}
+
+/**
+ * Build player DTOs for all party members (or solo if not in a party).
+ * Auto-detects party from characterData and loads cached profiles.
+ * @returns {Promise<{players: Array, playerNames: Array<string>, missingMembers: Array<string>}>}
+ */
+export async function buildAllPlayerDTOs() {
+    const characterData = dataManager.characterData;
+    const clientData = dataManager.getInitClientData();
+
+    if (!characterData) {
+        return { players: [], playerNames: [], missingMembers: [] };
+    }
+
+    const hasParty = characterData.partyInfo?.partySlotMap;
+
+    if (!hasParty) {
+        // Solo mode
+        const selfDTO = buildPlayerDTO();
+        if (!selfDTO) return { players: [], playerNames: [], missingMembers: [] };
+        return {
+            players: [selfDTO],
+            playerNames: [characterData.character?.name || 'Player 1'],
+            missingMembers: [],
+        };
+    }
+
+    // Party mode — load profile list from storage
+    let profileList = [];
+    try {
+        const hasScriptManager = typeof GM_info !== 'undefined';
+        if (hasScriptManager) {
+            const data = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
+            profileList = JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('[CombatSimAdapter] Failed to load profile list:', error);
+    }
+
+    // Get battle data for consumable detection
+    let battleData = null;
+    try {
+        const hasScriptManager = typeof GM_info !== 'undefined';
+        if (hasScriptManager) {
+            const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
+            if (data) battleData = JSON.parse(data);
+        } else {
+            battleData = dataManager.battleData;
+        }
+    } catch (error) {
+        console.error('[CombatSimAdapter] Failed to load battle data:', error);
+    }
+
+    const players = [];
+    const playerNames = [];
+    const missingMembers = [];
+    let slotIndex = 1;
+
+    for (const member of Object.values(characterData.partyInfo.partySlotMap)) {
+        if (!member.characterID) continue;
+
+        if (member.characterID === characterData.character.id) {
+            // Self
+            const selfDTO = buildPlayerDTO();
+            if (selfDTO) {
+                selfDTO.hrid = 'player' + slotIndex;
+                players.push(selfDTO);
+                playerNames.push(characterData.character.name || 'Player ' + slotIndex);
+            }
+        } else {
+            // Party member — try profile list, then memory cache
+            let profile = profileList.find((p) => p.characterID === member.characterID);
+            if (!profile) {
+                const cached = getCurrentProfile();
+                if (cached?.characterID === member.characterID) {
+                    profile = cached;
+                }
+            }
+
+            if (profile) {
+                const memberDTO = buildPartyMemberDTO(profile, clientData, battleData);
+                memberDTO.hrid = 'player' + slotIndex;
+                players.push(memberDTO);
+                playerNames.push(profile.characterName || 'Player ' + slotIndex);
+            } else {
+                missingMembers.push(member.characterName || 'Unknown');
+            }
+        }
+        slotIndex++;
+    }
+
+    // Calculate level gap debuff
+    if (players.length > 1) {
+        let maxCombatLevel = 0;
+        const levels = players.map((p) => {
+            const level = calcCombatLevel(p);
+            maxCombatLevel = Math.max(maxCombatLevel, level);
+            return level;
+        });
+
+        for (let i = 0; i < players.length; i++) {
+            const ratio = maxCombatLevel / levels[i];
+            if (ratio > 1.2) {
+                const maxDebuff = 0.9;
+                const levelPercent = Math.floor((ratio - 1.2) * 100) / 100;
+                players[i].debuffOnLevelGap = -1 * Math.min(maxDebuff, 3 * levelPercent);
+            } else {
+                players[i].debuffOnLevelGap = 0;
+            }
+        }
+    }
+
+    return { players, playerNames, missingMembers };
+}
+
+/**
+ * Get a sorted list of combat zones for the zone dropdown.
+ * @returns {Array<{hrid: string, name: string, isDungeon: boolean}>} Sorted zone list
+ */
+export function getCombatZones() {
+    const clientData = dataManager.getInitClientData();
+    if (!clientData?.actionDetailMap) {
+        return [];
+    }
+
+    const zones = [];
+
+    for (const [hrid, action] of Object.entries(clientData.actionDetailMap)) {
+        if (action.type !== '/action_types/combat') continue;
+
+        zones.push({
+            hrid,
+            name: action.name,
+            isDungeon: action.combatZoneInfo?.isDungeon || false,
+            sortIndex: action.sortIndex ?? 0,
+        });
+    }
+
+    // Sort by sortIndex for consistent ordering
+    zones.sort((a, b) => a.sortIndex - b.sortIndex);
+
+    // Remove sortIndex from the returned objects
+    return zones.map(({ hrid, name, isDungeon }) => ({ hrid, name, isDungeon }));
+}
+
+/**
+ * Get the player's current combat zone and difficulty tier from characterActions.
+ * @returns {{zoneHrid: string, difficultyTier: number, isDungeon: boolean}|null} Current zone info or null
+ */
+export function getCurrentCombatZone() {
+    const characterData = dataManager.characterData;
+    const clientData = dataManager.getInitClientData();
+
+    if (!characterData?.characterActions) {
+        return null;
+    }
+
+    for (const action of characterData.characterActions) {
+        if (action && action.actionHrid?.includes('/actions/combat/')) {
+            const isDungeon = clientData?.actionDetailMap?.[action.actionHrid]?.combatZoneInfo?.isDungeon || false;
+            return {
+                zoneHrid: action.actionHrid,
+                difficultyTier: action.difficultyTier || 0,
+                isDungeon,
+            };
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Extract community buff levels from characterData for the simulation.
+ * @returns {{comExp: number, comDrop: number}} Community buff levels (0 if not active)
+ */
+export function getCommunityBuffs() {
+    const mooPassBuffs = dataManager.getMooPassBuffs();
+    return {
+        mooPass: mooPassBuffs && mooPassBuffs.length > 0,
+        comExp: dataManager.getCommunityBuffLevel('/community_buff_types/experience') || 0,
+        comDrop: dataManager.getCommunityBuffLevel('/community_buff_types/combat_drop_quantity') || 0,
+    };
+}
+
+/**
+ * Calculate expected drops from simulation results.
+ * Uses deterministic expected-value math (no RNG rolls).
+ * @param {Object} simResult - SimResult from the engine
+ * @param {Object} gameData - Game data maps
+ * @returns {Map<string, number>} itemHrid → expected total drop count
+ */
+export function calculateExpectedDrops(simResult, gameData) {
+    const combatMonsterDetailMap = gameData.combatMonsterDetailMap;
+    const playerHrid = 'player1';
+    const dropRateMultiplier = simResult.dropRateMultiplier[playerHrid] || 1;
+    const rareFindMultiplier = simResult.rareFindMultiplier?.[playerHrid] || 1;
+    const combatDropQuantity = simResult.combatDropQuantity?.[playerHrid] || 0;
+    const debuffOnLevelGap = simResult.debuffOnLevelGap?.[playerHrid] || 0;
+    const numberOfPlayers = simResult.numberOfPlayers || 1;
+    const difficultyTier = simResult.difficultyTier || 0;
+
+    const totalDropMap = new Map();
+
+    // Get all monster kills (filter out player deaths)
+    const monsters = Object.keys(simResult.deaths).filter((hrid) => !hrid.startsWith('player'));
+
+    for (const monsterHrid of monsters) {
+        const monsterData = combatMonsterDetailMap[monsterHrid];
+        if (!monsterData) continue;
+
+        const killCount = simResult.deaths[monsterHrid];
+
+        // Regular drops
+        if (monsterData.dropTable) {
+            for (const drop of monsterData.dropTable) {
+                if (drop.minDifficultyTier > difficultyTier) continue;
+
+                const tierMultiplier = 1.0 + 0.1 * difficultyTier;
+                const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
+                const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * dropRateMultiplier);
+                if (adjustedRate <= 0) continue;
+
+                const avgCount = (drop.minCount + drop.maxCount) / 2;
+                const expected =
+                    (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
+                    numberOfPlayers;
+
+                totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+            }
+        }
+
+        // Rare drops
+        if (monsterData.rareDropTable) {
+            for (const drop of monsterData.rareDropTable) {
+                if (drop.minDifficultyTier > difficultyTier) continue;
+
+                const adjustedRate = drop.dropRate * rareFindMultiplier;
+                const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
+                const expected =
+                    (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
+                    numberOfPlayers;
+
+                totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+            }
+        }
+    }
+
+    return totalDropMap;
+}

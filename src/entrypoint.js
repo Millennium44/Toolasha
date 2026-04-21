@@ -396,6 +396,13 @@ function registerFeatures() {
             module: Combat.scrollSimulatorUI,
             async: false,
         },
+        {
+            key: 'combatSim',
+            name: 'Combat Simulator',
+            category: 'Combat',
+            module: Combat.combatSim,
+            async: false,
+        },
     ];
 
     // UI Features

@@ -1,5 +1,6 @@
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
+import { rollup } from 'rollup';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -45,6 +46,49 @@ function cssRawPlugin() {
                 return `export default ${JSON.stringify(css)};`;
             }
             return null;
+        },
+    };
+}
+
+/**
+ * Custom plugin to bundle JS worker entry points into inline strings.
+ * Import with '?worker' suffix: import code from './my-worker.js?worker';
+ */
+function workerBundlePlugin() {
+    const suffix = '?worker';
+    const cache = new Map();
+    return {
+        name: 'worker-bundle',
+        resolveId(source, importer) {
+            if (source.endsWith(suffix)) {
+                if (importer) {
+                    const basePath = dirname(importer);
+                    const workerPath = join(basePath, source.replace(suffix, ''));
+                    return workerPath + suffix;
+                }
+            }
+            return null;
+        },
+        async load(id) {
+            if (!id.endsWith(suffix)) return null;
+            const entryPath = id.replace(suffix, '');
+            if (cache.has(entryPath)) return cache.get(entryPath);
+            const bundle = await rollup({
+                input: entryPath,
+                plugins: [resolve({ browser: true, preferBuiltins: false }), commonjs()],
+                onwarn(warning, warn) {
+                    if (warning.code === 'CIRCULAR_DEPENDENCY') return;
+                    warn(warning);
+                },
+            });
+            const { output } = await bundle.generate({
+                format: 'iife',
+                name: 'CombatSimWorker',
+            });
+            const code = output[0].code;
+            const result = `export default ${JSON.stringify(code)};`;
+            cache.set(entryPath, result);
+            return result;
         },
     };
 }
@@ -106,6 +150,7 @@ const steamConfig = {
     },
     plugins: [
         cssRawPlugin(),
+        workerBundlePlugin(),
         resolve({
             browser: true,
             preferBuiltins: false,

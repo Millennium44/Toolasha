@@ -868,6 +868,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays encounters/hour, revenue, experience rates when returning from combat',
             },
+            combatSim: {
+                id: 'combatSim',
+                label: 'Combat Simulator',
+                type: 'checkbox',
+                default: true,
+                help: 'Simulate combat encounters to estimate XP/hr, deaths, and consumable usage',
+            },
             combatStats: {
                 id: 'combatStats',
                 label: 'Combat Statistics: Show Statistics tab in Combat panel',
