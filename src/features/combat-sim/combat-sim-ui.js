@@ -959,6 +959,7 @@ class CombatSimUI {
                 html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
                 html += `<span style="flex:1;">Item</span>`;
                 html += `<span style="${colNum}">/hr</span>`;
+                html += `<span style="${colNum}">/day</span>`;
                 html += `<span style="${colGold}">Gold/hr</span>`;
                 html += `<span style="${colGold}">Gold/day</span>`;
                 html += `<span style="${colNum}">Total</span>`;
@@ -971,6 +972,8 @@ class CombatSimUI {
                     const name = itemDetails?.name || drop.itemHrid.split('/').pop();
 
                     const perHrStr = perHr >= 1 ? formatWithSeparator(Math.round(perHr)) : perHr.toFixed(2);
+                    const perDay = perHr * 24;
+                    const perDayStr = perDay >= 1 ? formatWithSeparator(Math.round(perDay)) : perDay.toFixed(2);
                     const totalStr =
                         drop.total >= 1 ? formatWithSeparator(Math.round(drop.total)) : drop.total.toFixed(2);
 
@@ -986,6 +989,7 @@ class CombatSimUI {
                     html += `<div style="${dropRowStyle}">`;
                     html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
                     html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
+                    html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
                     html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldHrStr}</span>`;
                     html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldDayStr}</span>`;
                     html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
@@ -1000,6 +1004,7 @@ class CombatSimUI {
                         : '';
                 html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
                 html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Revenue</span>`;
+                html += `<span style="${colNum}"></span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}${revDelta}</span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}</span>`;
@@ -1031,6 +1036,7 @@ class CombatSimUI {
             html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
+            html += `<span style="${colNum}">/day</span>`;
             html += `<span style="${colGold}">Cost/hr</span>`;
             html += `<span style="${colGold}">Cost/day</span>`;
             html += `<span style="${colNum}">Total</span>`;
@@ -1043,6 +1049,7 @@ class CombatSimUI {
                 const name = itemDetails?.name || cons.itemHrid.split('/').pop();
 
                 const perHrStr = formatWithSeparator(Math.round(perHr));
+                const perDayStr = formatWithSeparator(Math.round(perHr * 24));
                 const totalStr = formatWithSeparator(Math.round(cons.total));
 
                 const costPerHr = perHr * cons.unitCost;
@@ -1057,6 +1064,7 @@ class CombatSimUI {
                 html += `<div style="${costRowStyle}">`;
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
                 html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costHrStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costDayStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
@@ -1071,6 +1079,7 @@ class CombatSimUI {
                     : '';
             html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
+            html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}${expDelta}</span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}</span>`;
@@ -1106,11 +1115,22 @@ class CombatSimUI {
         html += `<div style="${headingStyle}">Net Profit</div>`;
         const netColGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
         const netColNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
+        // Column headers
+        html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+        html += `<span style="flex:1;"></span>`;
+        html += `<span style="${netColNum}"></span>`;
+        html += `<span style="${netColNum}"></span>`;
+        html += `<span style="${netColGold}">/hr</span>`;
+        html += `<span style="${netColGold}">/day</span>`;
+        html += `<span style="${netColNum}"></span>`;
+        html += `<span style="${netColGold}">Total</span>`;
+        html += '</div>';
         html += `<div style="display:flex; align-items:center; padding:2px 0; font-size:13px; gap:6px;">`;
         html += `<span style="color:#aaa; font-weight:700; flex:1;">Profit</span>`;
         html += `<span style="${netColNum}"></span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}/hr${profitDelta}</span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}/day</span>`;
+        html += `<span style="${netColNum}"></span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}${profitDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
