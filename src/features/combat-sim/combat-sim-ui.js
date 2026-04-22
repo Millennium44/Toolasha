@@ -38,6 +38,23 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
+        this._previousSimResult = null;
+        this._previousSimHours = null;
+        this._previousNetProfitPerHr = null;
+        this._previousRevenuePerHr = null;
+        this._previousExpensesPerHr = null;
+        this._lastNetProfitPerHr = null;
+        this._lastRevenuePerHr = null;
+        this._lastExpensesPerHr = null;
+        // Loadout editor state
+        this._editedDTOs = null;
+        this._editedPlayerInfo = null;
+        this._originalDTOs = null;
+        this._activeMainTab = 'configure';
+        this._activeEditPlayer = null;
+        this._selfHrid = null;
+        this._missingMembers = [];
+        this._editorInitialized = false;
     }
 
     /**
@@ -87,7 +104,41 @@ class CombatSimUI {
         `;
         this._setupDrag(header);
 
-        // Controls
+        // Tab bar (Configure | Results)
+        const tabBar = document.createElement('div');
+        tabBar.id = 'mwi-csim-tabbar';
+        tabBar.style.cssText = `
+            display: flex;
+            gap: 0;
+            padding: 0;
+            flex-shrink: 0;
+            border-bottom: 1px solid #222;
+        `;
+        const tabStyle = (active) => `
+            flex: 1;
+            padding: 7px 0;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            font-family: inherit;
+            transition: all 0.1s;
+            background: ${active ? ACCENT_BG : 'transparent'};
+            color: ${active ? ACCENT : '#888'};
+            border-bottom: 2px solid ${active ? ACCENT : 'transparent'};
+        `;
+        tabBar.innerHTML = `
+            <button id="mwi-csim-tab-configure" style="${tabStyle(true)}">Configure</button>
+            <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
+        `;
+
+        // Configure tab content
+        const configureContent = document.createElement('div');
+        configureContent.id = 'mwi-csim-configure-content';
+        configureContent.style.cssText = 'display:flex; flex-direction:column; flex:1; overflow:hidden;';
+
+        // Controls (zone, tier, hours, simulate)
         const controls = document.createElement('div');
         controls.style.cssText = `
             display: flex;
@@ -125,6 +176,20 @@ class CombatSimUI {
                 cursor: pointer;">Simulate</button>
         `;
 
+        // Loadout editor area (scrollable)
+        const editorArea = document.createElement('div');
+        editorArea.id = 'mwi-csim-editor';
+        editorArea.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+        editorArea.innerHTML = `<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>`;
+
+        configureContent.appendChild(controls);
+        configureContent.appendChild(editorArea);
+
+        // Results tab content (hidden by default)
+        const resultsContent = document.createElement('div');
+        resultsContent.id = 'mwi-csim-results-content';
+        resultsContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+
         // Progress bar container (hidden by default)
         const progressContainer = document.createElement('div');
         progressContainer.id = 'mwi-csim-progress-container';
@@ -154,10 +219,13 @@ class CombatSimUI {
             </div>
         `;
 
-        // Results container (hidden by default)
+        // Results container
         const resultsContainer = document.createElement('div');
         resultsContainer.id = 'mwi-csim-results';
         resultsContainer.style.cssText = 'display:none; overflow-y:auto; flex:1; padding:10px 14px;';
+
+        resultsContent.appendChild(progressContainer);
+        resultsContent.appendChild(resultsContainer);
 
         // Status bar
         const status = document.createElement('div');
@@ -167,9 +235,9 @@ class CombatSimUI {
         status.textContent = 'Select a zone and click Simulate.';
 
         this.panel.appendChild(header);
-        this.panel.appendChild(controls);
-        this.panel.appendChild(progressContainer);
-        this.panel.appendChild(resultsContainer);
+        this.panel.appendChild(tabBar);
+        this.panel.appendChild(configureContent);
+        this.panel.appendChild(resultsContent);
         this.panel.appendChild(status);
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -180,6 +248,12 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-run').addEventListener('click', () => this._onSimulate());
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
+
+        // Tab switching
+        this.panel
+            .querySelector('#mwi-csim-tab-configure')
+            .addEventListener('click', () => this._switchTab('configure'));
+        this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
 
         this.populateZones();
     }
@@ -213,6 +287,347 @@ class CombatSimUI {
     }
 
     /**
+     * Switch between Configure and Results tabs.
+     * @param {string} tab - 'configure' or 'results'
+     * @private
+     */
+    _switchTab(tab) {
+        this._activeMainTab = tab;
+        const configureContent = this.panel.querySelector('#mwi-csim-configure-content');
+        const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
+        const tabConfigure = this.panel.querySelector('#mwi-csim-tab-configure');
+        const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
+
+        const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
+        const inactiveStyle =
+            'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:#888; border-bottom:2px solid transparent;';
+
+        if (tab === 'configure') {
+            configureContent.style.display = 'flex';
+            resultsContent.style.display = 'none';
+            tabConfigure.style.cssText = activeStyle;
+            tabResults.style.cssText = inactiveStyle;
+        } else {
+            configureContent.style.display = 'none';
+            resultsContent.style.display = 'flex';
+            tabConfigure.style.cssText = inactiveStyle;
+            tabResults.style.cssText = activeStyle;
+        }
+    }
+
+    /**
+     * Initialize the loadout editor by loading DTOs from live data.
+     * @private
+     */
+    async _initEditor() {
+        const editorArea = this.panel?.querySelector('#mwi-csim-editor');
+        if (!editorArea) return;
+
+        try {
+            const { players, playerInfo, selfHrid, missingMembers } = await buildAllPlayerDTOs();
+            if (!players.length) {
+                editorArea.innerHTML =
+                    '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
+                return;
+            }
+
+            // Build DTO map keyed by hrid
+            const dtoMap = {};
+            for (const p of players) {
+                dtoMap[p.hrid] = p;
+            }
+
+            this._originalDTOs = structuredClone(dtoMap);
+            this._editedDTOs = structuredClone(dtoMap);
+            this._editedPlayerInfo = playerInfo;
+            this._selfHrid = selfHrid;
+            this._activeEditPlayer = selfHrid;
+            this._missingMembers = missingMembers;
+            this._editorInitialized = true;
+
+            this._renderEditor();
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to init editor:', error);
+            editorArea.innerHTML =
+                '<div style="color:#f66; font-size:12px; text-align:center; padding:20px 0;">Failed to load character data.</div>';
+        }
+    }
+
+    /**
+     * Render the loadout editor for the active player.
+     * @private
+     */
+    _renderEditor() {
+        const editorArea = this.panel?.querySelector('#mwi-csim-editor');
+        if (!editorArea || !this._editedDTOs) return;
+
+        const playerInfo = this._editedPlayerInfo || [];
+        const activePlayer = this._activeEditPlayer;
+        const dto = this._editedDTOs[activePlayer];
+        if (!dto) return;
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) return;
+
+        let html = '';
+
+        // Player tabs (party mode)
+        if (playerInfo.length > 1) {
+            html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">`;
+            for (const { hrid, name } of playerInfo) {
+                const isActive = hrid === activePlayer;
+                const tabStyle = isActive
+                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT}; font-weight:700;`
+                    : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
+                html += `<button data-edit-tab="${hrid}" style="
+                    ${tabStyle}
+                    padding:3px 10px; border-radius:5px; font-size:12px; cursor:pointer;
+                    font-family:inherit; transition:all 0.1s;
+                ">${name}</button>`;
+            }
+            html += '</div>';
+        }
+
+        // Reset button
+        html += `<div style="display:flex; justify-content:flex-end; margin-bottom:8px;">`;
+        html += `<button id="mwi-csim-reset" style="
+            background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;
+            padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;
+            font-family:inherit;">Reset to Current</button>`;
+        html += '</div>';
+
+        // Equipment section
+        html += this._renderEquipmentSection(dto, gameData);
+
+        // Abilities section
+        html += this._renderAbilitiesSection(dto, gameData);
+
+        // Skill levels section
+        html += this._renderSkillLevelsSection(dto);
+
+        editorArea.innerHTML = html;
+
+        // Wire event listeners
+        this._wireEditorEvents(editorArea, dto);
+    }
+
+    /**
+     * Render equipment section with enhancement level inputs.
+     * @private
+     */
+    _renderEquipmentSection(dto, gameData) {
+        const itemDetailMap = gameData.itemDetailMap || {};
+        const slotOrder = [
+            '/equipment_types/head',
+            '/equipment_types/body',
+            '/equipment_types/legs',
+            '/equipment_types/feet',
+            '/equipment_types/hands',
+            '/equipment_types/main_hand',
+            '/equipment_types/two_hand',
+            '/equipment_types/off_hand',
+            '/equipment_types/pouch',
+            '/equipment_types/back',
+            '/equipment_types/neck',
+            '/equipment_types/earrings',
+            '/equipment_types/ring',
+            '/equipment_types/charm',
+        ];
+        const slotLabels = {
+            '/equipment_types/head': 'Head',
+            '/equipment_types/body': 'Body',
+            '/equipment_types/legs': 'Legs',
+            '/equipment_types/feet': 'Feet',
+            '/equipment_types/hands': 'Hands',
+            '/equipment_types/main_hand': 'Main Hand',
+            '/equipment_types/two_hand': 'Two Hand',
+            '/equipment_types/off_hand': 'Off Hand',
+            '/equipment_types/pouch': 'Pouch',
+            '/equipment_types/back': 'Back',
+            '/equipment_types/neck': 'Neck',
+            '/equipment_types/earrings': 'Earrings',
+            '/equipment_types/ring': 'Ring',
+            '/equipment_types/charm': 'Charm',
+        };
+
+        const equippedCount = slotOrder.filter((s) => dto.equipment[s]).length;
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="equip-section">`;
+        html += `<span data-arrow="equip-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Equipment (${equippedCount} items)`;
+        html += '</div>';
+        html += `<div id="mwi-csim-equip-section" style="display:none;">`;
+
+        for (const slotType of slotOrder) {
+            const equip = dto.equipment[slotType];
+            if (!equip) continue;
+
+            const item = itemDetailMap[equip.hrid];
+            const name = item?.name || equip.hrid.split('/').pop();
+            const label = slotLabels[slotType] || slotType.split('/').pop();
+
+            html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+            html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
+            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+            html += `<span style="color:#666; font-size:11px;">+</span>`;
+            html += `<input type="number" min="0" max="20" value="${equip.enhancementLevel}"
+                data-enhance-slot="${slotType}"
+                style="width:36px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
+    /**
+     * Render abilities section with level inputs.
+     * @private
+     */
+    _renderAbilitiesSection(dto, gameData) {
+        const abilityDetailMap = gameData.abilityDetailMap || {};
+        const abilityCount = dto.abilities.filter((a) => a).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="ability-section">`;
+        html += `<span data-arrow="ability-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Abilities (${abilityCount} equipped)`;
+        html += '</div>';
+        html += `<div id="mwi-csim-ability-section" style="display:none;">`;
+
+        for (let i = 0; i < dto.abilities.length; i++) {
+            const ability = dto.abilities[i];
+            if (!ability) continue;
+
+            const detail = abilityDetailMap[ability.hrid];
+            const name = detail?.name || ability.hrid.split('/').pop();
+            const slotLabel = i === 0 ? 'Special' : `Slot ${i}`;
+
+            html += `<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">`;
+            html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
+            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+            html += `<span style="color:#666; font-size:11px;">Lv</span>`;
+            html += `<input type="number" min="1" max="200" value="${ability.level}"
+                data-ability-idx="${i}"
+                style="width:42px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
+    /**
+     * Render skill levels section.
+     * @private
+     */
+    _renderSkillLevelsSection(dto) {
+        const skills = [
+            { key: 'staminaLevel', label: 'Stamina' },
+            { key: 'intelligenceLevel', label: 'Intelligence' },
+            { key: 'attackLevel', label: 'Attack' },
+            { key: 'meleeLevel', label: 'Melee' },
+            { key: 'defenseLevel', label: 'Defense' },
+            { key: 'rangedLevel', label: 'Ranged' },
+            { key: 'magicLevel', label: 'Magic' },
+        ];
+
+        const summary = skills.map((s) => `${s.label.slice(0, 3)} ${dto[s.key]}`).join(' / ');
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="skill-section">`;
+        html += `<span data-arrow="skill-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Skill Levels`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${summary}</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-skill-section" style="display:none;">`;
+        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px;">`;
+
+        for (const skill of skills) {
+            html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+            html += `<span style="color:#888; width:70px;">${skill.label}</span>`;
+            html += `<input type="number" min="1" max="200" value="${dto[skill.key]}"
+                data-skill="${skill.key}"
+                style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div></div>';
+        return html;
+    }
+
+    /**
+     * Wire event listeners for the editor area.
+     * @private
+     */
+    _wireEditorEvents(editorArea, dto) {
+        // Collapsible section toggles
+        editorArea.querySelectorAll('[data-toggle]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const sectionId = el.dataset.toggle;
+                const section = editorArea.querySelector(`#mwi-csim-${sectionId}`);
+                const arrow = editorArea.querySelector(`[data-arrow="${sectionId}"]`);
+                if (section) {
+                    const isOpen = section.style.display !== 'none';
+                    section.style.display = isOpen ? 'none' : 'block';
+                    if (arrow) arrow.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+                }
+            });
+        });
+
+        // Enhancement level inputs
+        editorArea.querySelectorAll('[data-enhance-slot]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const slotType = input.dataset.enhanceSlot;
+                const val = Math.min(20, Math.max(0, parseInt(input.value) || 0));
+                input.value = val;
+                if (dto.equipment[slotType]) {
+                    dto.equipment[slotType].enhancementLevel = val;
+                }
+            });
+        });
+
+        // Ability level inputs
+        editorArea.querySelectorAll('[data-ability-idx]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const idx = parseInt(input.dataset.abilityIdx);
+                const val = Math.max(1, parseInt(input.value) || 1);
+                input.value = val;
+                if (dto.abilities[idx]) {
+                    dto.abilities[idx].level = val;
+                }
+            });
+        });
+
+        // Skill level inputs
+        editorArea.querySelectorAll('[data-skill]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.dataset.skill;
+                const val = Math.max(1, parseInt(input.value) || 1);
+                input.value = val;
+                dto[key] = val;
+            });
+        });
+
+        // Reset button
+        const resetBtn = editorArea.querySelector('#mwi-csim-reset');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this._editedDTOs = structuredClone(this._originalDTOs);
+                this._renderEditor();
+            });
+        }
+
+        // Player edit tabs
+        editorArea.querySelectorAll('[data-edit-tab]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this._activeEditPlayer = btn.dataset.editTab;
+                this._renderEditor();
+            });
+        });
+    }
+
+    /**
      * Handle the Simulate button click.
      * @private
      */
@@ -234,7 +649,25 @@ class CombatSimUI {
             return;
         }
 
-        const { players: playerDTOs, playerInfo, selfHrid, missingMembers } = await buildAllPlayerDTOs();
+        // Use edited DTOs if available, otherwise auto-fill
+        let playerDTOs;
+        let playerInfo;
+        let selfHrid;
+        let missingMembers;
+
+        if (this._editedDTOs) {
+            playerDTOs = Object.values(this._editedDTOs);
+            playerInfo = this._editedPlayerInfo || [];
+            selfHrid = this._selfHrid || playerDTOs[0]?.hrid || 'player1';
+            missingMembers = this._missingMembers || [];
+        } else {
+            const result = await buildAllPlayerDTOs();
+            playerDTOs = result.players;
+            playerInfo = result.playerInfo;
+            selfHrid = result.selfHrid;
+            missingMembers = result.missingMembers;
+        }
+
         if (!playerDTOs.length) {
             this._setStatus('No character data available.');
             return;
@@ -268,6 +701,9 @@ class CombatSimUI {
         progressText.textContent = '0%';
         resultsContainer.style.display = 'none';
 
+        // Switch to results tab to show progress
+        this._switchTab('results');
+
         const simStartTime = Date.now();
         this.elapsedTimer = setInterval(() => {
             const elapsed = ((Date.now() - simStartTime) / 1000).toFixed(1);
@@ -287,10 +723,17 @@ class CombatSimUI {
             this.elapsedTimer = null;
             const totalElapsed = ((Date.now() - simStartTime) / 1000).toFixed(1);
 
+            // Save previous result for comparison deltas
+            this._previousSimResult = this._lastSimResult;
+            this._previousSimHours = this._lastSimHours;
+            this._previousNetProfitPerHr = this._lastNetProfitPerHr ?? null;
+            this._previousRevenuePerHr = this._lastRevenuePerHr ?? null;
+            this._previousExpensesPerHr = this._lastExpensesPerHr ?? null;
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
             this._displayResults(simResult, hours, gameData);
+            this._switchTab('results');
             const modeLabels = {
                 conservative: 'Buy: Ask / Sell: Bid',
                 hybrid: 'Buy: Ask / Sell: Ask',
@@ -359,6 +802,13 @@ class CombatSimUI {
             html += '</div>';
         }
 
+        // Compute previous values for delta comparison
+        const prev = this._previousSimResult;
+        const prevHours = this._previousSimHours;
+        const hasPrev = prev && prevHours;
+        const prevEncPerHr = hasPrev ? prev.encounters / prevHours : null;
+        const prevDeathsPerHr = hasPrev ? (prev.deaths?.[activeTab] || 0) / prevHours : null;
+
         // Overview: encounters/hr (party-wide) + deaths/hr (per active player)
         const encountersPerHr = simResult.encounters / hours;
         const playerDeaths = simResult.deaths?.[activeTab] || 0;
@@ -368,12 +818,42 @@ class CombatSimUI {
         html += `<div style="${headingStyle}">Overview</div>`;
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Encounters/hr</span>`;
-        html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(encountersPerHr))}</span>`;
+        html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(encountersPerHr))}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span>`;
         html += '</div>';
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Deaths/hr</span>`;
-        html += `<span style="${valueStyle}">${this._formatDeaths(deathsPerHr)}</span>`;
+        html += `<span style="${valueStyle}">${this._formatDeaths(deathsPerHr)}${this._formatDelta(deathsPerHr, prevDeathsPerHr, false)}</span>`;
         html += '</div>';
+
+        // DPS — estimated from monster kills × max HP / time
+        if (gameData) {
+            const monsterDetailMap = gameData.combatMonsterDetailMap || {};
+            let totalDamage = 0;
+            let prevTotalDamage = 0;
+            for (const [hrid, count] of Object.entries(simResult.deaths)) {
+                if (hrid.startsWith('player')) continue;
+                const monster = monsterDetailMap[hrid];
+                if (monster?.combatDetails?.maxHitpoints) {
+                    totalDamage += count * monster.combatDetails.maxHitpoints;
+                }
+            }
+            const dps = totalDamage / (hours * 3600);
+            let prevDps = null;
+            if (hasPrev) {
+                for (const [hrid, count] of Object.entries(prev.deaths)) {
+                    if (hrid.startsWith('player')) continue;
+                    const monster = monsterDetailMap[hrid];
+                    if (monster?.combatDetails?.maxHitpoints) {
+                        prevTotalDamage += count * monster.combatDetails.maxHitpoints;
+                    }
+                }
+                prevDps = prevTotalDamage / (prevHours * 3600);
+            }
+            html += `<div style="${rowStyle}">`;
+            html += `<span style="${labelStyle}">Party DPS (est.)</span>`;
+            html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(dps))}${this._formatDelta(dps, prevDps)}</span>`;
+            html += '</div>';
+        }
 
         // Dungeon stats if applicable
         if (simResult.isDungeon) {
@@ -394,12 +874,19 @@ class CombatSimUI {
         }
         html += '</div>';
 
-        // XP/hr by skill — show for first player (self) only
         // XP/hr by skill — per active tab player
         const xpTotals = {};
         if (simResult.experienceGained[activeTab]) {
             for (const [skill, amount] of Object.entries(simResult.experienceGained[activeTab])) {
                 xpTotals[skill] = (xpTotals[skill] || 0) + amount;
+            }
+        }
+
+        // Build previous XP map for delta comparison
+        const prevXpPerHr = {};
+        if (hasPrev && prev.experienceGained?.[activeTab]) {
+            for (const [skill, amount] of Object.entries(prev.experienceGained[activeTab])) {
+                prevXpPerHr[skill] = Math.round(amount / prevHours);
             }
         }
 
@@ -409,12 +896,20 @@ class CombatSimUI {
             html += `<div style="${headingStyle}">XP/hr</div>`;
             for (const [skill, total] of xpEntries) {
                 const perHr = Math.round(total / hours);
+                const prevVal = hasPrev ? prevXpPerHr[skill] || null : null;
                 const skillLabel = skill.charAt(0).toUpperCase() + skill.slice(1);
                 html += `<div style="${rowStyle}">`;
                 html += `<span style="${labelStyle}">${skillLabel}</span>`;
-                html += `<span style="${valueStyle}">${formatWithSeparator(perHr)}</span>`;
+                html += `<span style="${valueStyle}">${formatWithSeparator(perHr)}${this._formatDelta(perHr, prevVal)}</span>`;
                 html += '</div>';
             }
+            // Total XP/hr row
+            const totalXpPerHr = xpEntries.reduce((sum, [, total]) => sum + Math.round(total / hours), 0);
+            const prevTotalXpPerHr = hasPrev ? Object.values(prevXpPerHr).reduce((sum, v) => sum + v, 0) : null;
+            html += `<div style="display:flex; justify-content:space-between; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px;">`;
+            html += `<span style="color:#aaa; font-weight:700;">Total</span>`;
+            html += `<span style="${valueStyle}">${formatWithSeparator(totalXpPerHr)}${this._formatDelta(totalXpPerHr, prevTotalXpPerHr)}</span>`;
+            html += '</div>';
             html += '</div>';
         }
 
@@ -495,10 +990,15 @@ class CombatSimUI {
                     html += '</div>';
                 }
                 // Totals row
+                const prevRevPerHr = this._previousRevenuePerHr;
+                const revDelta =
+                    prevRevPerHr !== null && prevRevPerHr !== undefined
+                        ? this._formatDelta(dropGoldPerHr, prevRevPerHr, true, true)
+                        : '';
                 html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
                 html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Revenue</span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}${revDelta}</span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
@@ -557,10 +1057,15 @@ class CombatSimUI {
                 html += '</div>';
             }
             // Totals row
+            const prevExpPerHr = this._previousExpensesPerHr;
+            const expDelta =
+                prevExpPerHr !== null && prevExpPerHr !== undefined
+                    ? this._formatDelta(consumableGoldPerHr, prevExpPerHr, false, true)
+                    : '';
             html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}${expDelta}</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldTotal))}</span>`;
             html += '</div>';
@@ -574,6 +1079,18 @@ class CombatSimUI {
         const profitSign = netProfitPerHr >= 0 ? '' : '-';
         const totalProfitSign = netProfitTotal >= 0 ? '' : '-';
 
+        // Store for future delta comparison
+        this._lastNetProfitPerHr = netProfitPerHr;
+        this._lastRevenuePerHr = dropGoldPerHr;
+        this._lastExpensesPerHr = consumableGoldPerHr;
+
+        // Compute delta from previous sim
+        const prevProfit = this._previousNetProfitPerHr;
+        const profitDelta =
+            prevProfit !== null && prevProfit !== undefined
+                ? this._formatDelta(netProfitPerHr, prevProfit, true, true)
+                : '';
+
         html += `<div style="${sectionStyle}">`;
         html += `<div style="${headingStyle}">Net Profit</div>`;
         const netColGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
@@ -581,7 +1098,7 @@ class CombatSimUI {
         html += `<div style="display:flex; align-items:center; padding:2px 0; font-size:13px; gap:6px;">`;
         html += `<span style="color:#aaa; font-weight:700; flex:1;">Profit</span>`;
         html += `<span style="${netColNum}"></span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}/hr</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}/hr${profitDelta}</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
@@ -597,6 +1114,27 @@ class CombatSimUI {
                 this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
             });
         });
+    }
+
+    /**
+     * Format a delta value as colored HTML span.
+     * Returns empty string if no previous value or delta is zero.
+     * @param {number} current - Current value
+     * @param {number|null} previous - Previous value (null if no comparison)
+     * @param {boolean} [higherIsBetter=true] - Whether higher values are positive
+     * @param {boolean} [useKMB=false] - Use KMB formatting for the delta
+     * @returns {string} HTML span or empty string
+     * @private
+     */
+    _formatDelta(current, previous, higherIsBetter = true, useKMB = false) {
+        if (previous === null || previous === undefined) return '';
+        const delta = current - previous;
+        if (Math.abs(delta) < 0.5) return '';
+        const isPositive = higherIsBetter ? delta > 0 : delta < 0;
+        const color = isPositive ? '#7ec87e' : '#ff6b6b';
+        const sign = delta > 0 ? '+' : '';
+        const formatted = useKMB ? formatKMB(Math.round(delta)) : formatWithSeparator(Math.round(delta));
+        return ` <span style="color:${color}; font-size:11px;">(${sign}${formatted})</span>`;
     }
 
     /**
@@ -675,6 +1213,9 @@ class CombatSimUI {
         if (!visible) {
             bringPanelToFront(this.panel);
             this.populateZones();
+            if (!this._editorInitialized) {
+                this._initEditor();
+            }
         }
     }
 

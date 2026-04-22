@@ -352,7 +352,7 @@ export async function buildAllPlayerDTOs() {
     const clientData = dataManager.getInitClientData();
 
     if (!characterData) {
-        return { players: [], playerNames: [], missingMembers: [] };
+        return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
     }
 
     const hasParty = characterData.partyInfo?.partySlotMap;
@@ -360,10 +360,11 @@ export async function buildAllPlayerDTOs() {
     if (!hasParty) {
         // Solo mode
         const selfDTO = buildPlayerDTO();
-        if (!selfDTO) return { players: [], playerNames: [], missingMembers: [] };
+        if (!selfDTO) return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
         return {
             players: [selfDTO],
-            playerNames: [characterData.character?.name || 'Player 1'],
+            playerInfo: [{ hrid: selfDTO.hrid, name: characterData.character?.name || 'Player 1' }],
+            selfHrid: selfDTO.hrid,
             missingMembers: [],
         };
     }
