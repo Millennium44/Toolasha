@@ -960,6 +960,7 @@ class CombatSimUI {
                 html += `<span style="flex:1;">Item</span>`;
                 html += `<span style="${colNum}">/hr</span>`;
                 html += `<span style="${colGold}">Gold/hr</span>`;
+                html += `<span style="${colGold}">Gold/day</span>`;
                 html += `<span style="${colNum}">Total</span>`;
                 html += `<span style="${colGold}">Total Gold</span>`;
                 html += '</div>';
@@ -978,6 +979,7 @@ class CombatSimUI {
                     dropGoldTotal += drop.totalGold;
 
                     const goldHrStr = drop.unitValue > 0 ? formatKMB(Math.round(goldPerHr)) : '—';
+                    const goldDayStr = drop.unitValue > 0 ? formatKMB(Math.round(goldPerHr * 24)) : '—';
                     const goldTotalStr = drop.unitValue > 0 ? formatKMB(Math.round(drop.totalGold)) : '—';
                     const goldColor = drop.unitValue > 0 ? '#e8a87c' : '#444';
 
@@ -985,6 +987,7 @@ class CombatSimUI {
                     html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
                     html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
                     html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldHrStr}</span>`;
+                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldDayStr}</span>`;
                     html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
                     html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldTotalStr}</span>`;
                     html += '</div>';
@@ -999,6 +1002,7 @@ class CombatSimUI {
                 html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Revenue</span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}${revDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}</span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
@@ -1028,6 +1032,7 @@ class CombatSimUI {
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colGold}">Cost/hr</span>`;
+            html += `<span style="${colGold}">Cost/day</span>`;
             html += `<span style="${colNum}">Total</span>`;
             html += `<span style="${colGold}">Total Cost</span>`;
             html += '</div>';
@@ -1045,6 +1050,7 @@ class CombatSimUI {
                 consumableGoldTotal += cons.totalCost;
 
                 const costHrStr = cons.unitCost > 0 ? formatKMB(Math.round(costPerHr)) : '—';
+                const costDayStr = cons.unitCost > 0 ? formatKMB(Math.round(costPerHr * 24)) : '—';
                 const costTotalStr = cons.unitCost > 0 ? formatKMB(Math.round(cons.totalCost)) : '—';
                 const cColor = cons.unitCost > 0 ? costColor : '#444';
 
@@ -1052,6 +1058,7 @@ class CombatSimUI {
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
                 html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costHrStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costDayStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costTotalStr}</span>`;
                 html += '</div>';
@@ -1066,6 +1073,7 @@ class CombatSimUI {
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}${expDelta}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldTotal))}</span>`;
             html += '</div>';
@@ -1091,6 +1099,9 @@ class CombatSimUI {
                 ? this._formatDelta(netProfitPerHr, prevProfit, true, true)
                 : '';
 
+        const netProfitPerDay = netProfitPerHr * 24;
+        const profitDaySign = netProfitPerDay >= 0 ? '' : '-';
+
         html += `<div style="${sectionStyle}">`;
         html += `<div style="${headingStyle}">Net Profit</div>`;
         const netColGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
@@ -1099,6 +1110,7 @@ class CombatSimUI {
         html += `<span style="color:#aaa; font-weight:700; flex:1;">Profit</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}/hr${profitDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}/day</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
