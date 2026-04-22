@@ -397,6 +397,7 @@ export async function buildAllPlayerDTOs() {
     const players = [];
     const playerNames = [];
     const missingMembers = [];
+    let selfHrid = null;
     let slotIndex = 1;
 
     for (const member of Object.values(characterData.partyInfo.partySlotMap)) {
@@ -407,6 +408,7 @@ export async function buildAllPlayerDTOs() {
             const selfDTO = buildPlayerDTO();
             if (selfDTO) {
                 selfDTO.hrid = 'player' + slotIndex;
+                selfHrid = selfDTO.hrid;
                 players.push(selfDTO);
                 playerNames.push(characterData.character.name || 'Player ' + slotIndex);
             }
@@ -453,7 +455,10 @@ export async function buildAllPlayerDTOs() {
         }
     }
 
-    return { players, playerNames, missingMembers };
+    // Build playerInfo: hrid → name mapping in player order, for tab rendering
+    const playerInfo = players.map((p, i) => ({ hrid: p.hrid, name: playerNames[i] }));
+
+    return { players, playerInfo, selfHrid: selfHrid || players[0]?.hrid || 'player1', missingMembers };
 }
 
 /**
@@ -526,15 +531,15 @@ export function getCommunityBuffs() {
 }
 
 /**
- * Calculate expected drops from simulation results.
+ * Calculate expected drops from simulation results for a specific player.
  * Uses deterministic expected-value math (no RNG rolls).
  * @param {Object} simResult - SimResult from the engine
  * @param {Object} gameData - Game data maps
+ * @param {string} [playerHrid='player1'] - Which player's drop multipliers to use
  * @returns {Map<string, number>} itemHrid → expected total drop count
  */
-export function calculateExpectedDrops(simResult, gameData) {
+export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player1') {
     const combatMonsterDetailMap = gameData.combatMonsterDetailMap;
-    const playerHrid = 'player1';
     const dropRateMultiplier = simResult.dropRateMultiplier[playerHrid] || 1;
     const rareFindMultiplier = simResult.rareFindMultiplier?.[playerHrid] || 1;
     const combatDropQuantity = simResult.combatDropQuantity?.[playerHrid] || 0;

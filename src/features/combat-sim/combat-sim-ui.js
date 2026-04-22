@@ -33,6 +33,11 @@ class CombatSimUI {
         this.isDragging = false;
         this.dragOffset = { x: 0, y: 0 };
         this.elapsedTimer = null;
+        this._activePlayerTab = 'player1';
+        this._playerInfo = [];
+        this._lastSimResult = null;
+        this._lastSimHours = null;
+        this._lastGameData = null;
     }
 
     /**
@@ -229,11 +234,14 @@ class CombatSimUI {
             return;
         }
 
-        const { players: playerDTOs, playerNames: _playerNames, missingMembers } = await buildAllPlayerDTOs();
+        const { players: playerDTOs, playerInfo, selfHrid, missingMembers } = await buildAllPlayerDTOs();
         if (!playerDTOs.length) {
             this._setStatus('No character data available.');
             return;
         }
+
+        this._playerInfo = playerInfo;
+        this._activePlayerTab = selfHrid;
 
         const communityBuffs = getCommunityBuffs();
 
@@ -279,6 +287,9 @@ class CombatSimUI {
             this.elapsedTimer = null;
             const totalElapsed = ((Date.now() - simStartTime) / 1000).toFixed(1);
 
+            this._lastSimResult = simResult;
+            this._lastSimHours = hours;
+            this._lastGameData = gameData;
             this._displayResults(simResult, hours, gameData);
             const modeLabels = {
                 conservative: 'Buy: Ask / Sell: Bid',
@@ -319,6 +330,10 @@ class CombatSimUI {
         const container = this.panel.querySelector('#mwi-csim-results');
         if (!container) return;
 
+        const activeTab = this._activePlayerTab;
+        const playerInfo = this._playerInfo;
+        const numberOfPlayers = simResult.numberOfPlayers || 1;
+
         const sectionStyle = 'margin-bottom:12px;';
         const headingStyle = `color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px;`;
         const rowStyle = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
@@ -327,14 +342,27 @@ class CombatSimUI {
 
         let html = '';
 
-        // Overview: encounters/hr and deaths/hr
-        const encountersPerHr = simResult.encounters / hours;
-        let totalDeaths = 0;
-        for (const [hrid, count] of Object.entries(simResult.deaths)) {
-            // Only count player deaths (hrids starting with 'player'), not monster kills
-            if (typeof count === 'number' && hrid.startsWith('player')) totalDeaths += count;
+        // Player tabs (only shown for party sims)
+        if (numberOfPlayers > 1) {
+            html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">`;
+            for (const { hrid, name } of playerInfo) {
+                const isActive = hrid === activeTab;
+                const tabStyle = isActive
+                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT}; font-weight:700;`
+                    : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
+                html += `<button data-tab="${hrid}" style="
+                    ${tabStyle}
+                    padding:3px 10px; border-radius:5px; font-size:12px; cursor:pointer;
+                    font-family:inherit; transition:all 0.1s;
+                ">${name}</button>`;
+            }
+            html += '</div>';
         }
-        const deathsPerHr = totalDeaths / hours;
+
+        // Overview: encounters/hr (party-wide) + deaths/hr (per active player)
+        const encountersPerHr = simResult.encounters / hours;
+        const playerDeaths = simResult.deaths?.[activeTab] || 0;
+        const deathsPerHr = playerDeaths / hours;
 
         html += `<div style="${sectionStyle}">`;
         html += `<div style="${headingStyle}">Overview</div>`;
@@ -367,10 +395,10 @@ class CombatSimUI {
         html += '</div>';
 
         // XP/hr by skill — show for first player (self) only
-        const selfPlayerKey = Object.keys(simResult.experienceGained)[0];
+        // XP/hr by skill — per active tab player
         const xpTotals = {};
-        if (selfPlayerKey && simResult.experienceGained[selfPlayerKey]) {
-            for (const [skill, amount] of Object.entries(simResult.experienceGained[selfPlayerKey])) {
+        if (simResult.experienceGained[activeTab]) {
+            for (const [skill, amount] of Object.entries(simResult.experienceGained[activeTab])) {
                 xpTotals[skill] = (xpTotals[skill] || 0) + amount;
             }
         }
@@ -390,12 +418,11 @@ class CombatSimUI {
             html += '</div>';
         }
 
-        // Consumable costs — aggregate across all player keys
+        // Consumable costs — per active tab player
         const consumableTotals = {};
-        for (const playerConsumables of Object.values(simResult.consumablesUsed)) {
-            for (const [itemHrid, count] of Object.entries(playerConsumables)) {
-                consumableTotals[itemHrid] = (consumableTotals[itemHrid] || 0) + count;
-            }
+        const selfConsumables = simResult.consumablesUsed?.[activeTab] || {};
+        for (const [itemHrid, count] of Object.entries(selfConsumables)) {
+            consumableTotals[itemHrid] = (consumableTotals[itemHrid] || 0) + count;
         }
 
         // Track totals for net profit calculation
@@ -406,7 +433,7 @@ class CombatSimUI {
 
         // Drops — calculated from kill counts × drop tables × multipliers
         if (gameData) {
-            const dropMap = calculateExpectedDrops(simResult, gameData);
+            const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
 
             // Pre-compute gold values for sorting
             const dropData = [...dropMap.entries()]
@@ -562,6 +589,14 @@ class CombatSimUI {
 
         container.innerHTML = html;
         container.style.display = 'block';
+
+        // Tab click handler — re-render with new active player
+        container.querySelectorAll('[data-tab]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this._activePlayerTab = btn.dataset.tab;
+                this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+            });
+        });
     }
 
     /**
