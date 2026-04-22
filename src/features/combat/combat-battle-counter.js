@@ -79,6 +79,12 @@ class CombatBattleCounter {
     }
 
     _injectOrUpdate() {
+        // Only show counter while in combat
+        if (!this._isInCombat()) {
+            document.getElementById(COUNTER_ID)?.remove();
+            return;
+        }
+
         const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
         if (!currentAction || !nameRow) return;

@@ -401,6 +401,7 @@ class ActionTimeDisplay {
 
         if (!action) {
             this.displayElement.innerHTML = '';
+            this.clearAppendedStats(actionNameElement);
             this.scheduleUpdateRetry();
             // Reconnect observer
             this.reconnectActionNameObserver(actionNameElement);
@@ -409,6 +410,8 @@ class ActionTimeDisplay {
 
         const actionDetails = dataManager.getActionDetails(action.actionHrid);
         if (!actionDetails) {
+            this.displayElement.innerHTML = '';
+            this.clearAppendedStats(actionNameElement);
             // Reconnect observer
             this.reconnectActionNameObserver(actionNameElement);
             return;
