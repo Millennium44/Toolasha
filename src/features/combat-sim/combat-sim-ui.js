@@ -1004,10 +1004,14 @@ class CombatSimUI {
                         : '';
                 html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
                 html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Revenue</span>`;
+                const revDayDelta =
+                    prevRevPerHr !== null && prevRevPerHr !== undefined
+                        ? this._formatDelta(dropGoldPerHr * 24, prevRevPerHr * 24, true, true)
+                        : '';
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}${revDelta}</span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}${revDayDelta}</span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
@@ -1077,12 +1081,16 @@ class CombatSimUI {
                 prevExpPerHr !== null && prevExpPerHr !== undefined
                     ? this._formatDelta(consumableGoldPerHr, prevExpPerHr, false, true)
                     : '';
+            const expDayDelta =
+                prevExpPerHr !== null && prevExpPerHr !== undefined
+                    ? this._formatDelta(consumableGoldPerHr * 24, prevExpPerHr * 24, false, true)
+                    : '';
             html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}${expDelta}</span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}${expDayDelta}</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldTotal))}</span>`;
             html += '</div>';
@@ -1129,8 +1137,12 @@ class CombatSimUI {
         html += `<span style="color:#aaa; font-weight:700; flex:1;">Profit</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="${netColNum}"></span>`;
+        const profitDayDelta =
+            prevProfit !== null && prevProfit !== undefined
+                ? this._formatDelta(netProfitPerDay, prevProfit * 24, true, true)
+                : '';
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}${profitDelta}</span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}${profitDayDelta}</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
