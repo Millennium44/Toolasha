@@ -619,3 +619,67 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
 
     return totalDropMap;
 }
+
+// Maps dungeon chest HRIDs to their required entry key HRIDs
+const DUNGEON_ENTRY_KEYS = {
+    '/items/chimerical_chest': '/items/chimerical_entry_key',
+    '/items/sinister_chest': '/items/sinister_entry_key',
+    '/items/enchanted_chest': '/items/enchanted_entry_key',
+    '/items/pirate_chest': '/items/pirate_entry_key',
+};
+
+// Maps dungeon chest HRIDs (regular + refinement) to their chest key HRIDs
+const DUNGEON_CHEST_KEYS = {
+    '/items/chimerical_chest': '/items/chimerical_chest_key',
+    '/items/sinister_chest': '/items/sinister_chest_key',
+    '/items/enchanted_chest': '/items/enchanted_chest_key',
+    '/items/pirate_chest': '/items/pirate_chest_key',
+    '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
+    '/items/sinister_refinement_chest': '/items/sinister_chest_key',
+    '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
+    '/items/pirate_refinement_chest': '/items/pirate_chest_key',
+};
+
+/**
+ * Calculate dungeon key costs from a drop map.
+ * Entry keys (1:1 with regular chests) + chest keys (1:1 with all chests).
+ * @param {Map<string, number>} dropMap - itemHrid → expected count from calculateExpectedDrops
+ * @param {Function} getBuyPrice - Function to get buy price for an item (from UI)
+ * @returns {Array<{itemHrid: string, name: string, count: number, unitCost: number, totalCost: number}>}
+ */
+export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
+    const costs = [];
+    if (!dropMap) return costs;
+
+    const keyCounts = {};
+
+    // Entry keys: 1 per regular chest
+    for (const [chestHrid, count] of dropMap.entries()) {
+        const entryKeyHrid = DUNGEON_ENTRY_KEYS[chestHrid];
+        if (entryKeyHrid && count > 0) {
+            keyCounts[entryKeyHrid] = (keyCounts[entryKeyHrid] || 0) + count;
+        }
+    }
+
+    // Chest keys: 1 per chest (regular + refinement)
+    for (const [chestHrid, count] of dropMap.entries()) {
+        const chestKeyHrid = DUNGEON_CHEST_KEYS[chestHrid];
+        if (chestKeyHrid && count > 0) {
+            keyCounts[chestKeyHrid] = (keyCounts[chestKeyHrid] || 0) + count;
+        }
+    }
+
+    for (const [keyHrid, count] of Object.entries(keyCounts)) {
+        const unitCost = getBuyPrice(keyHrid);
+        const keyDetails = dataManager.getItemDetails(keyHrid);
+        costs.push({
+            itemHrid: keyHrid,
+            name: keyDetails?.name || keyHrid.split('/').pop(),
+            count,
+            unitCost,
+            totalCost: count * unitCost,
+        });
+    }
+
+    return costs.sort((a, b) => b.totalCost - a.totalCost);
+}

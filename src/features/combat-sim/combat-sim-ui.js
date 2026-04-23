@@ -16,6 +16,7 @@ import {
     getCurrentCombatZone,
     getCommunityBuffs,
     calculateExpectedDrops,
+    calculateDungeonKeyCosts,
 } from './combat-sim-adapter.js';
 import { runSimulation } from './combat-sim-runner.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -1218,6 +1219,9 @@ class CombatSimUI {
         let dropGoldTotal = 0;
         let consumableGoldPerHr = 0;
         let consumableGoldTotal = 0;
+        let keyCostPerHr = 0;
+        let keyCostTotal = 0;
+        let dungeonKeyCosts = [];
 
         // Drops — calculated from kill counts × drop tables × multipliers
         if (gameData) {
@@ -1310,6 +1314,19 @@ class CombatSimUI {
                 html += '</div>';
                 html += '</div>';
             }
+
+            // Compute dungeon key costs from drop map
+            if (simResult.isDungeon) {
+                const getBuyPriceForKey = (keyHrid) => {
+                    const price = marketAPI.getPrice(keyHrid);
+                    return this._getBuyPrice(price);
+                };
+                dungeonKeyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
+                for (const key of dungeonKeyCosts) {
+                    keyCostPerHr += (key.count / hours) * key.unitCost;
+                    keyCostTotal += key.totalCost;
+                }
+            }
         }
 
         // Consumable costs — same column layout as drops
@@ -1390,9 +1407,66 @@ class CombatSimUI {
             html += '</div>';
         }
 
-        // Net Profit
-        const netProfitPerHr = dropGoldPerHr - consumableGoldPerHr;
-        const netProfitTotal = dropGoldTotal - consumableGoldTotal;
+        // Dungeon key costs
+        if (dungeonKeyCosts.length > 0) {
+            const costRowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
+            const colNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
+            const colGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
+            const costColor = '#ff6b6b';
+
+            html += `<div style="${sectionStyle}">`;
+            html += `<div style="${headingStyle}">Key Costs</div>`;
+            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+            html += `<span style="flex:1;">Item</span>`;
+            html += `<span style="${colNum}">/hr</span>`;
+            html += `<span style="${colNum}">/day</span>`;
+            html += `<span style="${colGold}">Cost/hr</span>`;
+            html += `<span style="${colGold}">Cost/day</span>`;
+            html += `<span style="${colNum}">Total</span>`;
+            html += `<span style="${colGold}">Total Cost</span>`;
+            html += '</div>';
+
+            for (const key of dungeonKeyCosts) {
+                const perHr = key.count / hours;
+                const perHrStr = perHr >= 1 ? formatWithSeparator(Math.round(perHr)) : perHr.toFixed(2);
+                const perDayStr = formatWithSeparator(Math.round(perHr * 24));
+                const totalStr = key.count >= 1 ? formatWithSeparator(Math.round(key.count)) : key.count.toFixed(2);
+
+                const costPerHr = perHr * key.unitCost;
+                const costHrStr = key.unitCost > 0 ? formatKMB(Math.round(costPerHr)) : '—';
+                const costDayStr = key.unitCost > 0 ? formatKMB(Math.round(costPerHr * 24)) : '—';
+                const costTotalStr = key.unitCost > 0 ? formatKMB(Math.round(key.totalCost)) : '—';
+                const cColor = key.unitCost > 0 ? costColor : '#444';
+
+                html += `<div style="${costRowStyle}">`;
+                html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${key.name}</span>`;
+                html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costHrStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costDayStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costTotalStr}</span>`;
+                html += '</div>';
+            }
+
+            // Totals row
+            html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
+            html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Key Costs</span>`;
+            html += `<span style="${colNum}"></span>`;
+            html += `<span style="${colNum}"></span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostPerHr))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostPerHr * 24))}</span>`;
+            html += `<span style="${colNum}"></span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostTotal))}</span>`;
+            html += '</div>';
+            html += '</div>';
+        }
+
+        // Net Profit (includes consumable costs + key costs)
+        const totalExpensesPerHr = consumableGoldPerHr + keyCostPerHr;
+        const totalExpensesTotal = consumableGoldTotal + keyCostTotal;
+        const netProfitPerHr = dropGoldPerHr - totalExpensesPerHr;
+        const netProfitTotal = dropGoldTotal - totalExpensesTotal;
         const profitColor = netProfitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
         const profitSign = netProfitPerHr >= 0 ? '' : '-';
         const totalProfitSign = netProfitTotal >= 0 ? '' : '-';
@@ -1529,6 +1603,19 @@ class CombatSimUI {
             const price = marketAPI.getPrice(itemHrid);
             const unitCost = this._getBuyPrice(price);
             expensesPerHr += (count / hours) * unitCost;
+        }
+
+        // Dungeon key costs
+        if (simResult.isDungeon && gameData) {
+            const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
+            const getBuyPriceForKey = (keyHrid) => {
+                const price = marketAPI.getPrice(keyHrid);
+                return this._getBuyPrice(price);
+            };
+            const keyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
+            for (const key of keyCosts) {
+                expensesPerHr += (key.count / hours) * key.unitCost;
+            }
         }
 
         latestEntry.metrics = {
