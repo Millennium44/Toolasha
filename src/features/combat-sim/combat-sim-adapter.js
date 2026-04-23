@@ -550,46 +550,69 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
 
     const totalDropMap = new Map();
 
-    // Get all monster kills (filter out player deaths)
-    const monsters = Object.keys(simResult.deaths).filter((hrid) => !hrid.startsWith('player'));
+    if (simResult.isDungeon) {
+        // Dungeons: only completion rewards, no per-monster drops
+        if (simResult.dungeonsCompleted > 0) {
+            const zoneHrid = simResult.zoneName;
+            const actionDetailMap = gameData.actionDetailMap || {};
+            const actionDetail = actionDetailMap[zoneHrid];
+            const rewardDropTable = actionDetail?.combatZoneInfo?.dungeonInfo?.rewardDropTable;
 
-    for (const monsterHrid of monsters) {
-        const monsterData = combatMonsterDetailMap[monsterHrid];
-        if (!monsterData) continue;
+            if (rewardDropTable) {
+                for (const drop of rewardDropTable) {
+                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
+                    const adjustedRate = Math.min(1.0, Math.max(0, baseRate));
+                    if (adjustedRate <= 0) continue;
 
-        const killCount = simResult.deaths[monsterHrid];
+                    const avgCount = (drop.minCount + drop.maxCount) / 2;
+                    const expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
 
-        // Regular drops
-        if (monsterData.dropTable) {
-            for (const drop of monsterData.dropTable) {
-                if (drop.minDifficultyTier > difficultyTier) continue;
-
-                const tierMultiplier = 1.0 + 0.1 * difficultyTier;
-                const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
-                const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * dropRateMultiplier);
-                if (adjustedRate <= 0) continue;
-
-                const avgCount = (drop.minCount + drop.maxCount) / 2;
-                const expected =
-                    (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                    numberOfPlayers;
-
-                totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                }
             }
         }
+    } else {
+        // Regular zones: per-monster drops from kill counts
+        const monsters = Object.keys(simResult.deaths).filter((hrid) => !hrid.startsWith('player'));
 
-        // Rare drops
-        if (monsterData.rareDropTable) {
-            for (const drop of monsterData.rareDropTable) {
-                if (drop.minDifficultyTier > difficultyTier) continue;
+        for (const monsterHrid of monsters) {
+            const monsterData = combatMonsterDetailMap[monsterHrid];
+            if (!monsterData) continue;
 
-                const adjustedRate = drop.dropRate * rareFindMultiplier;
-                const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
-                const expected =
-                    (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
-                    numberOfPlayers;
+            const killCount = simResult.deaths[monsterHrid];
 
-                totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+            // Regular drops
+            if (monsterData.dropTable) {
+                for (const drop of monsterData.dropTable) {
+                    if (drop.minDifficultyTier > difficultyTier) continue;
+
+                    const tierMultiplier = 1.0 + 0.1 * difficultyTier;
+                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
+                    const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * dropRateMultiplier);
+                    if (adjustedRate <= 0) continue;
+
+                    const avgCount = (drop.minCount + drop.maxCount) / 2;
+                    const expected =
+                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
+                        numberOfPlayers;
+
+                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                }
+            }
+
+            // Rare drops
+            if (monsterData.rareDropTable) {
+                for (const drop of monsterData.rareDropTable) {
+                    if (drop.minDifficultyTier > difficultyTier) continue;
+
+                    const adjustedRate = drop.dropRate * rareFindMultiplier;
+                    const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
+                    const expected =
+                        (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
+                        numberOfPlayers;
+
+                    totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
+                }
             }
         }
     }
