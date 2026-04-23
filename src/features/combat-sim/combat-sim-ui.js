@@ -18,6 +18,7 @@ import {
     calculateExpectedDrops,
 } from './combat-sim-adapter.js';
 import { runSimulation } from './combat-sim-runner.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
 const ACCENT = '#4a9eff';
@@ -38,14 +39,9 @@ class CombatSimUI {
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
-        this._previousSimResult = null;
-        this._previousSimHours = null;
-        this._previousNetProfitPerHr = null;
-        this._previousRevenuePerHr = null;
-        this._previousExpensesPerHr = null;
-        this._lastNetProfitPerHr = null;
-        this._lastRevenuePerHr = null;
-        this._lastExpensesPerHr = null;
+        // Session history for multi-scenario comparison
+        this._simHistory = [];
+        this._comparisonIndex = null;
         // Loadout editor state
         this._editedDTOs = null;
         this._editedPlayerInfo = null;
@@ -55,6 +51,7 @@ class CombatSimUI {
         this._selfHrid = null;
         this._missingMembers = [];
         this._editorInitialized = false;
+        this._selectedLoadoutName = ''; // Track selected loadout for dropdown persistence
     }
 
     /**
@@ -388,12 +385,30 @@ class CombatSimUI {
             html += '</div>';
         }
 
-        // Reset button
-        html += `<div style="display:flex; justify-content:flex-end; margin-bottom:8px;">`;
+        // Loadout dropdown + Reset button row
+        const allSnapshots = loadoutSnapshot.getAllSnapshots();
+        // Only show combat loadouts (action type is combat or "All Skills")
+        const combatSnapshots = allSnapshots.filter(
+            (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
+        );
+        html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
+        if (combatSnapshots.length > 0) {
+            html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
+            html += `<select id="mwi-csim-loadout-select" style="
+                flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
+            html += `<option value=""${!this._selectedLoadoutName ? ' selected' : ''}>— Current Gear —</option>`;
+            for (const snap of combatSnapshots) {
+                const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
+                const selected = this._selectedLoadoutName === snap.name ? ' selected' : '';
+                html += `<option value="${snap.name}"${selected}>${label}</option>`;
+            }
+            html += `</select>`;
+        }
         html += `<button id="mwi-csim-reset" style="
-            background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;
+            margin-left:auto; background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;
             padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;
-            font-family:inherit;">Reset to Current</button>`;
+            font-family:inherit; flex-shrink:0;">Reset to Current</button>`;
         html += '</div>';
 
         // Equipment section
@@ -614,6 +629,7 @@ class CombatSimUI {
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 this._editedDTOs = structuredClone(this._originalDTOs);
+                this._selectedLoadoutName = '';
                 this._renderEditor();
             });
         }
@@ -625,6 +641,220 @@ class CombatSimUI {
                 this._renderEditor();
             });
         });
+
+        // Loadout select dropdown
+        const loadoutSelect = editorArea.querySelector('#mwi-csim-loadout-select');
+        if (loadoutSelect) {
+            loadoutSelect.addEventListener('change', () => {
+                const selectedName = loadoutSelect.value;
+                this._selectedLoadoutName = selectedName;
+                if (!selectedName) {
+                    // Reset to current gear
+                    const activePlayer = this._activeEditPlayer;
+                    if (this._originalDTOs?.[activePlayer]) {
+                        this._editedDTOs[activePlayer] = structuredClone(this._originalDTOs[activePlayer]);
+                    }
+                } else {
+                    this._applyLoadoutToDTO(selectedName);
+                }
+                this._renderEditor();
+            });
+        }
+    }
+
+    /**
+     * Generate a descriptive label for the current sim by diffing edited DTOs against original.
+     * @returns {string} Label like "Boots +15→+16, Slash Lv 8→9" or "Melee Loadout"
+     * @private
+     */
+    _generateSimLabel() {
+        const selfHrid = this._selfHrid || this._activeEditPlayer;
+        const original = this._originalDTOs?.[selfHrid];
+        const edited = this._editedDTOs?.[selfHrid];
+        if (!original || !edited) return this._selectedLoadoutName || 'Current Gear';
+
+        const gameData = buildGameDataPayload();
+        const itemDetailMap = gameData?.itemDetailMap || {};
+        const abilityDetailMap = gameData?.abilityDetailMap || {};
+
+        const changes = [];
+
+        // Equipment changes
+        const slotNames = {
+            '/equipment_types/head': 'Head',
+            '/equipment_types/body': 'Body',
+            '/equipment_types/legs': 'Legs',
+            '/equipment_types/feet': 'Feet',
+            '/equipment_types/hands': 'Hands',
+            '/equipment_types/main_hand': 'Main Hand',
+            '/equipment_types/two_hand': 'Two Hand',
+            '/equipment_types/off_hand': 'Off Hand',
+            '/equipment_types/pouch': 'Pouch',
+            '/equipment_types/back': 'Back',
+            '/equipment_types/neck': 'Neck',
+            '/equipment_types/earrings': 'Earrings',
+            '/equipment_types/ring': 'Ring',
+            '/equipment_types/charm': 'Charm',
+        };
+
+        for (const slot of Object.keys(slotNames)) {
+            const origEquip = original.equipment?.[slot];
+            const editEquip = edited.equipment?.[slot];
+            if (!origEquip && !editEquip) continue;
+
+            if (origEquip?.hrid !== editEquip?.hrid) {
+                const origName = itemDetailMap[origEquip?.hrid]?.name || origEquip?.hrid?.split('/').pop() || 'Empty';
+                const editName = itemDetailMap[editEquip?.hrid]?.name || editEquip?.hrid?.split('/').pop() || 'Empty';
+                changes.push(`${origName} → ${editName}`);
+            } else if (origEquip?.enhancementLevel !== editEquip?.enhancementLevel) {
+                const label = slotNames[slot];
+                changes.push(`${label} +${origEquip.enhancementLevel}→+${editEquip.enhancementLevel}`);
+            }
+        }
+
+        // Ability changes
+        for (let i = 0; i < 5; i++) {
+            const origAb = original.abilities?.[i];
+            const editAb = edited.abilities?.[i];
+            if (!origAb && !editAb) continue;
+
+            if (origAb?.hrid !== editAb?.hrid) {
+                const origName = abilityDetailMap[origAb?.hrid]?.name || origAb?.hrid?.split('/').pop() || 'None';
+                const editName = abilityDetailMap[editAb?.hrid]?.name || editAb?.hrid?.split('/').pop() || 'None';
+                changes.push(`${origName} → ${editName}`);
+            } else if (origAb && editAb && origAb.level !== editAb.level) {
+                const name = abilityDetailMap[editAb.hrid]?.name || editAb.hrid.split('/').pop();
+                changes.push(`${name} Lv ${origAb.level}→${editAb.level}`);
+            }
+        }
+
+        // Skill level changes
+        const skillLabels = {
+            staminaLevel: 'Stamina',
+            intelligenceLevel: 'Intelligence',
+            attackLevel: 'Attack',
+            meleeLevel: 'Melee',
+            defenseLevel: 'Defense',
+            rangedLevel: 'Ranged',
+            magicLevel: 'Magic',
+        };
+        for (const [key, label] of Object.entries(skillLabels)) {
+            if (original[key] !== edited[key]) {
+                changes.push(`${label} ${original[key]}→${edited[key]}`);
+            }
+        }
+
+        const loadoutPrefix = this._selectedLoadoutName || '';
+
+        if (changes.length === 0) return loadoutPrefix || 'Current Gear';
+
+        const joined = changes.join(', ');
+        const changesStr = joined.length > 50 ? joined.slice(0, 47) + '...' : joined;
+        return loadoutPrefix ? `${loadoutPrefix}: ${changesStr}` : changesStr;
+    }
+
+    /**
+     * Apply a loadout snapshot to the active player's DTO.
+     * Converts snapshot format to sim DTO format.
+     * @param {string} loadoutName - Name of the loadout to apply
+     * @private
+     */
+    _applyLoadoutToDTO(loadoutName) {
+        const snapshots = loadoutSnapshot.getAllSnapshots();
+        const snapshot = snapshots.find((s) => s.name === loadoutName);
+        if (!snapshot) return;
+
+        const activePlayer = this._activeEditPlayer;
+        const dto = this._editedDTOs[activePlayer];
+        if (!dto) return;
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) return;
+
+        const itemDetailMap = gameData.itemDetailMap || {};
+        const abilityDetailMap = gameData.abilityDetailMap || {};
+
+        // Convert equipment: snapshot uses itemLocationHrid, DTO uses equipmentDetail.type
+        const newEquipment = {};
+        for (const equip of snapshot.equipment || []) {
+            const itemDetail = itemDetailMap[equip.itemHrid];
+            const equipType = itemDetail?.equipmentDetail?.type;
+            if (equipType) {
+                newEquipment[equipType] = {
+                    hrid: equip.itemHrid,
+                    enhancementLevel: equip.enhancementLevel || 0,
+                };
+            }
+        }
+        dto.equipment = newEquipment;
+
+        // Convert abilities: snapshot has {abilityHrid, slot}, DTO needs {hrid, level, triggers}
+        // Ability levels come from characterData (they're player-level, not loadout-level)
+        const characterData = dataManager.characterData;
+        const currentAbilityLevels = {};
+        for (const ability of characterData?.combatUnit?.combatAbilities || []) {
+            if (ability?.abilityHrid) {
+                currentAbilityLevels[ability.abilityHrid] = ability.level || 1;
+            }
+        }
+
+        const triggerMap = {
+            ...(snapshot.abilityCombatTriggersMap || {}),
+            ...(snapshot.consumableCombatTriggersMap || {}),
+        };
+
+        const buildTriggers = (hrid) => {
+            const rawTriggers = triggerMap[hrid];
+            if (!Array.isArray(rawTriggers)) return [];
+            return rawTriggers.map((t) => ({
+                dependencyHrid: t.dependencyHrid,
+                conditionHrid: t.conditionHrid,
+                comparatorHrid: t.comparatorHrid,
+                value: t.value || 0,
+            }));
+        };
+
+        // Build abilities array (5 slots: 0=special, 1-4=normal)
+        // Use sequential packing like buildPlayerDTO — don't rely on server slot numbers
+        dto.abilities = [null, null, null, null, null];
+        let normalAbilityIndex = 1;
+        for (const ab of snapshot.abilities || []) {
+            if (!ab.abilityHrid) continue;
+            const isSpecial = abilityDetailMap[ab.abilityHrid]?.isSpecialAbility || false;
+            const abilityDTO = {
+                hrid: ab.abilityHrid,
+                level: currentAbilityLevels[ab.abilityHrid] || 1,
+                triggers: buildTriggers(ab.abilityHrid),
+            };
+
+            if (isSpecial) {
+                dto.abilities[0] = abilityDTO;
+            } else if (normalAbilityIndex < 5) {
+                dto.abilities[normalAbilityIndex++] = abilityDTO;
+            }
+        }
+
+        // Convert food (3 slots)
+        dto.food = [];
+        for (let i = 0; i < 3; i++) {
+            const foodItem = snapshot.food?.[i];
+            if (foodItem?.itemHrid) {
+                dto.food.push({ hrid: foodItem.itemHrid, triggers: buildTriggers(foodItem.itemHrid) });
+            } else {
+                dto.food.push(null);
+            }
+        }
+
+        // Convert drinks (3 slots)
+        dto.drinks = [];
+        for (let i = 0; i < 3; i++) {
+            const drinkItem = snapshot.drinks?.[i];
+            if (drinkItem?.itemHrid) {
+                dto.drinks.push({ hrid: drinkItem.itemHrid, triggers: buildTriggers(drinkItem.itemHrid) });
+            } else {
+                dto.drinks.push(null);
+            }
+        }
     }
 
     /**
@@ -723,15 +953,37 @@ class CombatSimUI {
             this.elapsedTimer = null;
             const totalElapsed = ((Date.now() - simStartTime) / 1000).toFixed(1);
 
-            // Save previous result for comparison deltas
-            this._previousSimResult = this._lastSimResult;
-            this._previousSimHours = this._lastSimHours;
-            this._previousNetProfitPerHr = this._lastNetProfitPerHr ?? null;
-            this._previousRevenuePerHr = this._lastRevenuePerHr ?? null;
-            this._previousExpensesPerHr = this._lastExpensesPerHr ?? null;
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
+
+            // Generate label before displaying (display may re-render)
+            const historyLabel = this._generateSimLabel();
+
+            // Add history entry (metrics filled after _displayResults computes them)
+            const historyEntry = {
+                label: historyLabel,
+                simResult,
+                hours,
+                gameData,
+                metrics: null, // Filled by _displayResults
+                timestamp: Date.now(),
+            };
+
+            // Auto-set comparison to first entry when adding second+ result
+            if (this._simHistory.length > 0 && this._comparisonIndex === null) {
+                this._comparisonIndex = 0;
+            }
+
+            this._simHistory.push(historyEntry);
+            if (this._simHistory.length > 10) {
+                this._simHistory.shift();
+                // Adjust comparison index
+                if (this._comparisonIndex !== null) {
+                    this._comparisonIndex = Math.max(0, this._comparisonIndex - 1);
+                }
+            }
+
             this._displayResults(simResult, hours, gameData);
             this._switchTab('results');
             const modeLabels = {
@@ -785,6 +1037,14 @@ class CombatSimUI {
 
         let html = '';
 
+        // Pre-compute metrics for the latest history entry if not yet populated
+        this._ensureHistoryMetrics(simResult, hours, gameData, activeTab);
+
+        // History panel (above everything)
+        if (this._simHistory.length > 0) {
+            html += this._renderHistoryPanel();
+        }
+
         // Player tabs (only shown for party sims)
         if (numberOfPlayers > 1) {
             html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">`;
@@ -802,12 +1062,14 @@ class CombatSimUI {
             html += '</div>';
         }
 
-        // Compute previous values for delta comparison
-        const prev = this._previousSimResult;
-        const prevHours = this._previousSimHours;
-        const hasPrev = prev && prevHours;
-        const prevEncPerHr = hasPrev ? prev.encounters / prevHours : null;
-        const prevDeathsPerHr = hasPrev ? (prev.deaths?.[activeTab] || 0) / prevHours : null;
+        // Compute previous values for delta comparison (from history)
+        const compEntry = this._comparisonIndex !== null ? this._simHistory[this._comparisonIndex] : null;
+        const compResult = compEntry?.simResult;
+        const compHours = compEntry?.hours;
+        const compMetrics = compEntry?.metrics;
+        const hasPrev = compResult && compHours;
+        const prevEncPerHr = hasPrev ? compResult.encounters / compHours : null;
+        const prevDeathsPerHr = hasPrev ? (compResult.deaths?.[activeTab] || 0) / compHours : null;
 
         // Overview: encounters/hr (party-wide) + deaths/hr (per active player)
         const encountersPerHr = simResult.encounters / hours;
@@ -838,16 +1100,17 @@ class CombatSimUI {
                 }
             }
             const dps = totalDamage / (hours * 3600);
+            this._lastComputedDps = dps;
             let prevDps = null;
             if (hasPrev) {
-                for (const [hrid, count] of Object.entries(prev.deaths)) {
+                for (const [hrid, count] of Object.entries(compResult.deaths)) {
                     if (hrid.startsWith('player')) continue;
                     const monster = monsterDetailMap[hrid];
                     if (monster?.combatDetails?.maxHitpoints) {
                         prevTotalDamage += count * monster.combatDetails.maxHitpoints;
                     }
                 }
-                prevDps = prevTotalDamage / (prevHours * 3600);
+                prevDps = prevTotalDamage / (compHours * 3600);
             }
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">Party DPS (est.)</span>`;
@@ -884,9 +1147,9 @@ class CombatSimUI {
 
         // Build previous XP map for delta comparison
         const prevXpPerHr = {};
-        if (hasPrev && prev.experienceGained?.[activeTab]) {
-            for (const [skill, amount] of Object.entries(prev.experienceGained[activeTab])) {
-                prevXpPerHr[skill] = Math.round(amount / prevHours);
+        if (hasPrev && compResult.experienceGained?.[activeTab]) {
+            for (const [skill, amount] of Object.entries(compResult.experienceGained[activeTab])) {
+                prevXpPerHr[skill] = Math.round(amount / compHours);
             }
         }
 
@@ -997,7 +1260,7 @@ class CombatSimUI {
                     html += '</div>';
                 }
                 // Totals row
-                const prevRevPerHr = this._previousRevenuePerHr;
+                const prevRevPerHr = compMetrics?.revenuePerHr ?? null;
                 const revDelta =
                     prevRevPerHr !== null && prevRevPerHr !== undefined
                         ? this._formatDelta(dropGoldPerHr, prevRevPerHr, true, true)
@@ -1076,7 +1339,7 @@ class CombatSimUI {
                 html += '</div>';
             }
             // Totals row
-            const prevExpPerHr = this._previousExpensesPerHr;
+            const prevExpPerHr = compMetrics?.expensesPerHr ?? null;
             const expDelta =
                 prevExpPerHr !== null && prevExpPerHr !== undefined
                     ? this._formatDelta(consumableGoldPerHr, prevExpPerHr, false, true)
@@ -1104,13 +1367,10 @@ class CombatSimUI {
         const profitSign = netProfitPerHr >= 0 ? '' : '-';
         const totalProfitSign = netProfitTotal >= 0 ? '' : '-';
 
-        // Store for future delta comparison
-        this._lastNetProfitPerHr = netProfitPerHr;
-        this._lastRevenuePerHr = dropGoldPerHr;
-        this._lastExpensesPerHr = consumableGoldPerHr;
+        // Metrics already pre-computed by _ensureHistoryMetrics
 
-        // Compute delta from previous sim
-        const prevProfit = this._previousNetProfitPerHr;
+        // Compute delta from comparison entry
+        const prevProfit = compMetrics?.profitPerHr ?? null;
         const profitDelta =
             prevProfit !== null && prevProfit !== undefined
                 ? this._formatDelta(netProfitPerHr, prevProfit, true, true)
@@ -1158,6 +1418,154 @@ class CombatSimUI {
                 this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
             });
         });
+
+        // History row click handler — set comparison baseline
+        container.querySelectorAll('[data-history-idx]').forEach((row) => {
+            const idx = parseInt(row.dataset.historyIdx, 10);
+            // Don't allow clicking the current result as comparison
+            if (idx === this._simHistory.length - 1) return;
+            row.addEventListener('click', () => {
+                this._comparisonIndex = idx;
+                this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+            });
+        });
+
+        // History collapsible toggle
+        container.querySelectorAll('[data-toggle="history-section"]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const section = container.querySelector('#mwi-csim-history-section');
+                const arrow = container.querySelector('[data-arrow="history-section"]');
+                if (section) {
+                    const isOpen = section.style.display !== 'none';
+                    section.style.display = isOpen ? 'none' : 'block';
+                    if (arrow) arrow.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+                }
+            });
+        });
+    }
+
+    /**
+     * Pre-compute and store metrics for the latest history entry if not yet populated.
+     * @private
+     */
+    _ensureHistoryMetrics(simResult, hours, gameData, activeTab) {
+        const latestEntry = this._simHistory[this._simHistory.length - 1];
+        if (!latestEntry || latestEntry.metrics) return;
+
+        // Encounters
+        const encountersPerHr = simResult.encounters / hours;
+
+        // DPS from monster kills × HP
+        let totalDamage = 0;
+        const monsterDetailMap = gameData?.combatMonsterDetailMap || {};
+        for (const [hrid, count] of Object.entries(simResult.deaths)) {
+            if (hrid.startsWith('player')) continue;
+            const monster = monsterDetailMap[hrid];
+            if (monster?.combatDetails?.maxHitpoints) {
+                totalDamage += count * monster.combatDetails.maxHitpoints;
+            }
+        }
+        const dps = totalDamage / (hours * 3600);
+
+        // XP/hr for active player
+        let totalXpPerHr = 0;
+        if (simResult.experienceGained?.[activeTab]) {
+            for (const amount of Object.values(simResult.experienceGained[activeTab])) {
+                totalXpPerHr += Math.round(amount / hours);
+            }
+        }
+
+        // Revenue from drops
+        let revenuePerHr = 0;
+        if (gameData) {
+            const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
+            for (const [itemHrid, total] of dropMap.entries()) {
+                if (total <= 0) continue;
+                const price = marketAPI.getPrice(itemHrid);
+                let unitValue = this._getSellPrice(price);
+                if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
+                if (unitValue === 0) {
+                    const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                    if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+                }
+                revenuePerHr += (total / hours) * unitValue;
+            }
+        }
+
+        // Expenses from consumables
+        let expensesPerHr = 0;
+        const selfConsumables = simResult.consumablesUsed?.[activeTab] || {};
+        for (const [itemHrid, count] of Object.entries(selfConsumables)) {
+            const price = marketAPI.getPrice(itemHrid);
+            const unitCost = this._getBuyPrice(price);
+            expensesPerHr += (count / hours) * unitCost;
+        }
+
+        latestEntry.metrics = {
+            encountersPerHr,
+            dps,
+            totalXpPerHr,
+            revenuePerHr,
+            expensesPerHr,
+            profitPerHr: revenuePerHr - expensesPerHr,
+        };
+    }
+
+    /**
+     * Render the history panel showing all sim runs in this session.
+     * @returns {string} HTML string
+     * @private
+     */
+    _renderHistoryPanel() {
+        const history = this._simHistory;
+        if (history.length === 0) return '';
+
+        const currentIdx = history.length - 1;
+        const compIdx = this._comparisonIndex;
+
+        let html = `<div style="margin-bottom:12px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="history-section">`;
+        html += `<span data-arrow="history-section" style="display:inline-block; width:14px; font-size:10px;">&#9660;</span> Simulation History (${history.length} runs)`;
+        html += '</div>';
+        html += `<div id="mwi-csim-history-section" style="display:block;">`;
+
+        // Table header
+        html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
+        html += '<tr style="border-bottom:1px solid #333; color:#666;">';
+        html += '<th style="text-align:left; padding:2px 4px;"></th>';
+        html += '<th style="text-align:left; padding:2px 4px;">Scenario</th>';
+        html += '<th style="text-align:right; padding:2px 4px;">Party DPS</th>';
+        html += '<th style="text-align:right; padding:2px 4px;">Profit/hr</th>';
+        html += '<th style="text-align:right; padding:2px 4px;">XP/hr</th>';
+        html += '</tr>';
+
+        for (let i = 0; i < history.length; i++) {
+            const entry = history[i];
+            const m = entry.metrics;
+            const isCurrent = i === currentIdx;
+            const isComp = i === compIdx;
+
+            const indicator = isCurrent ? '►' : isComp ? '★' : '';
+            const indicatorColor = isCurrent ? ACCENT : isComp ? '#e8a87c' : '#444';
+
+            const rowBg = isComp ? 'background:rgba(232,168,124,0.08);' : isCurrent ? `background:${ACCENT_BG};` : '';
+            const cursor = isCurrent ? '' : 'cursor:pointer;';
+            const labelColor = isCurrent ? ACCENT : '#ccc';
+
+            const profitColor = m?.profitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
+
+            html += `<tr data-history-idx="${i}" style="${rowBg} ${cursor}">`;
+            html += `<td style="padding:2px 4px; color:${indicatorColor}; font-size:10px; width:14px;">${indicator}</td>`;
+            html += `<td style="padding:2px 4px; color:${labelColor}; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${entry.label}">${entry.label}</td>`;
+            html += `<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">${m ? formatWithSeparator(Math.round(m.dps)) : '—'}</td>`;
+            html += `<td style="text-align:right; padding:2px 4px; color:${profitColor};">${m ? formatKMB(Math.round(m.profitPerHr)) : '—'}</td>`;
+            html += `<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">${m ? formatWithSeparator(Math.round(m.totalXpPerHr)) : '—'}</td>`;
+            html += '</tr>';
+        }
+
+        html += '</table>';
+        html += '</div></div>';
+        return html;
     }
 
     /**
