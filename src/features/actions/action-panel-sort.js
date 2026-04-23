@@ -24,12 +24,21 @@ class ActionPanelSort {
     }
 
     /**
+     * Get character-scoped storage key for pinned actions.
+     * @returns {string}
+     */
+    _getPinnedStorageKey() {
+        const charId = dataManager.getCurrentCharacterId() || 'default';
+        return `pinnedActions_${charId}`;
+    }
+
+    /**
      * Initialize - load pinned actions from storage
      */
     async initialize() {
         if (this.initialized) return;
 
-        const pinnedData = await storage.getJSON('pinnedActions', 'settings', []);
+        const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
         this.pinnedActions = new Set(pinnedData);
         this.sortMode = await storage.get('actionSortMode', 'settings', 'default');
         this.initialized = true;
@@ -49,6 +58,11 @@ class ActionPanelSort {
         this.pinnedActions.clear();
         this.cachedStats = {};
         this.initialized = false;
+
+        // Reload pinned actions for the new character
+        const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
+        this.pinnedActions = new Set(pinnedData);
+        this.initialized = true;
     }
 
     /**
@@ -143,7 +157,7 @@ class ActionPanelSort {
         }
 
         // Save to storage
-        await storage.setJSON('pinnedActions', Array.from(this.pinnedActions), 'settings', true);
+        await storage.setJSON(this._getPinnedStorageKey(), Array.from(this.pinnedActions), 'settings', true);
 
         return this.pinnedActions.has(actionHrid);
     }
