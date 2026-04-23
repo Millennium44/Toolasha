@@ -157,7 +157,6 @@ class CombatSimUI {
             <select id="mwi-csim-zone" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Tier</label>
             <select id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
-                ${Array.from({ length: 11 }, (_, i) => `<option value="${i}">${i}</option>`).join('')}
             </select>
             <label style="color:#888; font-size:12px;">Hours</label>
             <input id="mwi-csim-hours" type="number" min="1" max="10000" value="100" style="${inputStyle}">
@@ -252,6 +251,9 @@ class CombatSimUI {
             .addEventListener('click', () => this._switchTab('configure'));
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
 
+        // Zone change → update tier dropdown
+        this.panel.querySelector('#mwi-csim-zone').addEventListener('change', () => this._updateTierDropdown());
+
         this.populateZones();
     }
 
@@ -276,11 +278,39 @@ class CombatSimUI {
         const current = getCurrentCombatZone();
         if (current) {
             zoneSelect.value = current.zoneHrid;
+        }
+
+        this._updateTierDropdown();
+
+        // Restore current tier after dropdown is rebuilt
+        if (current) {
             const tierSelect = this.panel.querySelector('#mwi-csim-tier');
             if (tierSelect) {
                 tierSelect.value = String(current.difficultyTier);
             }
         }
+    }
+
+    /**
+     * Update the tier dropdown based on the currently selected zone.
+     * Regular zones: T0-T5, Dungeons: T0-T2.
+     * @private
+     */
+    _updateTierDropdown() {
+        const zoneSelect = this.panel?.querySelector('#mwi-csim-zone');
+        const tierSelect = this.panel?.querySelector('#mwi-csim-tier');
+        if (!zoneSelect || !tierSelect) return;
+
+        const selectedHrid = zoneSelect.value;
+        const zones = getCombatZones();
+        const zone = zones.find((z) => z.hrid === selectedHrid);
+        const maxTier = zone?.isDungeon ? 2 : 5;
+
+        const currentTier = parseInt(tierSelect.value) || 0;
+        tierSelect.innerHTML = Array.from({ length: maxTier + 1 }, (_, i) => `<option value="${i}">${i}</option>`).join(
+            ''
+        );
+        tierSelect.value = String(Math.min(currentTier, maxTier));
     }
 
     /**
