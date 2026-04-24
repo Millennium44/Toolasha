@@ -131,6 +131,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionPanel_enhanceMatLimitProtections: {
+                id: 'actionPanel_enhanceMatLimitProtections',
+                label: 'Enhancement material limit: Include protection items',
+                type: 'checkbox',
+                default: true,
+                help: 'When enabled, protection item availability is factored into the material limit estimate. Disable to see material limit based only on enhancement materials.',
+            },
             actionQueue_valueMode: {
                 id: 'actionQueue_valueMode',
                 label: 'Queued actions: Value calculation mode',

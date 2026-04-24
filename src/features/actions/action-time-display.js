@@ -922,7 +922,11 @@ class ActionTimeDisplay {
             }
 
             // Also check protection item availability if protection is active
-            if (protectFrom > 0 && expectedProtections > 0) {
+            if (
+                protectFrom > 0 &&
+                expectedProtections > 0 &&
+                config.getSetting('actionPanel_enhanceMatLimitProtections')
+            ) {
                 let protectionItemHrid = null;
 
                 // Extract from secondaryItemHash
