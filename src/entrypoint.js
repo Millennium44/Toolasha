@@ -505,6 +505,13 @@ function registerFeatures() {
             module: UI.taskClaimCollector,
             async: false,
         },
+        {
+            key: 'taskRerollProtection',
+            name: 'Task Reroll Protection',
+            category: 'Tasks',
+            module: UI.taskRerollProtection,
+            async: true,
+        },
         { key: 'skillRemainingXP', name: 'Remaining XP', category: 'Skills', module: UI.remainingXP, async: false },
         { key: 'xpTracker', name: 'XP/hr Tracker', category: 'Skills', module: UI.xpTracker, async: false },
         {

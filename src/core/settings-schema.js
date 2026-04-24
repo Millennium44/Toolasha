@@ -1046,6 +1046,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'When clicking Go on a task, combines the required amounts of all in-progress tasks for the same action into a single pre-filled count',
             },
+            taskRerollProtection: {
+                id: 'taskRerollProtection',
+                label: 'Task reroll protection',
+                type: 'checkbox',
+                default: true,
+                help: 'Protect specific tasks from accidental rerolling. Protected tasks get a green highlight and require a confirmation click before rerolling. A shield icon appears in the task panel to configure protected zones.',
+            },
         },
     },
 
