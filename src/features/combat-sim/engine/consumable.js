@@ -45,7 +45,7 @@ class Consumable {
     }
 
     static createFromDTO(dto) {
-        const triggers = dto.triggers.map((trigger) => Trigger.createFromDTO(trigger));
+        const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;
         const consumable = new Consumable(dto.hrid, triggers);
 
         return consumable;

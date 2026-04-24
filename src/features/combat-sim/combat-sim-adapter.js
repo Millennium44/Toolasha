@@ -121,7 +121,7 @@ export function buildPlayerDTO() {
      */
     const buildTriggerDTOs = (hrid) => {
         const rawTriggers = triggerMap[hrid];
-        if (!Array.isArray(rawTriggers)) return [];
+        if (!Array.isArray(rawTriggers)) return null;
 
         return rawTriggers.map((t) => ({
             dependencyHrid: t.dependencyHrid,
@@ -235,21 +235,21 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         }
     }
 
-    // Build trigger map from profile
-    const triggerMap = {
-        ...(profile.profile?.abilityCombatTriggersMap || {}),
-        ...(profile.profile?.consumableCombatTriggersMap || {}),
-    };
-
     // Try to get consumables from battle data first
     let battlePlayer = null;
     if (battleData?.players) {
         battlePlayer = battleData.players.find((p) => p.character?.id === profile.characterID);
     }
 
+    // Build trigger map — prefer battle data triggers over profile triggers (battle data is fresher)
+    const triggerMap = {
+        ...(battlePlayer?.abilityCombatTriggersMap || profile.profile?.abilityCombatTriggersMap || {}),
+        ...(battlePlayer?.consumableCombatTriggersMap || profile.profile?.consumableCombatTriggersMap || {}),
+    };
+
     const buildTriggerDTOs = (hrid) => {
         const rawTriggers = triggerMap[hrid];
-        if (!Array.isArray(rawTriggers)) return [];
+        if (!Array.isArray(rawTriggers)) return null;
         return rawTriggers.map((t) => ({
             dependencyHrid: t.dependencyHrid,
             conditionHrid: t.conditionHrid,

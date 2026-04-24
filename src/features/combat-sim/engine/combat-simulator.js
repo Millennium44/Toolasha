@@ -692,22 +692,22 @@ class CombatSimulator {
 
         if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {
             if (this.zone.isDungeon) {
+                const enemyInfo = this.enemies
+                    ? this.enemies
+                          .map(
+                              (enemy) =>
+                                  enemy.hrid +
+                                  '(' +
+                                  (
+                                      (enemy.combatDetails.currentHitpoints * 100) /
+                                      enemy.combatDetails.maxHitpoints
+                                  ).toFixed(2) +
+                                  '%)'
+                          )
+                          .join(', ')
+                    : 'none (all dead)';
                 console.log(
-                    'All Players died at wave #' +
-                        (this.zone.encountersKilled - 1) +
-                        ' with enemies: ' +
-                        this.enemies
-                            .map(
-                                (enemy) =>
-                                    enemy.hrid +
-                                    '(' +
-                                    (
-                                        (enemy.combatDetails.currentHitpoints * 100) /
-                                        enemy.combatDetails.maxHitpoints
-                                    ).toFixed(2) +
-                                    '%)'
-                            )
-                            .join(', ')
+                    'All Players died at wave #' + (this.zone.encountersKilled - 1) + ' with enemies: ' + enemyInfo
                 );
 
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);

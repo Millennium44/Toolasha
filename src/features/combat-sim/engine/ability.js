@@ -173,7 +173,7 @@ class Ability {
     }
 
     static createFromDTO(dto) {
-        const triggers = dto.triggers.map((trigger) => Trigger.createFromDTO(trigger));
+        const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;
         const ability = new Ability(dto.hrid, dto.level, triggers);
 
         return ability;
