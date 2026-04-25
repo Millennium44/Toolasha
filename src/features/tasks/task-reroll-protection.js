@@ -379,12 +379,43 @@ class TaskRerollProtection {
         const gameData = dataManager.getInitClientData();
         if (!gameData) return;
 
-        // Build list of all possible task targets (actions + monsters)
+        // Build list of all possible task targets (actions + monsters + zones)
         const items = [];
+        const zoneMonsters = {}; // zoneHrid → [monsterHrid, ...]
 
         // Actions (gathering, production, etc.)
         for (const [hrid, action] of Object.entries(gameData.actionDetailMap || {})) {
-            if (action.type === '/action_types/combat') continue; // Combat uses monsters, not actions
+            if (action.type === '/action_types/combat') {
+                // Build zone → monster mapping
+                const monsterHrids = new Set();
+                const fightInfo = action.combatZoneInfo?.fightInfo;
+                if (fightInfo) {
+                    for (const spawn of fightInfo.randomSpawnInfo?.spawns || []) {
+                        if (spawn.combatMonsterHrid) monsterHrids.add(spawn.combatMonsterHrid);
+                    }
+                    for (const spawn of fightInfo.bossSpawns || []) {
+                        if (spawn.combatMonsterHrid) monsterHrids.add(spawn.combatMonsterHrid);
+                    }
+                }
+                const dungeonInfo = action.combatZoneInfo?.dungeonInfo;
+                if (dungeonInfo) {
+                    for (const wave of Object.values(dungeonInfo.fixedSpawnsMap || {})) {
+                        for (const spawn of wave) {
+                            if (spawn.combatMonsterHrid) monsterHrids.add(spawn.combatMonsterHrid);
+                        }
+                    }
+                    for (const spawnInfo of Object.values(dungeonInfo.randomSpawnInfoMap || {})) {
+                        for (const spawn of spawnInfo.spawns || []) {
+                            if (spawn.combatMonsterHrid) monsterHrids.add(spawn.combatMonsterHrid);
+                        }
+                    }
+                }
+                if (monsterHrids.size > 1) {
+                    zoneMonsters[hrid] = [...monsterHrids];
+                    items.push({ hrid, name: action.name, type: 'zone', isZone: true });
+                }
+                continue;
+            }
             items.push({ hrid, name: action.name, type: action.type?.split('/').pop() || 'other' });
         }
 
@@ -439,7 +470,7 @@ class TaskRerollProtection {
         searchDiv.style.cssText = 'padding: 8px 14px; flex-shrink: 0;';
         const searchInput = document.createElement('input');
         searchInput.type = 'search';
-        searchInput.placeholder = 'Search actions, monsters...';
+        searchInput.placeholder = 'Search actions, monsters, zones...';
         searchInput.style.cssText = `
             width: 100%;
             padding: 6px 10px;
@@ -461,7 +492,13 @@ class TaskRerollProtection {
             const lower = query.toLowerCase();
             const filtered = query
                 ? items.filter((i) => i.name.toLowerCase().includes(lower))
-                : items.filter((i) => this.protectedHrids.has(i.hrid)); // Show only protected when no search
+                : items.filter((i) => {
+                      if (i.isZone) {
+                          // Show zone if any of its monsters are protected
+                          return zoneMonsters[i.hrid]?.some((m) => this.protectedHrids.has(m));
+                      }
+                      return this.protectedHrids.has(i.hrid);
+                  });
 
             let html = '';
             if (!query && filtered.length === 0) {
@@ -470,15 +507,28 @@ class TaskRerollProtection {
             }
 
             for (const item of filtered.slice(0, 50)) {
-                const isProtected = this.protectedHrids.has(item.hrid);
-                const checkmark = isProtected ? '✓' : '';
-                const checkColor = isProtected ? '#4caf50' : '#444';
-                const nameColor = isProtected ? '#e0e0e0' : '#aaa';
-                const typeLabel = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+                let checkmark, checkColor, nameColor, typeLabel;
 
-                html += `<div data-hrid="${item.hrid}" style="
+                if (item.isZone) {
+                    const monsters = zoneMonsters[item.hrid] || [];
+                    const protectedCount = monsters.filter((m) => this.protectedHrids.has(m)).length;
+                    const allProtected = protectedCount === monsters.length;
+                    checkmark = allProtected ? '✓' : protectedCount > 0 ? '~' : '';
+                    checkColor = protectedCount > 0 ? '#4a9eff' : '#444';
+                    nameColor = protectedCount > 0 ? '#e0e0e0' : '#aaa';
+                    typeLabel = 'Zone (' + monsters.length + ')';
+                } else {
+                    const isProtected = this.protectedHrids.has(item.hrid);
+                    checkmark = isProtected ? '✓' : '';
+                    checkColor = isProtected ? '#4caf50' : '#444';
+                    nameColor = isProtected ? '#e0e0e0' : '#aaa';
+                    typeLabel = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+                }
+
+                const borderColor = item.isZone ? '#2a2a4e' : '#1a1a2e';
+                html += `<div data-hrid="${item.hrid}" ${item.isZone ? 'data-zone="1"' : ''} style="
                     display:flex; align-items:center; gap:8px; padding:5px 4px;
-                    cursor:pointer; border-bottom:1px solid #1a1a2e;
+                    cursor:pointer; border-bottom:1px solid ${borderColor};
                     transition: background 0.1s;
                 " onmouseover="this.style.background='rgba(255,255,255,0.04)'"
                    onmouseout="this.style.background=''">
@@ -497,7 +547,22 @@ class TaskRerollProtection {
             // Wire click handlers
             listContainer.querySelectorAll('[data-hrid]').forEach((row) => {
                 row.addEventListener('click', async () => {
-                    await this.toggleProtected(row.dataset.hrid);
+                    if (row.dataset.zone === '1') {
+                        // Zone click — toggle all monsters in zone
+                        const monsters = zoneMonsters[row.dataset.hrid] || [];
+                        const allProtected = monsters.every((m) => this.protectedHrids.has(m));
+                        for (const m of monsters) {
+                            if (allProtected) {
+                                this.protectedHrids.delete(m);
+                            } else {
+                                this.protectedHrids.add(m);
+                            }
+                        }
+                        await this._save();
+                        this._processAllCards();
+                    } else {
+                        await this.toggleProtected(row.dataset.hrid);
+                    }
                     renderList(searchInput.value.trim());
                 });
             });
