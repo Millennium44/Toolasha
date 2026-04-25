@@ -12,7 +12,6 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
-import { timeReadable } from '../../utils/formatters.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -810,8 +809,12 @@ class CollectionFilters {
     _applySorting(catsEl) {
         const tiles = Array.from(catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO'));
 
-        // Always clear time badges so they disappear when switching modes
-        catsEl.querySelectorAll('.toolasha-cf.time-to-tier').forEach((el) => el.remove());
+        // Always clear time badges and margin overrides so they disappear when switching modes
+        catsEl.querySelectorAll('.toolasha-cf.time-to-tier').forEach((el) => {
+            el.parentElement?.style.removeProperty('margin-bottom');
+            el.parentElement?.style.removeProperty('overflow');
+            el.remove();
+        });
 
         if (this.sortMode === 'default') {
             tiles.forEach((el) => el.style.removeProperty('order'));
@@ -849,11 +852,30 @@ class CollectionFilters {
         if (this.sortMode === 'time-to-next-tier') {
             scored.forEach(({ el, score }) => {
                 if (score === Infinity) return;
-                const circleEl = el.querySelector('[class*="Collection_collection"]');
-                if (!circleEl) return;
-                circleEl.insertAdjacentHTML(
-                    'afterend',
-                    `<span class="toolasha-cf time-to-tier" style="font-size:10px;color:#aaa;display:block;text-align:center;line-height:1.4;">${timeReadable(score * 3600)}</span>`
+                el.style.marginBottom = '16px';
+                el.style.overflow = 'visible';
+
+                // Compact time format that fits tile width
+                const totalSec = score * 3600;
+                let timeStr;
+                if (totalSec >= 86400) {
+                    const d = Math.floor(totalSec / 86400);
+                    const h = Math.floor((totalSec % 86400) / 3600);
+                    timeStr = d + 'd ' + h + 'h';
+                } else if (totalSec >= 3600) {
+                    const h = Math.floor(totalSec / 3600);
+                    const m = Math.floor((totalSec % 3600) / 60);
+                    timeStr = h + 'h ' + m + 'm';
+                } else {
+                    const m = Math.floor(totalSec / 60);
+                    timeStr = m + 'm';
+                }
+
+                el.insertAdjacentHTML(
+                    'beforeend',
+                    '<span class="toolasha-cf time-to-tier" style="position:absolute;bottom:-14px;left:0;right:0;font-size:9px;color:#aaa;text-align:center;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                        timeStr +
+                        '</span>'
                 );
             });
         }
@@ -873,11 +895,31 @@ class CollectionFilters {
         this.itemActionCache = {};
         const actionDetailMap = dataManager.getInitClientData()?.actionDetailMap ?? {};
         for (const actionDetails of Object.values(actionDetailMap)) {
-            if (!actionDetails.outputItems?.length) continue;
-            const itemHrid = actionDetails.outputItems[0].itemHrid;
-            const itemId = itemHrid?.split('/').pop();
-            if (itemId && !(itemId in this.itemActionCache)) {
-                this.itemActionCache[itemId] = actionDetails;
+            // Production actions use outputItems
+            if (actionDetails.outputItems?.length) {
+                for (const output of actionDetails.outputItems) {
+                    const itemId = output.itemHrid?.split('/').pop();
+                    if (itemId && !(itemId in this.itemActionCache)) {
+                        this.itemActionCache[itemId] = {
+                            actionDetails,
+                            outputIndex: actionDetails.outputItems.indexOf(output),
+                            source: 'outputItems',
+                        };
+                    }
+                }
+            }
+            // Gathering actions use dropTable
+            if (actionDetails.dropTable?.length) {
+                for (const drop of actionDetails.dropTable) {
+                    const itemId = drop.itemHrid?.split('/').pop();
+                    if (itemId && !(itemId in this.itemActionCache)) {
+                        this.itemActionCache[itemId] = {
+                            actionDetails,
+                            outputIndex: actionDetails.dropTable.indexOf(drop),
+                            source: 'dropTable',
+                        };
+                    }
+                }
             }
         }
     }
@@ -891,20 +933,30 @@ class CollectionFilters {
      */
     _getEffectiveItemsPerHour(itemId) {
         this._buildItemActionCache();
-        const actionDetails = this.itemActionCache[itemId];
-        if (!actionDetails) return 0;
+        const cached = this.itemActionCache[itemId];
+        if (!cached) return 0;
+
+        const { actionDetails, outputIndex, source } = cached;
 
         // Production actions consume input items; gathering actions do not
         const isProduction = !!actionDetails.inputItems?.length;
 
         try {
             const ctx = getActionEfficiencyContext(actionDetails, { isProduction });
-            const outputCount = actionDetails.outputItems[0].count ?? 1;
+
+            let outputCount;
+            if (source === 'dropTable') {
+                const drop = actionDetails.dropTable[outputIndex];
+                outputCount = (drop.count ?? 1) * (drop.dropRate ?? 1);
+            } else {
+                outputCount = actionDetails.outputItems[outputIndex].count ?? 1;
+            }
+
             // totalGathering is 0 for production actions (efficiency.js zeroes it out)
             const rate = (3600 / ctx.actionTime) * ctx.efficiencyMultiplier * (1 + ctx.totalGathering) * outputCount;
             return rate;
         } catch (err) {
-            console.warn(`[CollectionFilters] _getEffectiveItemsPerHour error for ${itemId}:`, err);
+            console.warn('[CollectionFilters] _getEffectiveItemsPerHour error for ' + itemId + ':', err);
             return 0;
         }
     }
