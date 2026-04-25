@@ -437,6 +437,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'tabReorder',
+            name: 'Tab Reorder',
+            category: 'UI',
+            module: UI.tabReorder,
+            async: true,
+        },
+        {
             key: 'altClickNavigation',
             name: 'Alt+Click Navigation',
             category: 'Navigation',

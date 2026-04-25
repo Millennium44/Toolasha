@@ -1087,6 +1087,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
             },
+            tabReorder: {
+                id: 'tabReorder',
+                label: 'Character panel: Drag-and-drop tab reordering',
+                type: 'checkbox',
+                default: true,
+                help: 'Drag tabs to rearrange the order of Inventory, Toolasha, Equipment, Houses, Abilities, and Loadout. Order persists through refresh.',
+            },
             expPercentage: {
                 id: 'expPercentage',
                 label: 'Left sidebar: Show skill XP percentages',
