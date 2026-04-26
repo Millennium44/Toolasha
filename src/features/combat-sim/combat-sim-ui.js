@@ -43,10 +43,15 @@ class CombatSimUI {
         // Session history for multi-scenario comparison
         this._simHistory = [];
         this._comparisonIndex = null;
+        // Comparison table state
+        this._comparisonBaseline = null; // index into _simHistory
+        this._comparisonSlots = []; // array of _simHistory indices to compare
+        this._activeDetailIndex = null; // which history entry's details are shown
         // Loadout editor state
         this._editedDTOs = null;
         this._editedPlayerInfo = null;
         this._originalDTOs = null;
+        this._openSections = new Set(); // track which editor sections are expanded
         this._activeMainTab = 'configure';
         this._activeEditPlayer = null;
         this._selfHrid = null;
@@ -71,7 +76,7 @@ class CombatSimUI {
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid ${ACCENT_BORDER};
             border-radius: 10px;
-            width: 500px;
+            width: 600px;
             max-height: 600px;
             display: none;
             flex-direction: column;
@@ -448,6 +453,9 @@ class CombatSimUI {
         // Abilities section
         html += this._renderAbilitiesSection(dto, gameData);
 
+        // Consumables section
+        html += this._renderConsumablesSection(dto, gameData);
+
         // Skill levels section
         html += this._renderSkillLevelsSection(dto);
 
@@ -564,9 +572,296 @@ class CombatSimUI {
     }
 
     /**
-     * Render skill levels section.
+     * Render consumables section with food and drink slots.
      * @private
      */
+    _renderConsumablesSection(dto, gameData) {
+        const itemDetailMap = gameData?.itemDetailMap || {};
+        const foodCount = dto.food.filter((f) => f).length;
+        const drinkCount = dto.drinks.filter((d) => d).length;
+
+        let html = '<div style="margin-bottom:10px;">';
+        html +=
+            '<div style="color:' +
+            ACCENT +
+            '; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="consumable-section">';
+        html +=
+            '<span data-arrow="consumable-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Consumables (' +
+            foodCount +
+            ' food, ' +
+            drinkCount +
+            ' drinks)';
+        html += '</div>';
+        html += '<div id="mwi-csim-consumable-section" style="display:none;">';
+
+        // Food slots
+        html += '<div style="color:#888; font-size:11px; margin-bottom:3px;">Food</div>';
+        for (let i = 0; i < 3; i++) {
+            const item = dto.food[i];
+            const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
+            const nameColor = item ? '#e0e0e0' : '#555';
+            html += '<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">';
+            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' +
+                nameColor +
+                '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
+                name +
+                '</span>';
+            html +=
+                '<button data-consumable-slot="food-' +
+                i +
+                '" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>';
+            html += '</div>';
+        }
+
+        // Drink slots
+        html += '<div style="color:#888; font-size:11px; margin-bottom:3px; margin-top:6px;">Drinks</div>';
+        for (let i = 0; i < 3; i++) {
+            const item = dto.drinks[i];
+            const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
+            const nameColor = item ? '#e0e0e0' : '#555';
+            html += '<div style="display:flex; align-items:center; gap:6px; padding:2px 0; font-size:12px;">';
+            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' +
+                nameColor +
+                '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
+                name +
+                '</span>';
+            html +=
+                '<button data-consumable-slot="drinks-' +
+                i +
+                '" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>';
+            html += '</div>';
+        }
+
+        html += '</div></div>';
+        return html;
+    }
+
+    /**
+     * Open a searchable consumable picker popup.
+     * @param {'food'|'drinks'} slotType
+     * @param {number} slotIndex
+     * @param {Object} dto
+     * @param {Object} gameData
+     * @private
+     */
+    _openConsumablePicker(slotType, slotIndex, dto, gameData) {
+        // Remove any existing picker
+        document.getElementById('mwi-csim-consumable-picker')?.remove();
+        document.getElementById('mwi-csim-consumable-backdrop')?.remove();
+
+        const itemDetailMap = gameData?.itemDetailMap || {};
+        const isFood = slotType === 'food';
+
+        // Determine consumable "type" for slot restriction enforcement
+        const getConsumableType = (hrid) => {
+            const detail = itemDetailMap[hrid]?.consumableDetail;
+            if (!detail) return null;
+            const hp = detail.hitpointRestore || 0;
+            const mp = detail.manapointRestore || 0;
+            const dur = detail.recoveryDuration || 0;
+            if (hp > 0) return dur > 0 ? 'hp_over_time' : 'hp_instant';
+            if (mp > 0) return dur > 0 ? 'mp_over_time' : 'mp_instant';
+            const buffs = detail.buffs || [];
+            if (buffs.length > 0) return 'buff:' + (buffs[0].uniqueHrid || 'unknown');
+            return null;
+        };
+
+        // Collect types already used in OTHER slots
+        const usedTypes = new Set();
+        const slots = dto[slotType] || [];
+        for (let i = 0; i < slots.length; i++) {
+            if (i === slotIndex || !slots[i]) continue;
+            const t = getConsumableType(slots[i].hrid);
+            if (t) usedTypes.add(t);
+        }
+
+        // Build list of valid consumables, marking conflicts
+        const items = [];
+        for (const [hrid, item] of Object.entries(itemDetailMap)) {
+            if (!item.consumableDetail) continue;
+            const cat = item.categoryHrid || '';
+            const isFoodItem = cat.includes('food');
+            // Only include combat drinks (coffees) — teas have no cooldown and aren't used in combat
+            const isDrinkItem =
+                (cat.includes('drink') || hrid.includes('coffee')) && item.consumableDetail.cooldownDuration > 0;
+            if (isFood ? isFoodItem : isDrinkItem) {
+                const cType = getConsumableType(hrid);
+                const conflict = cType && usedTypes.has(cType);
+                const itemLevel = item.itemLevel || 0;
+
+                // Category label for grouping
+                let categoryLabel;
+                if (isFood) {
+                    const hp = item.consumableDetail.hitpointRestore || 0;
+                    const mp = item.consumableDetail.manapointRestore || 0;
+                    const dur = item.consumableDetail.recoveryDuration || 0;
+                    if (hp > 0 && dur > 0) categoryLabel = 'HP Over Time';
+                    else if (hp > 0) categoryLabel = 'HP Instant';
+                    else if (mp > 0 && dur > 0) categoryLabel = 'MP Over Time';
+                    else if (mp > 0) categoryLabel = 'MP Instant';
+                    else categoryLabel = 'Other';
+                } else {
+                    const buffs = item.consumableDetail.buffs || [];
+                    if (buffs.length > 0) {
+                        const buffName = buffs[0].uniqueHrid?.split('/').pop()?.replace(/_/g, ' ') || 'buff';
+                        categoryLabel = buffName.charAt(0).toUpperCase() + buffName.slice(1);
+                    } else categoryLabel = 'Other';
+                }
+
+                items.push({ hrid, name: item.name || hrid.split('/').pop(), conflict, itemLevel, categoryLabel });
+            }
+        }
+
+        // Sort by category then by item level descending within category
+        items.sort((a, b) => {
+            const catCmp = a.categoryLabel.localeCompare(b.categoryLabel);
+            if (catCmp !== 0) return catCmp;
+            return b.itemLevel - a.itemLevel;
+        });
+
+        // Build popup
+        const popup = document.createElement('div');
+        popup.id = 'mwi-csim-consumable-picker';
+        popup.style.cssText =
+            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            'width:350px; max-height:400px; display:flex; flex-direction:column;' +
+            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.innerHTML =
+            '<span style="font-weight:700; font-size:13px; color:#4a9eff;">Select ' +
+            (isFood ? 'Food' : 'Drink') +
+            '</span>' +
+            '<button id="mwi-csim-picker-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>';
+        popup.appendChild(header);
+
+        // Search
+        const searchDiv = document.createElement('div');
+        searchDiv.style.cssText = 'padding:6px 14px; flex-shrink:0;';
+        const searchInput = document.createElement('input');
+        searchInput.type = 'search';
+        searchInput.placeholder = 'Search...';
+        searchInput.style.cssText =
+            'width:100%; padding:5px 8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15);' +
+            'border-radius:6px; color:#e0e0e0; font-size:12px; font-family:inherit; outline:none;';
+        searchDiv.appendChild(searchInput);
+        popup.appendChild(searchDiv);
+
+        // List
+        const listEl = document.createElement('div');
+        listEl.style.cssText = 'flex:1; overflow-y:auto; padding:4px 14px;';
+        popup.appendChild(listEl);
+
+        const currentHrid = dto[slotType][slotIndex]?.hrid || '';
+
+        const renderList = (query) => {
+            const lower = query.toLowerCase();
+            const filtered = query
+                ? items.filter(
+                      (i) => i.name.toLowerCase().includes(lower) || i.categoryLabel.toLowerCase().includes(lower)
+                  )
+                : items;
+
+            let html =
+                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:#888; font-style:italic;"' +
+                ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">Empty (clear slot)</div>';
+
+            let lastCategory = '';
+            for (const item of filtered.slice(0, 80)) {
+                // Category header
+                if (item.categoryLabel !== lastCategory) {
+                    lastCategory = item.categoryLabel;
+                    html +=
+                        '<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:' +
+                        ACCENT +
+                        '; border-bottom:1px solid #2a2a4e; margin-top:4px;">' +
+                        item.categoryLabel +
+                        '</div>';
+                }
+
+                const isCurrent = item.hrid === currentHrid;
+                const lvlTag =
+                    '<span style="color:#666; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ' +
+                    item.itemLevel +
+                    '</span>';
+                if (item.conflict) {
+                    html +=
+                        '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid #1a1a2e; color:#555; cursor:default;">' +
+                        item.name +
+                        ' <span style="font-size:10px; color:#664;">(in use)</span>' +
+                        lvlTag +
+                        '</div>';
+                } else {
+                    const color = isCurrent ? '#4a9eff' : '#ccc';
+                    const indicator = isCurrent ? ' <span style="color:#4a9eff;">●</span>' : '';
+                    html +=
+                        '<div data-pick-hrid="' +
+                        item.hrid +
+                        '" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:' +
+                        color +
+                        ';"' +
+                        ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
+                        item.name +
+                        indicator +
+                        lvlTag +
+                        '</div>';
+                }
+            }
+            if (filtered.length > 80) {
+                html +=
+                    '<div style="color:#666; text-align:center; padding:6px;">...' +
+                    (filtered.length - 80) +
+                    ' more</div>';
+            }
+            listEl.innerHTML = html;
+
+            // Wire click handlers
+            listEl.querySelectorAll('[data-pick-hrid]').forEach((row) => {
+                row.addEventListener('click', () => {
+                    const hrid = row.dataset.pickHrid;
+                    if (hrid) {
+                        dto[slotType][slotIndex] = { hrid, triggers: null };
+                    } else {
+                        dto[slotType][slotIndex] = null;
+                    }
+                    closePicker();
+                    this._renderEditor();
+                });
+            });
+        };
+
+        let searchTimeout;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => renderList(searchInput.value.trim()), 150);
+        });
+
+        const closePicker = () => {
+            popup.remove();
+            document.getElementById('mwi-csim-consumable-backdrop')?.remove();
+        };
+
+        popup.querySelector('#mwi-csim-picker-close').addEventListener('click', closePicker);
+
+        // Backdrop
+        const backdrop = document.createElement('div');
+        backdrop.id = 'mwi-csim-consumable-backdrop';
+        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.addEventListener('click', closePicker);
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(popup);
+        renderList('');
+        searchInput.focus();
+    }
     _renderSkillLevelsSection(dto) {
         const skills = [
             { key: 'staminaLevel', label: 'Stamina' },
@@ -611,14 +906,30 @@ class CombatSimUI {
         editorArea.querySelectorAll('[data-toggle]').forEach((el) => {
             el.addEventListener('click', () => {
                 const sectionId = el.dataset.toggle;
-                const section = editorArea.querySelector(`#mwi-csim-${sectionId}`);
-                const arrow = editorArea.querySelector(`[data-arrow="${sectionId}"]`);
+                const section = editorArea.querySelector('#mwi-csim-' + sectionId);
+                const arrow = editorArea.querySelector('[data-arrow="' + sectionId + '"]');
                 if (section) {
                     const isOpen = section.style.display !== 'none';
                     section.style.display = isOpen ? 'none' : 'block';
                     if (arrow) arrow.innerHTML = isOpen ? '&#9654;' : '&#9660;';
+                    if (isOpen) {
+                        this._openSections.delete(sectionId);
+                    } else {
+                        this._openSections.add(sectionId);
+                    }
                 }
             });
+
+            // Restore open state from previous render
+            const sectionId = el.dataset.toggle;
+            if (this._openSections.has(sectionId)) {
+                const section = editorArea.querySelector('#mwi-csim-' + sectionId);
+                const arrow = editorArea.querySelector('[data-arrow="' + sectionId + '"]');
+                if (section) {
+                    section.style.display = 'block';
+                    if (arrow) arrow.innerHTML = '&#9660;';
+                }
+            }
         });
 
         // Enhancement level inputs
@@ -652,6 +963,15 @@ class CombatSimUI {
                 const val = Math.max(1, parseInt(input.value) || 1);
                 input.value = val;
                 dto[key] = val;
+            });
+        });
+
+        // Consumable change buttons
+        editorArea.querySelectorAll('[data-consumable-slot]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const [slotType, idx] = btn.dataset.consumableSlot.split('-');
+                const gameData = buildGameDataPayload();
+                if (gameData) this._openConsumablePicker(slotType, parseInt(idx), dto, gameData);
             });
         });
 
@@ -775,13 +1095,27 @@ class CombatSimUI {
             }
         }
 
+        // Consumable changes
+        const slotLabels = { food: 'Food', drinks: 'Drink' };
+        for (const [slotType, prefix] of Object.entries(slotLabels)) {
+            for (let i = 0; i < 3; i++) {
+                const origHrid = original[slotType]?.[i]?.hrid;
+                const editHrid = edited[slotType]?.[i]?.hrid;
+                if (origHrid !== editHrid) {
+                    const origName = origHrid ? itemDetailMap[origHrid]?.name || origHrid.split('/').pop() : 'Empty';
+                    const editName = editHrid ? itemDetailMap[editHrid]?.name || editHrid.split('/').pop() : 'Empty';
+                    changes.push(`${prefix} ${i + 1}: ${origName}→${editName}`);
+                }
+            }
+        }
+
         const loadoutPrefix = this._selectedLoadoutName || '';
 
         if (changes.length === 0) return loadoutPrefix || 'Current Gear';
 
         const joined = changes.join(', ');
-        const changesStr = joined.length > 50 ? joined.slice(0, 47) + '...' : joined;
-        return loadoutPrefix ? `${loadoutPrefix}: ${changesStr}` : changesStr;
+        const changesStr = joined;
+        return loadoutPrefix ? loadoutPrefix + ': ' + changesStr : changesStr;
     }
 
     /**
@@ -1001,7 +1335,10 @@ class CombatSimUI {
                 timestamp: Date.now(),
             };
 
-            // Auto-set comparison to first entry when adding second+ result
+            // Auto-set comparison baseline to first entry when adding second+ result
+            if (this._simHistory.length > 0 && this._comparisonBaseline === null) {
+                this._comparisonBaseline = 0;
+            }
             if (this._simHistory.length > 0 && this._comparisonIndex === null) {
                 this._comparisonIndex = 0;
             }
@@ -1009,12 +1346,21 @@ class CombatSimUI {
             this._simHistory.push(historyEntry);
             if (this._simHistory.length > 10) {
                 this._simHistory.shift();
-                // Adjust comparison index
+                // Adjust comparison indices
                 if (this._comparisonIndex !== null) {
                     this._comparisonIndex = Math.max(0, this._comparisonIndex - 1);
                 }
+                if (this._comparisonBaseline !== null) {
+                    this._comparisonBaseline = Math.max(0, this._comparisonBaseline - 1);
+                }
+                this._comparisonSlots = this._comparisonSlots.map((i) => i - 1).filter((i) => i >= 0);
+                if (this._activeDetailIndex !== null) {
+                    this._activeDetailIndex = Math.max(0, this._activeDetailIndex - 1);
+                }
             }
 
+            // Show the newly run sim's details
+            this._activeDetailIndex = this._simHistory.length - 1;
             this._displayResults(simResult, hours, gameData);
             this._switchTab('results');
             const modeLabels = {
@@ -1053,6 +1399,14 @@ class CombatSimUI {
      * @private
      */
     _displayResults(simResult, hours, gameData) {
+        // If an active detail index is set, show that history entry's details instead
+        if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
+            const entry = this._simHistory[this._activeDetailIndex];
+            simResult = entry.simResult;
+            hours = entry.hours;
+            gameData = entry.gameData;
+        }
+
         const container = this.panel.querySelector('#mwi-csim-results');
         if (!container) return;
 
@@ -1094,7 +1448,9 @@ class CombatSimUI {
         }
 
         // Compute previous values for delta comparison (from history)
-        const compEntry = this._comparisonIndex !== null ? this._simHistory[this._comparisonIndex] : null;
+        // Use baseline for deltas (comparison table baseline, not the old comparisonIndex)
+        const compIdx = this._comparisonBaseline ?? this._comparisonIndex;
+        const compEntry = compIdx !== null ? this._simHistory[compIdx] : null;
         const compResult = compEntry?.simResult;
         const compHours = compEntry?.hours;
         const compMetrics = compEntry?.metrics;
@@ -1247,8 +1603,8 @@ class CombatSimUI {
 
             if (dropData.length > 0) {
                 const dropRowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
-                const colNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
-                const colGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
+                const colNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
+                const colGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
 
                 html += `<div style="${sectionStyle}">`;
                 html += `<div style="${headingStyle}">Drops</div>`;
@@ -1307,8 +1663,8 @@ class CombatSimUI {
                         : '';
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}${revDelta}</span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}${revDayDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}<br>${revDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}<br>${revDayDelta}</span>`;
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
@@ -1340,8 +1696,8 @@ class CombatSimUI {
 
         if (consumableEntries.length > 0) {
             const costRowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
-            const colNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
-            const colGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
+            const colNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
+            const colGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
             const costColor = '#ff6b6b';
 
             html += `<div style="${sectionStyle}">`;
@@ -1399,8 +1755,8 @@ class CombatSimUI {
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}${expDelta}</span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}${expDayDelta}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}<br>${expDelta}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}<br>${expDayDelta}</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldTotal))}</span>`;
             html += '</div>';
@@ -1410,8 +1766,8 @@ class CombatSimUI {
         // Dungeon key costs
         if (dungeonKeyCosts.length > 0) {
             const costRowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
-            const colNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
-            const colGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
+            const colNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
+            const colGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
             const costColor = '#ff6b6b';
 
             html += `<div style="${sectionStyle}">`;
@@ -1485,8 +1841,8 @@ class CombatSimUI {
 
         html += `<div style="${sectionStyle}">`;
         html += `<div style="${headingStyle}">Net Profit</div>`;
-        const netColGold = 'flex:0; white-space:nowrap; min-width:58px; text-align:right;';
-        const netColNum = 'flex:0; white-space:nowrap; min-width:48px; text-align:right;';
+        const netColGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
+        const netColNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
         // Column headers
         html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
         html += `<span style="flex:1;"></span>`;
@@ -1505,8 +1861,8 @@ class CombatSimUI {
             prevProfit !== null && prevProfit !== undefined
                 ? this._formatDelta(netProfitPerDay, prevProfit * 24, true, true)
                 : '';
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}${profitDelta}</span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}${profitDayDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}<br>${profitDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}<br>${profitDayDelta}</span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
@@ -1534,6 +1890,41 @@ class CombatSimUI {
             });
         });
 
+        // Comparison: baseline selector
+        const baselineSelect = container.querySelector('#mwi-csim-baseline-select');
+        if (baselineSelect) {
+            baselineSelect.addEventListener('change', () => {
+                const newBase = parseInt(baselineSelect.value, 10);
+                this._comparisonBaseline = newBase;
+                // Remove the new baseline from comparison slots if present
+                this._comparisonSlots = this._comparisonSlots.filter((i) => i !== newBase);
+                this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+            });
+        }
+
+        // Comparison: add sim dropdown
+        const addCompSelect = container.querySelector('#mwi-csim-add-comparison');
+        if (addCompSelect) {
+            addCompSelect.addEventListener('change', () => {
+                const idx = parseInt(addCompSelect.value, 10);
+                if (!isNaN(idx) && !this._comparisonSlots.includes(idx)) {
+                    this._comparisonSlots.push(idx);
+                    this._activeDetailIndex = idx;
+                    this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+                }
+            });
+        }
+
+        // Comparison: remove × buttons
+        container.querySelectorAll('[data-remove-comparison]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.removeComparison, 10);
+                this._comparisonSlots = this._comparisonSlots.filter((i) => i !== idx);
+                this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+            });
+        });
+
         // History collapsible toggle
         container.querySelectorAll('[data-toggle="history-section"]').forEach((el) => {
             el.addEventListener('click', () => {
@@ -1550,12 +1941,28 @@ class CombatSimUI {
 
     /**
      * Pre-compute and store metrics for the latest history entry if not yet populated.
+     * Also ensures all history entries have metrics for comparison table.
      * @private
      */
     _ensureHistoryMetrics(simResult, hours, gameData, activeTab) {
         const latestEntry = this._simHistory[this._simHistory.length - 1];
-        if (!latestEntry || latestEntry.metrics) return;
+        if (latestEntry && !latestEntry.metrics) {
+            latestEntry.metrics = this._computeMetrics(simResult, hours, gameData, activeTab);
+        }
 
+        // Ensure all entries have metrics (for comparison table)
+        for (const entry of this._simHistory) {
+            if (!entry.metrics) {
+                entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, activeTab);
+            }
+        }
+    }
+
+    /**
+     * Compute metrics for a sim result.
+     * @private
+     */
+    _computeMetrics(simResult, hours, gameData, activeTab) {
         // Encounters
         const encountersPerHr = simResult.encounters / hours;
 
@@ -1618,69 +2025,184 @@ class CombatSimUI {
             }
         }
 
-        latestEntry.metrics = {
+        return {
             encountersPerHr,
             dps,
             totalXpPerHr,
             revenuePerHr,
             expensesPerHr,
             profitPerHr: revenuePerHr - expensesPerHr,
+            successRate: simResult.isDungeon
+                ? simResult.dungeonsCompleted / Math.max(1, simResult.dungeonsCompleted + simResult.dungeonsFailed)
+                : null,
         };
     }
 
     /**
-     * Render the history panel showing all sim runs in this session.
+     * Render the comparison panel with baseline + selected comparison sims.
      * @returns {string} HTML string
      * @private
      */
     _renderHistoryPanel() {
         const history = this._simHistory;
-        if (history.length === 0) return '';
+        if (history.length < 2) return '';
 
-        const currentIdx = history.length - 1;
-        const compIdx = this._comparisonIndex;
+        const baseIdx = this._comparisonBaseline ?? 0;
+        const baseEntry = history[baseIdx];
+        const baseM = baseEntry?.metrics;
 
-        let html = `<div style="margin-bottom:12px;">`;
-        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="history-section">`;
-        html += `<span data-arrow="history-section" style="display:inline-block; width:14px; font-size:10px;">&#9660;</span> Simulation History (${history.length} runs)`;
+        // Check if any sim is a dungeon
+        const hasDungeon = history.some((e) => e.simResult?.isDungeon);
+
+        let html = '<div style="margin-bottom:12px;">';
+        html +=
+            '<div style="color:' +
+            ACCENT +
+            '; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="history-section">';
+        html +=
+            '<span data-arrow="history-section" style="display:inline-block; width:14px; font-size:10px;">&#9660;</span> Comparison (' +
+            history.length +
+            ' runs)';
         html += '</div>';
-        html += `<div id="mwi-csim-history-section" style="display:block;">`;
+        html += '<div id="mwi-csim-history-section" style="display:block;">';
 
-        // Table header
+        // Baseline selector
+        html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:11px;">';
+        html += '<span style="color:#888;">Baseline:</span>';
+        html +=
+            '<select id="mwi-csim-baseline-select" style="flex:1; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
+        for (let i = 0; i < history.length; i++) {
+            const sel = i === baseIdx ? ' selected' : '';
+            html += '<option value="' + i + '"' + sel + '>' + history[i].label + '</option>';
+        }
+        html += '</select></div>';
+
+        // Table
         html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
         html += '<tr style="border-bottom:1px solid #333; color:#666;">';
-        html += '<th style="text-align:left; padding:2px 4px;"></th>';
         html += '<th style="text-align:left; padding:2px 4px;">Scenario</th>';
-        html += '<th style="text-align:right; padding:2px 4px;">Party DPS</th>';
+        html += '<th style="text-align:right; padding:2px 4px;">EPH</th>';
+        html += '<th style="text-align:right; padding:2px 4px;">DPS</th>';
         html += '<th style="text-align:right; padding:2px 4px;">Profit/hr</th>';
         html += '<th style="text-align:right; padding:2px 4px;">XP/hr</th>';
+        if (hasDungeon) html += '<th style="text-align:right; padding:2px 4px;">Success</th>';
+        html += '<th style="width:20px;"></th>';
         html += '</tr>';
 
-        for (let i = 0; i < history.length; i++) {
-            const entry = history[i];
+        // Baseline row
+        const baseProfitColor = baseM?.profitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
+        html += '<tr style="background:rgba(232,168,124,0.08);">';
+        html +=
+            '<td style="padding:2px 4px; color:#e8a87c; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
+            baseEntry.label +
+            '">★ ' +
+            baseEntry.label +
+            '</td>';
+        html +=
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+            (baseM ? formatWithSeparator(Math.round(baseM.encountersPerHr)) : '—') +
+            '</td>';
+        html +=
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+            (baseM ? formatWithSeparator(Math.round(baseM.dps)) : '—') +
+            '</td>';
+        html +=
+            '<td style="text-align:right; padding:2px 4px; color:' +
+            baseProfitColor +
+            ';">' +
+            (baseM ? formatKMB(Math.round(baseM.profitPerHr)) : '—') +
+            '</td>';
+        html +=
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+            (baseM ? formatWithSeparator(Math.round(baseM.totalXpPerHr)) : '—') +
+            '</td>';
+        if (hasDungeon) {
+            html +=
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+                (baseM?.successRate != null ? (baseM.successRate * 100).toFixed(1) + '%' : '—') +
+                '</td>';
+        }
+        html += '<td></td>';
+        html += '</tr>';
+
+        // Compared rows
+        for (const idx of this._comparisonSlots) {
+            if (idx === baseIdx || idx >= history.length) continue;
+            const entry = history[idx];
             const m = entry.metrics;
-            const isCurrent = i === currentIdx;
-            const isComp = i === compIdx;
-
-            const indicator = isCurrent ? '►' : isComp ? '★' : '';
-            const indicatorColor = isCurrent ? ACCENT : isComp ? '#e8a87c' : '#444';
-
-            const rowBg = isComp ? 'background:rgba(232,168,124,0.08);' : isCurrent ? `background:${ACCENT_BG};` : '';
-            const cursor = isCurrent ? '' : 'cursor:pointer;';
-            const labelColor = isCurrent ? ACCENT : '#ccc';
-
             const profitColor = m?.profitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
 
-            html += `<tr data-history-idx="${i}" style="${rowBg} ${cursor}">`;
-            html += `<td style="padding:2px 4px; color:${indicatorColor}; font-size:10px; width:14px;">${indicator}</td>`;
-            html += `<td style="padding:2px 4px; color:${labelColor}; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${entry.label}">${entry.label}</td>`;
-            html += `<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">${m ? formatWithSeparator(Math.round(m.dps)) : '—'}</td>`;
-            html += `<td style="text-align:right; padding:2px 4px; color:${profitColor};">${m ? formatKMB(Math.round(m.profitPerHr)) : '—'}</td>`;
-            html += `<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">${m ? formatWithSeparator(Math.round(m.totalXpPerHr)) : '—'}</td>`;
+            const ephDelta = baseM && m ? this._formatDelta(m.encountersPerHr, baseM.encountersPerHr, true) : '';
+            const dpsDelta = baseM && m ? this._formatDelta(m.dps, baseM.dps, true) : '';
+            const profitDelta = baseM && m ? this._formatDelta(m.profitPerHr, baseM.profitPerHr, true, true) : '';
+            const xpDelta = baseM && m ? this._formatDelta(m.totalXpPerHr, baseM.totalXpPerHr, true) : '';
+
+            html += '<tr>';
+            html +=
+                '<td style="padding:2px 4px; color:#ccc; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
+                entry.label +
+                '">' +
+                entry.label +
+                '</td>';
+            html +=
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+                (m ? formatWithSeparator(Math.round(m.encountersPerHr)) : '—') +
+                ephDelta +
+                '</td>';
+            html +=
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+                (m ? formatWithSeparator(Math.round(m.dps)) : '—') +
+                dpsDelta +
+                '</td>';
+            html +=
+                '<td style="text-align:right; padding:2px 4px; color:' +
+                profitColor +
+                ';">' +
+                (m ? formatKMB(Math.round(m.profitPerHr)) : '—') +
+                profitDelta +
+                '</td>';
+            html +=
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+                (m ? formatWithSeparator(Math.round(m.totalXpPerHr)) : '—') +
+                xpDelta +
+                '</td>';
+            if (hasDungeon) {
+                const successDelta =
+                    baseM?.successRate != null && m?.successRate != null
+                        ? this._formatDelta(m.successRate * 100, baseM.successRate * 100, true)
+                        : '';
+                html +=
+                    '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
+                    (m?.successRate != null ? (m.successRate * 100).toFixed(1) + '%' : '—') +
+                    successDelta +
+                    '</td>';
+            }
+            html +=
+                '<td style="text-align:center; padding:2px; cursor:pointer; color:#666;" data-remove-comparison="' +
+                idx +
+                '" title="Remove from comparison">×</td>';
             html += '</tr>';
         }
 
         html += '</table>';
+
+        // Add to comparison dropdown
+        const available = [];
+        for (let i = 0; i < history.length; i++) {
+            if (i === baseIdx || this._comparisonSlots.includes(i)) continue;
+            available.push(i);
+        }
+        if (available.length > 0) {
+            html += '<div style="margin-top:6px;">';
+            html +=
+                '<select id="mwi-csim-add-comparison" style="width:100%; background:#1a1a2e; color:#aaa; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
+            html += '<option value="">+ Add sim to comparison...</option>';
+            for (const i of available) {
+                html += '<option value="' + i + '">' + history[i].label + '</option>';
+            }
+            html += '</select></div>';
+        }
+
         html += '</div></div>';
         return html;
     }
