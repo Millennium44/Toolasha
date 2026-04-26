@@ -144,7 +144,7 @@ class Monster extends CombatUnit {
             'abilityDamage',
             'retaliation',
         ].forEach((stat) => {
-            if (gameMonster.combatDetails.combatStats[stat] === null) {
+            if (gameMonster.combatDetails.combatStats[stat] == null) {
                 this.combatDetails.combatStats[stat] = 0;
             }
         });
