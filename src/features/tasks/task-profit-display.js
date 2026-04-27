@@ -10,12 +10,21 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
-import { calculateTaskProfit } from './task-profit-calculator.js';
+import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { calculateSecondsForActions, calculateEffectiveActionsPerHour } from '../../utils/profit-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { runSimulation } from '../combat-sim/combat-sim-runner.js';
+import {
+    buildAllPlayerDTOs,
+    buildGameDataPayload,
+    getCommunityBuffs,
+    applyLoadoutSnapshotToDTO,
+    calculateSimRevenue,
+} from '../combat-sim/combat-sim-adapter.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 // Compiled regex pattern (created once, reused for performance)
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
@@ -555,17 +564,24 @@ class TaskProfitDisplay {
             // Calculate profit
             const profitData = await calculateTaskProfit(taskData);
 
-            // Don't show anything for combat tasks, but mark them so we detect rerolls
+            // Show combat estimate UI for combat tasks
             if (profitData === null) {
-                // Add hidden marker for combat tasks to enable reroll detection
+                // Hidden marker for reroll detection (still needed)
                 const combatMarker = document.createElement('div');
                 combatMarker.className = 'mwi-task-profit';
                 combatMarker.style.display = 'none';
                 combatMarker.dataset.taskKey = `${taskData.description}|${taskData.quantity}`;
 
+                // Visible estimate container
+                const estimateContainer = document.createElement('div');
+                estimateContainer.className = 'mwi-task-profit';
+                estimateContainer.style.cssText = 'margin-top: 4px; font-size: 0.75rem;';
+                this._renderCombatEstimateConfig(estimateContainer, taskData);
+
                 const actionNode = taskNode.querySelector(GAME.TASK_ACTION);
                 if (actionNode) {
                     actionNode.appendChild(combatMarker);
+                    actionNode.appendChild(estimateContainer);
                 }
                 return;
             }
@@ -684,6 +700,286 @@ class TaskProfitDisplay {
         }
 
         return parseFloat(text) || 0;
+    }
+
+    /**
+     * Render the pre-run config state for the combat task estimate.
+     * Shows a loadout dropdown and an "Estimate" button.
+     * @param {Element} container - Container element to render into
+     * @param {Object} taskData - Parsed task data
+     * @private
+     */
+    _renderCombatEstimateConfig(container, taskData) {
+        container.innerHTML = '';
+        const snapshots = loadoutSnapshot
+            .getAllSnapshots()
+            .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat');
+
+        let html = '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">';
+        html +=
+            '<select class="mwi-combat-est-loadout" style="font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
+        html += '<option value="">— Current Gear —</option>';
+        for (const s of snapshots) {
+            html += `<option value="${s.name}">${s.name}</option>`;
+        }
+        html += '</select>';
+        html +=
+            '<button class="mwi-combat-est-btn" style="font-size:11px; padding:2px 8px; background:#1a3a5c; color:#4a9eff; border:1px solid #4a9eff44; border-radius:3px; cursor:pointer;">⚔ Estimate</button>';
+        html += '</div>';
+        container.innerHTML = html;
+
+        container.querySelector('.mwi-combat-est-btn').addEventListener('click', () => {
+            const loadoutName = container.querySelector('.mwi-combat-est-loadout').value;
+            this._runCombatSimEstimate(container, taskData, loadoutName);
+        });
+    }
+
+    /**
+     * Run the combat sim to estimate task completion time.
+     * @param {Element} container - Container element to render into
+     * @param {Object} taskData - Parsed task data
+     * @param {string} loadoutName - Loadout snapshot name (empty = current gear)
+     * @private
+     */
+    async _runCombatSimEstimate(container, taskData, loadoutName) {
+        // Extract monster name from "Defeat - Monster Name" description
+        const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
+        const monsterName = match?.[1]?.trim();
+        const monsterHrid = monsterName ? dataManager.getMonsterHridFromName(monsterName) : null;
+        if (!monsterHrid) {
+            container.innerHTML = '<span style="color:#f87171; font-size:11px;">Could not identify monster.</span>';
+            return;
+        }
+
+        const zoneHrid = dataManager.getCombatZoneForMonster(monsterHrid);
+        if (!zoneHrid) {
+            container.innerHTML = '<span style="color:#f87171; font-size:11px;">No zone found for monster.</span>';
+            return;
+        }
+
+        container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
+
+        try {
+            const gameData = buildGameDataPayload();
+            if (!gameData) throw new Error('No game data');
+
+            const { players } = await buildAllPlayerDTOs();
+            if (!players.length) throw new Error('No player data');
+
+            if (loadoutName) {
+                applyLoadoutSnapshotToDTO(players[0], loadoutName, gameData);
+            }
+
+            // Single-monster mode: filter zone spawn table to only the target monster.
+            // Preserve all fields from the real spawn entry (rate, strength, difficultyTier, etc.)
+            // so the sim engine's weighted-selection logic works correctly.
+            const zoneAction = gameData.actionDetailMap[zoneHrid];
+            const allSpawns = zoneAction.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
+            const monsterSpawn = allSpawns.find((s) => s.combatMonsterHrid === monsterHrid) || {
+                combatMonsterHrid: monsterHrid,
+                rate: 1,
+                strength: 1,
+                difficultyTier: 0,
+            };
+            const filteredGameData = {
+                ...gameData,
+                actionDetailMap: {
+                    ...gameData.actionDetailMap,
+                    [zoneHrid]: {
+                        ...zoneAction,
+                        combatZoneInfo: {
+                            ...zoneAction.combatZoneInfo,
+                            fightInfo: {
+                                ...zoneAction.combatZoneInfo.fightInfo,
+                                randomSpawnInfo: {
+                                    ...zoneAction.combatZoneInfo.fightInfo.randomSpawnInfo,
+                                    spawns: [monsterSpawn],
+                                },
+                                bossSpawns: [],
+                            },
+                        },
+                    },
+                },
+            };
+
+            const SIM_HOURS = 1;
+            const simResult = await runSimulation({
+                gameData: filteredGameData,
+                playerDTOs: players,
+                zoneHrid,
+                difficultyTier: 0,
+                hours: SIM_HOURS,
+                communityBuffs: getCommunityBuffs(),
+            });
+
+            const kills = simResult.deaths?.[monsterHrid] ?? 0;
+            const killsPerHour = Math.round(kills / SIM_HOURS);
+            const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
+            const completionSeconds = killsPerHour > 0 ? Math.round((remaining / killsPerHour) * 3600) : null;
+            const timeEstimate = completionSeconds !== null ? timeReadable(completionSeconds) : '???';
+
+            const playerHrid = players[0]?.hrid || 'player1';
+            const { netPerHour, dropEntries, consumableEntries } = calculateSimRevenue(
+                simResult,
+                filteredGameData,
+                playerHrid,
+                SIM_HOURS
+            );
+
+            // Task completion rewards (one-time: coins + token value + Purple's Gift)
+            const rewardValue = calculateTaskRewardValue(taskData.coinReward, taskData.taskTokenReward);
+
+            this._renderCombatEstimateResult(
+                container,
+                taskData,
+                monsterName,
+                killsPerHour,
+                timeEstimate,
+                completionSeconds,
+                loadoutName,
+                netPerHour,
+                rewardValue,
+                dropEntries,
+                consumableEntries
+            );
+        } catch (e) {
+            console.error('[TaskProfit] Combat estimate failed:', e);
+            container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
+            const retry = document.createElement('span');
+            retry.textContent = 'Retry';
+            retry.style.cssText = 'color:#4a9eff; cursor:pointer; font-size:11px;';
+            retry.addEventListener('click', () => this._renderCombatEstimateConfig(container, taskData));
+            container.appendChild(retry);
+        }
+    }
+
+    /**
+     * Render the result state after a combat sim estimate completes.
+     * @param {Element} container - Container element to render into
+     * @param {Object} taskData - Parsed task data
+     * @param {string} monsterName - Monster display name
+     * @param {number} killsPerHour - Kills per hour from sim
+     * @param {string} timeEstimate - Formatted time estimate string
+     * @param {number|null} completionSeconds - Seconds to completion (for task sorter)
+     * @param {string} loadoutName - Loadout name used (empty = current gear)
+     * @param {number} netGoldPerHour - Net gold/hr (drops - consumable costs)
+     * @param {Array} dropEntries - Array of {name, count, unitValue, totalValue} per drop
+     * @param {Array} consumableEntries - Array of {name, count, unitCost, totalCost} per consumable
+     * @private
+     */
+    _renderCombatEstimateResult(
+        container,
+        taskData,
+        monsterName,
+        killsPerHour,
+        timeEstimate,
+        completionSeconds,
+        loadoutName,
+        netPerHour,
+        rewardValue,
+        dropEntries,
+        consumableEntries
+    ) {
+        container.innerHTML = '';
+        if (completionSeconds !== null) {
+            container.dataset.completionSeconds = completionSeconds;
+        }
+
+        // Convert per-hour rates to totals for the task duration (matching skilling format)
+        const completionHours = completionSeconds > 0 ? completionSeconds / 3600 : 0;
+        const totalDropValue = dropEntries.reduce((s, d) => s + d.totalValue * completionHours, 0);
+        const totalConsumableCost = consumableEntries.reduce((s, c) => s + c.totalCost * completionHours, 0);
+        const totalProfit = Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
+
+        const profitColor = totalProfit >= 0 ? '#4ade80' : config.COLOR_LOSS;
+
+        const mainLine = document.createElement('div');
+        mainLine.style.cssText = `color: ${profitColor}; cursor: pointer; user-select: none;`;
+        mainLine.innerHTML = `⚔ ${formatKMB(totalProfit)} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ▸`;
+
+        const breakdown = document.createElement('div');
+        breakdown.className = 'mwi-task-profit-breakdown';
+        breakdown.style.cssText = `
+            display: none;
+            margin-top: 6px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            font-size: 0.7rem;
+            color: #ddd;
+        `;
+
+        const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
+        const lines = [];
+        lines.push('<div style="font-weight: bold; margin-bottom: 4px;">Task Profit Breakdown</div>');
+        lines.push('<div style="border-bottom: 1px solid #555; margin-bottom: 4px;"></div>');
+        lines.push(
+            `<div style="margin-bottom: 2px; color: #aaa;">Monster: ${monsterName} × ${remaining.toLocaleString()} kills (${formatKMB(killsPerHour)}/hr)</div>`
+        );
+        lines.push(`<div style="margin-bottom: 4px; color: #aaa;">Loadout: ${loadoutName || 'Current Gear'}</div>`);
+
+        // Task Rewards — matching skilling section exactly
+        lines.push('<div style="margin-bottom: 4px; color: #aaa;">Task Rewards:</div>');
+        lines.push(`<div style="margin-left: 10px;">Coins: ${formatKMB(rewardValue.coins)}</div>`);
+        if (!rewardValue.error) {
+            lines.push(`<div style="margin-left: 10px;">Task Tokens: ${formatKMB(rewardValue.taskTokens)}</div>`);
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${rewardValue.breakdown.tokensReceived} tokens @ ${formatKMB(Math.round(rewardValue.breakdown.tokenValue))} each)</div>`
+            );
+            lines.push(`<div style="margin-left: 10px;">Purple's Gift: ${formatKMB(rewardValue.purpleGift)}</div>`);
+            lines.push(
+                `<div style="margin-left: 20px; font-size: 0.65rem; color: #888;">(${formatKMB(Math.round(rewardValue.breakdown.giftPerTask))} per task)</div>`
+            );
+        }
+
+        // Drops — total over task duration
+        if (dropEntries.length > 0) {
+            lines.push(
+                `<div style="margin-top: 6px; margin-bottom: 4px; color: #aaa;">Drops: ${formatKMB(Math.round(totalDropValue))}</div>`
+            );
+            for (const d of dropEntries.slice(0, 8)) {
+                const taskCount = d.countPerHour * completionHours;
+                const taskTotal = d.totalValue * completionHours;
+                lines.push(
+                    `<div style="margin-left: 10px;">${d.name}: ${taskCount.toFixed(1)} @ ${formatKMB(Math.round(d.unitValue))} = ${formatKMB(Math.round(taskTotal))}</div>`
+                );
+            }
+        }
+
+        // Consumables — total over task duration
+        if (consumableEntries.length > 0) {
+            lines.push(
+                `<div style="margin-top: 6px; margin-bottom: 4px; color: #aaa;">Consumables: -${formatKMB(Math.round(totalConsumableCost))}</div>`
+            );
+            for (const c of consumableEntries) {
+                const taskCount = c.countPerHour * completionHours;
+                const taskTotal = c.totalCost * completionHours;
+                lines.push(
+                    `<div style="margin-left: 10px;">${c.name}: ${taskCount.toFixed(1)} @ ${formatKMB(Math.round(c.unitCost))} = -${formatKMB(Math.round(taskTotal))}</div>`
+                );
+            }
+        }
+
+        breakdown.innerHTML = lines.join('');
+
+        const rerunBtn = document.createElement('button');
+        rerunBtn.textContent = 'Re-run';
+        rerunBtn.style.cssText =
+            'margin-top:6px; font-size:11px; padding:2px 8px; background:#1a3a5c; color:#4a9eff; border:1px solid #4a9eff44; border-radius:3px; cursor:pointer;';
+        rerunBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._renderCombatEstimateConfig(container, taskData);
+        });
+        breakdown.appendChild(rerunBtn);
+
+        mainLine.addEventListener('click', () => {
+            const hidden = breakdown.style.display === 'none';
+            breakdown.style.display = hidden ? 'block' : 'none';
+            mainLine.innerHTML = `⚔ ${formatKMB(totalProfit)} | <span style="display:inline-block; margin-right:0.25em;">⏱</span> ${timeEstimate} ${hidden ? '▾' : '▸'}`;
+        });
+
+        container.appendChild(mainLine);
+        container.appendChild(breakdown);
     }
 
     /**

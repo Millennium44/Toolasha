@@ -17,6 +17,7 @@ import {
     getCommunityBuffs,
     calculateExpectedDrops,
     calculateDungeonKeyCosts,
+    applyLoadoutSnapshotToDTO,
 } from './combat-sim-adapter.js';
 import { runSimulation } from './combat-sim-runner.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -1125,101 +1126,11 @@ class CombatSimUI {
      * @private
      */
     _applyLoadoutToDTO(loadoutName) {
-        const snapshots = loadoutSnapshot.getAllSnapshots();
-        const snapshot = snapshots.find((s) => s.name === loadoutName);
-        if (!snapshot) return;
-
-        const activePlayer = this._activeEditPlayer;
-        const dto = this._editedDTOs[activePlayer];
-        if (!dto) return;
-
         const gameData = buildGameDataPayload();
         if (!gameData) return;
-
-        const itemDetailMap = gameData.itemDetailMap || {};
-        const abilityDetailMap = gameData.abilityDetailMap || {};
-
-        // Convert equipment: snapshot uses itemLocationHrid, DTO uses equipmentDetail.type
-        const newEquipment = {};
-        for (const equip of snapshot.equipment || []) {
-            const itemDetail = itemDetailMap[equip.itemHrid];
-            const equipType = itemDetail?.equipmentDetail?.type;
-            if (equipType) {
-                newEquipment[equipType] = {
-                    hrid: equip.itemHrid,
-                    enhancementLevel: equip.enhancementLevel || 0,
-                };
-            }
-        }
-        dto.equipment = newEquipment;
-
-        // Convert abilities: snapshot has {abilityHrid, slot}, DTO needs {hrid, level, triggers}
-        // Ability levels come from characterData (they're player-level, not loadout-level)
-        const characterData = dataManager.characterData;
-        const currentAbilityLevels = {};
-        for (const ability of characterData?.combatUnit?.combatAbilities || []) {
-            if (ability?.abilityHrid) {
-                currentAbilityLevels[ability.abilityHrid] = ability.level || 1;
-            }
-        }
-
-        const triggerMap = {
-            ...(snapshot.abilityCombatTriggersMap || {}),
-            ...(snapshot.consumableCombatTriggersMap || {}),
-        };
-
-        const buildTriggers = (hrid) => {
-            const rawTriggers = triggerMap[hrid];
-            if (!Array.isArray(rawTriggers)) return [];
-            return rawTriggers.map((t) => ({
-                dependencyHrid: t.dependencyHrid,
-                conditionHrid: t.conditionHrid,
-                comparatorHrid: t.comparatorHrid,
-                value: t.value || 0,
-            }));
-        };
-
-        // Build abilities array (5 slots: 0=special, 1-4=normal)
-        // Use sequential packing like buildPlayerDTO — don't rely on server slot numbers
-        dto.abilities = [null, null, null, null, null];
-        let normalAbilityIndex = 1;
-        for (const ab of snapshot.abilities || []) {
-            if (!ab.abilityHrid) continue;
-            const isSpecial = abilityDetailMap[ab.abilityHrid]?.isSpecialAbility || false;
-            const abilityDTO = {
-                hrid: ab.abilityHrid,
-                level: currentAbilityLevels[ab.abilityHrid] || 1,
-                triggers: buildTriggers(ab.abilityHrid),
-            };
-
-            if (isSpecial) {
-                dto.abilities[0] = abilityDTO;
-            } else if (normalAbilityIndex < 5) {
-                dto.abilities[normalAbilityIndex++] = abilityDTO;
-            }
-        }
-
-        // Convert food (3 slots)
-        dto.food = [];
-        for (let i = 0; i < 3; i++) {
-            const foodItem = snapshot.food?.[i];
-            if (foodItem?.itemHrid) {
-                dto.food.push({ hrid: foodItem.itemHrid, triggers: buildTriggers(foodItem.itemHrid) });
-            } else {
-                dto.food.push(null);
-            }
-        }
-
-        // Convert drinks (3 slots)
-        dto.drinks = [];
-        for (let i = 0; i < 3; i++) {
-            const drinkItem = snapshot.drinks?.[i];
-            if (drinkItem?.itemHrid) {
-                dto.drinks.push({ hrid: drinkItem.itemHrid, triggers: buildTriggers(drinkItem.itemHrid) });
-            } else {
-                dto.drinks.push(null);
-            }
-        }
+        const dto = this._editedDTOs[this._activeEditPlayer];
+        if (!dto) return;
+        applyLoadoutSnapshotToDTO(dto, loadoutName, gameData);
     }
 
     /**

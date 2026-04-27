@@ -9,6 +9,10 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { getCurrentProfile } from '../../core/profile-manager.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import config from '../../core/config.js';
+import marketAPI from '../../api/marketplace.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 /**
  * Extract all required game data maps from initClientData for the sim engine.
@@ -531,6 +535,104 @@ export function getCommunityBuffs() {
 }
 
 /**
+ * Apply a named loadout snapshot to a player DTO (mutates dto in place).
+ * Extracted from CombatSimUI._applyLoadoutToDTO so both the sim UI and task display can use it.
+ * @param {Object} dto - Player DTO to mutate
+ * @param {string} snapshotName - Loadout snapshot name
+ * @param {Object} gameData - Game data payload from buildGameDataPayload()
+ * @returns {boolean} True if snapshot was found and applied, false otherwise
+ */
+export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
+    const snapshots = loadoutSnapshot.getAllSnapshots();
+    const snapshot = snapshots.find((s) => s.name === snapshotName);
+    if (!snapshot) return false;
+
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const abilityDetailMap = gameData.abilityDetailMap || {};
+
+    // Convert equipment: snapshot uses itemHrid, DTO keys by equipmentDetail.type
+    const newEquipment = {};
+    for (const equip of snapshot.equipment || []) {
+        const itemDetail = itemDetailMap[equip.itemHrid];
+        const equipType = itemDetail?.equipmentDetail?.type;
+        if (equipType) {
+            newEquipment[equipType] = {
+                hrid: equip.itemHrid,
+                enhancementLevel: equip.enhancementLevel || 0,
+            };
+        }
+    }
+    dto.equipment = newEquipment;
+
+    // Ability levels come from current character (not the snapshot)
+    const characterData = dataManager.characterData;
+    const currentAbilityLevels = {};
+    for (const ability of characterData?.combatUnit?.combatAbilities || []) {
+        if (ability?.abilityHrid) {
+            currentAbilityLevels[ability.abilityHrid] = ability.level || 1;
+        }
+    }
+
+    const triggerMap = {
+        ...(snapshot.abilityCombatTriggersMap || {}),
+        ...(snapshot.consumableCombatTriggersMap || {}),
+    };
+
+    const buildTriggers = (hrid) => {
+        const rawTriggers = triggerMap[hrid];
+        if (!Array.isArray(rawTriggers)) return [];
+        return rawTriggers.map((t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        }));
+    };
+
+    // Build abilities array (5 slots: 0=special, 1-4=normal)
+    dto.abilities = [null, null, null, null, null];
+    let normalAbilityIndex = 1;
+    for (const ab of snapshot.abilities || []) {
+        if (!ab.abilityHrid) continue;
+        const isSpecial = abilityDetailMap[ab.abilityHrid]?.isSpecialAbility || false;
+        const abilityDTO = {
+            hrid: ab.abilityHrid,
+            level: currentAbilityLevels[ab.abilityHrid] || 1,
+            triggers: buildTriggers(ab.abilityHrid),
+        };
+        if (isSpecial) {
+            dto.abilities[0] = abilityDTO;
+        } else if (normalAbilityIndex < 5) {
+            dto.abilities[normalAbilityIndex++] = abilityDTO;
+        }
+    }
+
+    // Convert food (3 slots)
+    dto.food = [];
+    for (let i = 0; i < 3; i++) {
+        const foodItem = snapshot.food?.[i];
+        if (foodItem?.itemHrid) {
+            dto.food.push({ hrid: foodItem.itemHrid, triggers: buildTriggers(foodItem.itemHrid) });
+        } else {
+            dto.food.push(null);
+        }
+    }
+
+    // Convert drinks (3 slots)
+    dto.drinks = [];
+    for (let i = 0; i < 3; i++) {
+        const drinkItem = snapshot.drinks?.[i];
+        if (drinkItem?.itemHrid) {
+            dto.drinks.push({ hrid: drinkItem.itemHrid, triggers: buildTriggers(drinkItem.itemHrid) });
+        } else {
+            dto.drinks.push(null);
+        }
+    }
+
+    return true;
+}
+
+/**
  * Calculate expected drops from simulation results for a specific player.
  * Uses deterministic expected-value math (no RNG rolls).
  * @param {Object} simResult - SimResult from the engine
@@ -681,4 +783,85 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
     }
 
     return costs.sort((a, b) => b.totalCost - a.totalCost);
+}
+
+/**
+ * Get the sell price for an item based on the global pricing mode.
+ * @param {Object|null} priceData - { bid, ask } from marketAPI.getPrice()
+ * @returns {number}
+ */
+function getSellPrice(priceData) {
+    if (!priceData) return 0;
+    const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+    if (mode === 'conservative' || mode === 'patientBuy') {
+        return priceData.bid > 0 ? priceData.bid : 0;
+    }
+    return priceData.ask > 0 ? priceData.ask : 0;
+}
+
+/**
+ * Get the buy price for an item based on the global pricing mode.
+ * @param {Object|null} priceData - { bid, ask } from marketAPI.getPrice()
+ * @returns {number}
+ */
+function getBuyPrice(priceData) {
+    if (!priceData) return 0;
+    const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+    if (mode === 'optimistic' || mode === 'patientBuy') {
+        return priceData.bid > 0 ? priceData.bid : 0;
+    }
+    return priceData.ask > 0 ? priceData.ask : 0;
+}
+
+/**
+ * Calculate revenue and consumable costs from a sim result.
+ * Respects the user's profitCalc_pricingMode setting.
+ * @param {Object} simResult - SimResult from runSimulation()
+ * @param {Object} gameData - Game data payload from buildGameDataPayload()
+ * @param {string} playerHrid - Player HRID to read drop multipliers and consumables for
+ * @param {number} hours - Number of hours simulated
+ * @returns {{ revenuePerHour: number, costPerHour: number, netPerHour: number,
+ *             dropEntries: Array, consumableEntries: Array }}
+ */
+export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
+    let revenuePerHour = 0;
+    const dropEntries = [];
+
+    const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
+    for (const [itemHrid, total] of dropMap.entries()) {
+        if (total <= 0) continue;
+        let unitValue = itemHrid === '/items/coin' ? 1 : getSellPrice(marketAPI.getPrice(itemHrid));
+        if (unitValue === 0) {
+            const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+            if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+        }
+        const perHour = (total / hours) * unitValue;
+        revenuePerHour += perHour;
+        if (unitValue > 0) {
+            const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
+            dropEntries.push({ name: itemName, countPerHour: total / hours, unitValue, totalValue: perHour });
+        }
+    }
+    dropEntries.sort((a, b) => b.totalValue - a.totalValue);
+
+    let costPerHour = 0;
+    const consumableEntries = [];
+    const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
+    for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
+        const unitCost = getBuyPrice(marketAPI.getPrice(itemHrid));
+        const perHour = (count / hours) * unitCost;
+        costPerHour += perHour;
+        if (unitCost > 0) {
+            const itemName = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
+            consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
+        }
+    }
+
+    return {
+        revenuePerHour,
+        costPerHour,
+        netPerHour: revenuePerHour - costPerHour,
+        dropEntries,
+        consumableEntries,
+    };
 }
