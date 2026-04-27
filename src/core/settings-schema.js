@@ -179,10 +179,10 @@ export const settingsGroups = {
             },
             actionPanel_showExpPerHour: {
                 id: 'actionPanel_showExpPerHour',
-                label: 'Action panel: Show exp/hr displays',
+                label: 'Action page: Show exp/hr on tiles',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays exp/hr on gathering tiles and in action panel sections',
+                help: 'Displays exp/hr on each action tile in the action list page',
             },
             actionPanel_hideNegativeProfit: {
                 id: 'actionPanel_hideNegativeProfit',
