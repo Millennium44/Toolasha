@@ -300,18 +300,37 @@ export function formatLootList(lootMap) {
 
     for (const loot of Object.values(lootMap)) {
         const itemDetails = dataManager.getItemDetails(loot.itemHrid);
+
+        let totalValue = 0;
+        if (loot.itemHrid === '/items/coin') {
+            totalValue = loot.count;
+        } else if (itemDetails?.isOpenable) {
+            const ev =
+                expectedValueCalculator.getCachedValue(loot.itemHrid) ||
+                expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
+            if (ev !== null && ev > 0) {
+                totalValue = ev * loot.count;
+            }
+        } else {
+            const prices = marketAPI.getPrice(loot.itemHrid);
+            if (prices) {
+                totalValue = prices.ask * loot.count;
+            }
+        }
+
         items.push({
             count: loot.count,
             itemHrid: loot.itemHrid,
             itemName: itemDetails?.name || 'Unknown',
             rarity: itemDetails?.rarity || 0,
+            totalValue,
         });
     }
 
-    // Sort by rarity (descending), then by name
+    // Sort by total value descending, then by name for ties
     items.sort((a, b) => {
-        if (a.rarity !== b.rarity) {
-            return b.rarity - a.rarity;
+        if (b.totalValue !== a.totalValue) {
+            return b.totalValue - a.totalValue;
         }
         return a.itemName.localeCompare(b.itemName);
     });
