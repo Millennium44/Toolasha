@@ -523,6 +523,25 @@ class PopOutChat {
   .pane.drag-over-before.vertical-drop { box-shadow: 0 -3px 0 0 var(--accent); }
   .pane.drag-over-after.vertical-drop  { box-shadow: 0  3px 0 0 var(--accent); }
 
+  /* Filter row */
+  .pane-filter {
+    display: flex; align-items: center; gap: 4px;
+    padding: 4px 10px; background: var(--topbg);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .pane-filter-preset {
+    background: var(--input-bg); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 5px;
+    padding: 3px 5px; font-size: 11px; outline: none; cursor: pointer; flex-shrink: 0;
+  }
+  .pane-filter-input {
+    flex: 1; background: var(--input-bg); color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 5px;
+    padding: 3px 6px; font-size: 11px; outline: none;
+  }
+  .pane-filter-input:focus { border-color: var(--accent); }
+  .pane-filter-input.invalid { border-color: #f87171; }
+
   /* Message list */
   .pane-messages {
     flex: 1; overflow-y: auto; padding: 8px 10px;
@@ -582,6 +601,32 @@ class PopOutChat {
   const SEND  = '${SEND_CHANNEL}';
   const MAX_PER_CHANNEL = 500;
   const STORAGE_KEY = 'mwi-chat-popout-layout';
+
+  const FILTER_PRESETS = [
+    { value: 'none',         label: 'No filter',      regex: null },
+    { value: 'enhanced_buy', label: 'Enhanced Buy',   regex: /\\+\\d+.*Buy\\]/i },
+    { value: 'enhanced_sell',label: 'Enhanced Sell',  regex: /\\+\\d+.*Sell\\]/i },
+    { value: 'buy_only',     label: 'Buy only',       regex: /Buy\\]/i },
+    { value: 'sell_only',    label: 'Sell only',      regex: /Sell\\]/i },
+    { value: 'custom',       label: 'Custom\u2026',   regex: null },
+  ];
+
+  function buildCustomRegex(text) {
+    if (!text) return null;
+    const m = text.match(/^\\/(.+)\\/([gimsuy]*)$/);
+    if (m) {
+      try { return new RegExp(m[1], m[2] || 'i'); } catch { return null; }
+    }
+    const esc = text.replace(/[-.*+?^\x24{}()|\\\\]/g, '\\\\$&').replace(/\\[/g, '\\\\[').replace(/\\]/g, '\\\\]');
+    return new RegExp(esc, 'i');
+  }
+
+  function matchesFilter(paneObj, msg) {
+    if (!paneObj.filterRegex) return true;
+    const parts = [msg.m || ''];
+    if (msg.renderedLinks) parts.push(...msg.renderedLinks);
+    return parts.some(p => paneObj.filterRegex.test(p));
+  }
 
   const relay  = new BroadcastChannel(RELAY);
   const sendCh = new BroadcastChannel(SEND);
@@ -646,7 +691,7 @@ class PopOutChat {
   resetPingWatchdog();
 
   // ── Pane management ───────────────────────────────────────────
-  function createPane(initialHrid) {
+  function createPane(initialHrid, savedFilterPreset, savedFilterCustom) {
     const id = ++paneIdSeq;
     const hrid = initialHrid || (channels[0]?.hrid || '');
 
@@ -676,6 +721,30 @@ class PopOutChat {
     header.appendChild(dragHandle);
     header.appendChild(select);
     header.appendChild(closeBtn);
+
+    // Filter row
+    const filterRow = document.createElement('div');
+    filterRow.className = 'pane-filter';
+
+    const filterSelect = document.createElement('select');
+    filterSelect.className = 'pane-filter-preset';
+    FILTER_PRESETS.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.value;
+      opt.textContent = p.label;
+      filterSelect.appendChild(opt);
+    });
+    filterSelect.value = savedFilterPreset || 'none';
+
+    const filterInput = document.createElement('input');
+    filterInput.className = 'pane-filter-input';
+    filterInput.type = 'text';
+    filterInput.placeholder = 'text or /regex/';
+    filterInput.value = savedFilterCustom || '';
+    filterInput.style.display = filterSelect.value === 'custom' ? '' : 'none';
+
+    filterRow.appendChild(filterSelect);
+    filterRow.appendChild(filterInput);
 
     // Messages
     const messages = document.createElement('div');
@@ -712,6 +781,7 @@ class PopOutChat {
     footer.appendChild(sendBtn);
 
     pane.appendChild(header);
+    pane.appendChild(filterRow);
     pane.appendChild(messages);
     pane.appendChild(footer);
 
@@ -768,6 +838,42 @@ class PopOutChat {
 
     const paneObj = { id, pane, select, messages, input, channelHrid: hrid };
     panes.push(paneObj);
+
+    // Initialize filter state
+    const initPreset = FILTER_PRESETS.find(p => p.value === (savedFilterPreset || 'none')) || FILTER_PRESETS[0];
+    paneObj.filterPreset = initPreset.value;
+    paneObj.filterCustom = savedFilterCustom || '';
+    paneObj.filterRegex = initPreset.value === 'custom'
+      ? buildCustomRegex(paneObj.filterCustom)
+      : initPreset.regex;
+
+    filterSelect.addEventListener('change', () => {
+      const preset = FILTER_PRESETS.find(p => p.value === filterSelect.value) || FILTER_PRESETS[0];
+      paneObj.filterPreset = preset.value;
+      filterInput.style.display = preset.value === 'custom' ? '' : 'none';
+      paneObj.filterRegex = preset.value === 'custom'
+        ? buildCustomRegex(paneObj.filterCustom)
+        : preset.regex;
+      refilterPane(paneObj);
+      saveLayout();
+    });
+
+    let filterDebounce;
+    filterInput.addEventListener('input', () => {
+      paneObj.filterCustom = filterInput.value;
+      filterInput.classList.remove('invalid');
+      const regex = buildCustomRegex(filterInput.value);
+      if (filterInput.value && !regex) {
+        filterInput.classList.add('invalid');
+        return;
+      }
+      clearTimeout(filterDebounce);
+      filterDebounce = setTimeout(() => {
+        paneObj.filterRegex = regex;
+        refilterPane(paneObj);
+        saveLayout();
+      }, 300);
+    });
 
     select.addEventListener('change', () => {
       paneObj.channelHrid = select.value;
@@ -866,7 +972,13 @@ class PopOutChat {
     }
   }
 
+  function refilterPane(paneObj) {
+    paneObj.messages.innerHTML = '';
+    (messageBuffer[paneObj.channelHrid] || []).forEach(msg => appendMessage(paneObj, msg));
+  }
+
   function appendMessage(paneObj, msg) {
+    if (!matchesFilter(paneObj, msg)) return;
     const { messages } = paneObj;
     const atBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 40;
 
@@ -924,7 +1036,11 @@ class PopOutChat {
     try {
       const layout = {
         vertical: verticalToggle.checked,
-        panes: panes.map(p => ({ channelHrid: p.channelHrid })),
+        panes: panes.map(p => ({
+          channelHrid: p.channelHrid,
+          filterPreset: p.filterPreset || 'none',
+          filterCustom: p.filterCustom || '',
+        })),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
     } catch { /* ignore */ }
@@ -957,7 +1073,7 @@ class PopOutChat {
     }
     const savedPanes = savedLayout.panes || [];
     if (savedPanes.length > 0) {
-      savedPanes.forEach(p => createPane(p.channelHrid));
+      savedPanes.forEach(p => createPane(p.channelHrid, p.filterPreset, p.filterCustom));
     } else {
       createPane(channels[0]?.hrid || '/chat_channel_types/general');
     }
