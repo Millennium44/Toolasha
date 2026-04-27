@@ -240,7 +240,6 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
     if (battleData?.players) {
         battlePlayer = battleData.players.find((p) => p.character?.id === profile.characterID);
     }
-
     // Build trigger map — prefer battle data triggers over profile triggers (battle data is fresher)
     const triggerMap = {
         ...(battlePlayer?.abilityCombatTriggersMap || profile.profile?.abilityCombatTriggersMap || {}),

@@ -190,8 +190,6 @@ class CombatSimulator {
 
         this.simResult.isDungeon = this.zone.isDungeon;
         if (this.simResult.isDungeon) {
-            console.log('Timeout now at wave #' + (this.zone.encountersKilled - 1));
-
             this.simResult.dungeonsCompleted = this.zone.dungeonsCompleted;
             this.simResult.dungeonsFailed = this.zone.dungeonsFailed;
             if (this.simResult.dungeonsCompleted < 1) {
@@ -311,6 +309,7 @@ class CombatSimulator {
             }
             this.players[i].reset(this.simulationTime);
         }
+
         const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);
         this.eventQueue.addEvent(regenTickEvent);
 
@@ -650,7 +649,7 @@ class CombatSimulator {
 
             // calc exp before clear
             if (this.enemies.some((enemy) => enemy.experienceRate <= 0)) {
-                console.log('WARN: Some enemies have no experience rate');
+                console.warn('[CombatSimulator] Some enemies have no experience rate');
             }
 
             const totalExp = this.enemies
@@ -692,24 +691,6 @@ class CombatSimulator {
 
         if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {
             if (this.zone.isDungeon) {
-                const enemyInfo = this.enemies
-                    ? this.enemies
-                          .map(
-                              (enemy) =>
-                                  enemy.hrid +
-                                  '(' +
-                                  (
-                                      (enemy.combatDetails.currentHitpoints * 100) /
-                                      enemy.combatDetails.maxHitpoints
-                                  ).toFixed(2) +
-                                  '%)'
-                          )
-                          .join(', ')
-                    : 'none (all dead)';
-                console.log(
-                    'All Players died at wave #' + (this.zone.encountersKilled - 1) + ' with enemies: ' + enemyInfo
-                );
-
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);
                 this.wipeLogs.index = 0;
                 this.wipeLogs.count = 0;
@@ -936,7 +917,6 @@ class CombatSimulator {
 
     processFuryExpirationEvent(event) {
         event.source.removeExpiredBuffs(this.simulationTime);
-        console.log('Fury Timeout');
     }
 
     processEnrageTickEvent(event) {
@@ -950,8 +930,6 @@ class CombatSimulator {
                 if (nowStack <= 0) {
                     return;
                 }
-
-                console.log(enemy.hrid, nowStack, ' stack Enrage at ', event.encounterTime / ONE_SECOND);
 
                 const enrageDamageBuff = {
                     uniqueHrid: '/buff_uniques/enrage_damage',
