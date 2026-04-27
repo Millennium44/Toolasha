@@ -67,7 +67,7 @@ const formatRareFindBonusSummary = (bonusRevenue) => {
  */
 export async function displayGatheringProfit(panel, actionHrid, dropTableSelector) {
     // Check global hide setting
-    if (!config.getSetting('actionPanel_showProfitPerHour')) {
+    if (!config.getSetting('actionPanel_showProfitDetail')) {
         return;
     }
 
@@ -624,7 +624,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
  */
 export async function displayProductionProfit(panel, actionHrid, dropTableSelector) {
     // Check global hide setting
-    if (!config.getSetting('actionPanel_showProfitPerHour')) {
+    if (!config.getSetting('actionPanel_showProfitDetail')) {
         return;
     }
 

@@ -692,7 +692,7 @@ class QuickInputButtons {
             } // End hasNormalXP check - queueContent only created for non-combat
 
             // Insert sections into DOM
-            const hideActionStats = !config.getSetting('actionPanel_showProfitPerHour');
+            const hideActionStats = !config.getSetting('actionPanel_showProfitDetail');
             if (queueContent) {
                 // Non-combat: Insert queueContent first
                 inputContainer.insertAdjacentElement('afterend', queueContent);

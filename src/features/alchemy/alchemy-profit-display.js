@@ -411,7 +411,7 @@ class AlchemyProfitDisplay {
         this.removeDisplay();
 
         // Check global hide setting
-        if (!config.getSetting('actionPanel_showProfitPerHour')) {
+        if (!config.getSetting('actionPanel_showProfitDetail')) {
             return;
         }
 

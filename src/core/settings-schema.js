@@ -165,10 +165,17 @@ export const settingsGroups = {
             },
             actionPanel_showProfitPerHour: {
                 id: 'actionPanel_showProfitPerHour',
-                label: 'Action panel: Show profit/hr displays',
+                label: 'Action page: Show profit/hr on tiles',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays profit/hr on gathering tiles and profitability sections in gathering, production, and alchemy panels',
+                help: 'Displays profit/hr on each action tile in the action list page',
+            },
+            actionPanel_showProfitDetail: {
+                id: 'actionPanel_showProfitDetail',
+                label: 'Action panel: Show profitability detail',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays the profitability breakdown section inside gathering, production, and alchemy action panels',
             },
             actionPanel_showExpPerHour: {
                 id: 'actionPanel_showExpPerHour',
