@@ -877,7 +877,7 @@ function updateTabsOnInventoryChange() {
  * @param {Object} material - Material object with updated counts
  */
 function updateTabBadge(tab, material) {
-    const badgeSpan = tab.querySelector('.TabsComponent_badge__1Du26');
+    const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
     if (!badgeSpan) {
         return;
     }

@@ -48,7 +48,7 @@ export function createMaterialTab(material, referenceTab, onClickCallback) {
     }
 
     // Update text content
-    const badgeSpan = tab.querySelector('.TabsComponent_badge__1Du26');
+    const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
     if (badgeSpan) {
         // Title case: capitalize first letter of each word
         const titleCaseName = material.itemName
