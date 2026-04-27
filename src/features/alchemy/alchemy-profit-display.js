@@ -35,13 +35,11 @@ class AlchemyProfitDisplay {
      * Initialize the display system
      */
     initialize() {
-        console.log('[AlchemyProfit] initialize() called, isInitialized=', this.isInitialized);
         if (this.isInitialized) {
             return;
         }
 
         if (!config.getSetting('alchemy_profitDisplay')) {
-            console.log('[AlchemyProfit] alchemy_profitDisplay setting is OFF — not initializing');
             return;
         }
 
@@ -86,7 +84,6 @@ class AlchemyProfitDisplay {
             'AlchemyProfitDisplay',
             'SkillActionDetail_alchemyComponent',
             (alchemyComponent) => {
-                console.log('[AlchemyProfit] onClass observer fired', alchemyComponent?.className);
                 this.checkAndUpdateDisplay();
                 // Setup content observer when alchemy component appears
                 this.setupContentObserver(alchemyComponent);
@@ -95,7 +92,6 @@ class AlchemyProfitDisplay {
 
         // Initial check for existing panel
         const existingComponent = document.querySelector('[class*="SkillActionDetail_alchemyComponent"]');
-        console.log('[AlchemyProfit] setupObserver: existingComponent=', !!existingComponent);
         if (existingComponent) {
             this.checkAndUpdateDisplay();
             this.setupContentObserver(existingComponent);
@@ -218,16 +214,6 @@ class AlchemyProfitDisplay {
         // Determine if display should be shown
         // Show if: alchemy component exists AND instructions NOT present AND info container exists
         const shouldShow = alchemyComponent && !instructionsEl && infoContainer;
-        console.log(
-            '[AlchemyProfit] checkAndUpdateDisplay: alchemyComponent=',
-            !!alchemyComponent,
-            'instructionsEl=',
-            !!instructionsEl,
-            'infoContainer=',
-            !!infoContainer,
-            '→ shouldShow=',
-            !!shouldShow
-        );
 
         if (shouldShow && (!this.displayElement || !this.displayElement.parentNode)) {
             // Should show but doesn't exist - create it
@@ -360,21 +346,6 @@ class AlchemyProfitDisplay {
                 profitData = alchemyProfitCalculator.calculateDecomposeProfit(itemHrid, enhancementLevel, true);
             }
 
-            console.log(
-                '[AlchemyProfit] updateDisplay: actionHrid=',
-                actionHrid,
-                'isCoinify=',
-                isCoinify,
-                'isTransmute=',
-                isTransmute,
-                'isDecompose=',
-                isDecompose,
-                'requirements=',
-                requirements?.length,
-                'profitData=',
-                profitData ? 'ok' : 'null'
-            );
-
             if (!profitData) {
                 this.removeDisplay();
                 return;
@@ -441,7 +412,6 @@ class AlchemyProfitDisplay {
 
         // Check global hide setting
         if (!config.getSetting('actionPanel_showProfitPerHour')) {
-            console.log('[AlchemyProfit] actionPanel_showProfitPerHour setting is OFF — not showing');
             return;
         }
 
