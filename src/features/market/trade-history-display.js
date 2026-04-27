@@ -220,7 +220,7 @@ class TradeHistoryDisplay {
 
         // Extract top ask (lowest sell price) and top bid (highest buy price)
         const topAsk = orderBook.asks?.[0]?.price;
-        const topBid = orderBook.bids?.length > 0 ? orderBook.bids[orderBook.bids.length - 1].price : undefined;
+        const topBid = orderBook.bids?.length > 0 ? orderBook.bids[0].price : undefined;
 
         // Validate prices exist and are positive
         if (!topAsk || topAsk <= 0 || !topBid || topBid <= 0) {

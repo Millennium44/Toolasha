@@ -306,7 +306,7 @@ class EstimatedListingAge {
                             if (!orderBook) return; // Skip empty slots in sparse array
                             const topAsk = orderBook.asks?.[0]?.price ?? null;
                             const bids = orderBook.bids;
-                            const topBid = bids?.length > 0 ? bids[bids.length - 1].price : null;
+                            const topBid = bids?.length > 0 ? bids[0].price : null;
 
                             // Only update if we have at least one price
                             if (topAsk !== null || topBid !== null) {
@@ -320,7 +320,7 @@ class EstimatedListingAge {
                             const enhancementLevel = parseInt(level, 10);
                             const topAsk = orderBook.asks?.[0]?.price ?? null;
                             const bids = orderBook.bids;
-                            const topBid = bids?.length > 0 ? bids[bids.length - 1].price : null;
+                            const topBid = bids?.length > 0 ? bids[0].price : null;
 
                             if (topAsk !== null || topBid !== null) {
                                 marketAPI.updatePrice(itemHrid, enhancementLevel, topAsk, topBid);
