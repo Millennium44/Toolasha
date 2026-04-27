@@ -850,8 +850,30 @@ class SettingsUI {
         importBtn.className = 'toolasha-utility-button';
         importBtn.addEventListener('click', () => this.handleImport());
 
+        // All Off button
+        const allOffBtn = document.createElement('button');
+        allOffBtn.textContent = 'All Off';
+        allOffBtn.className = 'toolasha-utility-button';
+        allOffBtn.addEventListener('click', () => this.handleAllOff(restoreBtn));
+
+        // Restore button (only shown when an All Off snapshot exists)
+        const restoreBtn = document.createElement('button');
+        restoreBtn.textContent = 'Restore';
+        restoreBtn.className = 'toolasha-utility-button';
+        restoreBtn.style.display = 'none';
+        restoreBtn.addEventListener('click', () => this.handleRestore(restoreBtn));
+
+        // Show restore immediately if a snapshot already exists from a prior All Off
+        this._getAllOffSnapshotKey().then((key) =>
+            storage.getJSON(key, 'settings', null).then((snap) => {
+                if (snap) restoreBtn.style.display = '';
+            })
+        );
+
         buttonsDiv.appendChild(syncBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
+        buttonsDiv.appendChild(allOffBtn);
+        buttonsDiv.appendChild(restoreBtn);
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
@@ -1154,6 +1176,81 @@ class SettingsUI {
         });
 
         input.click();
+    }
+
+    /**
+     * Returns the per-character storage key for the All Off snapshot.
+     * @returns {Promise<string>}
+     */
+    async _getAllOffSnapshotKey() {
+        const cid = dataManager.getCurrentCharacterId?.();
+        return cid ? `toolasha_allOffSnapshot_${cid}` : 'toolasha_allOffSnapshot';
+    }
+
+    /**
+     * Handle All Off — snapshots all checkbox values then sets them all to false.
+     * @param {HTMLElement} restoreBtn
+     */
+    async handleAllOff(restoreBtn) {
+        const snapshot = {};
+        for (const group of Object.values(settingsGroups)) {
+            for (const [id, def] of Object.entries(group.settings)) {
+                if ((def.type || 'checkbox') !== 'checkbox') continue;
+                if (id === 'ironCow_enabled') continue;
+                const entry = this.config.settingsMap[id];
+                if (!entry) continue;
+                snapshot[id] = entry.isTrue ?? false;
+            }
+        }
+        const key = await this._getAllOffSnapshotKey();
+        await storage.setJSON(key, snapshot, 'settings', true);
+
+        for (const id of Object.keys(snapshot)) {
+            this.config.setSetting(id, false);
+        }
+
+        this._syncAllCheckboxInputs();
+        this.applyDisabledByState();
+        restoreBtn.style.display = '';
+    }
+
+    /**
+     * Handle Restore — restores checkbox values from the All Off snapshot.
+     * @param {HTMLElement} restoreBtn
+     */
+    async handleRestore(restoreBtn) {
+        const key = await this._getAllOffSnapshotKey();
+        const snapshot = await storage.getJSON(key, 'settings', null);
+        if (!snapshot) return;
+
+        for (const [id, value] of Object.entries(snapshot)) {
+            const entry = this.config.settingsMap[id];
+            if (!entry) continue;
+            this.config.setSetting(id, value);
+        }
+        await storage.delete(key, 'settings');
+
+        this._syncAllCheckboxInputs();
+        this.applyDisabledByState();
+        restoreBtn.style.display = 'none';
+    }
+
+    /**
+     * Syncs all checkbox DOM inputs to match their current config values.
+     * Used after bulk changes (All Off / Restore).
+     */
+    _syncAllCheckboxInputs() {
+        for (const group of Object.values(settingsGroups)) {
+            for (const [id, def] of Object.entries(group.settings)) {
+                if ((def.type || 'checkbox') !== 'checkbox') continue;
+                const entry = this.config.settingsMap[id];
+                if (!entry) continue;
+                const input = document.querySelector(
+                    `.toolasha-setting[data-setting-id="${id}"] input[type="checkbox"]`
+                );
+                if (input) input.checked = entry.isTrue ?? false;
+            }
+        }
     }
 
     /**
