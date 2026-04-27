@@ -176,6 +176,17 @@ class DOMObserver {
                         return; // Only call once per node
                     }
                 }
+
+                // Also check descendants when a container subtree is inserted.
+                // Only applies when the node has children — leaf nodes are skipped,
+                // which eliminates the bulk of querySelectorAll cost during React's
+                // init burst (thousands of individual leaf additions).
+                if (node.childElementCount > 0) {
+                    for (const targetClass of classArray) {
+                        const matches = node.querySelectorAll(`[class*="${targetClass}"]`);
+                        matches.forEach((match) => callback(match));
+                    }
+                }
             },
             options
         );
