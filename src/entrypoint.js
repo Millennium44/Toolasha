@@ -564,6 +564,20 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'alchemy_decomposeHistory',
+            name: 'Decompose History Tracker',
+            category: 'Alchemy',
+            module: UI.decomposeHistoryTracker,
+            async: false,
+        },
+        {
+            key: 'alchemy_decomposeHistoryViewer',
+            name: 'Decompose History Viewer',
+            category: 'Alchemy',
+            module: UI.decomposeHistoryViewer,
+            async: false,
+        },
+        {
             key: 'enhancementFeature',
             name: 'Enhancement Tracker',
             category: 'Enhancement',

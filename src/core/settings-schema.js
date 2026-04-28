@@ -219,6 +219,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Records coinify sessions and displays history in a viewer tab in the Alchemy panel',
             },
+            alchemy_decomposeHistory: {
+                id: 'alchemy_decomposeHistory',
+                label: 'Alchemy panel: Track and view decompose session history',
+                type: 'checkbox',
+                default: true,
+                help: 'Records decompose sessions and displays history in a viewer tab in the Alchemy panel',
+            },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
                 label: 'Show "Missing Mats Marketplace" button on production panels',
