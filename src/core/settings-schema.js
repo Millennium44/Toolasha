@@ -76,6 +76,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds View Action and Item Dictionary buttons when clicking collection items',
             },
+            queueMonitor: {
+                id: 'queueMonitor',
+                label: 'Cross-character queue monitor',
+                type: 'checkbox',
+                default: false,
+                help: 'Shows estimated queue time remaining for your other characters in a floating widget',
+            },
         },
     },
 

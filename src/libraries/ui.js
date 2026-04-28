@@ -71,6 +71,9 @@ import guildXPDisplay from '../features/guild/guild-xp-display.js';
 // Notifications
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
 
+// Queue Monitor
+import queueMonitor from '../features/queue-monitor/queue-monitor.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -120,6 +123,7 @@ toolashaRoot.UI = {
     guildXPTracker,
     guildXPDisplay,
     emptyQueueNotification,
+    queueMonitor,
 };
 
 console.log('[Toolasha] UI library loaded');

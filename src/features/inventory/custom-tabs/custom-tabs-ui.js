@@ -599,7 +599,9 @@ export default class CustomTabsUI {
             dataManager.off('items_updated', this._onItemsUpdated);
             this._onItemsUpdated = null;
         }
-        for (const unreg of this._unregisterHandlers) unreg();
+        for (const unreg of this._unregisterHandlers) {
+            if (typeof unreg === 'function') unreg();
+        }
         this._unregisterHandlers = [];
 
         this._tabBtn?.remove();

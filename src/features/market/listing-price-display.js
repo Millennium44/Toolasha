@@ -880,11 +880,9 @@ class ListingPriceDisplay {
      * Disable the listing price display
      */
     disable() {
-        // Cleanup all MutationObservers
-        for (const observer of this.tbodyObservers.values()) {
-            observer.disconnect();
-        }
-        this.tbodyObservers.clear();
+        // Cleanup all MutationObservers (tbodyObservers is a WeakMap, not iterable)
+        // WeakMap entries are GC'd automatically, just reset the reference
+        this.tbodyObservers = new WeakMap();
 
         this.cleanupRegistry.cleanupAll();
         this.clearDisplays();

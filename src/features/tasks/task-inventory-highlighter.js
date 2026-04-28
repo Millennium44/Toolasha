@@ -114,8 +114,10 @@ class TaskInventoryHighlighter {
 
         // Update button state
         this.isHighlightActive = false;
-        this.highlightButton.textContent = 'Highlight Task Items';
-        this.highlightButton.style.backgroundColor = '';
+        if (this.highlightButton) {
+            this.highlightButton.textContent = 'Highlight Task Items';
+            this.highlightButton.style.backgroundColor = '';
+        }
     }
 
     /**

@@ -278,7 +278,7 @@ class QueueLengthEstimator {
      */
     disable() {
         this.clearDisplays();
-        this.cleanupRegistry.cleanup();
+        this.cleanupRegistry.cleanupAll();
         this.isInitialized = false;
     }
 

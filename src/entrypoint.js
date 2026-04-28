@@ -612,6 +612,13 @@ function registerFeatures() {
             module: UI.emptyQueueNotification,
             async: false,
         },
+        {
+            key: 'queueMonitor',
+            name: 'Queue Monitor',
+            category: 'General',
+            module: UI.queueMonitor,
+            async: false,
+        },
     ];
 
     // Combine all features
