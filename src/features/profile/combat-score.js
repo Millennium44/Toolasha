@@ -759,7 +759,7 @@ class CombatScore {
 
         // Create panel HTML
         panel.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-shrink: 0;">
+            <div id="mwi-abilities-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-shrink: 0; cursor: move; user-select: none;">
                 <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${playerName} - Abilities & Triggers</div>
                 <span id="mwi-abilities-close-btn" style="
                     cursor: pointer;
@@ -797,34 +797,18 @@ class CombatScore {
      */
     positionAbilitiesPanel(panel, modal) {
         const modalRect = modal.getBoundingClientRect();
-        const gap = 8;
+        const viewportHeight = window.innerHeight;
+        const panelWidth = panel.offsetWidth || 300;
+        const panelHeight = panel.offsetHeight || 200;
 
         // Center panel horizontally under modal
-        const panelWidth = panel.offsetWidth || 300;
         const modalCenter = modalRect.left + modalRect.width / 2;
         const panelLeft = modalCenter - panelWidth / 2;
-
         panel.style.left = Math.max(10, panelLeft) + 'px';
 
-        // Position below modal, but ensure it doesn't go off screen
-        const topPosition = modalRect.bottom + gap;
-        const viewportHeight = window.innerHeight;
-        const panelHeight = panel.offsetHeight || 300;
-
-        // If panel would go off bottom of screen, adjust position or reduce height
-        if (topPosition + panelHeight > viewportHeight - 10) {
-            const availableHeight = viewportHeight - topPosition - 10;
-            if (availableHeight < 200) {
-                // Not enough space below - position above modal instead
-                panel.style.top = Math.max(10, modalRect.top - panelHeight - gap) + 'px';
-            } else {
-                // Limit height to fit available space
-                panel.style.top = topPosition + 'px';
-                panel.style.maxHeight = availableHeight + 'px';
-            }
-        } else {
-            panel.style.top = topPosition + 'px';
-        }
+        // Anchor to bottom of screen
+        const bottomGap = 10;
+        panel.style.top = Math.max(10, viewportHeight - panelHeight - bottomGap) + 'px';
     }
 
     /**
@@ -855,6 +839,32 @@ class CombatScore {
                 const isCollapsed = details.style.display === 'none';
                 details.style.display = isCollapsed ? 'block' : 'none';
                 toggleBtn.textContent = (isCollapsed ? '- ' : '+ ') + (isCollapsed ? 'Hide Details' : 'Show Details');
+                // Re-anchor to bottom after size change
+                requestAnimationFrame(() => {
+                    const bottomGap = 10;
+                    panel.style.top = Math.max(10, window.innerHeight - panel.offsetHeight - bottomGap) + 'px';
+                });
+            });
+        }
+
+        // Drag to move
+        const header = panel.querySelector('#mwi-abilities-header');
+        if (header) {
+            const dragOffset = { x: 0, y: 0 };
+            const onMove = (e) => {
+                panel.style.left = e.clientX - dragOffset.x + 'px';
+                panel.style.top = e.clientY - dragOffset.y + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            };
+            header.addEventListener('mousedown', (e) => {
+                if (e.target.id === 'mwi-abilities-close-btn') return;
+                dragOffset.x = e.clientX - panel.offsetLeft;
+                dragOffset.y = e.clientY - panel.offsetTop;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             });
         }
     }
