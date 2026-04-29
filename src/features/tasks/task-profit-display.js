@@ -650,7 +650,12 @@ class TaskProfitDisplay {
         const nameNode = taskNode.querySelector(GAME.TASK_NAME_DIV);
         if (!nameNode) return null;
 
-        const description = nameNode.textContent.trim();
+        // Exclude zone-index spans injected by Toolasha (e.g. <span class="script_taskMapIndex">Z9</span>)
+        // so they don't pollute the description with "Arcane LumberZ9"
+        const zoneSpan = nameNode.querySelector('span.script_taskMapIndex');
+        const description = zoneSpan
+            ? nameNode.textContent.replace(zoneSpan.textContent, '').trim()
+            : nameNode.textContent.trim();
 
         // Get quantity from progress (plain div with text "Progress: 0 / 1562")
         // Find all divs in taskInfo and look for the one containing "Progress:"
@@ -775,9 +780,8 @@ class TaskProfitDisplay {
      */
     async _runCombatSimEstimate(container, taskData, loadoutName) {
         // Extract monster name from "Defeat - Monster Name" description
-        // Strip trailing zone suffix e.g. "PorcupineZ1" → "Porcupine"
         const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
-        const monsterName = match?.[1]?.trim().replace(/Z\d+$/i, '') || null;
+        const monsterName = match?.[1]?.trim() || null;
         console.log(
             '[TaskProfit] Combat estimate — raw description:',
             JSON.stringify(taskData.description),
