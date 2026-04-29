@@ -56,7 +56,7 @@ class LabyrinthBestLevel {
         this.styleEl = document.createElement('style');
         this.styleEl.id = 'mwi-labyrinth-best-style';
         this.styleEl.textContent = `
-            [class*="LabyrinthPanel_automationSection"] { max-width: 36rem !important; }
+            [class*="LabyrinthPanel_automationContent"] { max-width: 36rem !important; }
         `;
         document.head.appendChild(this.styleEl);
 
