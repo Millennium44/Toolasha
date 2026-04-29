@@ -128,6 +128,16 @@ export async function displayEnhancementStats(panel, itemHrid) {
             speedBreakdown
         );
         injectDisplay(panel, html);
+
+        // Attach mode toggle button handler
+        const modeToggleBtn = panel.querySelector('#mwi-enhance-mode-toggle');
+        if (modeToggleBtn) {
+            modeToggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                config.toggleSetting('enhanceSim_autoDetect');
+                displayEnhancementStats(panel, itemHrid);
+            });
+        }
     } catch (error) {
         console.error('[Toolasha] ❌ Error displaying enhancement stats:', error);
         console.error('[Toolasha] Error stack:', error.stack);
@@ -483,8 +493,12 @@ function formatEnhancementDisplay(
     lines.push(
         '<div style="margin-top: 15px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 0.9em;">'
     );
+    const isAutoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
     lines.push(
-        '<div style="color: #ffa500; font-weight: bold; margin-bottom: 10px; font-size: 1.1em;">⚙️ ENHANCEMENT CALCULATOR</div>'
+        '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">' +
+            `<button id="mwi-enhance-mode-toggle" style="font-size: 0.7em; padding: 2px 7px; border-radius: 3px; border: 1px solid #888; background: rgba(0,0,0,0.3); color: #ccc; cursor: pointer;" title="Toggle between Auto-Detect and Manual modes">${isAutoDetect ? '🔍 Auto' : '✏️ Manual'}</button>` +
+            '<span style="color: #ffa500; font-weight: bold; font-size: 1.1em;">⚙️ ENHANCEMENT CALCULATOR</span>' +
+            '</div>'
     );
 
     // Item info
