@@ -24,6 +24,15 @@ class ActionPanelSort {
     }
 
     /**
+     * Get character-scoped storage key for sort mode.
+     * @returns {string}
+     */
+    _getSortStorageKey() {
+        const charId = dataManager.getCurrentCharacterId() || 'default';
+        return `actionSortMode_${charId}`;
+    }
+
+    /**
      * Get character-scoped storage key for pinned actions.
      * @returns {string}
      */
@@ -40,7 +49,7 @@ class ActionPanelSort {
 
         const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
         this.pinnedActions = new Set(pinnedData);
-        this.sortMode = await storage.get('actionSortMode', 'settings', 'default');
+        this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
         this.initialized = true;
 
         // Listen for character switch to clear character-specific data
@@ -59,9 +68,10 @@ class ActionPanelSort {
         this.cachedStats = {};
         this.initialized = false;
 
-        // Reload pinned actions for the new character
+        // Reload pinned actions and sort mode for the new character
         const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
         this.pinnedActions = new Set(pinnedData);
+        this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
         this.initialized = true;
     }
 
@@ -125,7 +135,7 @@ class ActionPanelSort {
      */
     setSortMode(mode) {
         this.sortMode = mode;
-        storage.set('actionSortMode', mode, 'settings');
+        storage.set(this._getSortStorageKey(), mode, 'settings');
     }
 
     /**
