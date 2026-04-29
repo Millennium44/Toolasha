@@ -481,6 +481,10 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskProfitDisplay,
             async: false,
+            customCheck: () =>
+                config.getSetting('taskProfitCalculator') ||
+                config.getSetting('taskGoMerge') ||
+                config.getSetting('taskQueuedIndicator'),
         },
         {
             key: 'taskRerollTracker',
