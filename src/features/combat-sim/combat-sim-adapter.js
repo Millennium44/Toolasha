@@ -191,6 +191,18 @@ export function buildPlayerDTO() {
 }
 
 /**
+ * Build a player DTO from profile_shared data for the combat sim UI.
+ * @param {Object} profileData - Profile data from profile_shared (with .profile and .characterID)
+ * @returns {Object|null} Player DTO in sim engine format, or null if unavailable
+ */
+export function buildPlayerDTOFromProfile(profileData) {
+    if (!profileData?.profile) return null;
+    const clientData = dataManager.getInitClientData();
+    if (!clientData) return null;
+    return buildPartyMemberDTO(profileData, clientData, null);
+}
+
+/**
  * Build a player DTO from a cached party member profile.
  * @param {Object} profile - Profile data with .profile sub-object
  * @param {Object} clientData - initClientData

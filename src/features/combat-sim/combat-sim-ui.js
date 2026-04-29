@@ -2206,6 +2206,35 @@ class CombatSimUI {
     }
 
     /**
+     * Open the sim panel pre-loaded with an external player DTO.
+     * Used by the profile page "Sim Character" button.
+     * @param {Object} dto - Player DTO in sim engine format
+     * @param {string} playerName - Display name for the player tab
+     */
+    openWithExternalDTO(dto, playerName) {
+        if (!this.panel) {
+            this.buildPanel();
+        }
+
+        dto.hrid = 'player1';
+
+        const dtoMap = { player1: structuredClone(dto) };
+        this._originalDTOs = structuredClone(dtoMap);
+        this._editedDTOs = structuredClone(dtoMap);
+        this._editedPlayerInfo = [{ hrid: 'player1', name: playerName }];
+        this._selfHrid = 'player1';
+        this._activeEditPlayer = 'player1';
+        this._missingMembers = [];
+        this._editorInitialized = true;
+
+        this.panel.style.display = 'flex';
+        bringPanelToFront(this.panel);
+        this.populateZones();
+        this._switchTab('configure');
+        this._renderEditor();
+    }
+
+    /**
      * Toggle panel visibility.
      */
     toggle() {

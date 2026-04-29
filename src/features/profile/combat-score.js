@@ -15,6 +15,8 @@ import { handleViewCardClick, handleViewCardFromSnapshot } from './character-car
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import combatSimUI from '../combat-sim/combat-sim-ui.js';
+import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 
 /**
  * CombatScore class manages combat score display on profiles
@@ -347,6 +349,17 @@ class CombatScore {
                         overflow-y: auto;
                     "></div>
                 </div>
+                <button id="mwi-sim-character-btn" style="
+                    padding: 8px 12px;
+                    background: linear-gradient(135deg, #3a7bd5, #5f3dc4);
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-weight: bold;
+                    font-size: 0.85rem;
+                    width: 100%;
+                ">Sim Character</button>
                 <button id="mwi-milkonomy-export-btn" style="
                     padding: 8px 12px;
                     background: ${config.COLOR_ACCENT};
@@ -506,6 +519,32 @@ class CombatScore {
             });
             combatSimBtn.addEventListener('mouseleave', () => {
                 combatSimBtn.style.opacity = '1';
+            });
+        }
+
+        // Sim Character button - opens combat sim UI with profile data
+        const simCharBtn = panel.querySelector('#mwi-sim-character-btn');
+        if (simCharBtn) {
+            simCharBtn.addEventListener('click', () => {
+                const playerName = profileData?.profile?.sharableCharacter?.name || 'Player';
+                const dto = buildPlayerDTOFromProfile(profileData);
+                if (!dto) {
+                    simCharBtn.textContent = '\u2717 No Data';
+                    simCharBtn.style.background = config.COLOR_LOSS;
+                    const resetTimeout = setTimeout(() => {
+                        simCharBtn.textContent = 'Sim Character';
+                        simCharBtn.style.background = 'linear-gradient(135deg, #3a7bd5, #5f3dc4)';
+                    }, 3000);
+                    this.timerRegistry.registerTimeout(resetTimeout);
+                    return;
+                }
+                combatSimUI.openWithExternalDTO(dto, playerName);
+            });
+            simCharBtn.addEventListener('mouseenter', () => {
+                simCharBtn.style.opacity = '0.8';
+            });
+            simCharBtn.addEventListener('mouseleave', () => {
+                simCharBtn.style.opacity = '1';
             });
         }
 
