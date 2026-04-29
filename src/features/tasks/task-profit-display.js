@@ -331,10 +331,10 @@ class TaskProfitDisplay {
             });
         };
 
-        webSocketHook.on('loadouts_updated', loadoutsHandler);
+        loadoutSnapshot.onUpdate(loadoutsHandler);
 
         this.unregisterHandlers.push(() => {
-            webSocketHook.off('loadouts_updated', loadoutsHandler);
+            loadoutSnapshot.offUpdate(loadoutsHandler);
         });
     }
 
