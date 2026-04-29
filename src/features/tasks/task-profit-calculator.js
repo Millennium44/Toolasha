@@ -150,17 +150,22 @@ function detectTaskType(taskDescription) {
 function parseTaskDescription(taskDescription, taskType, quantity, currentProgress) {
     const gameData = dataManager.getInitClientData();
     if (!gameData) {
+        console.warn('[TaskProfit] parseTaskDescription: initClientData is null', { taskDescription, taskType });
         return null;
     }
 
     const actionDetailMap = gameData.actionDetailMap;
     if (!actionDetailMap) {
+        console.warn('[TaskProfit] parseTaskDescription: actionDetailMap missing from initClientData', {
+            taskDescription,
+        });
         return null;
     }
 
     // Extract action name from "Skill - Action" format
     const match = taskDescription.match(/^[^-]+\s*-\s*(.+)$/);
     if (!match) {
+        console.warn('[TaskProfit] parseTaskDescription: regex did not match description', { taskDescription });
         return null;
     }
 
@@ -173,6 +178,12 @@ function parseTaskDescription(taskDescription, taskType, quantity, currentProgre
         }
     }
 
+    console.warn('[TaskProfit] parseTaskDescription: no actionHrid found for action name', {
+        taskDescription,
+        extractedActionName: actionName,
+        taskType,
+        actionDetailMapSize: Object.keys(actionDetailMap).length,
+    });
     return null;
 }
 

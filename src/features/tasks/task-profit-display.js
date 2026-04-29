@@ -705,6 +705,15 @@ class TaskProfitDisplay {
             currentProgress,
         };
 
+        console.log('[TaskProfit] parseTaskData:', {
+            description,
+            descriptionCharCodes: [...description].map((c) => c.charCodeAt(0)),
+            quantity,
+            currentProgress,
+            coinReward,
+            taskTokenReward,
+        });
+
         return taskData;
     }
 
@@ -768,8 +777,36 @@ class TaskProfitDisplay {
         // Extract monster name from "Defeat - Monster Name" description
         const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
         const monsterName = match?.[1]?.trim();
+        console.log(
+            '[TaskProfit] Combat estimate — raw description:',
+            JSON.stringify(taskData.description),
+            '| regex match:',
+            match ? JSON.stringify(match[0]) : 'null',
+            '| extracted name:',
+            JSON.stringify(monsterName)
+        );
+
+        const initClientData = dataManager.getInitClientData();
+        const monsterMap = initClientData?.combatMonsterDetailMap;
         const monsterHrid = monsterName ? dataManager.getMonsterHridFromName(monsterName) : null;
+
         if (!monsterHrid) {
+            const knownNames = monsterMap
+                ? Object.values(monsterMap)
+                      .map((m) => m.name)
+                      .sort()
+                : null;
+            console.warn('[TaskProfit] Could not identify monster', {
+                description: taskData.description,
+                extractedName: monsterName,
+                initClientDataLoaded: !!initClientData,
+                monsterMapSize: monsterMap ? Object.keys(monsterMap).length : 0,
+                closeMatches: knownNames
+                    ? knownNames.filter(
+                          (n) => monsterName && n.toLowerCase().includes(monsterName.toLowerCase().split(' ')[0])
+                      )
+                    : [],
+            });
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">Could not identify monster.</span>';
             return;
         }
