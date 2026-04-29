@@ -70,7 +70,8 @@ const utilsExternalGlobals = new Map([
 // Combat feature modules imported cross-library (by ui)
 // Must be external so they reference the shared Combat.* globals instead of bundling duplicates
 const combatFeatureExternals = new Map([
-    [normalize(join(__dirname, 'src/features/combat/loadout-snapshot.js')), 'Toolasha.Combat.loadoutSnapshot'],
+    // loadout-snapshot is accessed lazily at runtime via window.Toolasha.Combat.loadoutSnapshot
+    // No entries needed here; kept as a hook for future cross-bundle combat singletons
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

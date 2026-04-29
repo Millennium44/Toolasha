@@ -24,7 +24,13 @@ import {
     applyLoadoutSnapshotToDTO,
     calculateSimRevenue,
 } from '../combat-sim/combat-sim-adapter.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+// Lazy accessor: in production multi-bundle builds, the UI bundle loads after Combat.
+// Resolve at runtime via window.Toolasha.Combat to share the initialized instance,
+// with a fallback to the static import for dev single-bundle builds.
+import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
+function getLoadoutSnapshot() {
+    return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
+}
 
 // Compiled regex pattern (created once, reused for performance)
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
@@ -331,10 +337,10 @@ class TaskProfitDisplay {
             });
         };
 
-        loadoutSnapshot.onUpdate(loadoutsHandler);
+        getLoadoutSnapshot().onUpdate(loadoutsHandler);
 
         this.unregisterHandlers.push(() => {
-            loadoutSnapshot.offUpdate(loadoutsHandler);
+            getLoadoutSnapshot().offUpdate(loadoutsHandler);
         });
     }
 
@@ -728,7 +734,7 @@ class TaskProfitDisplay {
      */
     _renderCombatEstimateConfig(container, taskData) {
         container.innerHTML = '';
-        const snapshots = loadoutSnapshot
+        const snapshots = getLoadoutSnapshot()
             .getAllSnapshots()
             .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat');
 
