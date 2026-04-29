@@ -67,6 +67,12 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
 ]);
 
+// Combat feature modules imported cross-library (by ui)
+// Must be external so they reference the shared Combat.* globals instead of bundling duplicates
+const combatFeatureExternals = new Map([
+    [normalize(join(__dirname, 'src/features/combat/loadout-snapshot.js')), 'Toolasha.Combat.loadoutSnapshot'],
+]);
+
 // Market modules imported cross-library (by combat, actions, ui)
 // Must be external so they reference the shared Market.* globals instead of bundling duplicates
 const marketExternalGlobals = new Map([
@@ -286,6 +292,10 @@ const prodConfig = [
         } else if (key !== 'core') {
             // actions, combat, ui — need core + utils + market externals
             const allExternals = new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...marketExternalGlobals]);
+            // ui and actions also treat combat feature singletons as externals to avoid duplicate instances
+            if (key === 'ui' || key === 'actions') {
+                for (const [k, v] of combatFeatureExternals) allExternals.set(k, v);
+            }
             external = buildExternal(allExternals);
             globals = buildGlobals(allExternals);
         }
