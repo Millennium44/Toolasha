@@ -54,21 +54,33 @@ class ActionPanelSort {
 
         // Listen for character switch to clear character-specific data
         if (!this.handlers.characterSwitch) {
-            this.handlers.characterSwitch = () => this.onCharacterSwitch();
+            this.handlers.characterSwitch = () => this.onCharacterSwitching();
             dataManager.on('character_switching', this.handlers.characterSwitch);
+        }
+
+        // Listen for character initialized to reload pins for the new character
+        if (!this.handlers.characterInit) {
+            this.handlers.characterInit = (data) => {
+                if (data?._isCharacterSwitch) this.onCharacterInitialized();
+            };
+            dataManager.on('character_initialized', this.handlers.characterInit);
         }
     }
 
     /**
-     * Handle character switch - clear all cached data
+     * Handle character switching - clear cached data only (character ID is still old)
      */
-    async onCharacterSwitch() {
+    onCharacterSwitching() {
         this.clearAllPanels();
         this.pinnedActions.clear();
         this.cachedStats = {};
         this.initialized = false;
+    }
 
-        // Reload pinned actions and sort mode for the new character
+    /**
+     * Handle character initialized - reload pins for the new character
+     */
+    async onCharacterInitialized() {
         const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
         this.pinnedActions = new Set(pinnedData);
         this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
@@ -83,6 +95,10 @@ class ActionPanelSort {
         if (this.handlers.characterSwitch) {
             dataManager.off('character_switching', this.handlers.characterSwitch);
             this.handlers.characterSwitch = null;
+        }
+        if (this.handlers.characterInit) {
+            dataManager.off('character_initialized', this.handlers.characterInit);
+            this.handlers.characterInit = null;
         }
         this.initialized = false;
     }
