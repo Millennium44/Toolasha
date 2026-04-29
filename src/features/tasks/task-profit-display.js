@@ -319,6 +319,23 @@ class TaskProfitDisplay {
         this.unregisterHandlers.push(() => {
             dataManager.off('actions_updated', actionsHandler);
         });
+
+        // Refresh combat estimate loadout dropdowns when snapshots arrive
+        const loadoutsHandler = () => {
+            document.querySelectorAll('.mwi-combat-est-loadout').forEach((select) => {
+                const container = select.closest('.mwi-task-profit');
+                const taskNode = container?.closest('[class*="RandomTask_randomTask"]');
+                if (!taskNode) return;
+                const taskData = this.parseTaskData(taskNode);
+                if (taskData) this._renderCombatEstimateConfig(container, taskData);
+            });
+        };
+
+        webSocketHook.on('loadouts_updated', loadoutsHandler);
+
+        this.unregisterHandlers.push(() => {
+            webSocketHook.off('loadouts_updated', loadoutsHandler);
+        });
     }
 
     /**
