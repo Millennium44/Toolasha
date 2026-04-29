@@ -387,7 +387,7 @@ function registerFeatures() {
             name: 'Loadout Snapshots',
             category: 'Combat',
             module: Combat.loadoutSnapshot,
-            async: false,
+            async: true,
         },
         {
             key: 'scrollSimulatorUI',
