@@ -175,7 +175,17 @@ class DecomposeHistoryTracker {
                   )
                 : 0;
 
-        this.activeSession.totalAttempts += Math.max(successCount, 1);
+        // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
+        const currentCount = action.currentCount || 0;
+        let attemptCount;
+        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
+            attemptCount = currentCount - this.lastCurrentCount;
+        } else {
+            attemptCount = Math.max(successCount, 1);
+        }
+        this.lastCurrentCount = currentCount;
+
+        this.activeSession.totalAttempts += attemptCount;
 
         if (successCount > 0) {
             this.activeSession.totalSuccesses += successCount;
@@ -253,6 +263,7 @@ class DecomposeHistoryTracker {
             primeCatalystUsed: 0,
             results: {},
         };
+        this.lastCurrentCount = null;
     }
 
     /**

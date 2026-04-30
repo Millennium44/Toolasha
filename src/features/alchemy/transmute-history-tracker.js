@@ -162,9 +162,17 @@ class TransmuteHistoryTracker {
         const outputItems = [...selfReturnEntries, ...otherOutputs];
 
         // Each entry corresponds to one successful action; failures produce no output.
-        // Use the output count as the attempt count so efficiency procs are recorded accurately.
-        // Fall back to 1 for a plain failure.
-        this.activeSession.totalAttempts += Math.max(outputItems.length, 1);
+        // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
+        const currentCount = action.currentCount || 0;
+        let attemptCount;
+        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
+            attemptCount = currentCount - this.lastCurrentCount;
+        } else {
+            attemptCount = Math.max(outputItems.length, 1);
+        }
+        this.lastCurrentCount = currentCount;
+
+        this.activeSession.totalAttempts += attemptCount;
 
         if (outputItems.length > 0) {
             this.activeSession.totalSuccesses += outputItems.length;
@@ -232,6 +240,7 @@ class TransmuteHistoryTracker {
             totalSuccesses: 0,
             results: {},
         };
+        this.lastCurrentCount = null;
 
         await this.saveActiveSession();
     }

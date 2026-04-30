@@ -145,7 +145,18 @@ class CoinifyHistoryTracker {
         const coinEntries = (data.endCharacterItems || []).filter((item) => item.itemHrid === COIN_ITEM_HRID);
         const successCount = coinEntries.length;
 
-        this.activeSession.totalAttempts += Math.max(successCount, 1);
+        // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
+        const currentCount = action.currentCount || 0;
+        let attemptCount;
+        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
+            attemptCount = currentCount - this.lastCurrentCount;
+        } else {
+            // First tick or counter reset — fall back to at least the success count
+            attemptCount = Math.max(successCount, 1);
+        }
+        this.lastCurrentCount = currentCount;
+
+        this.activeSession.totalAttempts += attemptCount;
 
         if (successCount > 0) {
             this.activeSession.totalSuccesses += successCount;
@@ -211,6 +222,7 @@ class CoinifyHistoryTracker {
             coinsPerSuccess,
             bulkMultiplier,
         };
+        this.lastCurrentCount = null;
     }
 
     /**
