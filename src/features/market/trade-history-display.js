@@ -219,11 +219,11 @@ class TradeHistoryDisplay {
         }
 
         // Extract top ask (lowest sell price) and top bid (highest buy price)
-        const topAsk = orderBook.asks?.[0]?.price;
-        const topBid = orderBook.bids?.length > 0 ? orderBook.bids[0].price : undefined;
+        const topAsk = orderBook.asks?.[0]?.price || null;
+        const topBid = orderBook.bids?.[0]?.price || null;
 
-        // Validate prices exist and are positive
-        if (!topAsk || topAsk <= 0 || !topBid || topBid <= 0) {
+        // Return partial data — at least one side must exist
+        if (!topAsk && !topBid) {
             return null;
         }
 
