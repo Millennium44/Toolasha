@@ -500,7 +500,6 @@ class WebSocketHook {
                 // Save as JSON string for Combat Sim export
                 const clientDataStr = JSON.stringify(clientDataObj);
                 await this.saveToStorage('toolasha_init_client_data', clientDataStr);
-                console.log('[Toolasha] Client data captured from localStorage via official API');
                 this.clearClientDataRetry();
             }
         } catch (error) {

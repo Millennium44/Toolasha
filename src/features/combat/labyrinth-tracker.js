@@ -49,7 +49,6 @@ class LabyrinthTracker {
         webSocketHook.on('labyrinth_updated', this.handlers.labyrinthUpdated);
 
         this.isInitialized = true;
-        console.log('[LabyrinthTracker] Initialized');
     }
 
     /**
