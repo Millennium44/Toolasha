@@ -275,6 +275,14 @@ class AlchemyProfitDisplay {
             const drops = await alchemyProfit.extractDrops(actionHrid);
             const requirements = await alchemyProfit.extractRequirements();
 
+            // Diagnostic: log extraction results for debugging missing displays
+            console.debug('[AlchemyProfitDisplay] updateDisplay:', {
+                actionHrid,
+                dropsCount: drops?.length ?? 0,
+                requirementsCount: requirements?.length ?? 0,
+                firstReqItem: requirements?.[0]?.itemHrid ?? null,
+            });
+
             // Determine action type from actionHrid (most reliable) or DOM tab state
             let isCoinify = false;
             let isTransmute = false;
@@ -320,6 +328,8 @@ class AlchemyProfitDisplay {
                 }
             }
 
+            console.debug('[AlchemyProfitDisplay] type detection:', { isCoinify, isTransmute, isDecompose });
+
             if (isCoinify) {
                 // Use unified calculator for coinify
                 if (requirements && requirements.length > 0) {
@@ -328,6 +338,13 @@ class AlchemyProfitDisplay {
 
                     // Call unified calculator
                     profitData = alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel, true);
+                    console.debug('[AlchemyProfitDisplay] coinify result:', {
+                        itemHrid,
+                        enhancementLevel,
+                        hasData: !!profitData,
+                        actionTime: profitData?.actionTime ?? null,
+                        hasEfficiency: !!profitData?.efficiencyBreakdown,
+                    });
                 }
             } else if (isTransmute) {
                 // Use unified calculator for transmute
@@ -347,6 +364,7 @@ class AlchemyProfitDisplay {
             }
 
             if (!profitData) {
+                console.debug('[AlchemyProfitDisplay] profitData is null — removing display');
                 this.removeDisplay();
                 return;
             }
@@ -940,6 +958,15 @@ class AlchemyProfitDisplay {
 
         // Use cached input field if current one is not available
         const effectiveInputField = inputField || this.cachedInputField;
+
+        // Diagnostic: log section creation guards
+        console.debug('[AlchemyProfitDisplay] createDisplay section guards:', {
+            hasInputField: !!effectiveInputField,
+            actionTime: profitData.actionTime ?? null,
+            hasEfficiencyBreakdown: !!profitData.efficiencyBreakdown,
+            actionType,
+            itemHrid,
+        });
 
         // Create Action Speed & Time section (after profitability)
         if (effectiveInputField && profitData.actionTime && profitData.efficiencyBreakdown) {
