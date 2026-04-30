@@ -66,10 +66,10 @@ class TradeHistoryDisplay {
                 // Get enhancement level from DOM
                 const enhancementLevel = this.getCurrentEnhancementLevel();
 
-                // Check if this is a different item
+                // Check if this is the same item
                 if (itemHrid === this.currentItemHrid && enhancementLevel === this.currentEnhancementLevel) {
-                    // Only update if we previously failed due to missing price data
-                    if (!this.needsPriceDataRetry) {
+                    // Re-render if display was removed by React, otherwise skip
+                    if (!this.needsPriceDataRetry && document.querySelector('.mwi-trade-history')) {
                         return;
                     }
                 }
