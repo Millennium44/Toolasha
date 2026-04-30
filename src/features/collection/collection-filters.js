@@ -499,7 +499,7 @@ class CollectionFilters {
         this.unregisterHandlers.push(unregPanel);
 
         // Watch for skilling screens
-        if (config.isFeatureEnabled('collectionFilters_skillingBadges')) {
+        if (config.getSetting('collectionFilters_skillingBadges')) {
             const unregSkilling = domObserver.onClass(
                 'CollectionFilters-skilling',
                 'SkillActionGrid_skillActionGrid__1tJFk',
