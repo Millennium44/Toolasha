@@ -57,6 +57,8 @@ class LabyrinthBestLevel {
         this.styleEl.id = 'mwi-labyrinth-best-style';
         this.styleEl.textContent = `
             [class*="LabyrinthPanel_automationContent"] { max-width: 36rem !important; }
+            [class*="LabyrinthPanel_skipThreshold"] { display: flex; align-items: center; }
+            .mwi-labyrinth-best { order: 99; }
         `;
         document.head.appendChild(this.styleEl);
 
