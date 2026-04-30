@@ -474,7 +474,7 @@ class CollectionFilters {
 
     async initialize() {
         if (this.isInitialized) return;
-        if (!config.isFeatureEnabled('collectionFilters')) return;
+        if (!config.getSetting('collectionFilters')) return;
 
         this.isInitialized = true;
 
