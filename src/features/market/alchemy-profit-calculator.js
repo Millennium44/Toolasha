@@ -260,8 +260,9 @@ class AlchemyProfitCalculator {
         computeNetProfit,
         computeTeaCost,
         levelPenalty = 0,
+        teaBonusOverride = null,
     }) {
-        const liveTeaBonus = getAlchemySuccessBonus();
+        const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
         const typeSpecificHrid = CATALYST_HRIDS[actionType];
         const primeCatalystHrid = CATALYST_HRIDS.prime;
         const typeSpecificPrice = getItemPrice(typeSpecificHrid, { context: 'profit', side: 'buy' }) ?? 0;
@@ -405,7 +406,7 @@ class AlchemyProfitCalculator {
      * @param {number} enhancementLevel - Enhancement level (default 0)
      * @returns {Object|null} Detailed profit data or null if not coinifiable
      */
-    calculateCoinifyProfit(itemHrid, enhancementLevel = 0, useLiveSetup = false) {
+    calculateCoinifyProfit(itemHrid, enhancementLevel = 0, useLiveSetup = false, teaBonusOverride = null) {
         try {
             const gameData = dataManager.getInitClientData();
             const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -522,6 +523,7 @@ class AlchemyProfitCalculator {
                 alchemyBonusRevenue: alchemyBonus.totalBonusRevenue,
                 computeNetProfit: (successRate) => coinsProduced * successRate - (materialCost + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
+                teaBonusOverride,
             });
 
             const {
@@ -670,7 +672,7 @@ class AlchemyProfitCalculator {
      * @param {number} enhancementLevel - Enhancement level (default 0)
      * @returns {Object|null} Profit data or null if not decomposable
      */
-    calculateDecomposeProfit(itemHrid, enhancementLevel = 0, useLiveSetup = false) {
+    calculateDecomposeProfit(itemHrid, enhancementLevel = 0, useLiveSetup = false, teaBonusOverride = null) {
         try {
             const gameData = dataManager.getInitClientData();
             const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -825,6 +827,7 @@ class AlchemyProfitCalculator {
                 alchemyBonusRevenue: alchemyBonus.totalBonusRevenue,
                 computeNetProfit: (successRate) => outputValue * successRate - (inputPrice + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
+                teaBonusOverride,
             });
 
             const {
@@ -968,7 +971,7 @@ class AlchemyProfitCalculator {
      * @param {string} itemHrid - Item HRID
      * @returns {Object|null} Profit data or null if not transmutable
      */
-    calculateTransmuteProfit(itemHrid, useLiveSetup = false) {
+    calculateTransmuteProfit(itemHrid, useLiveSetup = false, teaBonusOverride = null) {
         try {
             const gameData = dataManager.getInitClientData();
             const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -1143,6 +1146,7 @@ class AlchemyProfitCalculator {
                 },
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 levelPenalty,
+                teaBonusOverride,
             });
 
             const {

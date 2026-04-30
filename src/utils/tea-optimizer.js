@@ -11,6 +11,7 @@ import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from './e
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour, calculateDrinksPerHour } from './profit-helpers.js';
 import { getItemPrice } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
+import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 
 // Skill name to action type mapping
 const SKILL_TO_ACTION_TYPE = {
@@ -151,6 +152,7 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
         artisan: 0,
         gourmet: 0,
         actionLevel: 0,
+        alchemySuccess: 0,
         skillLevels: {}, // skill name → level bonus
     };
 
@@ -183,6 +185,10 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
                     break;
                 case '/buff_types/action_level':
                     buffs.actionLevel += scaledValue;
+                    break;
+                case '/buff_types/alchemy_success':
+                    // alchemy_success uses ratioBoost, not flatBoost
+                    buffs.alchemySuccess += (buff.ratioBoost || 0) * (1 + drinkConcentration);
                     break;
                 default:
                     // Check for skill level buffs (e.g., /buff_types/milking_level)
@@ -476,6 +482,131 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
 }
 
 /**
+ * Calculate Gold/hour for an alchemy action with a specific tea combination
+ * @param {Object} alchemyContext - { actionType: 'coinify'|'decompose'|'transmute', itemHrid, enhancementLevel }
+ * @param {Object} buffs - Parsed tea buffs (includes alchemySuccess)
+ * @returns {number} Gold per hour (profit after all costs)
+ */
+function calculateAlchemyGoldPerHour(alchemyContext, buffs) {
+    const { actionType, itemHrid, enhancementLevel = 0 } = alchemyContext;
+    const teaBonusOverride = buffs.alchemySuccess || 0;
+
+    let profitData = null;
+    if (actionType === 'coinify') {
+        profitData = alchemyProfitCalculator.calculateCoinifyProfit(
+            itemHrid,
+            enhancementLevel,
+            false,
+            teaBonusOverride
+        );
+    } else if (actionType === 'decompose') {
+        profitData = alchemyProfitCalculator.calculateDecomposeProfit(
+            itemHrid,
+            enhancementLevel,
+            false,
+            teaBonusOverride
+        );
+    } else if (actionType === 'transmute') {
+        profitData = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, false, teaBonusOverride);
+    }
+
+    if (!profitData) return 0;
+    return profitData.profitPerHour || 0;
+}
+
+/**
+ * Calculate XP/hour for an alchemy action with a specific tea combination.
+ * Alchemy XP is derived from item level, not from actionDetails.experienceGain.
+ * @param {Object} alchemyContext - { actionType, itemHrid, enhancementLevel }
+ * @param {Object} buffs - Parsed tea buffs
+ * @param {number} playerLevel - Player's alchemy level
+ * @param {Object} otherEfficiency - Non-tea efficiency sources
+ * @param {Object} calcContext - { equipment, itemDetailMap }
+ * @returns {number} XP per hour
+ */
+function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext) {
+    const { actionType, itemHrid } = alchemyContext;
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.actionDetailMap) return 0;
+
+    const actionHrid = `/actions/alchemy/${actionType}`;
+    const actionDetails = gameData.actionDetailMap[actionHrid];
+    if (!actionDetails) return 0;
+
+    const itemDetails = gameData.itemDetailMap?.[itemHrid];
+    if (!itemDetails?.itemLevel) return 0;
+
+    // Base XP from alchemy formula (depends on action type + item level)
+    const itemLevel = itemDetails.itemLevel;
+    let baseXP;
+    switch (actionType) {
+        case 'coinify':
+            baseXP = itemLevel + 10;
+            break;
+        case 'decompose':
+            baseXP = itemLevel * 1.4 + 14;
+            break;
+        case 'transmute':
+            baseXP = itemLevel * 1.6 + 16;
+            break;
+        default:
+            return 0;
+    }
+
+    // Success rate with this tea's alchemy bonus (affects XP: failures give 10%)
+    const teaBonusOverride = buffs.alchemySuccess || 0;
+    let baseSuccessRate;
+    if (actionType === 'coinify') baseSuccessRate = 0.7;
+    else if (actionType === 'decompose') baseSuccessRate = 0.6;
+    else baseSuccessRate = itemDetails.alchemyDetail?.transmuteSuccessRate || 0;
+
+    // Level penalty (transmute only)
+    const levelPenalty =
+        actionType === 'transmute' && playerLevel < itemLevel ? (0.9 / itemLevel) * (playerLevel - itemLevel) : 0;
+
+    const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty) * (1 + teaBonusOverride)));
+
+    // XP per action: success gives full XP, failure gives 10%
+    // Wisdom multiplier — replace current tea wisdom with our hypothetical tea wisdom
+    const xpData = calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy');
+    const currentTeaWisdom = xpData.breakdown?.consumableWisdom || 0;
+    const baseWisdomWithoutTea = xpData.totalWisdom - currentTeaWisdom;
+    const totalWisdomWithOurTea = baseWisdomWithoutTea + buffs.wisdom;
+    const charmExperience = xpData.charmExperience || 0;
+    const wisdomMultiplier = 1 + totalWisdomWithOurTea / 100 + charmExperience / 100;
+
+    const fullXP = baseXP * wisdomMultiplier;
+    const xpPerAction = successRate * fullXP + (1 - successRate) * fullXP * 0.1;
+
+    // Actions per hour (uses item level for efficiency, not action level requirement)
+    const requiredLevel = itemLevel;
+    const { equipment, itemDetailMap } = calcContext;
+    const teaSkillLevelBonus = buffs.skillLevels['alchemy'] || 0;
+    const equipmentSpeedBonus = parseEquipmentSpeedBonuses(equipment, actionDetails.type, itemDetailMap) || 0;
+    const equipmentEfficiencyBonus = parseEquipmentEfficiencyBonuses(equipment, actionDetails.type, itemDetailMap) || 0;
+
+    const efficiencyData = calculateEfficiencyBreakdown({
+        requiredLevel,
+        skillLevel: playerLevel,
+        teaSkillLevelBonus,
+        actionLevelBonus: buffs.actionLevel,
+        houseEfficiency: otherEfficiency.house || 0,
+        equipmentEfficiency: equipmentEfficiencyBonus,
+        teaEfficiency: buffs.efficiency,
+        communityEfficiency: otherEfficiency.community || 0,
+        achievementEfficiency: otherEfficiency.achievement || 0,
+    });
+
+    const efficiencyMultiplier = calculateEfficiencyMultiplier(efficiencyData.totalEfficiency);
+    const baseTime = (actionDetails.baseTimeCost || 20e9) / 1e9;
+    const actionTime = baseTime / (1 + equipmentSpeedBonus);
+    const baseActionsPerHour = calculateActionsPerHour(actionTime);
+    const actionsPerHour = calculateEffectiveActionsPerHour(baseActionsPerHour, efficiencyMultiplier);
+
+    return actionsPerHour * xpPerAction;
+}
+
+/**
  * Find processing conversion for an item
  * @param {string} itemHrid - Item HRID
  * @param {Object} gameData - Game data
@@ -654,7 +785,14 @@ function getOtherEfficiencySources(actionType) {
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @returns {Object} Optimization result
  */
-export function findOptimalTeas(skillName, goal, locationName = null, actionNameFilter = null, constraints = null) {
+export function findOptimalTeas(
+    skillName,
+    goal,
+    locationName = null,
+    actionNameFilter = null,
+    constraints = null,
+    alchemyContext = null
+) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
     const isProduction = PRODUCTION_SKILLS.includes(normalizedSkill);
@@ -760,50 +898,67 @@ export function findOptimalTeas(skillName, goal, locationName = null, actionName
         let profitableCount = 0;
         const actionScores = [];
 
-        for (const action of actions) {
+        // Alchemy mode: score the specific item, not all actions
+        if (alchemyContext) {
+            const actionName = `${alchemyContext.actionType}: ${alchemyContext.itemName || alchemyContext.itemHrid}`;
             let score;
             if (goal === 'xp') {
-                score = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
+                score = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
                 totalScore += score;
-            } else if (isGathering) {
-                score = calculateGatheringGoldPerHour(
-                    action,
-                    buffs,
-                    playerLevel,
-                    otherEfficiency,
-                    gameData,
-                    calcContext
-                );
-                // Deduct tea costs from gold score
-                score -= teaCostPerHour.total;
-                // Only include profitable actions in gold calculations
-                if (score > 0) {
-                    totalScore += score;
-                    profitableCount++;
-                }
             } else {
-                score = calculateProductionGoldPerHour(
-                    action,
-                    buffs,
-                    playerLevel,
-                    otherEfficiency,
-                    gameData,
-                    calcContext
-                );
-                // Deduct tea costs from gold score
-                score -= teaCostPerHour.total;
-                // Only include profitable actions in gold calculations
+                score = calculateAlchemyGoldPerHour(alchemyContext, buffs) - teaCostPerHour.total;
                 if (score > 0) {
                     totalScore += score;
                     profitableCount++;
                 }
             }
+            actionScores.push({ action: actionName, score });
+        } else {
+            for (const action of actions) {
+                let score;
+                if (goal === 'xp') {
+                    score = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
+                    totalScore += score;
+                } else if (isGathering) {
+                    score = calculateGatheringGoldPerHour(
+                        action,
+                        buffs,
+                        playerLevel,
+                        otherEfficiency,
+                        gameData,
+                        calcContext
+                    );
+                    // Deduct tea costs from gold score
+                    score -= teaCostPerHour.total;
+                    // Only include profitable actions in gold calculations
+                    if (score > 0) {
+                        totalScore += score;
+                        profitableCount++;
+                    }
+                } else {
+                    score = calculateProductionGoldPerHour(
+                        action,
+                        buffs,
+                        playerLevel,
+                        otherEfficiency,
+                        gameData,
+                        calcContext
+                    );
+                    // Deduct tea costs from gold score
+                    score -= teaCostPerHour.total;
+                    // Only include profitable actions in gold calculations
+                    if (score > 0) {
+                        totalScore += score;
+                        profitableCount++;
+                    }
+                }
 
-            actionScores.push({ action: action.name, score });
+                actionScores.push({ action: action.name, score });
+            }
         }
 
         // For gold, average across profitable actions only; for XP, average across all
-        const avgDivisor = goal === 'gold' ? profitableCount || 1 : actions.length;
+        const avgDivisor = goal === 'gold' ? profitableCount || 1 : alchemyContext ? 1 : actions.length;
 
         results.push({
             teas: combo,
@@ -874,7 +1029,7 @@ export function findOptimalTeas(skillName, goal, locationName = null, actionName
         playerLevel,
         drinkConcentration,
         otherEfficiency,
-        actionsEvaluated: actions.length,
+        actionsEvaluated: alchemyContext ? 1 : actions.length,
         profitableActionsCount: topResult.profitableCount, // For display in stats
         combinationsEvaluated: combinations.length,
         allResults: results.slice(0, 5).map((r) => ({

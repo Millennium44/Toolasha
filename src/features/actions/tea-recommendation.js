@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import actionFilter from './action-filter.js';
+import alchemyProfit from '../alchemy/alchemy-profit.js';
 import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -35,6 +36,49 @@ function getCurrentLocationTab() {
     }
 
     return null;
+}
+
+/**
+ * Build alchemy context for tea optimization when on the alchemy page.
+ * Detects action type from DOM tabs or active action, extracts current item.
+ * @returns {Promise<Object|null>} { actionType, itemHrid, enhancementLevel, itemName } or null
+ */
+async function getAlchemyContext() {
+    // Determine action type from active action or DOM tab
+    let actionType = null;
+    const actionHrid = alchemyProfit.getCurrentActionHrid();
+
+    if (actionHrid) {
+        if (actionHrid === '/actions/alchemy/coinify') actionType = 'coinify';
+        else if (actionHrid === '/actions/alchemy/transmute') actionType = 'transmute';
+        else if (actionHrid === '/actions/alchemy/decompose') actionType = 'decompose';
+    }
+
+    if (!actionType) {
+        // Fall back to selected tab
+        const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+        const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
+        const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
+
+        if (tabText.includes('coinify')) actionType = 'coinify';
+        else if (tabText.includes('transmute')) actionType = 'transmute';
+        else if (tabText.includes('decompose')) actionType = 'decompose';
+    }
+
+    if (!actionType) return null;
+
+    // Extract current item from requirements
+    const requirements = await alchemyProfit.extractRequirements();
+    if (!requirements || requirements.length === 0) return null;
+
+    const itemHrid = requirements[0].itemHrid;
+    if (!itemHrid) return null;
+
+    const enhancementLevel = requirements[0].enhancementLevel || 0;
+    const itemDetails = dataManager.getItemDetails(itemHrid);
+    const itemName = itemDetails?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+
+    return { actionType, itemHrid, enhancementLevel, itemName };
 }
 
 class TeaRecommendation {
@@ -69,10 +113,22 @@ class TeaRecommendation {
             }
         );
 
-        this.unregisterHandlers.push(unregisterLabelObserver);
+        // Observe for alchemy panel labels (different class from other skills)
+        const unregisterAlchemyLabelObserver = domObserver.onClass(
+            'TeaRecommendation-AlchemyLabel',
+            'AlchemyPanel_label',
+            (labelElement) => {
+                this.checkAndInjectButtons(labelElement);
+            }
+        );
 
-        // Check if consumables label already exists
-        const existingLabels = document.querySelectorAll('[class*="GatheringProductionSkillPanel_label"]');
+        this.unregisterHandlers.push(unregisterLabelObserver);
+        this.unregisterHandlers.push(unregisterAlchemyLabelObserver);
+
+        // Check if consumables label already exists (both skill panel and alchemy panel variants)
+        const existingLabels = document.querySelectorAll(
+            '[class*="GatheringProductionSkillPanel_label"], [class*="AlchemyPanel_label"]'
+        );
         existingLabels.forEach((label) => {
             this.checkAndInjectButtons(label);
         });
@@ -170,12 +226,15 @@ class TeaRecommendation {
      * @param {string} goal - 'xp', 'gold', or 'both'
      * @param {HTMLElement} anchorButton - Button that was clicked
      */
-    showRecommendation(goal, anchorButton) {
+    async showRecommendation(goal, anchorButton) {
         // Close existing popup
         this.closePopup();
 
-        // Get current skill name from action filter
-        const skillName = actionFilter.getCurrentSkillName();
+        // Detect if we're on the alchemy page by checking if the button is inside an alchemy panel
+        const isAlchemy = !!anchorButton.closest('[class*="AlchemyPanel_"]');
+
+        // Get current skill name — action filter doesn't track alchemy, so override when needed
+        const skillName = isAlchemy ? 'Alchemy' : actionFilter.getCurrentSkillName();
         if (!skillName) {
             this.showError(anchorButton, 'Could not detect current skill');
             return;
@@ -184,14 +243,24 @@ class TeaRecommendation {
         // Get current location tab (if any)
         const locationTab = getCurrentLocationTab();
 
+        // Build alchemy context if on alchemy page
+        let alchemyContext = null;
+        if (isAlchemy) {
+            alchemyContext = await getAlchemyContext();
+            if (!alchemyContext) {
+                this.showError(anchorButton, 'No item selected in alchemy panel');
+                return;
+            }
+        }
+
         // Handle 'both' mode - show dual results
         if (goal === 'both') {
-            this.showBothRecommendation(anchorButton, skillName, locationTab);
+            this.showBothRecommendation(anchorButton, skillName, locationTab, alchemyContext);
             return;
         }
 
         // Calculate optimal teas (pass location name to filter by category)
-        const result = findOptimalTeas(skillName, goal, locationTab);
+        const result = findOptimalTeas(skillName, goal, locationTab, null, null, alchemyContext);
 
         if (result.error) {
             this.showError(anchorButton, result.error);
@@ -214,7 +283,7 @@ class TeaRecommendation {
             cursor: default;
         `;
 
-        this.buildPopupContent(popup, result, goal, skillName, locationTab, null);
+        this.buildPopupContent(popup, result, goal, skillName, locationTab, null, alchemyContext);
 
         // Position popup relative to button
         document.body.appendChild(popup);
@@ -259,8 +328,9 @@ class TeaRecommendation {
      * @param {string} skillName - Current skill name
      * @param {string|null} locationTab - Current location tab
      * @param {string|null} drilldownAction - Action name when showing single-action view, null for all-actions
+     * @param {Object|null} alchemyContext - Alchemy context for alchemy skills
      */
-    buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction) {
+    buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext = null) {
         popup.innerHTML = '';
 
         const goalLabel = goal === 'xp' ? 'XP' : 'Gold';
@@ -280,6 +350,10 @@ class TeaRecommendation {
         header.title = 'Drag to move';
         if (drilldownAction) {
             header.textContent = `Optimal ${goalLabel}/hr for ${drilldownAction}`;
+        } else if (alchemyContext) {
+            const dcPercent = result.drinkConcentration ? (result.drinkConcentration * 100).toFixed(2) : 0;
+            const dcSuffix = dcPercent > 0 ? ` (${dcPercent}% DC)` : '';
+            header.textContent = `Optimal ${goalLabel}/hr for ${alchemyContext.actionType}: ${alchemyContext.itemName}${dcSuffix}`;
         } else {
             const displayName = locationTab || skillName;
             const dcPercent = result.drinkConcentration ? (result.drinkConcentration * 100).toFixed(2) : 0;
@@ -376,16 +450,19 @@ class TeaRecommendation {
             `;
             backLink.textContent = `← All ${skillName} actions`;
             backLink.addEventListener('click', () => {
-                const allResult = findOptimalTeas(skillName, goal, locationTab);
+                const allResult = findOptimalTeas(skillName, goal, locationTab, null, null, alchemyContext);
                 if (!allResult.error && allResult.optimal) {
-                    this.buildPopupContent(popup, allResult, goal, skillName, locationTab, null);
+                    this.buildPopupContent(popup, allResult, goal, skillName, locationTab, null, alchemyContext);
                 }
             });
             stats.querySelector('div:last-child').appendChild(backLink);
         } else {
             // Expandable actions section
             let actionsText;
-            if (goal === 'gold') {
+            if (alchemyContext) {
+                // Single alchemy item — no "profitable of N" count needed
+                actionsText = `${alchemyContext.actionType}: ${alchemyContext.itemName}`;
+            } else if (goal === 'gold') {
                 actionsText =
                     excludedCount > 0
                         ? `${profitableCount} profitable of ${result.actionsEvaluated} (+${excludedCount} excluded)`
@@ -448,9 +525,24 @@ class TeaRecommendation {
                     actionRow.style.background = '';
                 });
                 actionRow.addEventListener('click', () => {
-                    const drillResult = findOptimalTeas(skillName, goal, locationTab, actionData.action);
+                    const drillResult = findOptimalTeas(
+                        skillName,
+                        goal,
+                        locationTab,
+                        actionData.action,
+                        null,
+                        alchemyContext
+                    );
                     if (!drillResult.error && drillResult.optimal) {
-                        this.buildPopupContent(popup, drillResult, goal, skillName, locationTab, actionData.action);
+                        this.buildPopupContent(
+                            popup,
+                            drillResult,
+                            goal,
+                            skillName,
+                            locationTab,
+                            actionData.action,
+                            alchemyContext
+                        );
                     }
                 });
             }
@@ -503,7 +595,9 @@ class TeaRecommendation {
                 const isHidden = actionsDetail.style.display === 'none';
                 actionsDetail.style.display = isHidden ? 'block' : 'none';
                 let expandedText;
-                if (goal === 'gold') {
+                if (alchemyContext) {
+                    expandedText = `▼ ${alchemyContext.actionType}: ${alchemyContext.itemName}`;
+                } else if (goal === 'gold') {
                     expandedText =
                         excludedCount > 0
                             ? `▼ ${profitableCount} profitable (+${excludedCount})`
@@ -726,7 +820,7 @@ class TeaRecommendation {
                     this.pinnedTeas.add(hrid);
                     this.bannedTeas.delete(hrid);
                 }
-                this._rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction);
+                this._rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction, alchemyContext);
             });
 
             // Ban button ⊘
@@ -749,7 +843,7 @@ class TeaRecommendation {
                     this.bannedTeas.add(hrid);
                     this.pinnedTeas.delete(hrid);
                 }
-                this._rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction);
+                this._rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction, alchemyContext);
             });
 
             btnContainer.appendChild(pinBtn);
@@ -786,9 +880,9 @@ class TeaRecommendation {
      * @param {string} skillName - Current skill name
      * @param {string|null} locationTab - Current location tab
      */
-    showBothRecommendation(anchorButton, skillName, locationTab) {
-        const xpResult = findOptimalTeas(skillName, 'xp', locationTab);
-        const goldResult = findOptimalTeas(skillName, 'gold', locationTab);
+    showBothRecommendation(anchorButton, skillName, locationTab, alchemyContext = null) {
+        const xpResult = findOptimalTeas(skillName, 'xp', locationTab, null, null, alchemyContext);
+        const goldResult = findOptimalTeas(skillName, 'gold', locationTab, null, null, alchemyContext);
 
         if (xpResult.error && goldResult.error) {
             this.showError(anchorButton, xpResult.error);
@@ -812,7 +906,9 @@ class TeaRecommendation {
         `;
 
         // Header
-        const displayName = locationTab || skillName;
+        const displayName = alchemyContext
+            ? `${alchemyContext.actionType}: ${alchemyContext.itemName}`
+            : locationTab || skillName;
         const header = document.createElement('div');
         header.style.cssText = `
             font-size: 14px;
@@ -990,12 +1086,20 @@ class TeaRecommendation {
      * @param {string} skillName - Current skill name
      * @param {string|null} locationTab - Current location tab
      * @param {string|null} drilldownAction - Current drilldown action name, or null
+     * @param {Object|null} alchemyContext - Alchemy context for alchemy skills
      */
-    _rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction) {
+    _rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction, alchemyContext = null) {
         const constraints = { pinned: this.pinnedTeas, banned: this.bannedTeas };
-        const result = findOptimalTeas(skillName, goal, locationTab, drilldownAction || null, constraints);
+        const result = findOptimalTeas(
+            skillName,
+            goal,
+            locationTab,
+            drilldownAction || null,
+            constraints,
+            alchemyContext
+        );
         if (result.error) return;
-        this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction);
+        this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext);
     }
 
     /**
