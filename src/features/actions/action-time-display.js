@@ -14,6 +14,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
@@ -150,6 +151,9 @@ class ActionTimeDisplay {
         // Initialize queue tooltip observer
         this.initializeQueueObserver();
 
+        // Initialize queue hover tooltip observer
+        this.initializeQueueTooltipObserver();
+
         this.isInitialized = true;
     }
 
@@ -174,6 +178,320 @@ class ActionTimeDisplay {
                 this.unregisterQueueObserver = null;
             }
         });
+    }
+
+    /**
+     * Initialize observer for queue hover tooltip (the MUI Tooltip that appears on hover over "+N Queued Actions")
+     */
+    initializeQueueTooltipObserver() {
+        tooltipObserver.subscribe('queue-tooltip-timing', (element, eventType) => {
+            if (eventType !== 'opened') return;
+
+            // Identify queue tooltip by its unique class
+            const tooltipContent = element.querySelector('[class*="QueuedActions_queuedActionsTooltip"]');
+            if (!tooltipContent) return;
+
+            this.injectQueueTimesTooltip(tooltipContent);
+        });
+
+        this.cleanupRegistry.registerCleanup(() => {
+            tooltipObserver.unsubscribe('queue-tooltip-timing');
+        });
+    }
+
+    /**
+     * Inject time display into queue hover tooltip
+     * Reuses matchActionFromDiv and calculation logic from injectQueueTimes,
+     * but simplified (no mutation observer, no async profit).
+     * @param {HTMLElement} tooltipContent - The QueuedActions_queuedActionsTooltip container
+     */
+    injectQueueTimesTooltip(tooltipContent) {
+        try {
+            const currentActions = dataManager.getCurrentActions();
+            if (!currentActions || currentActions.length === 0) return;
+
+            const actionDivs = tooltipContent.querySelectorAll('[class^="QueuedActions_action__"]');
+            if (actionDivs.length === 0) return;
+
+            // Prevent duplicate injection
+            if (tooltipContent.querySelector('.mwi-queue-action-time')) return;
+
+            const inventoryLookup = this.buildInventoryLookup(dataManager.getInventory());
+
+            let accumulatedTime = 0;
+            let hasInfinite = false;
+
+            // Include current action time in total (same as edit menu)
+            const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
+            if (currentActionTime) {
+                accumulatedTime += currentActionTime.totalTime;
+                if (currentActionTime.hasInfinite) hasInfinite = true;
+            }
+
+            // Track used action IDs to prevent duplicate matching
+            const usedActionIds = new Set();
+            if (currentActionTime?.actionId) {
+                usedActionIds.add(currentActionTime.actionId);
+            }
+
+            for (const actionDiv of actionDivs) {
+                const actionObj = this.matchActionFromDiv(actionDiv, currentActions, usedActionIds);
+
+                if (!actionObj) {
+                    this.appendTimeToActionDiv(actionDiv, '[Unknown action]');
+                    continue;
+                }
+
+                usedActionIds.add(actionObj.id);
+
+                const actionDetails = dataManager.getActionDetails(actionObj.actionHrid);
+                if (!actionDetails) continue;
+
+                const result = this.calculateSingleQueueActionTime(actionObj, actionDetails, inventoryLookup);
+
+                if (result.isTrulyInfinite) {
+                    hasInfinite = true;
+                } else {
+                    accumulatedTime += result.actionTimeSeconds;
+                }
+
+                // Format time text
+                let timeText;
+                if (result.isTrulyInfinite) {
+                    timeText = '[∞]';
+                } else if (result.isInfinite && result.materialLimit !== null) {
+                    const timeStr = timeReadable(result.totalTime);
+                    timeText = `[${timeStr} · ${result.limitLabel}: ${this.formatLargeNumber(result.materialLimit)}]`;
+                } else {
+                    const timeStr = timeReadable(result.totalTime);
+                    timeText = `[${timeStr}]`;
+                }
+
+                // Add completion time
+                if (!hasInfinite && !result.isTrulyInfinite) {
+                    const completionDate = new Date();
+                    completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+                    const hours = String(completionDate.getHours()).padStart(2, '0');
+                    const minutes = String(completionDate.getMinutes()).padStart(2, '0');
+                    const seconds = String(completionDate.getSeconds()).padStart(2, '0');
+                    timeText += ` Complete at ${hours}:${minutes}:${seconds}`;
+                }
+
+                this.appendTimeToActionDiv(actionDiv, timeText);
+            }
+
+            // Add total time at bottom of tooltip
+            const actionsContainer = tooltipContent.querySelector('[class*="QueuedActions_actions"]');
+            if (actionsContainer) {
+                const totalDiv = document.createElement('div');
+                totalDiv.className = 'mwi-queue-tooltip-total';
+                totalDiv.style.cssText = `
+                    color: ${config.COLOR_TOOLTIP_INFO};
+                    font-weight: bold;
+                    margin-top: 8px;
+                    padding-top: 6px;
+                    border-top: 1px solid rgba(0, 0, 0, 0.2);
+                    text-align: center;
+                    font-size: 0.85em;
+                `;
+
+                let totalText;
+                if (hasInfinite) {
+                    totalText = accumulatedTime > 0 ? `Total: ${timeReadable(accumulatedTime)} + [∞]` : 'Total: [∞]';
+                } else {
+                    totalText = `Total: ${timeReadable(accumulatedTime)}`;
+                }
+                totalDiv.textContent = totalText;
+                actionsContainer.appendChild(totalDiv);
+            }
+        } catch (error) {
+            console.error('[Action Time Display] Error injecting queue tooltip times:', error);
+        }
+    }
+
+    /**
+     * Append a time display div to an action div in the queue tooltip
+     * @param {HTMLElement} actionDiv - The action container div
+     * @param {string} text - Time text to display
+     */
+    appendTimeToActionDiv(actionDiv, text) {
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'mwi-queue-action-time';
+        timeDiv.style.cssText = `
+            color: ${config.COLOR_TOOLTIP_INFO};
+            font-size: 0.85em;
+            margin-top: 2px;
+        `;
+        timeDiv.textContent = text;
+
+        const actionTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
+        if (actionTextContainer) {
+            actionTextContainer.appendChild(timeDiv);
+        } else {
+            actionDiv.appendChild(timeDiv);
+        }
+    }
+
+    /**
+     * Calculate time for the currently active action (for total time calculation)
+     * @param {Array} currentActions - All current actions from dataManager
+     * @param {Object} inventoryLookup - Inventory lookup map
+     * @returns {Object|null} { totalTime, hasInfinite, actionId } or null
+     */
+    calculateCurrentActionTime(currentActions, inventoryLookup) {
+        // Detect current action from DOM
+        const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
+        if (!actionNameElement || !actionNameElement.textContent) return null;
+
+        const actionNameText = this.getCleanActionName(actionNameElement);
+        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
+        const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
+
+        let actionNameFromDom, itemNameFromDom;
+        if (fullNameFromDom.includes(':')) {
+            const parts = fullNameFromDom.split(':');
+            actionNameFromDom = parts[0].trim();
+            itemNameFromDom = parts.slice(1).join(':').trim();
+        } else {
+            actionNameFromDom = fullNameFromDom;
+            itemNameFromDom = null;
+        }
+
+        const currentAction = currentActions.find((a) => {
+            const actionDetails = dataManager.getActionDetails(a.actionHrid);
+            if (!actionDetails || actionDetails.name !== actionNameFromDom) return false;
+            if (itemNameFromDom && a.primaryItemHash) {
+                const itemHrid = '/items/' + itemNameFromDom.toLowerCase().replace(/\s+/g, '_');
+                return a.primaryItemHash.includes(itemHrid);
+            }
+            return true;
+        });
+
+        if (!currentAction) return null;
+
+        const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
+        if (!actionDetails) return null;
+
+        const result = this.calculateSingleQueueActionTime(currentAction, actionDetails, inventoryLookup);
+
+        return {
+            totalTime: result.actionTimeSeconds,
+            hasInfinite: result.isTrulyInfinite,
+            actionId: currentAction.id,
+        };
+    }
+
+    /**
+     * Calculate time for a single queued action
+     * @param {Object} actionObj - Action object from dataManager cache
+     * @param {Object} actionDetails - Action details from dataManager
+     * @param {Object} inventoryLookup - Inventory lookup map
+     * @returns {Object} { totalTime, actionTimeSeconds, count, baseActionsNeeded, isTrulyInfinite, isInfinite, materialLimit, limitType, limitLabel, isEnhancing }
+     */
+    calculateSingleQueueActionTime(actionObj, actionDetails, inventoryLookup) {
+        const isEnhancing = actionDetails.type === '/action_types/enhancing';
+        const isInfinite = !actionObj.hasMaxCount || actionObj.actionHrid.includes('/combat/');
+
+        let totalTime = 0;
+        let actionTimeSeconds = 0;
+        let count = 0;
+        let baseActionsNeeded = 0;
+        let isTrulyInfinite = false;
+        let materialLimit = null;
+        let limitType = null;
+        let limitLabel = '';
+
+        if (isEnhancing) {
+            const enhancingTime = this.calculateEnhancingQueueTime(actionObj, actionDetails, inventoryLookup);
+            if (enhancingTime) {
+                count = enhancingTime.count;
+                totalTime = enhancingTime.totalTime;
+                actionTimeSeconds = enhancingTime.totalTime;
+            } else if (isInfinite) {
+                isTrulyInfinite = true;
+                totalTime = Infinity;
+            }
+        } else {
+            const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid);
+            if (!timeData) {
+                return {
+                    totalTime: 0,
+                    actionTimeSeconds: 0,
+                    count: 0,
+                    baseActionsNeeded: 0,
+                    isTrulyInfinite: isInfinite,
+                    isInfinite,
+                    materialLimit: null,
+                    limitType: null,
+                    limitLabel: '',
+                    isEnhancing,
+                };
+            }
+
+            const { actionTime, totalEfficiency } = timeData;
+
+            if (isInfinite) {
+                const equipment = dataManager.getEquipment();
+                const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+                const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
+                const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
+                const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+
+                const limitResult = this.calculateMaterialLimit(
+                    actionDetails,
+                    inventoryLookup,
+                    artisanBonus,
+                    actionObj
+                );
+                if (limitResult) {
+                    materialLimit = limitResult.maxActions;
+                    limitType = limitResult.limitType;
+                }
+            }
+
+            isTrulyInfinite = isInfinite && materialLimit === null;
+
+            if (!isInfinite) {
+                count = actionObj.maxCount - actionObj.currentCount;
+            } else if (materialLimit !== null) {
+                count = materialLimit;
+            }
+
+            if (!isTrulyInfinite && count > 0) {
+                const avgActionsPerBaseAction = calculateEfficiencyMultiplier(totalEfficiency);
+                baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
+                totalTime = baseActionsNeeded * actionTime;
+                actionTimeSeconds = totalTime;
+            } else if (isTrulyInfinite) {
+                totalTime = Infinity;
+            }
+        }
+
+        // Derive limit label
+        if (limitType === 'gold') {
+            limitLabel = 'gold';
+        } else if (limitType && limitType.startsWith('material:')) {
+            limitLabel = 'mat';
+        } else if (limitType && limitType.startsWith('upgrade:')) {
+            limitLabel = 'upgrade';
+        } else if (limitType === 'alchemy_item') {
+            limitLabel = 'item';
+        } else {
+            limitLabel = 'max';
+        }
+
+        return {
+            totalTime,
+            actionTimeSeconds,
+            count,
+            baseActionsNeeded,
+            isTrulyInfinite,
+            isInfinite,
+            materialLimit,
+            limitType,
+            limitLabel,
+            isEnhancing,
+        };
     }
 
     /**
