@@ -636,6 +636,7 @@ function registerFeatures() {
         initialize: () => feature.module.initialize(),
         disable: typeof feature.module.disable === 'function' ? () => feature.module.disable() : undefined,
         async: feature.async,
+        customCheck: feature.customCheck || undefined,
     }));
 
     // Replace feature registry's features array

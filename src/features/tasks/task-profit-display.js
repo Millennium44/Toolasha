@@ -710,15 +710,6 @@ class TaskProfitDisplay {
             currentProgress,
         };
 
-        console.log('[TaskProfit] parseTaskData:', {
-            description,
-            descriptionCharCodes: [...description].map((c) => c.charCodeAt(0)),
-            quantity,
-            currentProgress,
-            coinReward,
-            taskTokenReward,
-        });
-
         return taskData;
     }
 
@@ -782,14 +773,6 @@ class TaskProfitDisplay {
         // Extract monster name from "Defeat - Monster Name" description
         const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
         const monsterName = match?.[1]?.trim() || null;
-        console.log(
-            '[TaskProfit] Combat estimate — raw description:',
-            JSON.stringify(taskData.description),
-            '| regex match:',
-            match ? JSON.stringify(match[0]) : 'null',
-            '| extracted name:',
-            JSON.stringify(monsterName)
-        );
 
         const initClientData = dataManager.getInitClientData();
         const monsterMap = initClientData?.combatMonsterDetailMap;
