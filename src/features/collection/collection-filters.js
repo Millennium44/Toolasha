@@ -12,6 +12,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
+import { formatRelativeTime } from '../../utils/formatters.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -438,6 +439,7 @@ class CollectionFilters {
         this.isInitialized = false;
         this.flags = buildFlags();
         this.collections = {};
+        this.collectionsLastUpdated = null;
         this.favorites = {};
         this.showUncollected = false;
         this.sortMode = 'default'; // 'default' | 'items-needed' | 'gold-cost' | 'time-to-next-tier'
@@ -548,11 +550,12 @@ class CollectionFilters {
         // Reset flags to defaults before loading saved state
         this.flags = buildFlags();
 
-        const [savedFlags, savedFavorites, savedCollections, savedShowUncollected] = await Promise.all([
+        const [savedFlags, savedFavorites, savedCollections, savedShowUncollected, savedTimestamp] = await Promise.all([
             storage.getJSON(this._charKey('flags'), 'collections', {}),
             storage.getJSON(this._charKey('favorites'), 'collections', {}),
             storage.getJSON(this._charKey('collections'), 'collections', {}),
             storage.getJSON(this._charKey('showUncollected'), 'collections', false),
+            storage.get(this._charKey('collectionsUpdatedAt'), 'collections', null),
         ]);
 
         // Apply saved flag states
@@ -568,6 +571,7 @@ class CollectionFilters {
 
         this.favorites = savedFavorites;
         this.collections = savedCollections;
+        this.collectionsLastUpdated = savedTimestamp;
         this.showUncollected = savedShowUncollected;
     }
 
@@ -675,8 +679,10 @@ class CollectionFilters {
             }
         });
 
-        // Persist the scanned counts
+        // Persist the scanned counts and update timestamp
         this._saveCollections();
+        this.collectionsLastUpdated = Date.now();
+        storage.set(this._charKey('collectionsUpdatedAt'), this.collectionsLastUpdated, 'collections');
 
         // --- Inject checkboxes ---
         // Remove old Toolasha checkboxes (but not stars, which are inside catsEl)
@@ -966,10 +972,41 @@ class CollectionFilters {
     // -------------------------------------------------------------------------
 
     /**
+     * Get staleness color override for collection badges.
+     * Returns null when data is fresh enough to use the normal tier color.
+     * @returns {string|null}
+     * @private
+     */
+    _getBadgeStalenessColor() {
+        if (!this.collectionsLastUpdated) return '#999999'; // gray — never scanned
+        const hours = (Date.now() - this.collectionsLastUpdated) / 3_600_000;
+        if (hours < 4) return null; // fresh — use tier color
+        if (hours < 12) return '#FFAA00'; // yellow — getting stale
+        return '#FF6600'; // orange — stale
+    }
+
+    /**
+     * Get tooltip text for a collection badge showing count and freshness.
+     * @param {number} count
+     * @returns {string}
+     * @private
+     */
+    _getBadgeStalenessTooltip(count) {
+        if (!this.collectionsLastUpdated) {
+            return 'Collection data not yet loaded \u2014 visit Collections page to refresh';
+        }
+        const age = Date.now() - this.collectionsLastUpdated;
+        const relativeTime = formatRelativeTime(age);
+        return `${formatCount(count)} collected \u2014 updated ${relativeTime} ago`;
+    }
+
+    /**
      * Overlay collection count badges on skilling action tiles.
      * @param {Element} containerEl — the .SkillActionGrid_skillActionGrid__... element
      */
     _addSkillingBadges(containerEl) {
+        const stalenessColor = this._getBadgeStalenessColor();
+
         containerEl.querySelectorAll('.SkillAction_skillAction__1esCp').forEach((el) => {
             const useEl = el.querySelector('use');
             if (!useEl) return;
@@ -990,10 +1027,14 @@ class CollectionFilters {
             // Remove old badge
             el.querySelector('.toolasha-cf.collection-badge')?.remove();
 
+            const tooltip = this._getBadgeStalenessTooltip(n);
+            const colorStyle = stalenessColor ? ` style="color:${stalenessColor}"` : '';
+
             nameEl.insertAdjacentHTML(
                 'beforeend',
-                `<span class="toolasha-cf collection-badge Collection_collection__3H6c8 ${tierColorClass(n)}">` +
-                    `<span class="Collection_count__3oj-t">${formatCount(n)}</span></span>`
+                `<span class="toolasha-cf collection-badge Collection_collection__3H6c8 ${tierColorClass(n)}"` +
+                    ` title="${tooltip}">` +
+                    `<span class="Collection_count__3oj-t"${colorStyle}>${formatCount(n)}</span></span>`
             );
         });
     }
