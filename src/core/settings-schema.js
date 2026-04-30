@@ -184,6 +184,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays the profitability breakdown section inside gathering, production, and alchemy action panels',
             },
+            actionPanel_showLevelProgress: {
+                id: 'actionPanel_showLevelProgress',
+                label: 'Action panel: Show level progress',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays XP and level progress estimates inside action panels',
+            },
             actionPanel_showExpPerHour: {
                 id: 'actionPanel_showExpPerHour',
                 label: 'Action page: Show exp/hr on tiles',
