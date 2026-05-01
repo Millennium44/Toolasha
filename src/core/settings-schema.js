@@ -1395,6 +1395,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays total quantity at best price below Buy/Sell buttons. Estimated values (20+ orders at same price) are shown in a different color.',
             },
+            market_milkywayMarketLink: {
+                id: 'market_milkywayMarketLink',
+                label: 'Market: Show MilkyWay Market link',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a small link to view the current item on milkyway.market',
+            },
             itemDictionary_transmuteRates: {
                 id: 'itemDictionary_transmuteRates',
                 label: 'Item Dictionary: Show transmutation success rates',

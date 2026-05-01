@@ -166,6 +166,13 @@ function registerFeatures() {
             module: Market.tradeHistoryDisplay,
             async: false,
         },
+        {
+            key: 'milkywayMarketLink',
+            name: 'MilkyWay Market Link',
+            category: 'Market',
+            module: Market.milkywayMarketLink,
+            async: false,
+        },
         { key: 'networth', name: 'Net Worth', category: 'Economy', module: Market.networthFeature, async: false },
         {
             key: 'inventoryBadgeManager',
