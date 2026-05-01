@@ -264,6 +264,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'craftingPlan',
+            name: 'Crafting Plan',
+            category: 'Actions',
+            module: Actions.craftingPlan,
+            async: false,
+        },
+        {
             key: 'alchemyProfitDisplay',
             name: 'Alchemy Profit Display',
             category: 'Alchemy',

@@ -268,6 +268,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price.',
             },
+            actionPanel_bestCraftingPlan: {
+                id: 'actionPanel_bestCraftingPlan',
+                label: 'Action panel: Show best crafting plan',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows the cheapest way to obtain a crafted item by comparing buy vs craft at each material tier.',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
