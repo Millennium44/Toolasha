@@ -453,7 +453,7 @@ class TaskIcons {
 
         // Count dungeons if dungeon icons are enabled
         let dungeonCount = 0;
-        if (config.isFeatureEnabled('taskIconsDungeons')) {
+        if (config.getSetting('taskIconsDungeons')) {
             dungeonCount = this.countDungeonsForMonster(monsterHrid);
         }
 

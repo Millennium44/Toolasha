@@ -22,7 +22,7 @@ class AutoClickMax {
             return;
         }
 
-        if (!config.isFeatureEnabled('market_autoClickMax')) {
+        if (!config.getSetting('market_autoClickMax')) {
             return;
         }
 

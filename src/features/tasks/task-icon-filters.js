@@ -226,7 +226,7 @@ class TaskIconFilters {
         this.filterBar.style.marginLeft = '8px';
 
         // Check if taskIconsDungeons setting is enabled
-        const isEnabled = config.isFeatureEnabled('taskIconsDungeons');
+        const isEnabled = config.getSetting('taskIconsDungeons');
         this.filterBar.style.display = isEnabled ? 'flex' : 'none';
 
         // Create battle icon (combat icon is in misc_sprite)

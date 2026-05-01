@@ -48,7 +48,7 @@ class NetworthFeature {
         }
 
         // Initialize inventory panel display (separate toggle)
-        if (config.isFeatureEnabled('inventorySummary')) {
+        if (config.getSetting('inventorySummary')) {
             networthInventoryDisplay.initialize();
         }
 
@@ -162,7 +162,7 @@ class NetworthFeature {
                 networthHeaderDisplay.update(networthData);
             }
 
-            if (config.isFeatureEnabled('inventorySummary')) {
+            if (config.getSetting('inventorySummary')) {
                 networthInventoryDisplay.update(networthData);
             }
 
