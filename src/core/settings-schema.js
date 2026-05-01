@@ -976,6 +976,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays a color-graded efficiency score based on expected completion time.',
             },
+            taskMaterialsIndicator: {
+                id: 'taskMaterialsIndicator',
+                label: 'Show materials availability on production tasks',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows how many task actions you can complete with current inventory.',
+            },
             taskEfficiencyRatingMode: {
                 id: 'taskEfficiencyRatingMode',
                 label: 'Efficiency algorithm',
