@@ -21,6 +21,7 @@ import pinnedActionsPage from '../features/actions/pinned-actions-page.js';
 
 // Alchemy features
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
+import alchemyBestItems from '../features/alchemy/alchemy-best-items.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -41,6 +42,7 @@ toolashaRoot.Actions = {
     missingMaterialsButton,
     budgetCalculator,
     alchemyProfitDisplay,
+    alchemyBestItems,
     teaRecommendation,
     inventoryCountDisplay,
     pinnedActionsPage,

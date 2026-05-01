@@ -219,6 +219,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices',
             },
+            alchemy_bestItems: {
+                id: 'alchemy_bestItems',
+                label: 'Alchemy panel: Show best items button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a button to see items ranked by profit or XP for each alchemy type.',
+            },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
                 label: 'Alchemy panel: Track and view transmute session history',

@@ -271,6 +271,14 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'alchemyBestItems',
+            name: 'Alchemy Best Items',
+            category: 'Alchemy',
+            module: Actions.alchemyBestItems,
+            async: false,
+            customCheck: () => config.getSetting('alchemy_bestItems'),
+        },
+        {
             key: 'teaRecommendation',
             name: 'Tea Recommendation',
             category: 'Actions',
