@@ -68,15 +68,20 @@ class TooltipPrices {
             return;
         }
 
-        if (!config.getSetting('itemTooltip_prices')) {
+        const pricesEnabled = config.getSetting('itemTooltip_prices');
+        const pinTopEnabled = config.getSetting('itemTooltip_pinTop');
+
+        if (!pricesEnabled && !pinTopEnabled) {
             return;
         }
 
         this.isInitialized = true;
 
-        // Wait for market data to load
-        if (!marketAPI.isLoaded()) {
-            await marketAPI.fetch(true); // Force fresh fetch on init
+        if (pricesEnabled) {
+            // Wait for market data to load
+            if (!marketAPI.isLoaded()) {
+                await marketAPI.fetch(true); // Force fresh fetch on init
+            }
         }
 
         // Add CSS to prevent tooltip cutoff
@@ -151,6 +156,16 @@ class TooltipPrices {
      * @param {Element} tooltipElement - The tooltip popper element
      */
     async handleTooltip(tooltipElement) {
+        // Apply pin-to-top positioning independently of price injection
+        if (config.getSetting('itemTooltip_pinTop')) {
+            dom.fixTooltipOverflow(tooltipElement, { forceTop: true });
+        }
+
+        // Skip price/profit injection if prices are disabled
+        if (!config.getSetting('itemTooltip_prices')) {
+            return;
+        }
+
         // Check if it's a collection tooltip
         const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
         const isCollectionTooltip = !!collectionContent;

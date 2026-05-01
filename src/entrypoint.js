@@ -64,7 +64,14 @@ function isCombatSimulatorPage() {
 function registerFeatures() {
     // Market Features
     const marketFeatures = [
-        { key: 'tooltipPrices', name: 'Tooltip Prices', category: 'Market', module: Market.tooltipPrices, async: true },
+        {
+            key: 'tooltipPrices',
+            name: 'Tooltip Prices',
+            category: 'Market',
+            module: Market.tooltipPrices,
+            async: true,
+            customCheck: () => config.getSetting('itemTooltip_prices') || config.getSetting('itemTooltip_pinTop'),
+        },
         {
             key: 'expectedValueCalculator',
             name: 'Expected Value Calculator',
