@@ -33,6 +33,7 @@ class WebSocketHook {
         this.isSocketWrapped = false;
         this.originalWebSocket = null;
         this.currentWebSocket = null;
+        this.hasGMStorage = typeof GM_setValue !== 'undefined' && typeof GM_getValue !== 'undefined';
         this.clientDataRetryTimeout = null;
     }
 
@@ -43,6 +44,7 @@ class WebSocketHook {
      * @param {string} value - Value to save (JSON string)
      */
     async saveToStorage(key, value) {
+        if (!this.hasGMStorage) return;
         // Wrap in setTimeout to make async and prevent main thread blocking
         setTimeout(() => {
             try {
@@ -60,6 +62,7 @@ class WebSocketHook {
      * @returns {string|null} Stored value or default
      */
     async loadFromStorage(key, defaultValue = null) {
+        if (!this.hasGMStorage) return defaultValue;
         return GM_getValue(key, defaultValue);
     }
 
