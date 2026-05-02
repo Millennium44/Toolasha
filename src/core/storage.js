@@ -13,6 +13,8 @@ class Storage {
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
+        this._reconnecting = false; // Guard against concurrent reconnection attempts
+        this._dbNulledReason = null; // Track why db was last set to null
     }
 
     /**
@@ -46,17 +48,14 @@ class Storage {
 
             request.onsuccess = () => {
                 this.db = request.result;
-                // Handle connection being closed unexpectedly (e.g. version upgrade from another tab)
-                this.db.onversionchange = () => {
-                    this.db.close();
-                    this.db = null;
-                    console.warn('[Storage] DB version changed, connection closed. Reload the page.');
-                };
+                this._dbNulledReason = null;
+                this._setupDbEventHandlers();
                 resolve();
             };
 
             request.onblocked = () => {
                 console.warn('[Storage] IndexedDB open blocked by existing connection — retrying after close');
+                this._dbNulledReason = 'onblocked';
                 // Attempt to close any stale connection and retry once
                 if (this.db) {
                     this.db.close();
@@ -69,10 +68,8 @@ class Storage {
                 };
                 retry.onsuccess = () => {
                     this.db = retry.result;
-                    this.db.onversionchange = () => {
-                        this.db.close();
-                        this.db = null;
-                    };
+                    this._dbNulledReason = null;
+                    this._setupDbEventHandlers();
                     resolve();
                 };
                 retry.onupgradeneeded = request.onupgradeneeded;
@@ -434,6 +431,69 @@ class Storage {
         }
         this.saveDebounceTimers.clear();
         this.pendingWrites.clear();
+    }
+
+    /**
+     * Set up event handlers on the active DB connection.
+     * @private
+     */
+    _setupDbEventHandlers() {
+        if (!this.db) return;
+
+        this.db.onversionchange = () => {
+            console.warn('[Storage] DB connection lost: onversionchange fired (another tab/instance upgraded the DB)');
+            this._dbNulledReason = 'onversionchange';
+            this.db.close();
+            this.db = null;
+            this._reconnect();
+        };
+
+        this.db.onclose = () => {
+            console.warn('[Storage] DB connection lost: onclose fired (connection dropped unexpectedly)');
+            this._dbNulledReason = 'onclose';
+            this.db = null;
+            this._reconnect();
+        };
+    }
+
+    /**
+     * Attempt to reconnect to IndexedDB after the connection is lost.
+     * @private
+     */
+    async _reconnect() {
+        if (this._reconnecting) return;
+        this._reconnecting = true;
+
+        // Wait a brief moment for any version upgrade to complete
+        await new Promise((r) => setTimeout(r, 500));
+
+        try {
+            await this.openDatabase();
+            this.available = true;
+            console.log('[Storage] Successfully reconnected to IndexedDB');
+        } catch (error) {
+            console.error('[Storage] Reconnection failed:', error);
+            this.available = false;
+        } finally {
+            this._reconnecting = false;
+        }
+    }
+
+    /**
+     * Return diagnostic info about current storage state.
+     * @returns {Object}
+     */
+    diagnostics() {
+        return {
+            dbExists: this.db !== null,
+            available: this.available,
+            dbName: this.dbName,
+            dbVersion: this.dbVersion,
+            reconnecting: this._reconnecting,
+            lastNullReason: this._dbNulledReason,
+            pendingWrites: this.pendingWrites.size,
+            activeTimers: this.saveDebounceTimers.size,
+        };
     }
 }
 

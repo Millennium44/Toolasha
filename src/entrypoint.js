@@ -809,4 +809,21 @@ if (isCombatSimulatorPage()) {
     targetWindow.Toolasha.guild = {
         resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
     };
+
+    // Debug utilities (for diagnosing issues via console)
+    targetWindow.Toolasha.debug = {
+        storage: () => {
+            const diag = storage.diagnostics();
+            console.log('=== Storage Diagnostics ===');
+            console.log('DB connection exists:', diag.dbExists);
+            console.log('Storage available:', diag.available);
+            console.log('DB name:', diag.dbName);
+            console.log('DB version:', diag.dbVersion);
+            console.log('Reconnecting:', diag.reconnecting);
+            console.log('Last null reason:', diag.lastNullReason || 'never');
+            console.log('Pending writes:', diag.pendingWrites);
+            console.log('Active timers:', diag.activeTimers);
+            return diag;
+        },
+    };
 }
