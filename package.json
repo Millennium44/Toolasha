@@ -6,9 +6,8 @@
     "scripts": {
         "build": "BUILD_MODE=production rollup -c",
         "build:dev": "BUILD_TARGET=dev-standalone rollup -c",
-        "build:steam": "rollup -c rollup.config.steam.js",
         "build:enhancement": "rollup -c rollup.config.enhancement.js",
-        "build:all": "npm run build && npm run build:steam && npm run build:enhancement",
+        "build:all": "npm run build && npm run build:enhancement",
         "watch": "rollup -c -w",
         "dev": "rollup -c -w",
         "test": "vitest run",
@@ -57,16 +56,11 @@
             "prettier --write",
             "bash -c 'npm test'",
             "bash -c 'npm run build:dev'",
-            "bash -c 'npm run build'",
-            "bash -c 'npm run build:steam'"
+            "bash -c 'npm run build'"
         ],
         "rollup.config.js": [
             "prettier --write",
             "bash -c 'npm run build'"
-        ],
-        "rollup.config.steam.js": [
-            "prettier --write",
-            "bash -c 'npm run build:steam'"
         ],
         "*.config.js": [
             "prettier --write"

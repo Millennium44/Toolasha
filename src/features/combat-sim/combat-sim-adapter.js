@@ -387,11 +387,8 @@ export async function buildAllPlayerDTOs() {
     // Party mode — load profile list from storage
     let profileList = [];
     try {
-        const hasScriptManager = typeof GM_info !== 'undefined';
-        if (hasScriptManager) {
-            const data = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
-            profileList = JSON.parse(data);
-        }
+        const data = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
+        profileList = JSON.parse(data);
     } catch (error) {
         console.error('[CombatSimAdapter] Failed to load profile list:', error);
     }
@@ -399,13 +396,8 @@ export async function buildAllPlayerDTOs() {
     // Get battle data for consumable detection
     let battleData = null;
     try {
-        const hasScriptManager = typeof GM_info !== 'undefined';
-        if (hasScriptManager) {
-            const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
-            if (data) battleData = JSON.parse(data);
-        } else {
-            battleData = dataManager.battleData;
-        }
+        const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
+        if (data) battleData = JSON.parse(data);
     } catch (error) {
         console.error('[CombatSimAdapter] Failed to load battle data:', error);
     }

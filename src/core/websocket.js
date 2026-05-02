@@ -33,46 +33,34 @@ class WebSocketHook {
         this.isSocketWrapped = false;
         this.originalWebSocket = null;
         this.currentWebSocket = null;
-        // Detect if userscript manager is present (Tampermonkey, Greasemonkey, etc.)
-        this.hasScriptManager = typeof GM_info !== 'undefined';
         this.clientDataRetryTimeout = null;
     }
 
     /**
-     * Save combat sim export data to appropriate storage
-     * Only saves if script manager is available (cross-domain sharing with Combat Sim)
+     * Save combat sim export data to GM storage
+     * Used for cross-domain sharing with Combat Sim page
      * @param {string} key - Storage key
      * @param {string} value - Value to save (JSON string)
      */
     async saveToStorage(key, value) {
-        if (this.hasScriptManager) {
-            // Tampermonkey: use GM storage for cross-domain sharing with Combat Sim
-            // Wrap in setTimeout to make async and prevent main thread blocking
-            setTimeout(() => {
-                try {
-                    GM_setValue(key, value);
-                } catch (error) {
-                    console.error('[WebSocket] Failed to save to GM storage:', error);
-                }
-            }, 0);
-        }
-        // Steam/standalone: Skip saving - Combat Sim import not possible without cross-domain storage
+        // Wrap in setTimeout to make async and prevent main thread blocking
+        setTimeout(() => {
+            try {
+                GM_setValue(key, value);
+            } catch (error) {
+                console.error('[WebSocket] Failed to save to GM storage:', error);
+            }
+        }, 0);
     }
 
     /**
-     * Load combat sim export data from appropriate storage
-     * Only loads if script manager is available
+     * Load combat sim export data from GM storage
      * @param {string} key - Storage key
      * @param {string} defaultValue - Default value if not found
      * @returns {string|null} Stored value or default
      */
     async loadFromStorage(key, defaultValue = null) {
-        if (this.hasScriptManager) {
-            // Tampermonkey: use GM storage
-            return GM_getValue(key, defaultValue);
-        }
-        // Steam/standalone: No data available (Combat Sim import requires script manager)
-        return defaultValue;
+        return GM_getValue(key, defaultValue);
     }
 
     /**

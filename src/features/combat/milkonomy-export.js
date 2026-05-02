@@ -8,32 +8,18 @@ import webSocketHook from '../../core/websocket.js';
 import { getCurrentProfile } from '../../core/profile-manager.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 
-// Detect if we're running on Tampermonkey or Steam
-const hasScriptManager = typeof GM_info !== 'undefined';
-
 /**
  * Get character data from storage
  * @returns {Promise<Object|null>} Character data or null
  */
 async function getCharacterData() {
     try {
-        // Tampermonkey: Use GM storage (cross-domain, persisted)
-        if (hasScriptManager) {
-            const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
-            if (!data) {
-                console.error('[Milkonomy Export] No character data found');
-                return null;
-            }
-            return JSON.parse(data);
-        }
-
-        // Steam: Use dataManager (RAM only, no GM storage available)
-        const characterData = dataManager.characterData;
-        if (!characterData) {
+        const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
+        if (!data) {
             console.error('[Milkonomy Export] No character data found');
             return null;
         }
-        return characterData;
+        return JSON.parse(data);
     } catch (error) {
         console.error('[Milkonomy Export] Failed to get character data:', error);
         return null;

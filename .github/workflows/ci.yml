@@ -43,9 +43,6 @@ jobs:
             - name: Build (production libraries)
               run: npm run build
 
-            - name: Build (Steam bundle)
-              run: npm run build:steam
-
             - name: Verify bundle sizes
               run: |
                   limit=2097152
@@ -63,12 +60,3 @@ jobs:
                     fi
                     echo "✅ $file is under 2MB ($size bytes)"
                   done
-
-                  # Verify Steam bundle size (should be ~5MB, max 6MB)
-                  steam_limit=6291456
-                  steam_size=$(wc -c < "dist/Toolasha.steam.js")
-                  if [ "$steam_size" -gt "$steam_limit" ]; then
-                    echo "❌ dist/Toolasha.steam.js is over 5MB limit ($steam_size bytes)"
-                    exit 1
-                  fi
-                  echo "✅ dist/Toolasha.steam.js is under 5MB ($steam_size bytes)"

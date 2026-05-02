@@ -107,7 +107,7 @@ Toolasha is a complete rewrite of the popular MWITools userscript, rebuilt from 
 ### Prerequisites
 
 - **Browser**: Chrome, Firefox, or Edge with [Tampermonkey](https://www.tampermonkey.net/)
-- **Steam**: No additional extensions required — Steam has a built-in extension manager
+- **Steam**: No additional extensions required — use the game's built-in extension manager to install from [Greasy Fork](https://update.greasyfork.org/scripts/562662/Toolasha.user.js)
 
 ### Install from Greasy Fork (Recommended)
 
@@ -131,27 +131,6 @@ Toolasha is a complete rewrite of the popular MWITools userscript, rebuilt from 
     - Toolasha loads automatically
 
 > The entrypoint loads required libraries automatically from GitHub raw URLs.
-
-### Install on Steam
-
-Steam's embedded browser has its own built-in extension manager. Use the Steam-specific single-file build instead of the standard version.
-
-1. **Download the Steam build**
-    - Visit the [Releases page](../../releases)
-    - Download `Toolasha.steam.user.js` from the latest release
-
-2. **Open the extension manager**
-    - Launch Milky Way Idle on Steam
-    - In the top-left menu, click **Game**
-    - Select **Manage Extensions**
-    - A panel will open on the side of the game window
-
-3. **Install the script**
-    - Paste the contents of `Toolasha.steam.user.js` into the editor
-    - Click **Save**
-    - The game will reload automatically
-
-> **Note**: If Toolasha doesn't appear after saving, close and reopen the game in Steam to ensure the script is fully loaded.
 
 ### Install from Source
 
@@ -192,7 +171,6 @@ Toolasha is built with modern JavaScript (ES6+) using a modular, feature-based a
 npm install           # Install dependencies
 npm run build:dev     # Build dev standalone userscript
 npm run build         # Build production libraries + entrypoint
-npm run build:steam   # Build Steam single-file bundle
 npm run dev           # Watch mode (auto-rebuild)
 npm test              # Run test suite (202 tests)
 ```

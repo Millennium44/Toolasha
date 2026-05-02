@@ -10,20 +10,8 @@ import { constructExportObject } from './combat-sim-export.js';
 import config from '../../core/config.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { createCalculatorUI, extractExpRates } from '../combat-sim-integration/skill-calculator-ui.js';
-
-// Detect if we're running on Tampermonkey or Steam
-const hasScriptManager = typeof GM_info !== 'undefined';
-
-/**
- * Check if running on Steam client (no extension manager)
- * @returns {boolean} True if on Steam client
- */
-function isSteamClient() {
-    return typeof GM === 'undefined' && typeof GM_setValue === 'undefined';
-}
 
 const timerRegistry = createTimerRegistry();
 const IMPORT_CONTAINER_ID = 'toolasha-import-container';
@@ -36,11 +24,6 @@ let calculatorUIElements = null;
  * Initialize combat sim integration (runs on sim page only)
  */
 export function initialize() {
-    // Don't inject import button on Steam client (no cross-domain storage)
-    if (isSteamClient()) {
-        return;
-    }
-
     disable();
 
     // Wait for simulator UI to load
@@ -613,25 +596,12 @@ async function handleSimResults(resultsPanel) {
  */
 async function getCharacterDataFromStorage() {
     try {
-        // Tampermonkey: Use GM storage (cross-domain, persisted)
-        if (hasScriptManager) {
-            const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
-            if (!data) {
-                console.error(
-                    '[Toolasha Combat Sim Calculator] No character data in storage. Please refresh game page.'
-                );
-                return null;
-            }
-            return JSON.parse(data);
-        }
-
-        // Steam: Use dataManager (which has its own fallback handling)
-        const characterData = dataManager.characterData;
-        if (!characterData) {
-            console.error('[Toolasha Combat Sim Calculator] No character data found. Please refresh game page.');
+        const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
+        if (!data) {
+            console.error('[Toolasha Combat Sim Calculator] No character data in storage. Please refresh game page.');
             return null;
         }
-        return characterData;
+        return JSON.parse(data);
     } catch (error) {
         console.error('[Toolasha Combat Sim Calculator] Failed to get character data:', error);
         return null;
@@ -644,23 +614,12 @@ async function getCharacterDataFromStorage() {
  */
 async function getClientDataFromStorage() {
     try {
-        // Tampermonkey: Use GM storage (cross-domain, persisted)
-        if (hasScriptManager) {
-            const data = await webSocketHook.loadFromStorage('toolasha_init_client_data', null);
-            if (!data) {
-                console.warn('[Toolasha Combat Sim Calculator] No client data in storage');
-                return null;
-            }
-            return JSON.parse(data);
-        }
-
-        // Steam: Use dataManager (RAM only, no GM storage available)
-        const clientData = dataManager.getInitClientData();
-        if (!clientData) {
-            console.warn('[Toolasha Combat Sim Calculator] No client data found');
+        const data = await webSocketHook.loadFromStorage('toolasha_init_client_data', null);
+        if (!data) {
+            console.warn('[Toolasha Combat Sim Calculator] No client data in storage');
             return null;
         }
-        return clientData;
+        return JSON.parse(data);
     } catch (error) {
         console.error('[Toolasha Combat Sim Calculator] Failed to get client data:', error);
         return null;

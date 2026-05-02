@@ -42,10 +42,6 @@ jobs:
               if: ${{ steps.release.outputs.release_created }}
               run: npm run build
 
-            - name: Build (Steam bundle)
-              if: ${{ steps.release.outputs.release_created }}
-              run: npm run build:steam
-
             - name: Build (Standalone enhancement library)
               if: ${{ steps.release.outputs.release_created }}
               run: npm run build:enhancement
@@ -59,7 +55,6 @@ jobs:
 
                   # Save the built files
                   cp dist/Toolasha.user.js /tmp/Toolasha.user.js
-                  cp dist/Toolasha.steam.js /tmp/Toolasha.steam.js
                   cp -R dist/libraries /tmp/libraries
 
                   # Fetch and checkout releases branch (create if doesn't exist)
@@ -71,9 +66,8 @@ jobs:
                   mkdir -p dist
                   mkdir -p dist/libraries
                   cp /tmp/Toolasha.user.js dist/Toolasha.user.js
-                  cp /tmp/Toolasha.steam.js dist/Toolasha.steam.js
                   cp -R /tmp/libraries/* dist/libraries/
-                  git add dist/Toolasha.user.js dist/Toolasha.steam.js dist/libraries/*.js
+                  git add dist/Toolasha.user.js dist/libraries/*.js
 
                   # Commit libraries
                   git commit -m "chore(main): release ${{ steps.release.outputs.version }}"
@@ -95,7 +89,6 @@ jobs:
                   tag_name: ${{ steps.release.outputs.tag_name }}
                   files: |
                       dist/Toolasha.user.js
-                      dist/Toolasha.steam.js
                       dist/libraries/*.js
                   draft: false
               env:
