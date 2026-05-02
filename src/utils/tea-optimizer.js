@@ -49,8 +49,15 @@ export function getRelevantTeas(skillName, goal) {
     // Universal efficiency tea
     generalTeas.add('/items/efficiency_tea');
 
-    // Artisan tea - action level helps everyone, artisan buff helps production gold
-    generalTeas.add('/items/artisan_tea');
+    // Artisan tea - action level helps everyone, artisan buff helps production gold (not alchemy)
+    if (skill !== 'alchemy') {
+        generalTeas.add('/items/artisan_tea');
+    }
+
+    // Catalytic tea - alchemy success rate boost
+    if (skill === 'alchemy') {
+        generalTeas.add('/items/catalytic_tea');
+    }
 
     // Wisdom tea - always shown so users can evaluate the XP/gold trade-off in any mode
     generalTeas.add('/items/wisdom_tea');
