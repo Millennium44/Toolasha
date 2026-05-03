@@ -860,6 +860,7 @@ export default class CustomTabsUI {
                 invContainer.appendChild(empty);
                 this._injectedEls.push(empty);
             } else {
+                this._allClaimedHrids = new Set();
                 orderCounter = this._injectAccordionHeaders(invContainer, this._config.tabs, 0, tileMap, orderCounter);
             }
 
@@ -1459,6 +1460,7 @@ export default class CustomTabsUI {
                         invContainer.appendChild(lb);
                         this._injectedEls.push(lb);
                     } else {
+                        this._allClaimedHrids?.add(hrid);
                         for (const tile of this._claimTilesForHrid(hrid, tileMap)) {
                             tile.classList.add('toolasha-ct-visible');
                             tile.style.order = String(orderCounter++);
@@ -1469,6 +1471,7 @@ export default class CustomTabsUI {
             } else {
                 // Collect all tiles, then sort by price and assign orders
                 for (const hrid of tab.items) {
+                    this._allClaimedHrids?.add(hrid);
                     for (const tile of this._claimTilesForHrid(hrid, tileMap)) sectionTiles.push(tile);
                 }
             }
@@ -1487,6 +1490,8 @@ export default class CustomTabsUI {
                         })
                 );
                 const anyOwned = realItems.some((hrid) => {
+                    // Skip items already claimed by a higher tab — not a DOM issue
+                    if (this._allClaimedHrids?.has(hrid)) return false;
                     if (ownedHrids.has(hrid)) return true;
                     // Base hrid matches any owned enhanced variant
                     if (!/\+\d+$/.test(hrid)) {
@@ -1553,6 +1558,16 @@ export default class CustomTabsUI {
             // Unorganized bucket already filters assigned items via getAssignedItemSet,
             // so we don't need to delete them here to keep them out of unorganized.
             // Children are still hidden (parent is closed), so remove them.
+
+            // Consume own items so lower tabs cannot claim them (topmost-tab-wins priority)
+            if (config.getSetting('inventoryTabs_topTabPriority')) {
+                for (const hrid of tab.items) {
+                    if (hrid !== LINEBREAK_HRID) {
+                        this._claimTilesForHrid(hrid, tileMap);
+                        this._allClaimedHrids?.add(hrid);
+                    }
+                }
+            }
 
             // Show rolled-up value on the collapsed header (own items + all descendants)
             const valueKey = (() => {
