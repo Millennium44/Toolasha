@@ -654,6 +654,7 @@ class CombatSimUI {
 
         const skillCols = [
             { key: 'totalXP', label: 'Total XP/hr' },
+            { key: 'profitDay', label: 'Profit/day' },
             { key: 'stamina', label: 'Stam' },
             { key: 'intelligence', label: 'Int' },
             { key: 'attack', label: 'Atk' },
@@ -703,6 +704,7 @@ class CombatSimUI {
                     revenue: r.revenue?.revenuePerHour || 0,
                     expenses: r.revenue?.costPerHour || 0,
                     profit: r.revenue?.netPerHour || 0,
+                    profitDay: (r.revenue?.netPerHour || 0) * 24,
                 };
             });
 
@@ -750,18 +752,31 @@ class CombatSimUI {
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
                             style += ' color:#888; text-align:center;';
+                        } else if (col.key === 'deaths') {
+                            display = val.toFixed(2);
+                            style += ' text-align:right; font-variant-numeric:tabular-nums;';
+
+                            const bestVal = minVals[col.key];
+                            const isBest = bestVal !== undefined && val === bestVal && rows.length > 1;
+                            if (isBest) {
+                                style += ' color:#4caf50; font-weight:600;';
+                            } else if (val > 0) {
+                                style += ' color:#f44336;';
+                            } else {
+                                style += ' color:#e0e0e0;';
+                            }
                         } else {
                             display = formatKMB(Math.round(val));
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
 
                             // Highlight best value per column in green
-                            const isLowerBetter = col.key === 'deaths' || col.key === 'expenses';
+                            const isLowerBetter = col.key === 'expenses';
                             const bestVal = isLowerBetter ? minVals[col.key] : maxVals[col.key];
                             const isBest = bestVal !== undefined && val === bestVal && rows.length > 1;
 
                             if (isBest) {
                                 style += ' color:#4caf50; font-weight:600;';
-                            } else if ((col.key === 'deaths' && val > 0) || (col.key === 'profit' && val < 0)) {
+                            } else if ((col.key === 'profit' || col.key === 'profitDay') && val < 0) {
                                 style += ' color:#f44336;';
                             } else {
                                 style += ' color:#e0e0e0;';
