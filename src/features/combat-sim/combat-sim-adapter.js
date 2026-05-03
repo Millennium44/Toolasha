@@ -720,7 +720,7 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
 
     const buildTriggers = (hrid) => {
         const rawTriggers = triggerMap[hrid];
-        if (!Array.isArray(rawTriggers)) return [];
+        if (!Array.isArray(rawTriggers)) return null;
         return rawTriggers.map((t) => ({
             dependencyHrid: t.dependencyHrid,
             conditionHrid: t.conditionHrid,

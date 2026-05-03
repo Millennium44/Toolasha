@@ -2556,6 +2556,15 @@ class CombatSimUI {
             });
         });
 
+        // History: delete result buttons
+        container.querySelectorAll('[data-delete-history]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.deleteHistory, 10);
+                this._deleteHistoryEntry(idx);
+            });
+        });
+
         // History collapsible toggle
         container.querySelectorAll('[data-toggle="history-section"]').forEach((el) => {
             el.addEventListener('click', () => {
@@ -2674,8 +2683,62 @@ class CombatSimUI {
      * @returns {string} HTML string
      * @private
      */
+    /**
+     * Delete a history entry by index and re-render results.
+     * @param {number} idx - Index in _simHistory to remove
+     * @private
+     */
+    _deleteHistoryEntry(idx) {
+        if (idx < 0 || idx >= this._simHistory.length) return;
+
+        this._simHistory.splice(idx, 1);
+
+        // Adjust comparisonBaseline
+        if (this._comparisonBaseline === idx) {
+            this._comparisonBaseline = this._simHistory.length > 0 ? Math.max(0, this._simHistory.length - 1) : null;
+        } else if (this._comparisonBaseline !== null && this._comparisonBaseline > idx) {
+            this._comparisonBaseline--;
+        }
+
+        // Adjust comparisonSlots
+        this._comparisonSlots = this._comparisonSlots.filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i));
+
+        // Adjust comparisonIndex
+        if (this._comparisonIndex === idx) {
+            this._comparisonIndex = null;
+        } else if (this._comparisonIndex !== null && this._comparisonIndex > idx) {
+            this._comparisonIndex--;
+        }
+
+        // Adjust activeDetailIndex
+        if (this._activeDetailIndex === idx) {
+            this._activeDetailIndex = this._simHistory.length > 0 ? this._simHistory.length - 1 : null;
+        } else if (this._activeDetailIndex !== null && this._activeDetailIndex > idx) {
+            this._activeDetailIndex--;
+        }
+
+        // If history is now empty, clear results display
+        if (this._simHistory.length === 0) {
+            this._lastSimResult = null;
+            this._lastSimHours = null;
+            this._lastGameData = null;
+            const container = this.panel?.querySelector('#mwi-csim-results');
+            if (container) container.style.display = 'none';
+            return;
+        }
+
+        // Re-render with the active entry
+        const activeEntry =
+            this._activeDetailIndex !== null
+                ? this._simHistory[this._activeDetailIndex]
+                : this._simHistory[this._simHistory.length - 1];
+        this._lastSimResult = activeEntry.simResult;
+        this._lastSimHours = activeEntry.hours;
+        this._lastGameData = activeEntry.gameData;
+        this._displayResults(activeEntry.simResult, activeEntry.hours, activeEntry.gameData);
+    }
+
     _renderHistoryPanel() {
-        const history = this._simHistory;
         if (history.length < 2) return '';
 
         const baseIdx = this._comparisonBaseline ?? 0;
@@ -2718,6 +2781,7 @@ class CombatSimUI {
         html += '<th style="text-align:right; padding:2px 4px;">XP/hr</th>';
         if (hasDungeon) html += '<th style="text-align:right; padding:2px 4px;">Success</th>';
         html += '<th style="width:20px;"></th>';
+        html += '<th style="width:20px;"></th>';
         html += '</tr>';
 
         // Baseline row
@@ -2754,9 +2818,11 @@ class CombatSimUI {
                 '</td>';
         }
         html += '<td></td>';
+        html +=
+            '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" data-delete-history="' +
+            baseIdx +
+            '" title="Delete result">✕</td>';
         html += '</tr>';
-
-        // Compared rows
         for (const idx of this._comparisonSlots) {
             if (idx === baseIdx || idx >= history.length) continue;
             const entry = history[idx];
@@ -2812,6 +2878,10 @@ class CombatSimUI {
                 '<td style="text-align:center; padding:2px; cursor:pointer; color:#666;" data-remove-comparison="' +
                 idx +
                 '" title="Remove from comparison">×</td>';
+            html +=
+                '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" data-delete-history="' +
+                idx +
+                '" title="Delete result">✕</td>';
             html += '</tr>';
         }
 
