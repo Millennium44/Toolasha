@@ -408,8 +408,8 @@ class WebSocketHook {
                     profileList.pop();
                 }
 
-                // Save updated profile list to IndexedDB (works on all platforms including Steam)
-                await storage.setJSON('profile_list', profileList, 'combatExport');
+                // Save updated profile list to IndexedDB immediately (works on all platforms including Steam)
+                await storage.setJSON('profile_list', profileList, 'combatExport', true);
             }
         } catch (error) {
             console.error('[WebSocket] Failed to save Combat Sim data:', error);
