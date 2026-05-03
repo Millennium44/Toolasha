@@ -97,10 +97,15 @@ function buildSnapshot(loadout) {
 class LoadoutSnapshot {
     constructor() {
         this.snapshots = {}; // In-memory cache: { [loadoutName]: snapshot }
-        this.loadoutsUpdatedHandler = null;
         this.characterInitializedHandler = null;
         this.updateListeners = [];
         this.isInitialized = false;
+
+        // Register WebSocket handler immediately at module load time.
+        // loadouts_updated fires as part of the game's login burst, often before
+        // feature initialization runs — pre-registering here ensures we never miss it.
+        this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
+        webSocketHook.on('loadouts_updated', this.loadoutsUpdatedHandler);
     }
 
     /**
@@ -127,11 +132,20 @@ class LoadoutSnapshot {
         if (this.isInitialized) return;
         this.isInitialized = true;
 
-        // Load existing snapshots into memory.
-        // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-        // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-        // from the correct key once character_initialized fires.
-        this.snapshots = (await storage.getJSON(getStorageKey(), 'settings', null)) || {};
+        // Re-register WS handler if it was cleared by disable()
+        if (!this.loadoutsUpdatedHandler) {
+            this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
+            webSocketHook.on('loadouts_updated', this.loadoutsUpdatedHandler);
+        }
+
+        // Load from storage only if the early WS handler hasn't already populated snapshots.
+        // If loadouts_updated arrived before feature init, this.snapshots already has fresh data.
+        if (Object.keys(this.snapshots).length === 0) {
+            // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
+            // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
+            // from the correct key once character_initialized fires.
+            this.snapshots = (await storage.getJSON(getStorageKey(), 'settings', null)) || {};
+        }
 
         // Reload from the correct character-scoped key once character data is available
         this.characterInitializedHandler = async () => {
@@ -142,10 +156,6 @@ class LoadoutSnapshot {
             }
         };
         dataManager.on('character_initialized', this.characterInitializedHandler);
-
-        // Listen for loadouts_updated WebSocket messages
-        this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
-        webSocketHook.on('loadouts_updated', this.loadoutsUpdatedHandler);
     }
 
     /**
