@@ -10,7 +10,7 @@ import { constructExportObject } from './combat-sim-export.js';
 import config from '../../core/config.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import webSocketHook from '../../core/websocket.js';
+import dataManager from '../../core/data-manager.js';
 import { createCalculatorUI, extractExpRates } from '../combat-sim-integration/skill-calculator-ui.js';
 
 const timerRegistry = createTimerRegistry();
@@ -535,7 +535,7 @@ async function handleSimResults(resultsPanel) {
 
         // Fallback to real character data if simulator extraction fails
         if (!characterSkills) {
-            const characterData = await getCharacterDataFromStorage();
+            const characterData = getCharacterDataFromStorage();
 
             if (!characterData) {
                 console.warn('[Toolasha Combat Sim Calculator] No character data available');
@@ -551,7 +551,7 @@ async function handleSimResults(resultsPanel) {
         }
 
         // Get level exp table from storage (cross-domain)
-        const clientData = await getClientDataFromStorage();
+        const clientData = getClientDataFromStorage();
 
         if (!clientData) {
             console.warn('[Toolasha Combat Sim Calculator] No client data available');
@@ -591,37 +591,19 @@ async function handleSimResults(resultsPanel) {
 }
 
 /**
- * Get saved character data from storage
- * @returns {Promise<Object|null>} Parsed character data or null
+ * Get character data from dataManager (in-memory, always current).
+ * @returns {Object|null}
  */
-async function getCharacterDataFromStorage() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
-        if (!data) {
-            console.error('[Toolasha Combat Sim Calculator] No character data in storage. Please refresh game page.');
-            return null;
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Toolasha Combat Sim Calculator] Failed to get character data:', error);
-        return null;
-    }
+function getCharacterDataFromStorage() {
+    const data = dataManager.characterData;
+    if (!data) console.error('[Toolasha Combat Sim Calculator] No character data. Please refresh game page.');
+    return data || null;
 }
 
 /**
- * Get init_client_data from storage
- * @returns {Promise<Object|null>} Parsed client data or null
+ * Get init_client_data from dataManager (in-memory, always current).
+ * @returns {Object|null}
  */
-async function getClientDataFromStorage() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_init_client_data', null);
-        if (!data) {
-            console.warn('[Toolasha Combat Sim Calculator] No client data in storage');
-            return null;
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Toolasha Combat Sim Calculator] Failed to get client data:', error);
-        return null;
-    }
+function getClientDataFromStorage() {
+    return dataManager.getInitClientData() || null;
 }

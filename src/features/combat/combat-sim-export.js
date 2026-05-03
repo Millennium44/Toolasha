@@ -5,71 +5,42 @@
  * Exports character data for solo or party simulation testing
  */
 
-import webSocketHook from '../../core/websocket.js';
-import { getCurrentProfile } from '../../core/profile-manager.js';
+import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 
 /**
- * Get saved character data from storage
- * @returns {Promise<Object|null>} Parsed character data or null
+ * Get character data from dataManager (in-memory, always current).
+ * @returns {Object|null}
  */
-async function getCharacterData() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
-        if (!data) {
-            console.error('[Combat Sim Export] No character data found. Please refresh game page.');
-            return null;
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Combat Sim Export] Failed to get character data:', error);
-        return null;
-    }
+function getCharacterData() {
+    const data = dataManager.characterData;
+    if (!data) console.error('[Combat Sim Export] No character data found. Please refresh game page.');
+    return data || null;
 }
 
 /**
- * Get saved battle data from storage
- * @returns {Promise<Object|null>} Parsed battle data or null
+ * Get battle data from dataManager (null if not in combat).
+ * @returns {Object|null}
  */
-async function getBattleData() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
-        if (!data) {
-            return null; // No battle data (not in combat or solo)
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Combat Sim Export] Failed to get battle data:', error);
-        return null;
-    }
+function getBattleData() {
+    return dataManager.battleData || null;
 }
 
 /**
- * Get init_client_data from storage
- * @returns {Promise<Object|null>} Parsed client data or null
+ * Get init_client_data from dataManager (in-memory, always current).
+ * @returns {Object|null}
  */
-async function getClientData() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_init_client_data', null);
-        if (!data) {
-            console.warn('[Combat Sim Export] No client data found');
-            return null;
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Combat Sim Export] Failed to get client data:', error);
-        return null;
-    }
+function getClientData() {
+    return dataManager.getInitClientData() || null;
 }
 
 /**
- * Get profile export list from storage
- * @returns {Promise<Array>} List of saved profiles
+ * Get profile list from IndexedDB (cross-session, works on all platforms).
+ * @returns {Promise<Array>}
  */
 async function getProfileList() {
     try {
-        // Read from GM storage (cross-origin accessible, matches pattern of other combat sim data)
-        const profileListJson = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
-        return JSON.parse(profileListJson);
+        return (await storage.getJSON('profile_list', 'combatExport', null)) || [];
     } catch (error) {
         console.error('[Combat Sim Export] Failed to get profile list:', error);
         return [];
@@ -383,13 +354,13 @@ function constructPartyPlayer(profile, clientObj, battleObj) {
  * @returns {Object} Export object with player data, IDs, positions, and zone info
  */
 export async function constructExportObject(externalProfileId = null, singlePlayerFormat = false) {
-    const characterObj = await getCharacterData();
+    const characterObj = getCharacterData();
     if (!characterObj) {
         return null;
     }
 
-    const clientObj = await getClientData();
-    const battleObj = await getBattleData();
+    const clientObj = getClientData();
+    const battleObj = getBattleData();
     const profileList = await getProfileList();
 
     // Blank player template (as string, like MCS)
@@ -398,14 +369,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
 
     // Check if exporting another player's profile
     if (externalProfileId && externalProfileId !== characterObj.character.id) {
-        // Try to find profile in GM storage first, then fall back to memory cache
-        let profile = profileList.find((p) => p.characterID === externalProfileId);
-
-        // If not found in GM storage, check memory cache (works on Steam)
-        const cachedProfile = getCurrentProfile();
-        if (!profile && cachedProfile && cachedProfile.characterID === externalProfileId) {
-            profile = cachedProfile;
-        }
+        const profile = profileList.find((p) => p.characterID === externalProfileId);
 
         if (!profile) {
             console.error('[Combat Sim Export] Profile not found for:', externalProfileId);

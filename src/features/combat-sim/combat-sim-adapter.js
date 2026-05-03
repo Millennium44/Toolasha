@@ -7,8 +7,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import webSocketHook from '../../core/websocket.js';
-import { getCurrentProfile } from '../../core/profile-manager.js';
+import storage from '../../core/storage.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
@@ -533,23 +532,16 @@ export async function buildAllPlayerDTOs() {
         };
     }
 
-    // Party mode — load profile list from storage
+    // Party mode — load profile list from IndexedDB
     let profileList = [];
     try {
-        const data = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
-        profileList = JSON.parse(data);
+        profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
     } catch (error) {
         console.error('[CombatSimAdapter] Failed to load profile list:', error);
     }
 
     // Get battle data for consumable detection
-    let battleData = null;
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_new_battle', null);
-        if (data) battleData = JSON.parse(data);
-    } catch (error) {
-        console.error('[CombatSimAdapter] Failed to load battle data:', error);
-    }
+    const battleData = dataManager.battleData || null;
 
     const players = [];
     const playerNames = [];
@@ -570,14 +562,8 @@ export async function buildAllPlayerDTOs() {
                 playerNames.push(characterData.character.name || 'Player ' + slotIndex);
             }
         } else {
-            // Party member — try profile list, then memory cache
-            let profile = profileList.find((p) => p.characterID === member.characterID);
-            if (!profile) {
-                const cached = getCurrentProfile();
-                if (cached?.characterID === member.characterID) {
-                    profile = cached;
-                }
-            }
+            // Party member — look up in profile list (IndexedDB, cross-session)
+            const profile = profileList.find((p) => p.characterID === member.characterID);
 
             if (profile) {
                 const memberDTO = buildPartyMemberDTO(profile, clientData, battleData);

@@ -4,36 +4,26 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import webSocketHook from '../../core/websocket.js';
-import { getCurrentProfile } from '../../core/profile-manager.js';
+import storage from '../../core/storage.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 
 /**
- * Get character data from storage
- * @returns {Promise<Object|null>} Character data or null
+ * Get character data from dataManager (in-memory, always current).
+ * @returns {Object|null}
  */
-async function getCharacterData() {
-    try {
-        const data = await webSocketHook.loadFromStorage('toolasha_init_character_data', null);
-        if (!data) {
-            console.error('[Milkonomy Export] No character data found');
-            return null;
-        }
-        return JSON.parse(data);
-    } catch (error) {
-        console.error('[Milkonomy Export] Failed to get character data:', error);
-        return null;
-    }
+function getCharacterData() {
+    const data = dataManager.characterData;
+    if (!data) console.error('[Milkonomy Export] No character data found');
+    return data || null;
 }
 
 /**
- * Get profile list from storage (for looking up external profiles)
- * @returns {Promise<Array>} List of saved profiles
+ * Get profile list from IndexedDB (cross-session, works on all platforms).
+ * @returns {Promise<Array>}
  */
 async function getProfileList() {
     try {
-        const profileListJson = await webSocketHook.loadFromStorage('toolasha_profile_list', '[]');
-        return JSON.parse(profileListJson);
+        return (await storage.getJSON('profile_list', 'combatExport', null)) || [];
     } catch (error) {
         console.error('[Milkonomy Export] Failed to get profile list:', error);
         return [];
@@ -477,7 +467,7 @@ function getAchievementBuffMap(characterData, gameData) {
  */
 export async function constructMilkonomyExport(externalProfileId = null) {
     try {
-        const characterData = await getCharacterData();
+        const characterData = getCharacterData();
         if (!characterData) {
             console.error('[Milkonomy Export] No character data available');
             return null;
@@ -515,15 +505,8 @@ export async function constructMilkonomyExport(externalProfileId = null) {
 
         // Check if exporting another player's profile
         if (externalProfileId && externalProfileId !== characterData.character?.id) {
-            // Try to find profile in GM storage first, then fall back to memory cache
             const profileList = await getProfileList();
-            let profile = profileList.find((p) => p.characterID === externalProfileId);
-
-            // If not found in GM storage, check memory cache (works on Steam)
-            const cachedProfile = getCurrentProfile();
-            if (!profile && cachedProfile && cachedProfile.characterID === externalProfileId) {
-                profile = cachedProfile;
-            }
+            const profile = profileList.find((p) => p.characterID === externalProfileId);
 
             if (!profile) {
                 console.error('[Milkonomy Export] Profile not found for:', externalProfileId);
