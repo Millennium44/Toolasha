@@ -558,9 +558,11 @@ class CombatScore {
                 profileData?.profile?.character?.id;
             const isOwnCharacter = profileCharId === dataManager.getCurrentCharacterId();
             if (isOwnCharacter) {
-                const combatSnapshots = loadoutSnapshot
-                    .getAllSnapshots()
-                    .filter((s) => s.actionTypeHrid === '/action_types/combat');
+                const allSnapshots = loadoutSnapshot.getAllSnapshots();
+                const combatSnapshots = allSnapshots.filter((s) => s.actionTypeHrid === '/action_types/combat');
+                console.log(
+                    `[CombatScore] Combat Sim dropdown: profileCharId=${profileCharId}, myCharId=${dataManager.getCurrentCharacterId()}, totalSnapshots=${allSnapshots.length}, combatSnapshots=${combatSnapshots.length}`
+                );
                 if (combatSnapshots.length > 0) {
                     combatSimLoadoutBtn.style.display = '';
 

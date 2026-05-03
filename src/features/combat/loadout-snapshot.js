@@ -106,6 +106,7 @@ class LoadoutSnapshot {
         // feature initialization runs — pre-registering here ensures we never miss it.
         this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
         webSocketHook.on('loadouts_updated', this.loadoutsUpdatedHandler);
+        console.log('[LoadoutSnapshot] Constructor: WS handler registered at module load time');
     }
 
     /**
@@ -132,8 +133,11 @@ class LoadoutSnapshot {
         if (this.isInitialized) return;
         this.isInitialized = true;
 
+        console.log('[LoadoutSnapshot] initialize() called, snapshots in memory:', Object.keys(this.snapshots).length);
+
         // Re-register WS handler if it was cleared by disable()
         if (!this.loadoutsUpdatedHandler) {
+            console.log('[LoadoutSnapshot] Re-registering WS handler (was cleared by disable)');
             this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
             webSocketHook.on('loadouts_updated', this.loadoutsUpdatedHandler);
         }
@@ -141,15 +145,27 @@ class LoadoutSnapshot {
         // Load from storage only if the early WS handler hasn't already populated snapshots.
         // If loadouts_updated arrived before feature init, this.snapshots already has fresh data.
         if (Object.keys(this.snapshots).length === 0) {
+            const storageKey = getStorageKey();
+            console.log('[LoadoutSnapshot] No WS data yet, loading from storage key:', storageKey);
             // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
             // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
             // from the correct key once character_initialized fires.
-            this.snapshots = (await storage.getJSON(getStorageKey(), 'settings', null)) || {};
+            this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
+            console.log('[LoadoutSnapshot] Loaded from storage:', Object.keys(this.snapshots).length, 'snapshots');
+        } else {
+            console.log('[LoadoutSnapshot] Using WS-populated snapshots, skipping storage read');
         }
 
         // Reload from the correct character-scoped key once character data is available
         this.characterInitializedHandler = async () => {
-            const fresh = (await storage.getJSON(getStorageKey(), 'settings', null)) || {};
+            const storageKey = getStorageKey();
+            console.log('[LoadoutSnapshot] character_initialized fired, reloading from key:', storageKey);
+            const fresh = (await storage.getJSON(storageKey, 'settings', null)) || {};
+            console.log(
+                '[LoadoutSnapshot] character_initialized reload:',
+                Object.keys(fresh).length,
+                'snapshots found'
+            );
             if (Object.keys(fresh).length > 0) {
                 this.snapshots = fresh;
                 this._emitUpdate();
@@ -166,6 +182,7 @@ class LoadoutSnapshot {
     _onLoadoutsUpdated(data) {
         const loadoutMap = data.characterLoadoutMap;
         if (!loadoutMap) {
+            console.warn('[LoadoutSnapshot] loadouts_updated received but no characterLoadoutMap');
             return;
         }
 
@@ -174,6 +191,13 @@ class LoadoutSnapshot {
             if (!loadout.name) continue;
             newSnapshots[id] = buildSnapshot(loadout);
         }
+
+        const combatCount = Object.values(newSnapshots).filter(
+            (s) => s.actionTypeHrid === '/action_types/combat'
+        ).length;
+        console.log(
+            `[LoadoutSnapshot] loadouts_updated processed: ${Object.keys(newSnapshots).length} total snapshots, ${combatCount} combat, isInitialized=${this.isInitialized}, storageKey=${getStorageKey()}`
+        );
 
         this.snapshots = newSnapshots;
         storage.setJSON(getStorageKey(), this.snapshots, 'settings');
