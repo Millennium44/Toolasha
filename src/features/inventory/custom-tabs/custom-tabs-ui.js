@@ -1243,6 +1243,25 @@ export default class CustomTabsUI {
                 if (remaining.length > 0) tileMap.set(baseHrid, remaining);
                 else tileMap.delete(baseHrid);
             }
+        } else {
+            // Base hrid: skip tiles that are also registered under an enhanced key still in the
+            // tileMap — those tiles belong to a tab that specifically requested that level.
+            const enhancedPrefix = hrid + '+';
+            const reservedTiles = new Set();
+            for (const [key, keyTiles] of tileMap) {
+                if (key.startsWith(enhancedPrefix)) {
+                    for (const t of keyTiles) reservedTiles.add(t);
+                }
+            }
+            const claimable = reservedTiles.size > 0 ? entries.filter((t) => !reservedTiles.has(t)) : entries;
+            if (claimable.length < entries.length) {
+                // Put the reserved tiles back so their enhanced-hrid tab can claim them
+                const reserved = entries.filter((t) => reservedTiles.has(t));
+                tileMap.set(hrid, reserved);
+            } else {
+                // nothing reserved, already deleted from map above
+            }
+            return claimable;
         }
         return entries;
     }
@@ -1963,6 +1982,27 @@ export default class CustomTabsUI {
                         this._renderSearchResults(container, query, tabId, categoryFilter);
                     });
                     container.appendChild(headerRow);
+
+                    // "Add all levels" shortcut row
+                    const addAllRow = document.createElement('div');
+                    addAllRow.className = 'toolasha-ct-search-result toolasha-ct-search-level-row';
+                    addAllRow.innerHTML = `<span style="color:#7dcea0;font-size:12px;padding-left:4px;">+ Add all levels (+0–+${maxLevel})</span>`;
+                    addAllRow.addEventListener('click', () => {
+                        for (let level = 0; level <= maxLevel; level++) {
+                            const levelHrid = level === 0 ? hrid : `${hrid}+${level}`;
+                            if (!currentItems.has(levelHrid)) {
+                                this._config = addItem(this._config, tabId, levelHrid);
+                            }
+                        }
+                        this._save();
+                        this._renderSearchResults(container, query, tabId, categoryFilter);
+                        this._renderAssignedItems(
+                            container.parentElement.querySelector('.toolasha-ct-assigned-list'),
+                            tabId
+                        );
+                        if (this._isActive) this._applyLayout();
+                    });
+                    container.appendChild(addAllRow);
 
                     // All levels 0–maxLevel; mark owned with a dot
                     for (let level = 0; level <= maxLevel; level++) {
