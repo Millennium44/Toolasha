@@ -1948,7 +1948,7 @@ export default class CustomTabsUI {
             const iconHref = spriteUrl ? `${spriteUrl}#${iconId}` : `#${iconId}`;
 
             const ownedLevels = levelMap.get(hrid);
-            const maxLevel = details.equipmentDetail?.maxEnhancementLevel || 0;
+            const maxLevel = details.equipmentDetail ? 20 : 0;
             const isExpandable = maxLevel > 0;
             const isExpanded = this._expandedSearchHrids?.has(hrid);
 
