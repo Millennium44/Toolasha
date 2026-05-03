@@ -1005,3 +1005,72 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         consumableEntries,
     };
 }
+
+/**
+ * Find all zone×tier combinations that drop the specified item.
+ * Checks regular zone monster drop tables and dungeon reward drop tables.
+ * @param {string} itemHrid - e.g. '/items/soul_hunter_crossbow'
+ * @param {Object} gameData - Game data payload from buildGameDataPayload()
+ * @returns {Array<{zoneHrid: string, difficultyTier: number, name: string}>} Sorted by sortIndex then tier
+ */
+export function getZonesThatDropItem(itemHrid, gameData) {
+    const { actionDetailMap, combatMonsterDetailMap } = gameData;
+    if (!actionDetailMap || !combatMonsterDetailMap) return [];
+
+    const results = [];
+
+    for (const [hrid, action] of Object.entries(actionDetailMap)) {
+        if (action.type !== '/action_types/combat') continue;
+
+        const maxDifficulty = action.maxDifficulty || 0;
+        const isDungeon = action.combatZoneInfo?.isDungeon || false;
+
+        if (isDungeon) {
+            // Dungeon: item comes from the reward drop table (same table for all tiers)
+            const rewardDropTable = action.combatZoneInfo?.dungeonInfo?.rewardDropTable;
+            if (rewardDropTable?.some((drop) => drop.itemHrid === itemHrid)) {
+                for (let tier = 0; tier <= maxDifficulty; tier++) {
+                    results.push({ zoneHrid: hrid, difficultyTier: tier, name: action.name });
+                }
+            }
+        } else {
+            // Regular zone: check each monster's drop table and rare drop table
+            const spawns = action.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
+            const validTiers = new Set();
+
+            for (const spawn of spawns) {
+                const monster = combatMonsterDetailMap[spawn.combatMonsterHrid];
+                if (!monster) continue;
+
+                for (const drop of monster.dropTable || []) {
+                    if (drop.itemHrid !== itemHrid) continue;
+                    const minTier = drop.minDifficultyTier || 0;
+                    for (let tier = minTier; tier <= maxDifficulty; tier++) {
+                        validTiers.add(tier);
+                    }
+                }
+
+                for (const drop of monster.rareDropTable || []) {
+                    if (drop.itemHrid !== itemHrid) continue;
+                    const minTier = drop.minDifficultyTier || 0;
+                    for (let tier = minTier; tier <= maxDifficulty; tier++) {
+                        validTiers.add(tier);
+                    }
+                }
+            }
+
+            for (const tier of validTiers) {
+                results.push({ zoneHrid: hrid, difficultyTier: tier, name: action.name });
+            }
+        }
+    }
+
+    results.sort((a, b) => {
+        const aSortIndex = actionDetailMap[a.zoneHrid]?.sortIndex ?? 0;
+        const bSortIndex = actionDetailMap[b.zoneHrid]?.sortIndex ?? 0;
+        if (aSortIndex !== bSortIndex) return aSortIndex - bSortIndex;
+        return a.difficultyTier - b.difficultyTier;
+    });
+
+    return results;
+}

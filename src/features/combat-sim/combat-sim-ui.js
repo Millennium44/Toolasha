@@ -20,6 +20,7 @@ import {
     calculateSimRevenue,
     applyLoadoutSnapshotToDTO,
     parseShykaiImport,
+    getZonesThatDropItem,
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
@@ -79,6 +80,13 @@ class CombatSimUI {
         this._allZonesResults = null; // Array of {zone, simResult, revenue}
         this._allZonesSortCol = null;
         this._allZonesSortAsc = true;
+        this._earlyExitEnabled = true; // default on
+        // Seek state
+        this._seekItems = []; // [{itemHrid, name}] — droppable items across all combat zones
+        this._seekSelectedItem = null;
+        this._seekResults = null;
+        this._seekSortCol = null;
+        this._seekSortAsc = true;
     }
 
     /**
@@ -155,6 +163,7 @@ class CombatSimUI {
         tabBar.innerHTML = `
             <button id="mwi-csim-tab-configure" style="${tabStyle(true)}">Configure</button>
             <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
+            <button id="mwi-csim-tab-seek" style="${tabStyle(false)}">Seek</button>
         `;
 
         // Configure tab content
@@ -221,6 +230,10 @@ class CombatSimUI {
             <label style="${labelStyle}">
                 <input type="checkbox" id="mwi-csim-allzones-solo" style="${checkboxStyle}">
                 Sim All Solo
+            </label>
+            <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
+                <input type="checkbox" id="mwi-csim-earlyexit" style="${checkboxStyle}" checked>
+                Skip Worse Tiers
             </label>
         `;
 
@@ -303,6 +316,88 @@ class CombatSimUI {
         resultsContent.appendChild(progressContainer);
         resultsContent.appendChild(resultsContainer);
 
+        // Seek tab content (hidden by default)
+        const seekContent = document.createElement('div');
+        seekContent.id = 'mwi-csim-seek-content';
+        seekContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+
+        const seekControls = document.createElement('div');
+        seekControls.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+        `;
+        seekControls.innerHTML = `
+            <label style="color:#888; font-size:12px;">Item</label>
+            <input id="mwi-csim-seek-input" type="text" placeholder="Search item..." style="
+                flex:1; min-width:0;
+                background:#1a1a2e; color:#e0e0e0;
+                border:1px solid #444; border-radius:4px;
+                padding:3px 6px; font-size:12px; font-family:inherit;">
+            <label style="color:#888; font-size:12px;">Hours</label>
+            <input id="mwi-csim-seek-hours" type="number" min="1" max="10000" value="10" style="
+                width:60px; background:#1a1a2e; color:#e0e0e0;
+                border:1px solid #444; border-radius:4px;
+                padding:3px 6px; font-size:12px; text-align:center;">
+            <button id="mwi-csim-seek-run" style="
+                background: ${ACCENT_BTN_BG};
+                color: ${ACCENT};
+                border: 1px solid ${ACCENT_BTN_BORDER};
+                border-radius: 6px;
+                padding: 5px 14px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                font-family: inherit;">Seek</button>
+            <button id="mwi-csim-seek-stop" style="
+                display:none;
+                background:rgba(244, 67, 54, 0.2);
+                border:1px solid rgba(244, 67, 54, 0.4);
+                color:#f44336;
+                border-radius:4px;
+                padding:5px 10px;
+                font-size:12px;
+                font-weight:600;
+                cursor:pointer;
+                font-family:inherit;">Stop</button>
+        `;
+
+        const seekSuggestions = document.createElement('div');
+        seekSuggestions.id = 'mwi-csim-seek-suggestions';
+        seekSuggestions.style.cssText = `
+            display: none;
+            max-height: 140px;
+            overflow-y: auto;
+            padding: 4px 14px;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+        `;
+
+        const seekProgress = document.createElement('div');
+        seekProgress.id = 'mwi-csim-seek-progress';
+        seekProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
+        seekProgress.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                    <div id="mwi-csim-seek-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
+                    <span id="mwi-csim-seek-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0%</span>
+                </div>
+            </div>
+        `;
+
+        const seekResults = document.createElement('div');
+        seekResults.id = 'mwi-csim-seek-results';
+        seekResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+
+        seekContent.appendChild(seekControls);
+        seekContent.appendChild(seekSuggestions);
+        seekContent.appendChild(seekProgress);
+        seekContent.appendChild(seekResults);
+
         // Status bar
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
@@ -314,6 +409,7 @@ class CombatSimUI {
         this.panel.appendChild(tabBar);
         this.panel.appendChild(configureContent);
         this.panel.appendChild(resultsContent);
+        this.panel.appendChild(seekContent);
         this.panel.appendChild(status);
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -331,6 +427,7 @@ class CombatSimUI {
             .querySelector('#mwi-csim-tab-configure')
             .addEventListener('click', () => this._switchTab('configure'));
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
+        this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
 
         // Zone change → update tier dropdown
         this.panel.querySelector('#mwi-csim-zone').addEventListener('change', () => this._updateTierDropdown());
@@ -353,6 +450,30 @@ class CombatSimUI {
                 this._allZonesMode = null;
             }
             this._updateAllZonesUI();
+        });
+
+        // Early exit toggle
+        this.panel.querySelector('#mwi-csim-earlyexit').addEventListener('change', (e) => {
+            this._earlyExitEnabled = e.target.checked;
+        });
+
+        // Seek: item search input
+        this.panel.querySelector('#mwi-csim-seek-input').addEventListener('input', (e) => {
+            this._updateSeekSuggestions(e.target.value);
+        });
+        this.panel.querySelector('#mwi-csim-seek-input').addEventListener('focus', (e) => {
+            this._updateSeekSuggestions(e.target.value);
+        });
+        this.panel.querySelector('#mwi-csim-seek-input').addEventListener('blur', () => {
+            // Delay hide to allow click on suggestion
+            setTimeout(() => {
+                const sug = this.panel.querySelector('#mwi-csim-seek-suggestions');
+                if (sug) sug.style.display = 'none';
+            }, 150);
+        });
+        this.panel.querySelector('#mwi-csim-seek-run').addEventListener('click', () => this._onSeek());
+        this.panel.querySelector('#mwi-csim-seek-stop').addEventListener('click', () => {
+            cancelAllZonesSimulation();
         });
 
         this.populateZones();
@@ -425,6 +546,7 @@ class CombatSimUI {
         const tierSelect = this.panel?.querySelector('#mwi-csim-tier');
         const zoneLabel = zoneSelect?.previousElementSibling;
         const tierLabel = tierSelect?.previousElementSibling;
+        const earlyExitLabel = this.panel?.querySelector('#mwi-csim-earlyexit-label');
 
         if (!checklist) return;
 
@@ -434,6 +556,7 @@ class CombatSimUI {
             if (tierSelect) tierSelect.style.display = 'none';
             if (zoneLabel) zoneLabel.style.display = 'none';
             if (tierLabel) tierLabel.style.display = 'none';
+            if (earlyExitLabel) earlyExitLabel.style.display = 'flex';
 
             // Show checklist with zones
             checklist.style.display = 'block';
@@ -444,6 +567,7 @@ class CombatSimUI {
             if (tierSelect) tierSelect.style.display = '';
             if (zoneLabel) zoneLabel.style.display = '';
             if (tierLabel) tierLabel.style.display = '';
+            if (earlyExitLabel) earlyExitLabel.style.display = 'none';
 
             // Hide checklist
             checklist.style.display = 'none';
@@ -676,6 +800,359 @@ class CombatSimUI {
     }
 
     /**
+     * Populate (or refresh) the seekable item list from all combat zone drop tables.
+     * Only called once per game data session; subsequent calls are no-ops if list is cached.
+     * @private
+     */
+    _populateSeekItems() {
+        if (this._seekItems.length > 0) return;
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) return;
+
+        const { actionDetailMap, combatMonsterDetailMap } = gameData;
+        if (!actionDetailMap || !combatMonsterDetailMap) return;
+
+        const itemHridSet = new Set();
+
+        for (const action of Object.values(actionDetailMap)) {
+            if (action.type !== '/action_types/combat') continue;
+            const isDungeon = action.combatZoneInfo?.isDungeon || false;
+
+            if (isDungeon) {
+                for (const drop of action.combatZoneInfo?.dungeonInfo?.rewardDropTable || []) {
+                    if (drop.itemHrid) itemHridSet.add(drop.itemHrid);
+                }
+            } else {
+                const spawns = action.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
+                for (const spawn of spawns) {
+                    const monster = combatMonsterDetailMap[spawn.combatMonsterHrid];
+                    if (!monster) continue;
+                    for (const drop of monster.dropTable || []) {
+                        if (drop.itemHrid) itemHridSet.add(drop.itemHrid);
+                    }
+                    for (const drop of monster.rareDropTable || []) {
+                        if (drop.itemHrid) itemHridSet.add(drop.itemHrid);
+                    }
+                }
+            }
+        }
+
+        const clientData = dataManager.getInitClientData();
+        const itemDetailMap = clientData?.itemDetailMap || {};
+
+        this._seekItems = Array.from(itemHridSet)
+            .map((hrid) => ({ itemHrid: hrid, name: itemDetailMap[hrid]?.name || hrid.split('/').pop() }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Update the seek suggestion list based on the current search text.
+     * @param {string} query
+     * @private
+     */
+    _updateSeekSuggestions(query) {
+        const container = this.panel?.querySelector('#mwi-csim-seek-suggestions');
+        if (!container) return;
+
+        this._populateSeekItems();
+
+        const q = (query || '').toLowerCase().trim();
+        if (!q) {
+            container.style.display = 'none';
+            return;
+        }
+
+        const matches = this._seekItems.filter((item) => item.name.toLowerCase().includes(q)).slice(0, 20);
+
+        if (!matches.length) {
+            container.style.display = 'none';
+            return;
+        }
+
+        container.innerHTML = '';
+        for (const item of matches) {
+            const el = document.createElement('div');
+            el.style.cssText =
+                'padding:3px 0; font-size:12px; color:#ccc; cursor:pointer; border-bottom:1px solid #1a1a2e;';
+            el.textContent = item.name;
+            el.addEventListener('mousedown', () => {
+                this._seekSelectedItem = item;
+                const input = this.panel.querySelector('#mwi-csim-seek-input');
+                if (input) input.value = item.name;
+                container.style.display = 'none';
+            });
+            container.appendChild(el);
+        }
+        container.style.display = 'block';
+    }
+
+    /**
+     * Run the Seek simulation: find all zones that drop the selected item and rank by items/hr.
+     * @private
+     */
+    async _onSeek() {
+        const input = this.panel?.querySelector('#mwi-csim-seek-input');
+        const queryText = input?.value?.trim() || '';
+
+        // Resolve selected item — either from prior click or by exact name match
+        if (!this._seekSelectedItem || this._seekSelectedItem.name !== queryText) {
+            const match = this._seekItems.find((i) => i.name.toLowerCase() === queryText.toLowerCase());
+            if (match) {
+                this._seekSelectedItem = match;
+            } else {
+                this._setStatus('No item selected. Type a name and pick from the list.');
+                return;
+            }
+        }
+
+        const { itemHrid, name: itemName } = this._seekSelectedItem;
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+
+        const zones = getZonesThatDropItem(itemHrid, gameData);
+        if (!zones.length) {
+            const resultsEl = this.panel?.querySelector('#mwi-csim-seek-results');
+            if (resultsEl)
+                resultsEl.innerHTML =
+                    '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No zones drop this item.</div>';
+            return;
+        }
+
+        const hoursEl = this.panel?.querySelector('#mwi-csim-seek-hours');
+        const hours = Math.min(10000, Math.max(1, parseInt(hoursEl?.value) || 100));
+
+        let playerDTOs;
+        if (this._editedDTOs) {
+            playerDTOs = Object.values(this._editedDTOs);
+        } else {
+            const result = await buildAllPlayerDTOs();
+            playerDTOs = result.players;
+            this._playerInfo = result.playerInfo;
+            this._activePlayerTab = result.selfHrid;
+            this._selfHrid = result.selfHrid;
+        }
+
+        if (!playerDTOs.length) {
+            this._setStatus('No character data available.');
+            return;
+        }
+
+        const communityBuffs = getCommunityBuffs();
+
+        // UI setup
+        this.isRunning = true;
+        const runBtn = this.panel.querySelector('#mwi-csim-seek-run');
+        const stopBtn = this.panel.querySelector('#mwi-csim-seek-stop');
+        const progressEl = this.panel.querySelector('#mwi-csim-seek-progress');
+        const progressFill = this.panel.querySelector('#mwi-csim-seek-progress-fill');
+        const progressText = this.panel.querySelector('#mwi-csim-seek-progress-text');
+        const resultsEl = this.panel.querySelector('#mwi-csim-seek-results');
+
+        runBtn.disabled = true;
+        runBtn.style.opacity = '0.5';
+        runBtn.style.cursor = 'not-allowed';
+        stopBtn.style.display = '';
+        progressEl.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressText.textContent = '0%';
+        resultsEl.innerHTML = '';
+
+        const simStartTime = Date.now();
+        const zoneCount = zones.length;
+        this.elapsedTimer = setInterval(() => {
+            const elapsed = (Date.now() - simStartTime) / 1000;
+            this._setStatus(`Seeking ${itemName} in ${zoneCount} zone/tiers... ${formatElapsed(elapsed)}`);
+        }, 100);
+
+        try {
+            const simZones = zones.map((z) => ({ zoneHrid: z.zoneHrid, difficultyTier: z.difficultyTier }));
+
+            const simResults = await runAllZonesSimulation(
+                { gameData, playerDTOs, zones: simZones, hours, communityBuffs, useEarlyExit: false },
+                (percent) => {
+                    progressFill.style.width = `${percent}%`;
+                    progressText.textContent = `${percent}%`;
+                }
+            );
+
+            clearInterval(this.elapsedTimer);
+            this.elapsedTimer = null;
+            const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
+
+            const playerHrid = this._activePlayerTab || 'player1';
+
+            const seekRows = simResults
+                .map((simResult, i) => {
+                    if (!simResult) return null;
+                    const zone = zones[i];
+                    const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
+
+                    const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
+                    const itemCount = dropMap.get(itemHrid) || 0;
+                    const itemsPerHour = itemCount / simHours;
+                    if (itemsPerHour <= 0) return null;
+
+                    let profitPerHour = 0;
+                    let costPerHour = 0;
+                    try {
+                        const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+                        profitPerHour = revenue.netPerHour;
+                        costPerHour = revenue.costPerHour;
+                    } catch {
+                        // Revenue may not be available
+                    }
+
+                    const costPerDrop = itemsPerHour > 0 ? costPerHour / itemsPerHour : 0;
+
+                    return { zone, itemsPerHour, profitPerHour, costPerHour, costPerDrop };
+                })
+                .filter(Boolean);
+
+            this._seekResults = seekRows;
+            this._seekSortCol = 'itemsPerHour';
+            this._seekSortAsc = false;
+            this._displaySeekResults(seekRows, itemName);
+            this._setStatus(`Seek complete in ${totalElapsed}: ${seekRows.length} sources found for ${itemName}`);
+        } catch (error) {
+            clearInterval(this.elapsedTimer);
+            this.elapsedTimer = null;
+            if (error.message === 'Cancelled') {
+                this._setStatus('Seek cancelled.');
+            } else {
+                console.error('[CombatSimUI] Seek simulation failed:', error);
+                this._setStatus(`Seek error: ${error.message || 'Unknown error'}`);
+            }
+        } finally {
+            this.isRunning = false;
+            runBtn.disabled = false;
+            runBtn.style.opacity = '1';
+            runBtn.style.cursor = 'pointer';
+            stopBtn.style.display = 'none';
+            progressEl.style.display = 'none';
+        }
+    }
+
+    /**
+     * Render seek results in a sortable table.
+     * @param {Array<Object>} rows - seek result rows
+     * @param {string} itemName - display name of the sought item
+     * @private
+     */
+    _displaySeekResults(rows, itemName) {
+        const container = this.panel?.querySelector('#mwi-csim-seek-results');
+        if (!container) return;
+
+        if (!rows.length) {
+            container.innerHTML = `<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No zones drop ${itemName}.</div>`;
+            return;
+        }
+
+        const cols = [
+            { key: 'zone', label: 'Zone' },
+            { key: 'tier', label: 'T' },
+            { key: 'itemsPerHour', label: 'Items/hr' },
+            { key: 'profitPerHour', label: 'Profit/hr' },
+            { key: 'costPerHour', label: 'Cost/hr' },
+            { key: 'costPerDrop', label: 'Cost/Drop' },
+        ];
+
+        // Sort
+        const sortCol = this._seekSortCol || 'itemsPerHour';
+        const sortAsc = this._seekSortAsc;
+        const sorted = [...rows].sort((a, b) => {
+            const va =
+                sortCol === 'zone' ? a.zone.name : sortCol === 'tier' ? a.zone.difficultyTier : (a[sortCol] ?? 0);
+            const vb =
+                sortCol === 'zone' ? b.zone.name : sortCol === 'tier' ? b.zone.difficultyTier : (b[sortCol] ?? 0);
+            if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+            return sortAsc ? va - vb : vb - va;
+        });
+
+        // Best per numeric column (for green highlight)
+        const bestItemsPerHour = Math.max(...rows.map((r) => r.itemsPerHour));
+        const bestProfitPerHour = Math.max(...rows.map((r) => r.profitPerHour));
+        const lowestCostPerHour =
+            rows.filter((r) => r.costPerHour > 0).length > 0
+                ? Math.min(...rows.filter((r) => r.costPerHour > 0).map((r) => r.costPerHour))
+                : null;
+        const lowestCostPerDrop =
+            rows.filter((r) => r.costPerDrop > 0).length > 0
+                ? Math.min(...rows.filter((r) => r.costPerDrop > 0).map((r) => r.costPerDrop))
+                : null;
+
+        const arrow = (col) => (this._seekSortCol === col ? (this._seekSortAsc ? ' ▲' : ' ▼') : '');
+
+        const headerCells = cols
+            .map(
+                (col) =>
+                    `<th data-col="${col.key}" style="padding:3px 4px; cursor:pointer; white-space:nowrap; font-size:10px; font-weight:600; color:#888; border-bottom:1px solid #333; user-select:none;">${col.label}${arrow(col.key)}</th>`
+            )
+            .join('');
+
+        const bodyRows = sorted
+            .map((row) => {
+                const cells = cols
+                    .map((col) => {
+                        let display = '';
+                        let highlight = false;
+                        const cellStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
+
+                        if (col.key === 'zone') {
+                            display = row.zone.name;
+                        } else if (col.key === 'tier') {
+                            display = String(row.zone.difficultyTier);
+                        } else if (col.key === 'itemsPerHour') {
+                            display = row.itemsPerHour.toFixed(3);
+                            highlight = row.itemsPerHour === bestItemsPerHour;
+                        } else if (col.key === 'profitPerHour') {
+                            display = formatKMB(row.profitPerHour);
+                            highlight = row.profitPerHour === bestProfitPerHour && row.profitPerHour > 0;
+                        } else if (col.key === 'costPerHour') {
+                            display = row.costPerHour > 0 ? formatKMB(row.costPerHour) : '—';
+                            highlight = lowestCostPerHour !== null && row.costPerHour === lowestCostPerHour;
+                        } else if (col.key === 'costPerDrop') {
+                            display = row.costPerDrop > 0 ? formatKMB(row.costPerDrop) : '—';
+                            highlight = lowestCostPerDrop !== null && row.costPerDrop === lowestCostPerDrop;
+                        }
+
+                        const color = highlight ? '#4caf50' : '#ccc';
+                        return `<td style="${cellStyle} color:${color};">${display}</td>`;
+                    })
+                    .join('');
+                return `<tr style="border-bottom:1px solid #1a1a2e;">${cells}</tr>`;
+            })
+            .join('');
+
+        container.innerHTML = `
+            <div style="font-size:11px; color:#888; margin-bottom:8px;">Best sources for <strong style="color:${ACCENT};">${itemName}</strong></div>
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; min-width:400px;">
+                    <thead><tr>${headerCells}</tr></thead>
+                    <tbody>${bodyRows}</tbody>
+                </table>
+            </div>
+        `;
+
+        container.querySelectorAll('th[data-col]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.col;
+                if (this._seekSortCol === col) {
+                    this._seekSortAsc = !this._seekSortAsc;
+                } else {
+                    this._seekSortCol = col;
+                    this._seekSortAsc = col === 'zone' || col === 'tier';
+                }
+                this._displaySeekResults(rows, itemName);
+            });
+        });
+    }
+
+    /**
      * Reset the Simulate button to its default state.
      * @param {HTMLElement} btn
      * @private
@@ -734,23 +1211,37 @@ class CombatSimUI {
         this._activeMainTab = tab;
         const configureContent = this.panel.querySelector('#mwi-csim-configure-content');
         const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
+        const seekContent = this.panel.querySelector('#mwi-csim-seek-content');
         const tabConfigure = this.panel.querySelector('#mwi-csim-tab-configure');
         const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
+        const tabSeek = this.panel.querySelector('#mwi-csim-tab-seek');
 
         const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
             'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:#888; border-bottom:2px solid transparent;';
 
+        configureContent.style.display = 'none';
+        resultsContent.style.display = 'none';
+        if (seekContent) seekContent.style.display = 'none';
+        tabConfigure.style.cssText = inactiveStyle;
+        tabResults.style.cssText = inactiveStyle;
+        if (tabSeek) tabSeek.style.cssText = inactiveStyle;
+
         if (tab === 'configure') {
             configureContent.style.display = 'flex';
-            resultsContent.style.display = 'none';
             tabConfigure.style.cssText = activeStyle;
-            tabResults.style.cssText = inactiveStyle;
+            this._setStatus('Select a zone and click Simulate.');
+        } else if (tab === 'seek') {
+            if (seekContent) seekContent.style.display = 'flex';
+            if (tabSeek) tabSeek.style.cssText = activeStyle;
+            this._populateSeekItems();
+            this._setStatus('Search for a combat drop item, then click Seek.');
         } else {
-            configureContent.style.display = 'none';
             resultsContent.style.display = 'flex';
-            tabConfigure.style.cssText = inactiveStyle;
             tabResults.style.cssText = activeStyle;
+            if (!this.isRunning && !this._lastSimResult && !this._allZonesResults) {
+                this._setStatus('No results yet. Run a simulation first.');
+            }
         }
     }
 
@@ -1967,7 +2458,7 @@ class CombatSimUI {
             const zones = selectedZones.map((z) => ({ zoneHrid: z.zoneHrid, difficultyTier: z.difficultyTier }));
 
             const simResults = await runAllZonesSimulation(
-                { gameData, playerDTOs, zones, hours, communityBuffs },
+                { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit: this._earlyExitEnabled },
                 (percent) => {
                     progressFill.style.width = `${percent}%`;
                     progressText.textContent = `${percent}%`;

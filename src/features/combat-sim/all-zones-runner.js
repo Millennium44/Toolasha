@@ -10,6 +10,7 @@
 import { buildExtraBuffs } from './combat-sim-runner.js';
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import MULTI_WORKER_SCRIPT from './multi-worker-entry.js?worker';
+import { calculateSimRevenue } from './combat-sim-adapter.js';
 
 let multiWorker = null;
 let activeReject = null;
@@ -22,11 +23,12 @@ let activeReject = null;
  * @param {Array<{zoneHrid: string, difficultyTier: number}>} params.zones - Zones to simulate
  * @param {number} params.hours - Hours to simulate per zone
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+ * @param {boolean} [params.useEarlyExit] - Skip higher tiers when both XP/hr and profit/hr decline
  * @param {Function} [onProgress] - Called with (percent: 0-100) for overall progress
  * @returns {Promise<Array<Object>>} Array of SimResults, one per zone (same order as input)
  */
 export async function runAllZonesSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zones, hours, communityBuffs } = params;
+    const { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit } = params;
 
     if (!zones.length) return [];
 
@@ -56,11 +58,51 @@ export async function runAllZonesSimulation(params, onProgress) {
             URL.revokeObjectURL(blobURL);
         };
 
+        // Per-zone tier metrics for early exit comparison: zoneHrid → [{xpPerHour, profitPerHour}]
+        const tierResultsByZone = new Map();
+
         worker.onmessage = (event) => {
             const msg = event.data;
 
             if (msg.type === 'progress') {
                 if (onProgress) onProgress(Math.round(msg.progress));
+            } else if (msg.type === 'zone_tier_result') {
+                // Calculate XP/hr and profit/hr for this tier and decide whether to skip the next
+                const { zoneHrid, simResult } = msg;
+                const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
+
+                // Sum XP across all players and all skills
+                let totalXP = 0;
+                for (const playerXP of Object.values(simResult.experienceGained || {})) {
+                    for (const xp of Object.values(playerXP)) {
+                        totalXP += xp;
+                    }
+                }
+                const xpPerHour = totalXP / simHours;
+
+                let profitPerHour = 0;
+                try {
+                    const revenue = calculateSimRevenue(simResult, gameData, 'player1', simHours);
+                    profitPerHour = revenue.netPerHour;
+                } catch {
+                    // Revenue calculation may fail if market data is unavailable
+                }
+
+                const prevResults = tierResultsByZone.get(zoneHrid) || [];
+                const currMetrics = { xpPerHour, profitPerHour };
+
+                let skip = false;
+                if (prevResults.length > 0) {
+                    const prev = prevResults[prevResults.length - 1];
+                    if (xpPerHour < prev.xpPerHour && profitPerHour < prev.profitPerHour) {
+                        skip = true;
+                    }
+                }
+
+                prevResults.push(currMetrics);
+                tierResultsByZone.set(zoneHrid, prevResults);
+
+                worker.postMessage({ type: 'zone_tier_decision', zoneHrid, skip });
             } else if (msg.type === 'all_zones_result') {
                 worker.terminate();
                 cleanup();
@@ -89,6 +131,7 @@ export async function runAllZonesSimulation(params, onProgress) {
             simulationTimeLimit,
             extraBuffs,
             maxWorkers,
+            useEarlyExit: !!useEarlyExit,
         });
     });
 }
