@@ -71,11 +71,13 @@ function getClientData() {
  * @returns {Promise<Array>}
  */
 async function getProfileList() {
-    try {
-        const list = await storage.getJSON('profile_list', 'combatExport', null);
-        if (list && list.length > 0) return list;
-    } catch (error) {
-        console.error('[Combat Sim Export] Failed to get profile list from IndexedDB:', error);
+    if (storage.available) {
+        try {
+            const list = await storage.getJSON('profile_list', 'combatExport', null);
+            if (list && list.length > 0) return list;
+        } catch (error) {
+            console.error('[Combat Sim Export] Failed to get profile list from IndexedDB:', error);
+        }
     }
     // Cross-domain fallback: read from GM storage (saved by game page)
     if (typeof GM_getValue !== 'undefined') {
@@ -177,30 +179,43 @@ function constructSelfPlayer(characterObj, clientObj) {
         playerObj.abilities[i] = { abilityHrid: '', level: 1 };
     }
 
-    // Extract equipped abilities
-    let normalAbilityIndex = 1;
-    const equippedAbilities = characterObj.combatUnit?.combatAbilities || [];
-    for (const ability of equippedAbilities) {
-        if (!ability || !ability.abilityHrid) continue;
+    // Extract equipped abilities via characterLoadoutMap (slot 0 = special/aura, 1-4 = normal).
+    // This avoids relying on clientObj.abilityDetailMap.isSpecialAbility, which is unavailable
+    // cross-domain (Shykai page) and caused abilities to shift into the wrong slots.
+    const abilityLevelMap = {};
+    for (const ability of characterObj.combatUnit?.combatAbilities || []) {
+        if (ability?.abilityHrid) abilityLevelMap[ability.abilityHrid] = ability.level || 1;
+    }
 
-        // Check if special ability
-        if (clientObj?.abilityDetailMap && !clientObj.abilityDetailMap[ability.abilityHrid]) {
-            console.error(`[CombatSimExport] Ability not found in abilityDetailMap: ${ability.abilityHrid}`);
+    let combatLoadout = null;
+    for (const loadout of Object.values(characterObj.characterLoadoutMap || {})) {
+        if (loadout.actionTypeHrid === '/action_types/combat') {
+            if (!combatLoadout || loadout.isDefault) combatLoadout = loadout;
         }
-        const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+    }
 
-        if (isSpecial) {
-            // Special ability goes in slot 0
-            playerObj.abilities[0] = {
-                abilityHrid: ability.abilityHrid,
-                level: ability.level || 1,
-            };
-        } else if (normalAbilityIndex < 5) {
-            // Normal abilities go in slots 1-4
-            playerObj.abilities[normalAbilityIndex++] = {
-                abilityHrid: ability.abilityHrid,
-                level: ability.level || 1,
-            };
+    if (combatLoadout?.abilityMap) {
+        for (const [slotStr, abilityHrid] of Object.entries(combatLoadout.abilityMap)) {
+            if (!abilityHrid) continue;
+            const slotIndex = parseInt(slotStr, 10);
+            if (slotIndex >= 0 && slotIndex < 5) {
+                playerObj.abilities[slotIndex] = { abilityHrid, level: abilityLevelMap[abilityHrid] || 1 };
+            }
+        }
+    } else {
+        // Fallback: iterate combatAbilities with isSpecialAbility detection (requires clientObj)
+        let normalAbilityIndex = 1;
+        for (const ability of characterObj.combatUnit?.combatAbilities || []) {
+            if (!ability?.abilityHrid) continue;
+            const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+            if (isSpecial) {
+                playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level: ability.level || 1 };
+            } else if (normalAbilityIndex < 5) {
+                playerObj.abilities[normalAbilityIndex++] = {
+                    abilityHrid: ability.abilityHrid,
+                    level: ability.level || 1,
+                };
+            }
         }
     }
 
@@ -336,30 +351,45 @@ function constructPartyPlayer(profile, clientObj, battleObj) {
         playerObj.abilities[i] = { abilityHrid: '', level: 1 };
     }
 
-    // Extract equipped abilities from profile
-    let normalAbilityIndex = 1;
-    const equippedAbilities = profile.profile?.equippedAbilities || [];
-    for (const ability of equippedAbilities) {
-        if (!ability || !ability.abilityHrid) continue;
-
-        // Check if special ability
-        if (clientObj?.abilityDetailMap && !clientObj.abilityDetailMap[ability.abilityHrid]) {
-            console.error(`[CombatSimExport] Ability not found in abilityDetailMap: ${ability.abilityHrid}`);
+    // Extract equipped abilities from profile.
+    // Try characterLoadoutMap first (slot-indexed, no clientObj needed).
+    // Falls back to equippedAbilities array with isSpecialAbility detection if loadout unavailable.
+    let profileCombatLoadout = null;
+    for (const loadout of Object.values(profile.profile?.characterLoadoutMap || {})) {
+        if (loadout.actionTypeHrid === '/action_types/combat') {
+            if (!profileCombatLoadout || loadout.isDefault) profileCombatLoadout = loadout;
         }
-        const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+    }
 
-        if (isSpecial) {
-            // Special ability goes in slot 0
-            playerObj.abilities[0] = {
-                abilityHrid: ability.abilityHrid,
-                level: ability.level || 1,
-            };
-        } else if (normalAbilityIndex < 5) {
-            // Normal abilities go in slots 1-4
-            playerObj.abilities[normalAbilityIndex++] = {
-                abilityHrid: ability.abilityHrid,
-                level: ability.level || 1,
-            };
+    if (profileCombatLoadout?.abilityMap) {
+        const profileAbilityLevelMap = {};
+        for (const ability of profile.profile?.equippedAbilities || []) {
+            if (ability?.abilityHrid) profileAbilityLevelMap[ability.abilityHrid] = ability.level || 1;
+        }
+        for (const [slotStr, abilityHrid] of Object.entries(profileCombatLoadout.abilityMap)) {
+            if (!abilityHrid) continue;
+            const slotIndex = parseInt(slotStr, 10);
+            if (slotIndex >= 0 && slotIndex < 5) {
+                playerObj.abilities[slotIndex] = {
+                    abilityHrid,
+                    level: profileAbilityLevelMap[abilityHrid] || 1,
+                };
+            }
+        }
+    } else {
+        // Fallback: iterate equippedAbilities with isSpecialAbility detection (requires clientObj)
+        let normalAbilityIndex = 1;
+        for (const ability of profile.profile?.equippedAbilities || []) {
+            if (!ability?.abilityHrid) continue;
+            const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+            if (isSpecial) {
+                playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level: ability.level || 1 };
+            } else if (normalAbilityIndex < 5) {
+                playerObj.abilities[normalAbilityIndex++] = {
+                    abilityHrid: ability.abilityHrid,
+                    level: ability.level || 1,
+                };
+            }
         }
     }
 
