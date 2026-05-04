@@ -195,7 +195,7 @@ class CombatSimUI {
             <select id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
             </select>
             <label style="color:#888; font-size:12px;">Hours</label>
-            <input id="mwi-csim-hours" type="number" min="1" max="10000" value="100" style="${inputStyle}">
+            <input id="mwi-csim-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" style="${inputStyle}">
             <button id="mwi-csim-run" style="
                 margin-left: auto;
                 background: ${ACCENT_BTN_BG};
@@ -231,6 +231,8 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-allzones-solo" style="${checkboxStyle}">
                 Sim All Solo
             </label>
+            <label id="mwi-csim-allzones-hours-label" style="color:#888; font-size:12px; display:none;">Hours</label>
+            <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
                 <input type="checkbox" id="mwi-csim-earlyexit" style="${checkboxStyle}" checked>
                 Skip Worse Tiers
@@ -339,7 +341,7 @@ class CombatSimUI {
                 border:1px solid #444; border-radius:4px;
                 padding:3px 6px; font-size:12px; font-family:inherit;">
             <label style="color:#888; font-size:12px;">Hours</label>
-            <input id="mwi-csim-seek-hours" type="number" min="1" max="10000" value="10" style="
+            <input id="mwi-csim-seek-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_seekDefaultHours', 10)}" style="
                 width:60px; background:#1a1a2e; color:#e0e0e0;
                 border:1px solid #444; border-radius:4px;
                 padding:3px 6px; font-size:12px; text-align:center;">
@@ -547,6 +549,10 @@ class CombatSimUI {
         const zoneLabel = zoneSelect?.previousElementSibling;
         const tierLabel = tierSelect?.previousElementSibling;
         const earlyExitLabel = this.panel?.querySelector('#mwi-csim-earlyexit-label');
+        const allZonesHoursInput = this.panel?.querySelector('#mwi-csim-allzones-hours');
+        const allZonesHoursLabel = this.panel?.querySelector('#mwi-csim-allzones-hours-label');
+        const mainHoursInput = this.panel?.querySelector('#mwi-csim-hours');
+        const mainHoursLabel = mainHoursInput?.previousElementSibling;
 
         if (!checklist) return;
 
@@ -556,7 +562,11 @@ class CombatSimUI {
             if (tierSelect) tierSelect.style.display = 'none';
             if (zoneLabel) zoneLabel.style.display = 'none';
             if (tierLabel) tierLabel.style.display = 'none';
+            if (mainHoursInput) mainHoursInput.style.display = 'none';
+            if (mainHoursLabel) mainHoursLabel.style.display = 'none';
             if (earlyExitLabel) earlyExitLabel.style.display = 'flex';
+            if (allZonesHoursInput) allZonesHoursInput.style.display = '';
+            if (allZonesHoursLabel) allZonesHoursLabel.style.display = '';
 
             // Show checklist with zones
             checklist.style.display = 'block';
@@ -567,7 +577,11 @@ class CombatSimUI {
             if (tierSelect) tierSelect.style.display = '';
             if (zoneLabel) zoneLabel.style.display = '';
             if (tierLabel) tierLabel.style.display = '';
+            if (mainHoursInput) mainHoursInput.style.display = '';
+            if (mainHoursLabel) mainHoursLabel.style.display = '';
             if (earlyExitLabel) earlyExitLabel.style.display = 'none';
+            if (allZonesHoursInput) allZonesHoursInput.style.display = 'none';
+            if (allZonesHoursLabel) allZonesHoursLabel.style.display = 'none';
 
             // Hide checklist
             checklist.style.display = 'none';
@@ -939,7 +953,10 @@ class CombatSimUI {
         }
 
         const hoursEl = this.panel?.querySelector('#mwi-csim-seek-hours');
-        const hours = Math.min(10000, Math.max(1, parseInt(hoursEl?.value) || 100));
+        const hours = Math.min(
+            10000,
+            Math.max(1, parseInt(hoursEl?.value) || config.getSettingValue('combatSim_seekDefaultHours', 10))
+        );
 
         let playerDTOs;
         if (this._editedDTOs) {
@@ -2225,7 +2242,14 @@ class CombatSimUI {
 
         const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
         const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
-        const hours = Math.min(10000, Math.max(1, parseInt(this.panel.querySelector('#mwi-csim-hours')?.value) || 100));
+        const hours = Math.min(
+            10000,
+            Math.max(
+                1,
+                parseInt(this.panel.querySelector('#mwi-csim-hours')?.value) ||
+                    config.getSettingValue('combatSim_defaultHours', 100)
+            )
+        );
 
         if (!zoneHrid) {
             this._setStatus('No zone selected.');
@@ -2408,7 +2432,14 @@ class CombatSimUI {
             return;
         }
 
-        const hours = Math.min(10000, Math.max(1, parseInt(this.panel.querySelector('#mwi-csim-hours')?.value) || 100));
+        const hours = Math.min(
+            10000,
+            Math.max(
+                1,
+                parseInt(this.panel.querySelector('#mwi-csim-allzones-hours')?.value) ||
+                    config.getSettingValue('combatSim_allZonesDefaultHours', 10)
+            )
+        );
 
         const gameData = buildGameDataPayload();
         if (!gameData) {
