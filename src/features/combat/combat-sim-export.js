@@ -194,6 +194,18 @@ function constructSelfPlayer(characterObj, clientObj) {
         }
     }
 
+    // DEBUG: Log ability data sources to diagnose import issues
+    console.log('[CombatSimExport] Self ability debug:', {
+        hasCharacterLoadoutMap: !!characterObj.characterLoadoutMap,
+        loadoutCount: Object.keys(characterObj.characterLoadoutMap || {}).length,
+        combatLoadoutFound: !!combatLoadout,
+        combatLoadoutAbilityMap: combatLoadout?.abilityMap || null,
+        combatAbilities: (characterObj.combatUnit?.combatAbilities || []).map((a) => a?.abilityHrid || null),
+        abilityLevelMap,
+        hasClientObj: !!clientObj,
+        usingLoadoutPath: !!combatLoadout?.abilityMap,
+    });
+
     if (combatLoadout?.abilityMap) {
         for (const [slotStr, abilityHrid] of Object.entries(combatLoadout.abilityMap)) {
             if (!abilityHrid) continue;
@@ -218,6 +230,9 @@ function constructSelfPlayer(characterObj, clientObj) {
             }
         }
     }
+
+    // DEBUG: Log final ability result
+    console.log('[CombatSimExport] Self abilities result:', playerObj.abilities);
 
     // Extract trigger maps
     playerObj.triggerMap = {
