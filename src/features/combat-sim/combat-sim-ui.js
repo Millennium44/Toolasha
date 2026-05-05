@@ -2677,6 +2677,7 @@ class CombatSimUI {
         if (simResult.isDungeon) {
             const completedPerHr = simResult.dungeonsCompleted / hours;
             const failedPerHr = simResult.dungeonsFailed / hours;
+
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">Dungeons completed/hr</span>`;
             html += `<span style="${valueStyle}">${this._formatRate(completedPerHr)}</span>`;
@@ -2685,6 +2686,20 @@ class CombatSimUI {
             html += `<span style="${labelStyle}">Dungeons failed/hr</span>`;
             html += `<span style="${valueStyle}">${this._formatRate(failedPerHr)}</span>`;
             html += '</div>';
+            html += `<div style="${rowStyle}">`;
+            html += `<span style="${labelStyle}">Total completed / failed</span>`;
+            html += `<span style="${valueStyle}">${formatWithSeparator(simResult.dungeonsCompleted)} / ${formatWithSeparator(simResult.dungeonsFailed)}</span>`;
+            html += '</div>';
+            if (simResult.dungeonsCompleted > 0) {
+                const avgTimeNs = simResult.simulatedTime / simResult.dungeonsCompleted;
+                const avgTimeSec = avgTimeNs / 1e9;
+                const avgMin = Math.floor(avgTimeSec / 60);
+                const avgSec = Math.round(avgTimeSec % 60);
+                html += `<div style="${rowStyle}">`;
+                html += `<span style="${labelStyle}">Avg completion time</span>`;
+                html += `<span style="${valueStyle}">${avgMin}m ${avgSec}s</span>`;
+                html += '</div>';
+            }
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">Max wave reached</span>`;
             html += `<span style="${valueStyle}">${simResult.maxWaveReached}</span>`;
