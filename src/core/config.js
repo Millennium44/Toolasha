@@ -577,13 +577,9 @@ class Config {
     /**
      * Reset all settings to defaults
      */
-    resetToDefaults() {
-        // Find default values from constructor (all true except notifiEmptyAction)
-        for (const key in this.settingsMap) {
-            this.settingsMap[key].isTrue = key !== 'notifiEmptyAction';
-        }
-
-        this.saveSettings();
+    async resetToDefaults() {
+        this.settingsMap = settingsStorage.buildDefaults();
+        await settingsStorage.saveSettings(this.settingsMap);
         this.applyColorSettings();
     }
 
