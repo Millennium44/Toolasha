@@ -64,61 +64,131 @@ class Zone {
             this.dungeonsCompleted++;
             this.encountersKilled = 1;
         }
-        // console.log("Wave #" + this.encountersKilled);
-        const fixedSpawns = this.dungeonSpawnInfo.fixedSpawnsMap[this.encountersKilled.toString()];
+
+        const waveNum = this.encountersKilled;
+        const fixedSpawns = this.dungeonSpawnInfo.fixedSpawnsMap[waveNum.toString()];
+
         if (fixedSpawns) {
             this.encountersKilled++;
             return fixedSpawns.map(
                 (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)
             );
-        } else {
-            let monsterSpawns = null;
-            const waveKeys = Object.keys(this.dungeonSpawnInfo.randomSpawnInfoMap)
-                .map(Number)
-                .sort((a, b) => a - b);
-            if (this.encountersKilled >= waveKeys[waveKeys.length - 1]) {
-                monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];
-            } else {
-                for (let i = 0; i < waveKeys.length - 1; i++) {
-                    if (this.encountersKilled >= waveKeys[i] && this.encountersKilled < waveKeys[i + 1]) {
-                        monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[i]];
-                        break;
-                    }
-                }
-            }
-            // Fallback to first available spawn info if no range matched
-            if (!monsterSpawns || !monsterSpawns.spawns) {
-                monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[0]];
-            }
-            const totalWeight = monsterSpawns.spawns.reduce((prev, cur) => prev + cur.rate, 0);
-
-            const encounterHrids = [];
-            let totalStrength = 0;
-
-            outer: for (let i = 0; i < monsterSpawns.maxSpawnCount; i++) {
-                const randomWeight = totalWeight * Math.random();
-                let cumulativeWeight = 0;
-
-                for (const spawn of monsterSpawns.spawns) {
-                    cumulativeWeight += spawn.rate;
-                    if (randomWeight <= cumulativeWeight) {
-                        totalStrength += spawn.strength;
-
-                        if (totalStrength <= monsterSpawns.maxTotalStrength) {
-                            encounterHrids.push({
-                                hrid: spawn.combatMonsterHrid,
-                                difficultyTier: spawn.difficultyTier,
-                            });
-                        } else {
-                            break outer;
-                        }
-                        break;
-                    }
-                }
-            }
-            this.encountersKilled++;
-            return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));
         }
+
+        // Random spawn path
+        const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
+
+        if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {
+            console.error('[Zone] getNextWave CRASH DEBUG:', {
+                reason: 'randomSpawnInfoMap is null/undefined/not-object',
+                randomSpawnInfoMap,
+                zoneHrid: this.hrid,
+                waveNum,
+                maxWaves: this.dungeonSpawnInfo.maxWaves,
+                fixedSpawnsMapKeys: Object.keys(this.dungeonSpawnInfo.fixedSpawnsMap || {}),
+                dungeonSpawnInfo: JSON.parse(JSON.stringify(this.dungeonSpawnInfo)),
+            });
+            this.encountersKilled++;
+            return [new Monster(Object.keys(randomSpawnInfoMap || {})[0] || this.hrid, this.difficultyTier)];
+        }
+
+        const waveKeys = Object.keys(randomSpawnInfoMap)
+            .map(Number)
+            .sort((a, b) => a - b);
+
+        if (waveKeys.length === 0) {
+            console.error('[Zone] getNextWave CRASH DEBUG:', {
+                reason: 'randomSpawnInfoMap has no keys',
+                randomSpawnInfoMap: JSON.parse(JSON.stringify(randomSpawnInfoMap)),
+                zoneHrid: this.hrid,
+                waveNum,
+                maxWaves: this.dungeonSpawnInfo.maxWaves,
+                fixedSpawnsMapKeys: Object.keys(this.dungeonSpawnInfo.fixedSpawnsMap || {}),
+            });
+            this.encountersKilled++;
+            return [];
+        }
+
+        let monsterSpawns = null;
+        let matchReason = 'none';
+
+        if (waveNum >= waveKeys[waveKeys.length - 1]) {
+            monsterSpawns = randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];
+            matchReason = `>= last key (${waveKeys[waveKeys.length - 1]})`;
+        } else {
+            for (let i = 0; i < waveKeys.length - 1; i++) {
+                if (waveNum >= waveKeys[i] && waveNum < waveKeys[i + 1]) {
+                    monsterSpawns = randomSpawnInfoMap[waveKeys[i]];
+                    matchReason = `range [${waveKeys[i]}, ${waveKeys[i + 1]})`;
+                    break;
+                }
+            }
+        }
+
+        // Fallback to first available spawn info if no range matched
+        if (!monsterSpawns || !monsterSpawns.spawns) {
+            const fallbackKey = waveKeys[0];
+            const fallbackValue = randomSpawnInfoMap[fallbackKey];
+
+            console.error('[Zone] getNextWave CRASH DEBUG:', {
+                reason: 'monsterSpawns null/missing spawns after lookup',
+                matchReason,
+                monsterSpawns: monsterSpawns ? JSON.parse(JSON.stringify(monsterSpawns)) : monsterSpawns,
+                fallbackKey,
+                fallbackValue: fallbackValue
+                    ? { spawns: fallbackValue.spawns, maxSpawnCount: fallbackValue.maxSpawnCount }
+                    : fallbackValue,
+                zoneHrid: this.hrid,
+                waveNum,
+                maxWaves: this.dungeonSpawnInfo.maxWaves,
+                waveKeys,
+                fixedSpawnsMapKeys: Object.keys(this.dungeonSpawnInfo.fixedSpawnsMap || {}),
+                dungeonsCompleted: this.dungeonsCompleted,
+                dungeonsFailed: this.dungeonsFailed,
+                randomSpawnInfoMapSnapshot: JSON.parse(JSON.stringify(randomSpawnInfoMap)),
+            });
+
+            monsterSpawns = fallbackValue;
+        }
+
+        // Final safety — if still broken, skip wave instead of crashing
+        if (!monsterSpawns?.spawns) {
+            console.error('[Zone] getNextWave FATAL: no valid spawns found anywhere, skipping wave', {
+                zoneHrid: this.hrid,
+                waveNum,
+            });
+            this.encountersKilled++;
+            return [];
+        }
+
+        const totalWeight = monsterSpawns.spawns.reduce((prev, cur) => prev + cur.rate, 0);
+
+        const encounterHrids = [];
+        let totalStrength = 0;
+
+        outer: for (let i = 0; i < monsterSpawns.maxSpawnCount; i++) {
+            const randomWeight = totalWeight * Math.random();
+            let cumulativeWeight = 0;
+
+            for (const spawn of monsterSpawns.spawns) {
+                cumulativeWeight += spawn.rate;
+                if (randomWeight <= cumulativeWeight) {
+                    totalStrength += spawn.strength;
+
+                    if (totalStrength <= monsterSpawns.maxTotalStrength) {
+                        encounterHrids.push({
+                            hrid: spawn.combatMonsterHrid,
+                            difficultyTier: spawn.difficultyTier,
+                        });
+                    } else {
+                        break outer;
+                    }
+                    break;
+                }
+            }
+        }
+        this.encountersKilled++;
+        return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));
     }
 }
 
