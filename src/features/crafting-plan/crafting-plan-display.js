@@ -157,15 +157,7 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     const buyIntermediates = config.getSetting('actionPanel_craftingPlanBuyIntermediates');
     let plan;
     try {
-        plan = computeBestCraftingPlan(
-            output.itemHrid,
-            1,
-            mode,
-            new Set(),
-            new Map(),
-            0,
-            buyIntermediates ? 1 : undefined
-        );
+        plan = computeBestCraftingPlan(output.itemHrid, 1, mode, new Set(), new Map(), 0, undefined, buyIntermediates);
     } catch (e) {
         console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
         return null;
@@ -217,7 +209,7 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
         if (onToggle) onToggle();
     });
     toggleRow.appendChild(checkbox);
-    toggleRow.appendChild(document.createTextNode('Buy intermediates'));
+    toggleRow.appendChild(document.createTextNode('Buy raw materials only'));
     content.appendChild(toggleRow);
 
     // Only show breakdown if crafting is the optimal strategy

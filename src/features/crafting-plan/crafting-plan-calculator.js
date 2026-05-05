@@ -59,6 +59,7 @@ function getArtisanBonus(actionType) {
  * @param {Map} [memo] - Memoization cache (unit cost per itemHrid)
  * @param {number} [depth=0] - Current recursion depth
  * @param {number} [maxDepth=MAX_DEPTH] - Maximum recursion depth (1 = buy all sub-materials)
+ * @param {boolean} [buyRawOnly=false] - When true, always craft items that have a recipe; only buy uncraftable items
  * @returns {CraftingPlanNode}
  */
 export function computeBestCraftingPlan(
@@ -68,7 +69,8 @@ export function computeBestCraftingPlan(
     visited = new Set(),
     memo = new Map(),
     depth = 0,
-    maxDepth = MAX_DEPTH
+    maxDepth = MAX_DEPTH,
+    buyRawOnly = false
 ) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
@@ -125,7 +127,8 @@ export function computeBestCraftingPlan(
                               visited,
                               memo,
                               depth + 1,
-                              maxDepth
+                              maxDepth,
+                              buyRawOnly
                           )
                       )
                     : [],
@@ -201,7 +204,8 @@ export function computeBestCraftingPlan(
                 visited,
                 memo,
                 depth + 1,
-                maxDepth
+                maxDepth,
+                buyRawOnly
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
@@ -220,7 +224,8 @@ export function computeBestCraftingPlan(
             visited,
             memo,
             depth + 1,
-            maxDepth
+            maxDepth,
+            buyRawOnly
         );
 
         craftCostPerUnit += upgradePlan.unitCost * qtyPerUnit;
@@ -230,7 +235,8 @@ export function computeBestCraftingPlan(
     visited.delete(itemHrid);
 
     // Buy vs craft decision
-    const shouldBuy = buyPrice !== null && buyPrice <= craftCostPerUnit;
+    // When buyRawOnly is true, always craft (we only reach here if a recipe exists)
+    const shouldBuy = !buyRawOnly && buyPrice !== null && buyPrice <= craftCostPerUnit;
     const strategy = shouldBuy ? 'buy' : 'craft';
     const unitCost = shouldBuy ? buyPrice : craftCostPerUnit;
 
@@ -255,13 +261,31 @@ export function computeBestCraftingPlan(
                 const reducedCount = inputCountPerAction * (1 - artisanBonus);
                 const inputQty = Math.ceil(reducedCount * actionsNeeded);
                 children.push(
-                    computeBestCraftingPlan(input.itemHrid, inputQty, mode, visited, memo, depth + 1, maxDepth)
+                    computeBestCraftingPlan(
+                        input.itemHrid,
+                        inputQty,
+                        mode,
+                        visited,
+                        memo,
+                        depth + 1,
+                        maxDepth,
+                        buyRawOnly
+                    )
                 );
             }
         }
         if (action.upgradeItemHrid) {
             children.push(
-                computeBestCraftingPlan(action.upgradeItemHrid, actionsNeeded, mode, visited, memo, depth + 1, maxDepth)
+                computeBestCraftingPlan(
+                    action.upgradeItemHrid,
+                    actionsNeeded,
+                    mode,
+                    visited,
+                    memo,
+                    depth + 1,
+                    maxDepth,
+                    buyRawOnly
+                )
             );
         }
     }
