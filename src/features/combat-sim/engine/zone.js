@@ -72,7 +72,7 @@ class Zone {
                 (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)
             );
         } else {
-            let monsterSpawns = {};
+            let monsterSpawns = null;
             const waveKeys = Object.keys(this.dungeonSpawnInfo.randomSpawnInfoMap)
                 .map(Number)
                 .sort((a, b) => a - b);
@@ -80,11 +80,15 @@ class Zone {
                 monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];
             } else {
                 for (let i = 0; i < waveKeys.length - 1; i++) {
-                    if (this.encountersKilled >= waveKeys[i] && this.encountersKilled <= waveKeys[i + 1]) {
+                    if (this.encountersKilled >= waveKeys[i] && this.encountersKilled < waveKeys[i + 1]) {
                         monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[i]];
                         break;
                     }
                 }
+            }
+            // Fallback to first available spawn info if no range matched
+            if (!monsterSpawns || !monsterSpawns.spawns) {
+                monsterSpawns = this.dungeonSpawnInfo.randomSpawnInfoMap[waveKeys[0]];
             }
             const totalWeight = monsterSpawns.spawns.reduce((prev, cur) => prev + cur.rate, 0);
 
