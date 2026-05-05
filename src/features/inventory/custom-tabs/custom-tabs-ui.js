@@ -1032,7 +1032,13 @@ export default class CustomTabsUI {
                     this._applyTileOrderForTabs(tab.children, tileMap, headerOrderMap);
                 }
             } else {
-                // Collapsed — leave own items in tileMap; remove children's items only.
+                // Collapsed — claim own items if topTabPriority so lower tabs can't show them.
+                if (config.getSetting('inventoryTabs_topTabPriority')) {
+                    for (const hrid of tab.items) {
+                        if (hrid !== LINEBREAK_HRID) this._claimTilesForHrid(hrid, tileMap);
+                    }
+                }
+                // Remove children's items only.
                 this._removeTilesFromMapForChildren(tab.children, tileMap);
             }
         }
@@ -1559,17 +1565,8 @@ export default class CustomTabsUI {
             // so we don't need to delete them here to keep them out of unorganized.
             // Children are still hidden (parent is closed), so remove them.
 
-            // Consume own items so lower tabs cannot claim them (topmost-tab-wins priority)
-            if (config.getSetting('inventoryTabs_topTabPriority')) {
-                for (const hrid of tab.items) {
-                    if (hrid !== LINEBREAK_HRID) {
-                        this._claimTilesForHrid(hrid, tileMap);
-                        this._allClaimedHrids?.add(hrid);
-                    }
-                }
-            }
-
             // Show rolled-up value on the collapsed header (own items + all descendants)
+            // Must peek BEFORE claiming tiles so values are still in the map.
             const valueKey = (() => {
                 const mode = inventorySort.currentMode;
                 if (mode === 'ask' || mode === 'bid') {
@@ -1590,6 +1587,16 @@ export default class CustomTabsUI {
                     const rightEl = header.querySelector('.toolasha-ct-section-right');
                     if (rightEl) rightEl.appendChild(valueBadge);
                     else header.appendChild(valueBadge);
+                }
+            }
+
+            // Consume own items so lower tabs cannot claim them (topmost-tab-wins priority)
+            if (config.getSetting('inventoryTabs_topTabPriority')) {
+                for (const hrid of tab.items) {
+                    if (hrid !== LINEBREAK_HRID) {
+                        this._claimTilesForHrid(hrid, tileMap);
+                        this._allClaimedHrids?.add(hrid);
+                    }
                 }
             }
 
