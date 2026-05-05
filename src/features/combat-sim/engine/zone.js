@@ -65,10 +65,10 @@ class Zone {
             this.encountersKilled = 1;
         }
         // console.log("Wave #" + this.encountersKilled);
-        if (this.dungeonSpawnInfo.fixedSpawnsMap.hasOwnProperty(this.encountersKilled.toString())) {
-            const currentMonsters = this.dungeonSpawnInfo.fixedSpawnsMap[this.encountersKilled.toString()];
+        const fixedSpawns = this.dungeonSpawnInfo.fixedSpawnsMap[this.encountersKilled.toString()];
+        if (fixedSpawns) {
             this.encountersKilled++;
-            return currentMonsters.map(
+            return fixedSpawns.map(
                 (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)
             );
         } else {
