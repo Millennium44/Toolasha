@@ -124,9 +124,20 @@ function constructSelfPlayer(characterObj, clientObj) {
         }
     }
 
-    // Extract equipped items - handle both formats
-    if (Array.isArray(characterObj.characterItems)) {
-        // Array format (full inventory list)
+    // Extract equipped items — prefer the always-current characterEquipment Map
+    // (updated on every items_updated WS message) over the characterItems array
+    // which can lose enhancementLevel when items are swapped mid-session.
+    const equipmentMap = dataManager.characterEquipment;
+    if (equipmentMap && equipmentMap.size > 0) {
+        for (const [locationHrid, item] of equipmentMap) {
+            playerObj.player.equipment.push({
+                itemLocationHrid: locationHrid,
+                itemHrid: item.itemHrid,
+                enhancementLevel: item.enhancementLevel || 0,
+            });
+        }
+    } else if (Array.isArray(characterObj.characterItems)) {
+        // Fallback: array format (cross-domain or Map not yet populated)
         for (const item of characterObj.characterItems) {
             if (item.itemLocationHrid && !item.itemLocationHrid.includes('/item_locations/inventory')) {
                 playerObj.player.equipment.push({
@@ -137,7 +148,7 @@ function constructSelfPlayer(characterObj, clientObj) {
             }
         }
     } else if (characterObj.characterEquipment) {
-        // Object format (just equipped items)
+        // Fallback: object format (cross-domain Shykai page)
         for (const key in characterObj.characterEquipment) {
             const item = characterObj.characterEquipment[key];
             playerObj.player.equipment.push({
