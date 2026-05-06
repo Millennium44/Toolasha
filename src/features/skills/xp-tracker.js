@@ -245,7 +245,8 @@ class XPTracker {
             pushXP(this.xpHistory[skillId], { t, xp: skillEntry.experience });
         });
 
-        await storage.set(`xpHistory_${charId}`, this.xpHistory, STORE_NAME);
+        // Don't await — write is fire-and-forget, no need to block initialization
+        storage.set(`xpHistory_${charId}`, this.xpHistory, STORE_NAME);
 
         this._updateNavBars();
     }
@@ -355,6 +356,12 @@ class XPTracker {
             'NavigationBar_navigationSkillTooltip',
             (tooltipEl) => {
                 this._addTimeTillLevelUp(tooltipEl);
+                // Retry after a frame in case children weren't rendered yet
+                if (tooltipEl.childElementCount < 4) {
+                    requestAnimationFrame(() => {
+                        this._addTimeTillLevelUp(tooltipEl);
+                    });
+                }
             }
         );
         this.unregisterObservers.push(unregister);
@@ -365,30 +372,44 @@ class XPTracker {
      * @param {HTMLElement} tooltipEl
      */
     _addTimeTillLevelUp(tooltipEl) {
-        if (!config.getSetting('xpTracker_timeTillLevel', true)) return;
+        if (!config.getSetting('xpTracker_timeTillLevel', true)) {
+            return;
+        }
 
         // Tooltip structure: div[0]=name, div[1]=level, div[2]=xp progress, div[3]="XP to next level: N"
         const divs = tooltipEl.querySelectorAll(':scope > div');
-        if (divs.length < 4) return;
+        if (divs.length < 4) {
+            return;
+        }
 
         const skillName = divs[0].textContent.trim().toLowerCase();
         const skillId = SKILL_NAME_TO_ID[skillName];
-        if (!skillId) return;
+        if (!skillId) {
+            return;
+        }
 
         const history = this.xpHistory[skillId];
-        if (!history) return;
+        if (!history) {
+            return;
+        }
 
         const stats = calcStats(history);
-        if (stats.lastXPH <= 0) return;
+        if (stats.lastXPH <= 0) {
+            return;
+        }
 
         // Parse "XP to next level: 12,345" — strip all non-digit characters to handle
         // locale-specific separators (commas, periods, spaces)
         const xpText = divs[3].textContent;
         const match = xpText.match(/[\d.,\s]+$/);
-        if (!match) return;
+        if (!match) {
+            return;
+        }
 
         const xpTillLevel = parseInt(match[0].replace(/[^\d]/g, ''), 10);
-        if (isNaN(xpTillLevel) || xpTillLevel <= 0) return;
+        if (isNaN(xpTillLevel) || xpTillLevel <= 0) {
+            return;
+        }
 
         // Remove any previously injected element
         tooltipEl.querySelector('.mwi-xp-time-left')?.remove();
