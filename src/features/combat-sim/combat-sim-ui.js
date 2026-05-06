@@ -1481,6 +1481,9 @@ class CombatSimUI {
         // Skill levels section
         html += this._renderSkillLevelsSection(dto);
 
+        // House rooms section
+        html += this._renderHouseRoomsSection(dto, gameData);
+
         editorArea.innerHTML = html;
 
         // Wire event listeners
@@ -1920,6 +1923,40 @@ class CombatSimUI {
     }
 
     /**
+     * Render house rooms section with level inputs.
+     * @private
+     */
+    _renderHouseRoomsSection(dto, gameData) {
+        const houseRoomDetailMap = gameData.houseRoomDetailMap || {};
+        const roomHrids = Object.keys(houseRoomDetailMap).sort();
+        const activeCount = roomHrids.filter((hrid) => (dto.houseRooms[hrid] || 0) > 0).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="house-section">`;
+        html += `<span data-arrow="house-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> House Rooms`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-house-section" style="display:none;">`;
+        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px;">`;
+
+        for (const hrid of roomHrids) {
+            const room = houseRoomDetailMap[hrid];
+            const name = room.name || hrid.split('/').pop();
+            const level = dto.houseRooms[hrid] || 0;
+            html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}</span>`;
+            html += `<input type="number" min="0" max="8" value="${level}"
+                data-house-hrid="${hrid}"
+                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div></div>';
+        return html;
+    }
+
+    /**
      * Wire event listeners for the editor area.
      * @private
      */
@@ -1985,6 +2022,20 @@ class CombatSimUI {
                 const val = Math.max(1, parseInt(input.value) || 1);
                 input.value = val;
                 dto[key] = val;
+            });
+        });
+
+        // House room level inputs
+        editorArea.querySelectorAll('[data-house-hrid]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const hrid = input.dataset.houseHrid;
+                const val = Math.max(0, Math.min(8, parseInt(input.value) || 0));
+                input.value = val;
+                if (val === 0) {
+                    delete dto.houseRooms[hrid];
+                } else {
+                    dto.houseRooms[hrid] = val;
+                }
             });
         });
 
