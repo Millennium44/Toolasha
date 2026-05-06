@@ -1818,9 +1818,10 @@ export default class CustomTabsUI {
         const remainingEntries = [];
         for (const [hrid, tiles] of tileMap) {
             if (/\+\d+$/.test(hrid)) {
-                // Enhanced key: skip if exact hrid or its base is assigned
-                const baseHrid = hrid.replace(/\+\d+$/, '');
-                if (!assignedSet.has(hrid) && !assignedSet.has(baseHrid)) {
+                // Enhanced key still in tileMap means it wasn't claimed by the base tab
+                // (reserved for a specific enhanced-hrid tab that doesn't exist).
+                // Only skip if the exact enhanced hrid is assigned to a tab.
+                if (!assignedSet.has(hrid)) {
                     remainingEntries.push({ hrid, tiles });
                 }
             } else {
