@@ -50,7 +50,6 @@ class NetworthHistoryChart {
         this.currentCustomTo = null;
         this._deletePopup = null;
         this._deletePopupOutsideHandler = null;
-        this._loadChartPrefs();
     }
 
     /**
