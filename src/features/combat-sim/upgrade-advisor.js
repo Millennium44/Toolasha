@@ -8,8 +8,10 @@
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation } from './combat-sim-runner.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
 
 /** Enhancement breakpoints: the next target level from any given current level */
 const BREAKPOINTS = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -48,6 +50,7 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
     // Use protection from startLevel (realistic — nobody enhances high levels unprotected)
     const protectFrom = startLevel >= 2 ? startLevel : 0;
     let attempts;
+    let protectionCount = 0;
     try {
         const result = calculateEnhancement({
             enhancingLevel: enhancingParams.enhancingLevel,
@@ -61,23 +64,44 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
             guzzlingBonus: enhancingParams.guzzlingBonus || 1.0,
         });
         attempts = result.attempts;
+        protectionCount = result.protectionCount || 0;
     } catch {
         // Fallback: rough estimate
         attempts = targetLevel - startLevel;
     }
 
-    // Sum material costs per attempt
+    // Sum material costs per attempt (matches tooltip-enhancement pricing)
     let perAttemptCost = 0;
     for (const material of itemDetails.enhancementCosts) {
-        if (material.itemHrid === '/items/coin') {
-            perAttemptCost += material.count;
+        let price = 0;
+        if (material.itemHrid.startsWith('/items/trainee_')) {
+            price = 250000;
+        } else if (material.itemHrid === '/items/coin') {
+            price = 1;
         } else {
-            const { price } = resolveItemPrice(material.itemHrid, { side: 'buy' });
-            perAttemptCost += price * material.count;
+            const marketPrice = getItemPrices(material.itemHrid, 0);
+            if (marketPrice) {
+                let ask = marketPrice.ask;
+                let bid = marketPrice.bid;
+                if (ask > 0 && bid < 0) bid = ask;
+                if (bid > 0 && ask < 0) ask = bid;
+                price = ask;
+            } else {
+                const itemDetail = gameData.itemDetailMap[material.itemHrid];
+                price = getProductionCost(material.itemHrid, 'ask') || itemDetail?.sellPrice || 0;
+            }
         }
+        perAttemptCost += price * material.count;
     }
 
-    return Math.round(attempts * perAttemptCost);
+    // Add protection scroll costs
+    let protectionCost = 0;
+    if (protectionCount > 0) {
+        const { price: protPrice } = getCheapestProtectionPrice(itemHrid);
+        protectionCost = protPrice * protectionCount;
+    }
+
+    return Math.round(attempts * perAttemptCost + protectionCost);
 }
 
 /**
