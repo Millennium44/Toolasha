@@ -65,8 +65,15 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
         });
         attempts = result.attempts;
         protectionCount = result.protectionCount || 0;
-    } catch {
+    } catch (e) {
         // Fallback: rough estimate
+        console.warn('[UpgradeAdvisor] calculateEnhancement failed:', e.message, {
+            itemHrid,
+            startLevel,
+            targetLevel,
+            protectFrom,
+            enhancingParams,
+        });
         attempts = targetLevel - startLevel;
     }
 
@@ -85,8 +92,12 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
                 let bid = marketPrice.bid;
                 if (ask > 0 && bid < 0) bid = ask;
                 if (bid > 0 && ask < 0) ask = bid;
-                price = ask;
-            } else {
+                if (ask > 0) {
+                    price = ask;
+                }
+            }
+            // Fallback if no valid market ask
+            if (price === 0) {
                 const itemDetail = gameData.itemDetailMap[material.itemHrid];
                 price = getProductionCost(material.itemHrid, 'ask') || itemDetail?.sellPrice || 0;
             }
@@ -101,7 +112,19 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
         protectionCost = protPrice * protectionCount;
     }
 
-    return Math.round(attempts * perAttemptCost + protectionCost);
+    const totalCost = Math.round(attempts * perAttemptCost + protectionCost);
+    if (totalCost === 0) {
+        console.warn('[UpgradeAdvisor] Enhancement cost is 0:', {
+            itemHrid,
+            startLevel,
+            targetLevel,
+            attempts,
+            perAttemptCost,
+            protectionCount,
+            protectionCost,
+        });
+    }
+    return totalCost;
 }
 
 /**
