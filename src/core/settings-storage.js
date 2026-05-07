@@ -258,8 +258,9 @@ class SettingsStorage {
      * @returns {Promise<void>}
      */
     async resetToDefaults() {
-        // Simply clear storage - loadSettings() will return defaults
-        await storage.remove(this.storageKey, this.storageArea);
+        // Clear per-character settings so loadSettings() returns defaults
+        const characterKey = this.getCharacterStorageKey();
+        await storage.delete(characterKey, this.storageArea);
     }
 
     /**
