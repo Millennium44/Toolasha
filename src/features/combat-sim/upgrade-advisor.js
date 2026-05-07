@@ -65,15 +65,8 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
         });
         attempts = result.attempts;
         protectionCount = result.protectionCount || 0;
-    } catch (e) {
+    } catch {
         // Fallback: rough estimate
-        console.warn('[UpgradeAdvisor] calculateEnhancement failed:', e.message, {
-            itemHrid,
-            startLevel,
-            targetLevel,
-            protectFrom,
-            enhancingParams,
-        });
         attempts = targetLevel - startLevel;
     }
 
@@ -113,17 +106,6 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
     }
 
     const totalCost = Math.round(attempts * perAttemptCost + protectionCost);
-    if (totalCost === 0) {
-        console.warn('[UpgradeAdvisor] Enhancement cost is 0:', {
-            itemHrid,
-            startLevel,
-            targetLevel,
-            attempts,
-            perAttemptCost,
-            protectionCount,
-            protectionCost,
-        });
-    }
     return totalCost;
 }
 
@@ -368,17 +350,12 @@ export function generateCandidates(playerDTO, gameData) {
 export function calculateUpgradeCost(candidate, gameData) {
     if (candidate.type === 'enhancement') {
         // Primary: market price delta (buy at target level - sell at current level)
-        const buyUpgraded = resolveItemPrice(candidate.currentHrid, {
-            side: 'buy',
-            enhancementLevel: candidate.upgradeLevel,
-        }).price;
-        const sellCurrent = resolveItemPrice(candidate.currentHrid, {
-            side: 'sell',
-            enhancementLevel: candidate.currentLevel,
-        }).price;
+        // Only use if BOTH levels have actual market listings
+        const upgradedMarket = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
+        const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
 
-        if (buyUpgraded > 0 && sellCurrent > 0) {
-            return Math.max(0, buyUpgraded - sellCurrent);
+        if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
+            return Math.max(0, upgradedMarket.ask - currentMarket.bid);
         }
 
         // Fallback: enhancement cost estimate with protection
