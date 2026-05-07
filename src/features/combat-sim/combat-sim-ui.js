@@ -24,6 +24,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
+import { runUpgradeAnalysis } from './upgrade-advisor.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
@@ -164,6 +165,7 @@ class CombatSimUI {
             <button id="mwi-csim-tab-configure" style="${tabStyle(true)}">Configure</button>
             <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
             <button id="mwi-csim-tab-seek" style="${tabStyle(false)}">Seek</button>
+            <button id="mwi-csim-tab-upgrade" style="${tabStyle(false)}">Upgrade</button>
         `;
 
         // Configure tab content
@@ -400,6 +402,67 @@ class CombatSimUI {
         seekContent.appendChild(seekProgress);
         seekContent.appendChild(seekResults);
 
+        // Upgrade tab content (hidden by default)
+        const upgradeContent = document.createElement('div');
+        upgradeContent.id = 'mwi-csim-upgrade-content';
+        upgradeContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+
+        const upgradeControls = document.createElement('div');
+        upgradeControls.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+        `;
+        upgradeControls.innerHTML = `
+            <label style="color:#888; font-size:12px;">Player</label>
+            <select id="mwi-csim-upgrade-player" style="${selectStyle}"></select>
+            <button id="mwi-csim-upgrade-run" style="
+                background: ${ACCENT_BTN_BG};
+                color: ${ACCENT};
+                border: 1px solid ${ACCENT_BTN_BORDER};
+                border-radius: 6px;
+                padding: 5px 14px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                font-family: inherit;">Analyze</button>
+            <button id="mwi-csim-upgrade-stop" style="
+                display:none;
+                background:rgba(244, 67, 54, 0.2);
+                border:1px solid rgba(244, 67, 54, 0.4);
+                color:#f44336;
+                border-radius:4px;
+                padding:5px 10px;
+                font-size:12px;
+                font-weight:600;
+                cursor:pointer;
+                font-family:inherit;">Stop</button>
+        `;
+
+        const upgradeProgress = document.createElement('div');
+        upgradeProgress.id = 'mwi-csim-upgrade-progress';
+        upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
+        upgradeProgress.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                    <div id="mwi-csim-upgrade-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
+                    <span id="mwi-csim-upgrade-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0 / 0</span>
+                </div>
+            </div>
+        `;
+
+        const upgradeResults = document.createElement('div');
+        upgradeResults.id = 'mwi-csim-upgrade-results';
+        upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+
+        upgradeContent.appendChild(upgradeControls);
+        upgradeContent.appendChild(upgradeProgress);
+        upgradeContent.appendChild(upgradeResults);
+
         // Status bar
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
@@ -412,6 +475,7 @@ class CombatSimUI {
         this.panel.appendChild(configureContent);
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
+        this.panel.appendChild(upgradeContent);
         this.panel.appendChild(status);
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -430,6 +494,11 @@ class CombatSimUI {
             .addEventListener('click', () => this._switchTab('configure'));
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
         this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
+        this.panel.querySelector('#mwi-csim-tab-upgrade').addEventListener('click', () => this._switchTab('upgrade'));
+        this.panel.querySelector('#mwi-csim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
+        this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
+            this._upgradeAborted = true;
+        });
 
         // Zone change → update tier dropdown
         this.panel.querySelector('#mwi-csim-zone').addEventListener('change', () => this._updateTierDropdown());
@@ -1244,9 +1313,11 @@ class CombatSimUI {
         const configureContent = this.panel.querySelector('#mwi-csim-configure-content');
         const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
         const seekContent = this.panel.querySelector('#mwi-csim-seek-content');
+        const upgradeContent = this.panel.querySelector('#mwi-csim-upgrade-content');
         const tabConfigure = this.panel.querySelector('#mwi-csim-tab-configure');
         const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
         const tabSeek = this.panel.querySelector('#mwi-csim-tab-seek');
+        const tabUpgrade = this.panel.querySelector('#mwi-csim-tab-upgrade');
 
         const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
@@ -1255,9 +1326,11 @@ class CombatSimUI {
         configureContent.style.display = 'none';
         resultsContent.style.display = 'none';
         if (seekContent) seekContent.style.display = 'none';
+        if (upgradeContent) upgradeContent.style.display = 'none';
         tabConfigure.style.cssText = inactiveStyle;
         tabResults.style.cssText = inactiveStyle;
         if (tabSeek) tabSeek.style.cssText = inactiveStyle;
+        if (tabUpgrade) tabUpgrade.style.cssText = inactiveStyle;
 
         if (tab === 'configure') {
             configureContent.style.display = 'flex';
@@ -1268,6 +1341,11 @@ class CombatSimUI {
             if (tabSeek) tabSeek.style.cssText = activeStyle;
             this._populateSeekItems();
             this._setStatus('Search for a combat drop item, then click Seek.');
+        } else if (tab === 'upgrade') {
+            if (upgradeContent) upgradeContent.style.display = 'flex';
+            if (tabUpgrade) tabUpgrade.style.cssText = activeStyle;
+            this._populateUpgradePlayerSelector();
+            this._setStatus('Select a player and click Analyze.');
         } else {
             resultsContent.style.display = 'flex';
             tabResults.style.cssText = activeStyle;
@@ -3730,6 +3808,220 @@ class CombatSimUI {
             return priceData.bid > 0 ? priceData.bid : 0;
         }
         return priceData.ask > 0 ? priceData.ask : 0;
+    }
+
+    /**
+     * Populate the player selector dropdown in the Upgrade tab.
+     * @private
+     */
+    _populateUpgradePlayerSelector() {
+        const select = this.panel?.querySelector('#mwi-csim-upgrade-player');
+        if (!select) return;
+
+        const playerInfo = this._editedPlayerInfo || [];
+        select.innerHTML = '';
+        playerInfo.forEach((p, i) => {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = p.name || `Player ${i + 1}`;
+            select.appendChild(option);
+        });
+
+        if (playerInfo.length === 0) {
+            const option = document.createElement('option');
+            option.value = 0;
+            option.textContent = 'Player 1';
+            select.appendChild(option);
+        }
+    }
+
+    /**
+     * Run upgrade analysis when Analyze button is clicked.
+     * @private
+     */
+    async _onUpgradeAnalyze() {
+        const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
+        const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
+        const hours = Math.min(
+            10000,
+            Math.max(
+                1,
+                parseInt(this.panel.querySelector('#mwi-csim-hours')?.value) ||
+                    config.getSettingValue('combatSim_defaultHours', 100)
+            )
+        );
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+
+        if (!zoneHrid) {
+            this._setStatus('Select a zone in Configure tab first.');
+            return;
+        }
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+
+        // Get player DTOs (edited or live)
+        let playerDTOs;
+        if (this._editedDTOs) {
+            playerDTOs = Object.values(this._editedDTOs);
+        } else {
+            const result = await buildAllPlayerDTOs();
+            playerDTOs = result.players;
+        }
+
+        if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
+            this._setStatus('No player data available. Configure a simulation first.');
+            return;
+        }
+
+        // Show progress, hide results
+        const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
+        const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
+        const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
+        progressEl.style.display = 'block';
+        resultsEl.innerHTML = '';
+        runBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        this._upgradeAborted = false;
+
+        const communityBuffs = getCommunityBuffs();
+
+        try {
+            const results = await runUpgradeAnalysis(
+                { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs },
+                ({ current, total, description }) => {
+                    if (this._upgradeAborted) return;
+                    const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
+                    const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
+                    const pct = Math.round((current / total) * 100);
+                    if (fill) fill.style.width = pct + '%';
+                    if (text) text.textContent = `${current} / ${total}`;
+                    this._setStatus(description);
+                },
+                { abortSignal: () => this._upgradeAborted }
+            );
+
+            if (this._upgradeAborted) {
+                this._setStatus('Analysis cancelled.');
+            } else {
+                this._renderUpgradeResults(results);
+                this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.`);
+            }
+        } catch (error) {
+            console.error('[CombatSimUI] Upgrade analysis failed:', error);
+            this._setStatus('Analysis failed: ' + error.message);
+        } finally {
+            progressEl.style.display = 'none';
+            runBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * Render upgrade analysis results as an expandable table.
+     * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
+     * @private
+     */
+    _renderUpgradeResults(results) {
+        const container = this.panel.querySelector('#mwi-csim-upgrade-results');
+        if (!container) return;
+
+        if (!results.results.length) {
+            container.innerHTML =
+                '<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.</div>';
+            return;
+        }
+
+        // Find best (lowest non-Infinity) value in each gold/0.01% column
+        let bestDps = Infinity;
+        let bestXp = Infinity;
+        let bestProfit = Infinity;
+        for (const r of results.results) {
+            if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
+            if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
+            if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
+        }
+
+        const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
+        const thStyle = 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+        const bestStyle = 'color:#4caf50; font-weight:700;';
+
+        let html = `<table style="${tableStyle}">
+            <thead><tr>
+                <th style="${thStyle}">Upgrade</th>
+                <th style="${thStyle}">Cost</th>
+                <th style="${thStyle}">Gold/0.01% DPS</th>
+                <th style="${thStyle}">Gold/0.01% EXP</th>
+                <th style="${thStyle}">Gold/0.01% Profit</th>
+            </tr></thead><tbody>`;
+
+        results.results.forEach((r, i) => {
+            const costStr = formatKMB(r.cost);
+            const dpsGold = r.goldPer.dps === Infinity ? '—' : formatKMB(r.goldPer.dps);
+            const xpGold = r.goldPer.xp === Infinity ? '—' : formatKMB(r.goldPer.xp);
+            const profitGold = r.goldPer.profit === Infinity ? '—' : formatKMB(r.goldPer.profit);
+            const rowColor = r.deltas.dps > 0 ? '#e0e0e0' : '#888';
+
+            const dpsStyle = r.goldPer.dps === bestDps && bestDps !== Infinity ? bestStyle : '';
+            const xpStyle = r.goldPer.xp === bestXp && bestXp !== Infinity ? bestStyle : '';
+            const profitStyle = r.goldPer.profit === bestProfit && bestProfit !== Infinity ? bestStyle : '';
+
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}">${costStr}</td>
+                <td style="${tdStyle} ${dpsStyle}">${dpsGold}</td>
+                <td style="${tdStyle} ${xpStyle}">${xpGold}</td>
+                <td style="${tdStyle} ${profitStyle}">${profitGold}</td>
+            </tr>`;
+
+            // Expanded detail row (hidden by default)
+            const dpsDelta = r.deltas.dps.toFixed(2);
+            const xpDelta = r.deltas.xp.toFixed(2);
+            const profitDelta = r.deltas.profit.toFixed(2);
+            html += `<tr data-upgrade-detail="${i}" style="display:none;">
+                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:11px;">
+                        <div>
+                            <div style="color:#888;">DPS (XP/hr)</div>
+                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
+                            <div style="color:${r.deltas.dps >= 0 ? '#4caf50' : '#f44336'};">${r.deltas.dps >= 0 ? '+' : ''}${dpsDelta}%</div>
+                        </div>
+                        <div>
+                            <div style="color:#888;">EXP/hr</div>
+                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.xpPerHour)}</div>
+                            <div style="color:${r.deltas.xp >= 0 ? '#4caf50' : '#f44336'};">${r.deltas.xp >= 0 ? '+' : ''}${xpDelta}%</div>
+                        </div>
+                        <div>
+                            <div style="color:#888;">Profit/hr</div>
+                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour)}</div>
+                            <div style="color:${r.deltas.profit >= 0 ? '#4caf50' : '#f44336'};">${r.deltas.profit >= 0 ? '+' : ''}${profitDelta}%</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:6px; color:#666; font-size:10px;">
+                        Baseline: DPS ${formatKMB(results.baseline.dps)} | EXP ${formatKMB(results.baseline.xpPerHour)} | Profit ${formatKMB(results.baseline.profitPerHour)}
+                    </div>
+                </td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        // Wire up row click to expand/collapse
+        container.querySelectorAll('[data-upgrade-row]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const idx = row.getAttribute('data-upgrade-row');
+                const detail = container.querySelector(`[data-upgrade-detail="${idx}"]`);
+                if (detail) {
+                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                }
+            });
+        });
     }
 }
 
