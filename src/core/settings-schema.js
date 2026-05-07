@@ -968,6 +968,13 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Default simulation duration in hours for Seek Best Source runs',
             },
+            combatSim_decimalMinutes: {
+                id: 'combatSim_decimalMinutes',
+                label: 'Combat Simulator: Show completion time as decimal minutes',
+                type: 'checkbox',
+                default: false,
+                help: 'Display avg completion time as "X.XX min" instead of "Xm Ys"',
+            },
             combatStats: {
                 id: 'combatStats',
                 label: 'Combat Statistics: Show Statistics tab in Combat panel',

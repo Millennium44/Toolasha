@@ -2822,11 +2822,17 @@ class CombatSimUI {
             if (simResult.dungeonsCompleted > 0) {
                 const avgTimeNs = simResult.simulatedTime / simResult.dungeonsCompleted;
                 const avgTimeSec = avgTimeNs / 1e9;
-                const avgMin = Math.floor(avgTimeSec / 60);
-                const avgSec = Math.round(avgTimeSec % 60);
+                let avgTimeStr;
+                if (config.getSettingValue('combatSim_decimalMinutes', false)) {
+                    avgTimeStr = `${(avgTimeSec / 60).toFixed(2)} min`;
+                } else {
+                    const avgMin = Math.floor(avgTimeSec / 60);
+                    const avgSec = Math.round(avgTimeSec % 60);
+                    avgTimeStr = `${avgMin}m ${avgSec}s`;
+                }
                 html += `<div style="${rowStyle}">`;
                 html += `<span style="${labelStyle}">Avg completion time</span>`;
-                html += `<span style="${valueStyle}">${avgMin}m ${avgSec}s</span>`;
+                html += `<span style="${valueStyle}">${avgTimeStr}</span>`;
                 html += '</div>';
             }
             html += `<div style="${rowStyle}">`;
