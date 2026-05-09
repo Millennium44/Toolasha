@@ -1174,6 +1174,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Protect specific tasks from accidental rerolling. Protected tasks get a green highlight and require a confirmation click before rerolling. A shield icon appears in the task panel to configure protected zones.',
             },
+            taskRerollProtection_hideHighlight: {
+                id: 'taskRerollProtection_hideHighlight',
+                label: 'Task reroll protection: Hide green highlight',
+                type: 'checkbox',
+                default: false,
+                help: 'Removes the green outline/glow from protected tasks while keeping the reroll confirmation active.',
+            },
         },
     },
 

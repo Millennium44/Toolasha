@@ -117,7 +117,7 @@ class TaskRerollProtection {
         const isProtected = hrid && this.protectedHrids.has(hrid);
 
         // Update visual state
-        if (isProtected) {
+        if (isProtected && !config.getSetting('taskRerollProtection_hideHighlight')) {
             taskCard.style.setProperty('outline', '2px solid rgba(76, 175, 80, 0.7)', 'important');
             taskCard.style.setProperty('outline-offset', '-2px');
             taskCard.style.setProperty('box-shadow', '0 0 8px 2px rgba(76, 175, 80, 0.3)', 'important');
