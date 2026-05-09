@@ -176,15 +176,15 @@ class QuickInputButtons {
                 panel.querySelectorAll('.mwi-quick-input-btn').forEach((el) => el.remove());
             }
 
-            // Find the number input field first to skip panels that don't have queue inputs
-            // (Enhancing, Alchemy, etc.)
-            let numberInput = panel.querySelector('input[type="number"]');
+            // Find the queue input field - prioritize maxActionCountInput container
+            // to avoid matching other number inputs (e.g., crafting plan gold/hr input)
+            let numberInput = null;
+            const maxInputContainer = panel.querySelector('[class*="maxActionCountInput"]');
+            if (maxInputContainer) {
+                numberInput = maxInputContainer.querySelector('input');
+            }
             if (!numberInput) {
-                // Try finding input within maxActionCountInput container
-                const inputContainer = panel.querySelector('[class*="maxActionCountInput"]');
-                if (inputContainer) {
-                    numberInput = inputContainer.querySelector('input');
-                }
+                numberInput = panel.querySelector('input[type="number"]');
             }
             if (!numberInput) {
                 // This is a panel type that doesn't have queue inputs (Enhancing, Alchemy, etc.)
@@ -720,7 +720,7 @@ class QuickInputButtons {
             const hideActionStats = !config.getSetting('actionPanel_showProfitDetail');
             const hideLevelProgress = !config.getSetting('actionPanel_showLevelProgress');
             if (queueContent) {
-                // Non-combat: Insert queueContent first
+                // Non-combat: Insert queueContent after the input container
                 inputContainer.insertAdjacentElement('afterend', queueContent);
 
                 // Anchor: last element inserted after queueContent so far
