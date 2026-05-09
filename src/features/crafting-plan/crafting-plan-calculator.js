@@ -6,6 +6,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
@@ -84,13 +85,17 @@ export function computeBestCraftingPlan(
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
     const isTradable = itemDetails?.isTradable ?? false;
 
-    // Get market buy price
+    // Get market buy price (min of market ask and shop cost)
     let buyPrice = null;
     if (isTradable) {
         const marketPrice = getItemPrice(itemHrid, { mode, context: 'profit', side: 'buy' });
         if (marketPrice !== null && marketPrice > 0) {
             buyPrice = marketPrice;
         }
+    }
+    const shopCost = getShopCoinCost(itemHrid);
+    if (shopCost > 0 && (buyPrice === null || shopCost < buyPrice)) {
+        buyPrice = shopCost;
     }
 
     // Coins always cost 1 each
