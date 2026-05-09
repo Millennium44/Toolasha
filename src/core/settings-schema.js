@@ -296,6 +296,20 @@ export const settingsGroups = {
                 default: false,
                 help: 'Forces the final craft step (for task credit) but allows buying intermediate materials if cheaper.',
             },
+            actionPanel_craftingPlanTimeCost: {
+                id: 'actionPanel_craftingPlanTimeCost',
+                label: 'Action panel: Crafting plan time cost',
+                type: 'checkbox',
+                default: false,
+                help: 'Factor in the time cost of crafting when deciding buy vs craft. Uses your gold/hr value to determine if crafting is worth your time.',
+            },
+            actionPanel_craftingPlanGoldPerHour: {
+                id: 'actionPanel_craftingPlanGoldPerHour',
+                label: 'Action panel: Crafting plan gold/hr value',
+                type: 'number',
+                default: 0,
+                help: 'Your time value in gold per hour. Used to calculate if crafting intermediates is worth the time. Set to your typical hourly profit (e.g., 500000).',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',

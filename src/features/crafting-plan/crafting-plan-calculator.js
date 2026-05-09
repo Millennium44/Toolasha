@@ -7,6 +7,8 @@
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import { calculateActionStats } from '../../utils/action-calculator.js';
+import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 
 const MAX_DEPTH = 15;
 
@@ -61,6 +63,7 @@ function getArtisanBonus(actionType) {
  * @param {number} [maxDepth=MAX_DEPTH] - Maximum recursion depth (1 = buy all sub-materials)
  * @param {boolean} [buyRawOnly=false] - When true, always craft items that have a recipe; only buy uncraftable items
  * @param {boolean} [forceRootCraft=false] - When true, forces the root item (depth 0) to be crafted
+ * @param {number} [timeCostPerHour=0] - Gold value per hour of player time (0 = disabled)
  * @returns {CraftingPlanNode}
  */
 export function computeBestCraftingPlan(
@@ -72,7 +75,8 @@ export function computeBestCraftingPlan(
     depth = 0,
     maxDepth = MAX_DEPTH,
     buyRawOnly = false,
-    forceRootCraft = false
+    forceRootCraft = false,
+    timeCostPerHour = 0
 ) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
@@ -131,7 +135,8 @@ export function computeBestCraftingPlan(
                               depth + 1,
                               maxDepth,
                               buyRawOnly,
-                              forceRootCraft
+                              forceRootCraft,
+                              timeCostPerHour
                           )
                       )
                     : [],
@@ -209,7 +214,8 @@ export function computeBestCraftingPlan(
                 depth + 1,
                 maxDepth,
                 buyRawOnly,
-                forceRootCraft
+                forceRootCraft,
+                timeCostPerHour
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
@@ -230,7 +236,8 @@ export function computeBestCraftingPlan(
             depth + 1,
             maxDepth,
             buyRawOnly,
-            forceRootCraft
+            forceRootCraft,
+            timeCostPerHour
         );
 
         craftCostPerUnit += upgradePlan.unitCost * qtyPerUnit;
@@ -238,6 +245,22 @@ export function computeBestCraftingPlan(
     }
 
     visited.delete(itemHrid);
+
+    // Add time cost to craft cost if enabled
+    if (timeCostPerHour > 0) {
+        const gameData = dataManager.getInitClientData();
+        const actionDetails = gameData?.actionDetailMap?.[actionHrid];
+        if (actionDetails) {
+            const stats = calculateActionStats(actionDetails, {
+                skills: dataManager.getSkills(),
+                equipment: dataManager.getEquipment(),
+                itemDetailMap: gameData.itemDetailMap,
+            });
+            const effMultiplier = calculateEfficiencyMultiplier(stats.totalEfficiency);
+            const timePerUnit = (stats.actionTime / effMultiplier) * actionsForOne;
+            craftCostPerUnit += timePerUnit * (timeCostPerHour / 3600);
+        }
+    }
 
     // Buy vs craft decision
     // When buyRawOnly is true, always craft (we only reach here if a recipe exists)
@@ -277,7 +300,8 @@ export function computeBestCraftingPlan(
                         depth + 1,
                         maxDepth,
                         buyRawOnly,
-                        forceRootCraft
+                        forceRootCraft,
+                        timeCostPerHour
                     )
                 );
             }
@@ -293,7 +317,8 @@ export function computeBestCraftingPlan(
                     depth + 1,
                     maxDepth,
                     buyRawOnly,
-                    forceRootCraft
+                    forceRootCraft,
+                    timeCostPerHour
                 )
             );
         }

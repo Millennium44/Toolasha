@@ -9,7 +9,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { computeBestCraftingPlan } from './crafting-plan-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
-import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
 import {
@@ -19,6 +19,8 @@ import {
     navigateToMarketplace,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { calculateActionStats } from '../../utils/action-calculator.js';
+import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 
 const UI_ID = 'mwi-crafting-plan';
 const craftingPlanTabs = [];
@@ -111,6 +113,7 @@ function collectCraftSteps(node, craftSteps) {
             itemName: node.itemName,
             quantity: Math.ceil(node.quantity),
             actionsNeeded: node.actionsNeeded,
+            actionHrid: node.actionHrid,
         });
     }
 }
@@ -168,6 +171,8 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     const buyIntermediates = config.getSetting('actionPanel_craftingPlanBuyIntermediates');
     const noProcessing = config.getSetting('actionPanel_craftingPlanNoProcessing');
     const taskMode = config.getSetting('actionPanel_craftingPlanTaskMode');
+    const timeCostEnabled = config.getSetting('actionPanel_craftingPlanTimeCost');
+    const goldPerHour = config.getSetting('actionPanel_craftingPlanGoldPerHour') || 0;
     let plan;
     try {
         plan = computeBestCraftingPlan(
@@ -179,7 +184,8 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
             0,
             noProcessing ? 1 : undefined,
             buyIntermediates,
-            taskMode
+            taskMode,
+            timeCostEnabled ? goldPerHour : 0
         );
     } catch (e) {
         console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
@@ -280,6 +286,54 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     taskToggleRow.appendChild(taskCheckbox);
     taskToggleRow.appendChild(document.createTextNode('Task mode (force last step)'));
     content.appendChild(taskToggleRow);
+
+    // === Time cost toggle ===
+    const timeCostRow = document.createElement('label');
+    timeCostRow.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85em;
+        color: var(--text-color-secondary, #888);
+        cursor: pointer;
+        margin-bottom: 4px;
+    `;
+    const timeCostCheckbox = document.createElement('input');
+    timeCostCheckbox.type = 'checkbox';
+    timeCostCheckbox.checked = timeCostEnabled;
+    timeCostCheckbox.style.cssText = 'margin: 0; cursor: pointer;';
+    timeCostRow.appendChild(timeCostCheckbox);
+    timeCostRow.appendChild(document.createTextNode('Factor in time cost'));
+
+    const goldInput = document.createElement('input');
+    goldInput.type = 'number';
+    goldInput.value = goldPerHour || '';
+    goldInput.placeholder = '500000';
+    goldInput.style.cssText = `
+        width: 80px; margin-left: auto; padding: 2px 4px;
+        background: var(--input-bg, #1a1a2e); border: 1px solid var(--border-color, #333);
+        border-radius: 3px; color: var(--text-color-primary, #fff); font-size: 0.85em;
+    `;
+    goldInput.style.display = timeCostEnabled ? '' : 'none';
+    const goldLabel = document.createElement('span');
+    goldLabel.textContent = 'gold/hr';
+    goldLabel.style.fontSize = '0.85em';
+    goldLabel.style.display = timeCostEnabled ? '' : 'none';
+
+    timeCostCheckbox.addEventListener('change', () => {
+        config.setSetting('actionPanel_craftingPlanTimeCost', timeCostCheckbox.checked);
+        goldInput.style.display = timeCostCheckbox.checked ? '' : 'none';
+        goldLabel.style.display = timeCostCheckbox.checked ? '' : 'none';
+        if (onToggle) onToggle();
+    });
+    goldInput.addEventListener('change', () => {
+        config.setSetting('actionPanel_craftingPlanGoldPerHour', parseInt(goldInput.value) || 0);
+        if (onToggle) onToggle();
+    });
+
+    timeCostRow.appendChild(goldInput);
+    timeCostRow.appendChild(goldLabel);
+    content.appendChild(timeCostRow);
 
     // Only show breakdown if crafting is the optimal strategy
     if (plan.strategy !== 'craft' || plan.children.length === 0) {
@@ -391,10 +445,40 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
         stepsHeader.textContent = 'Crafting Steps';
         content.appendChild(stepsHeader);
 
+        const gameData = dataManager.getInitClientData();
+        const skills = dataManager.getSkills();
+        const equipment = dataManager.getEquipment();
+        let totalCraftSeconds = 0;
+
         for (let i = 0; i < craftSteps.length; i++) {
             const step = craftSteps[i];
             const qty = formatWithSeparator(step.quantity);
-            content.appendChild(createRow(`${i + 1}. ${step.itemName}`, `x${qty}`));
+            let timeStr = '';
+            if (step.actionHrid) {
+                const actionDetails = gameData?.actionDetailMap?.[step.actionHrid];
+                if (actionDetails) {
+                    const stats = calculateActionStats(actionDetails, {
+                        skills,
+                        equipment,
+                        itemDetailMap: gameData.itemDetailMap,
+                    });
+                    const effMultiplier = calculateEfficiencyMultiplier(stats.totalEfficiency);
+                    const totalSeconds = (stats.actionTime * step.actionsNeeded) / effMultiplier;
+                    totalCraftSeconds += totalSeconds;
+                    timeStr = ` (${timeReadable(totalSeconds)})`;
+                }
+            }
+            content.appendChild(createRow(`${i + 1}. ${step.itemName}`, `x${qty}${timeStr}`));
+        }
+
+        if (totalCraftSeconds > 0) {
+            const totalTimeRow = createRow('Total craft time', timeReadable(totalCraftSeconds), {
+                leftColor: 'var(--text-color-primary, #fff)',
+            });
+            totalTimeRow.style.borderTop = '1px solid var(--border-color, #333)';
+            totalTimeRow.style.marginTop = '4px';
+            totalTimeRow.style.paddingTop = '4px';
+            content.appendChild(totalTimeRow);
         }
     }
 
