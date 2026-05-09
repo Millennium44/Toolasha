@@ -714,7 +714,7 @@ class ActionTimeDisplay {
         // ONLY match against the first action (current action), not queued actions
         // This prevents showing stats from queued actions when party combat interrupts
         if (cachedActions.length > 0) {
-            action = this.matchCurrentActionFromText(cachedActions, actionNameText);
+            action = this.matchCurrentActionFromText(cachedActions.slice(0, 1), actionNameText);
         }
 
         if (!action) {
