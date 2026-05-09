@@ -11,8 +11,19 @@ import { computeBestCraftingPlan } from './crafting-plan-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { findActionInput } from '../../utils/action-panel-helper.js';
+import {
+    createMaterialTab,
+    removeMaterialTabs,
+    setupMarketplaceCleanupObserver,
+    navigateToMarketplace,
+} from '../../utils/marketplace-tabs.js';
+import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 
 const UI_ID = 'mwi-crafting-plan';
+const craftingPlanTabs = [];
+let cleanupObserver = null;
+const autofillManager = createAutofillManager('CraftingPlan');
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -155,9 +166,21 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
 
     const mode = getPricingMode();
     const buyIntermediates = config.getSetting('actionPanel_craftingPlanBuyIntermediates');
+    const noProcessing = config.getSetting('actionPanel_craftingPlanNoProcessing');
+    const taskMode = config.getSetting('actionPanel_craftingPlanTaskMode');
     let plan;
     try {
-        plan = computeBestCraftingPlan(output.itemHrid, 1, mode, new Set(), new Map(), 0, undefined, buyIntermediates);
+        plan = computeBestCraftingPlan(
+            output.itemHrid,
+            1,
+            mode,
+            new Set(),
+            new Map(),
+            0,
+            noProcessing ? 1 : undefined,
+            buyIntermediates,
+            taskMode
+        );
     } catch (e) {
         console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
         return null;
@@ -212,6 +235,52 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     toggleRow.appendChild(document.createTextNode('Buy raw materials only'));
     content.appendChild(toggleRow);
 
+    // === No processing toggle ===
+    const noProcessingRow = document.createElement('label');
+    noProcessingRow.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85em;
+        color: var(--text-color-secondary, #888);
+        cursor: pointer;
+        margin-bottom: 4px;
+    `;
+    const noProcessingCheckbox = document.createElement('input');
+    noProcessingCheckbox.type = 'checkbox';
+    noProcessingCheckbox.checked = noProcessing;
+    noProcessingCheckbox.style.cssText = 'margin: 0; cursor: pointer;';
+    noProcessingCheckbox.addEventListener('change', () => {
+        config.setSetting('actionPanel_craftingPlanNoProcessing', noProcessingCheckbox.checked);
+        if (onToggle) onToggle();
+    });
+    noProcessingRow.appendChild(noProcessingCheckbox);
+    noProcessingRow.appendChild(document.createTextNode('No processing (buy intermediates)'));
+    content.appendChild(noProcessingRow);
+
+    // === Task mode toggle ===
+    const taskToggleRow = document.createElement('label');
+    taskToggleRow.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85em;
+        color: var(--text-color-secondary, #888);
+        cursor: pointer;
+        margin-bottom: 4px;
+    `;
+    const taskCheckbox = document.createElement('input');
+    taskCheckbox.type = 'checkbox';
+    taskCheckbox.checked = taskMode;
+    taskCheckbox.style.cssText = 'margin: 0; cursor: pointer;';
+    taskCheckbox.addEventListener('change', () => {
+        config.setSetting('actionPanel_craftingPlanTaskMode', taskCheckbox.checked);
+        if (onToggle) onToggle();
+    });
+    taskToggleRow.appendChild(taskCheckbox);
+    taskToggleRow.appendChild(document.createTextNode('Task mode (force last step)'));
+    content.appendChild(taskToggleRow);
+
     // Only show breakdown if crafting is the optimal strategy
     if (plan.strategy !== 'craft' || plan.children.length === 0) {
         const costText = plan.unitCost === Infinity ? '?' : `${formatKMB(Math.round(plan.unitCost))}/ea`;
@@ -258,6 +327,50 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
         totalRow.style.marginTop = '4px';
         totalRow.style.paddingTop = '4px';
         content.appendChild(totalRow);
+
+        // === Buy Missing Materials button ===
+        const buyButton = document.createElement('button');
+        buyButton.textContent = 'Buy Missing Materials';
+        buyButton.style.cssText = `
+            width: 100%; margin-top: 6px; padding: 6px;
+            background: linear-gradient(135deg, #1e40af, #3b82f6);
+            border: 1px solid #60a5fa; border-radius: 4px;
+            color: white; cursor: pointer; font-size: 0.85em;
+        `;
+        buyButton.addEventListener('click', () => {
+            const panel = buyButton.closest('[class*="SkillActionDetail_skillActionDetail"]');
+            const inputField = findActionInput(panel);
+            const numActions = parseInt(inputField?.value) || 1;
+            const outputCount = output.count || 1;
+            const totalQty = numActions * outputCount;
+            const inventory = dataManager.getInventory() || [];
+
+            const missingMaterials = [];
+            for (const [itemHrid, item] of buyItems) {
+                const needed = Math.ceil(item.quantity * totalQty);
+                const have = inventory
+                    .filter((i) => i.itemHrid === itemHrid && !i.enhancementLevel)
+                    .reduce((sum, i) => sum + (i.count || 0), 0);
+                const missing = Math.max(0, needed - have);
+                const itemDetails = dataManager.getItemDetails(itemHrid);
+                const isTradeable = itemDetails?.isTradable !== false;
+                if (missing > 0 && isTradeable) {
+                    missingMaterials.push({
+                        itemHrid,
+                        itemName: item.itemName,
+                        missing,
+                        required: needed,
+                        isTradeable,
+                    });
+                }
+            }
+
+            if (missingMaterials.length === 0) return;
+
+            navigateToMarketplace(missingMaterials[0].itemHrid, 0);
+            setTimeout(() => createCraftingPlanTabs(missingMaterials), 300);
+        });
+        content.appendChild(buyButton);
     }
 
     // === Crafting Steps (what to craft, in order) ===
@@ -293,6 +406,42 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     return section;
 }
 
+/**
+ * Create marketplace tabs for crafting plan shopping list materials.
+ * @param {Array} missingMaterials - Array of { itemHrid, itemName, missing, required, isTradeable }
+ */
+function createCraftingPlanTabs(missingMaterials) {
+    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+    if (!tabsContainer) return;
+
+    removeMaterialTabs();
+    craftingPlanTabs.length = 0;
+
+    const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
+    if (!referenceTab) return;
+
+    tabsContainer.style.flexWrap = 'wrap';
+
+    for (const material of missingMaterials) {
+        const tabRef = { tab: null };
+        const handler = () => {
+            const qty = parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10);
+            autofillManager.setQuantity(qty);
+            navigateToMarketplace(material.itemHrid, 0);
+        };
+        const tab = createMaterialTab(material, referenceTab, handler);
+        tabRef.tab = tab;
+        tabsContainer.appendChild(tab);
+        craftingPlanTabs.push(tab);
+    }
+
+    if (!cleanupObserver) {
+        cleanupObserver = setupMarketplaceCleanupObserver(() => {
+            craftingPlanTabs.length = 0;
+        }, craftingPlanTabs);
+    }
+}
+
 class CraftingPlanDisplay {
     constructor() {
         this.isInitialized = false;
@@ -306,6 +455,7 @@ class CraftingPlanDisplay {
         if (!config.getSetting('actionPanel_bestCraftingPlan')) return;
 
         this.isInitialized = true;
+        autofillManager.initialize();
 
         const unregister = domObserver.onClass('CraftingPlan', 'SkillActionDetail_skillActionDetail', () =>
             this._processActionPanels()

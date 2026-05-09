@@ -60,6 +60,7 @@ function getArtisanBonus(actionType) {
  * @param {number} [depth=0] - Current recursion depth
  * @param {number} [maxDepth=MAX_DEPTH] - Maximum recursion depth (1 = buy all sub-materials)
  * @param {boolean} [buyRawOnly=false] - When true, always craft items that have a recipe; only buy uncraftable items
+ * @param {boolean} [forceRootCraft=false] - When true, forces the root item (depth 0) to be crafted
  * @returns {CraftingPlanNode}
  */
 export function computeBestCraftingPlan(
@@ -70,7 +71,8 @@ export function computeBestCraftingPlan(
     memo = new Map(),
     depth = 0,
     maxDepth = MAX_DEPTH,
-    buyRawOnly = false
+    buyRawOnly = false,
+    forceRootCraft = false
 ) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
@@ -128,7 +130,8 @@ export function computeBestCraftingPlan(
                               memo,
                               depth + 1,
                               maxDepth,
-                              buyRawOnly
+                              buyRawOnly,
+                              forceRootCraft
                           )
                       )
                     : [],
@@ -205,7 +208,8 @@ export function computeBestCraftingPlan(
                 memo,
                 depth + 1,
                 maxDepth,
-                buyRawOnly
+                buyRawOnly,
+                forceRootCraft
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
@@ -225,7 +229,8 @@ export function computeBestCraftingPlan(
             memo,
             depth + 1,
             maxDepth,
-            buyRawOnly
+            buyRawOnly,
+            forceRootCraft
         );
 
         craftCostPerUnit += upgradePlan.unitCost * qtyPerUnit;
@@ -236,7 +241,9 @@ export function computeBestCraftingPlan(
 
     // Buy vs craft decision
     // When buyRawOnly is true, always craft (we only reach here if a recipe exists)
-    const shouldBuy = !buyRawOnly && buyPrice !== null && buyPrice <= craftCostPerUnit;
+    // When forceRootCraft is true and depth === 0, always craft the root item
+    const shouldBuy =
+        !buyRawOnly && !(forceRootCraft && depth === 0) && buyPrice !== null && buyPrice <= craftCostPerUnit;
     const strategy = shouldBuy ? 'buy' : 'craft';
     const unitCost = shouldBuy ? buyPrice : craftCostPerUnit;
 
@@ -269,7 +276,8 @@ export function computeBestCraftingPlan(
                         memo,
                         depth + 1,
                         maxDepth,
-                        buyRawOnly
+                        buyRawOnly,
+                        forceRootCraft
                     )
                 );
             }
@@ -284,7 +292,8 @@ export function computeBestCraftingPlan(
                     memo,
                     depth + 1,
                     maxDepth,
-                    buyRawOnly
+                    buyRawOnly,
+                    forceRootCraft
                 )
             );
         }

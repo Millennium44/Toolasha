@@ -282,6 +282,20 @@ export const settingsGroups = {
                 default: false,
                 help: 'Always craft items that have a recipe — only buy uncraftable raw materials from the market.',
             },
+            actionPanel_craftingPlanNoProcessing: {
+                id: 'actionPanel_craftingPlanNoProcessing',
+                label: 'Action panel: Crafting plan no processing',
+                type: 'checkbox',
+                default: false,
+                help: 'Only craft the final item — buy all sub-materials from the market instead of processing them yourself.',
+            },
+            actionPanel_craftingPlanTaskMode: {
+                id: 'actionPanel_craftingPlanTaskMode',
+                label: 'Action panel: Crafting plan task mode',
+                type: 'checkbox',
+                default: false,
+                help: 'Forces the final craft step (for task credit) but allows buying intermediate materials if cheaper.',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
