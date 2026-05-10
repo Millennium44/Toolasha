@@ -846,6 +846,7 @@ class NetworthHistoryChart {
                 scales: {
                     x: {
                         type: 'linear',
+                        offset: false,
                         min: filtered[0].t,
                         max: filtered[filtered.length - 1].t,
                         ticks: {
@@ -868,6 +869,7 @@ class NetworthHistoryChart {
                         grid: { color: '#333' },
                     },
                     y: {
+                        beginAtZero: false,
                         title: {
                             display: true,
                             text: yAxisTitle,
