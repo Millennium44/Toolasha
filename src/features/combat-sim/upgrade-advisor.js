@@ -293,6 +293,51 @@ function hasCombatStats(itemDetails) {
 }
 
 /**
+ * Build a map of valid tier upgrades based on crafting/production chains.
+ * An item X can upgrade to item Y if Y's crafting action uses X as:
+ *   - upgradeItemHrid (direct upgrade chain), OR
+ *   - one of its inputItems (combination recipes like Philosopher's)
+ *
+ * Only considers equipment outputs and equipment inputs.
+ * @param {Object} gameData
+ * @returns {Map<string, Set<string>>} itemHrid → Set of possible upgrade output hrids
+ */
+function buildUpgradeMap(gameData) {
+    const map = new Map();
+
+    for (const action of Object.values(gameData.actionDetailMap)) {
+        if (!action.outputItems?.length) continue;
+        const outputHrid = action.outputItems[0].itemHrid;
+
+        // Only consider equipment outputs
+        const outputItem = gameData.itemDetailMap[outputHrid];
+        if (!outputItem?.equipmentDetail?.type) continue;
+
+        // upgradeItemHrid → output (direct upgrade chain)
+        if (action.upgradeItemHrid) {
+            const upgradeItem = gameData.itemDetailMap[action.upgradeItemHrid];
+            if (upgradeItem?.equipmentDetail?.type) {
+                if (!map.has(action.upgradeItemHrid)) map.set(action.upgradeItemHrid, new Set());
+                map.get(action.upgradeItemHrid).add(outputHrid);
+            }
+        }
+
+        // inputItems → output (combination recipes like Philosopher's)
+        if (action.inputItems) {
+            for (const input of action.inputItems) {
+                const inputItem = gameData.itemDetailMap[input.itemHrid];
+                if (!inputItem?.equipmentDetail?.type) continue;
+
+                if (!map.has(input.itemHrid)) map.set(input.itemHrid, new Set());
+                map.get(input.itemHrid).add(outputHrid);
+            }
+        }
+    }
+
+    return map;
+}
+
+/**
  * Generate upgrade candidates for a player's equipment.
  * @param {Object} playerDTO - Player DTO with equipment
  * @param {Object} gameData - Game data from buildGameDataPayload()
@@ -301,6 +346,7 @@ function hasCombatStats(itemDetails) {
 export function generateCandidates(playerDTO, gameData) {
     const candidates = [];
     const tierProgression = getEquipmentTierProgression(gameData);
+    const upgradeMap = buildUpgradeMap(gameData);
 
     for (const [slot, equip] of Object.entries(playerDTO.equipment)) {
         if (!equip) continue;
@@ -328,25 +374,55 @@ export function generateCandidates(playerDTO, gameData) {
             });
         }
 
-        // Tier upgrade: next item in same slot AND same role
+        // Tier upgrade
         const role = getItemRole(itemDetails?.equipmentDetail?.combatStats);
-        const slotKey = `${slot}|${role}`;
-        const slotItems = tierProgression[slotKey];
-        if (slotItems) {
-            const currentIdx = slotItems.findIndex((item) => item.hrid === currentHrid);
-            if (currentIdx >= 0 && currentIdx < slotItems.length - 1) {
-                const nextTier = slotItems[currentIdx + 1];
-                const nextName = nextTier.name || nextTier.hrid.split('/').pop();
-                const currentName = gameData.itemDetailMap[currentHrid]?.name || currentHrid.split('/').pop();
-                candidates.push({
-                    slot,
-                    currentHrid,
-                    currentLevel,
-                    upgradeHrid: nextTier.hrid,
-                    upgradeLevel: currentLevel,
-                    description: `${currentName} → ${nextName} (+${currentLevel})`,
-                    type: 'tier',
-                });
+
+        if (role === 'defensive') {
+            // Defensive items: use crafting chain (upgrade path + combination recipes)
+            const upgrades = upgradeMap.get(currentHrid);
+            if (upgrades) {
+                for (const upgradeHrid of upgrades) {
+                    const upgradeItem = gameData.itemDetailMap[upgradeHrid];
+                    if (!upgradeItem?.equipmentDetail) continue;
+                    // Must be same slot
+                    if (upgradeItem.equipmentDetail.type !== slot) continue;
+                    // Must also be defensive (don't suggest offensive items)
+                    const upgradeRole = getItemRole(upgradeItem.equipmentDetail?.combatStats);
+                    if (upgradeRole !== 'defensive') continue;
+
+                    const upgradeName = upgradeItem.name || upgradeHrid.split('/').pop();
+                    const currentName = itemDetails?.name || currentHrid.split('/').pop();
+                    candidates.push({
+                        slot,
+                        currentHrid,
+                        currentLevel,
+                        upgradeHrid,
+                        upgradeLevel: currentLevel,
+                        description: `${currentName} → ${upgradeName} (+${currentLevel})`,
+                        type: 'tier',
+                    });
+                }
+            }
+        } else {
+            // Offensive items: keep existing role-based tier progression
+            const slotKey = `${slot}|${role}`;
+            const slotItems = tierProgression[slotKey];
+            if (slotItems) {
+                const currentIdx = slotItems.findIndex((item) => item.hrid === currentHrid);
+                if (currentIdx >= 0 && currentIdx < slotItems.length - 1) {
+                    const nextTier = slotItems[currentIdx + 1];
+                    const nextName = nextTier.name || nextTier.hrid.split('/').pop();
+                    const currentName = gameData.itemDetailMap[currentHrid]?.name || currentHrid.split('/').pop();
+                    candidates.push({
+                        slot,
+                        currentHrid,
+                        currentLevel,
+                        upgradeHrid: nextTier.hrid,
+                        upgradeLevel: currentLevel,
+                        description: `${currentName} → ${nextName} (+${currentLevel})`,
+                        type: 'tier',
+                    });
+                }
             }
         }
     }
