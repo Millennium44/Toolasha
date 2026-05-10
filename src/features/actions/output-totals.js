@@ -86,6 +86,21 @@ class OutputTotals {
     }
 
     /**
+     * Extract alchemy success rate from the detail panel DOM.
+     * @param {HTMLElement} detailPanel - The action detail panel
+     * @returns {number} Success rate as decimal (0-1), or 1 if not an alchemy action
+     */
+    getSuccessRate(detailPanel) {
+        const el = detailPanel.querySelector(
+            '[class*="SkillActionDetail_successRate"] [class*="SkillActionDetail_value"]'
+        );
+        if (!el) return 1;
+        const match = el.textContent.trim().match(/([\d,.]+)%/);
+        if (!match) return 1;
+        return parseFloat(match[1].replace(',', '.')) / 100;
+    }
+
+    /**
      * Update output totals based on input value
      * @param {HTMLElement} detailPanel - The action detail panel
      * @param {HTMLInputElement} inputBox - The action count input
@@ -101,6 +116,9 @@ class OutputTotals {
         // '∞' parses to NaN; explicit '0' parses to 0 — show matching placeholder
         const placeholderLabel = isNaN(amount) ? '∞' : '0.0';
 
+        // Get alchemy success rate (1.0 for non-alchemy actions)
+        const successRate = this.getSuccessRate(detailPanel);
+
         // Find main drop container
         let dropTable = detailPanel.querySelector('[class*="SkillActionDetail_dropTable"]');
         if (!dropTable) return;
@@ -111,11 +129,12 @@ class OutputTotals {
         // Track processed containers to avoid duplicates
         const processedContainers = new Set();
 
-        // Process main outputs
-        this.processDropContainer(dropTable, amount, isIndeterminate, placeholderLabel);
+        // Process main outputs (affected by success rate)
+        this.processDropContainer(dropTable, amount, isIndeterminate, placeholderLabel, successRate);
         processedContainers.add(dropTable);
 
         // Process Essences and Rares - find all dropTable containers
+        // Note: essences and rares are NOT affected by success rate (drop on every action)
         const allDropTables = detailPanel.querySelectorAll('[class*="SkillActionDetail_dropTable"]');
 
         allDropTables.forEach((container) => {
@@ -148,8 +167,11 @@ class OutputTotals {
      * Process drop container (matches MWIT-E implementation)
      * @param {HTMLElement} container - The drop table container
      * @param {number} amount - Number of actions
+     * @param {boolean} isIndeterminate - Whether the amount is indeterminate
+     * @param {string} placeholderLabel - Placeholder text for indeterminate
+     * @param {number} [successRate=1] - Success rate multiplier for main outputs
      */
-    processDropContainer(container, amount, isIndeterminate, placeholderLabel) {
+    processDropContainer(container, amount, isIndeterminate, placeholderLabel, successRate = 1) {
         if (!container) return;
 
         const children = Array.from(container.children);
@@ -172,14 +194,20 @@ class OutputTotals {
                     if (dropEl.nextSibling?.classList?.contains('mwi-output-total')) {
                         return;
                     }
-                    const clone = this.processChildElement(dropEl, amount, isIndeterminate, placeholderLabel);
+                    const clone = this.processChildElement(
+                        dropEl,
+                        amount,
+                        isIndeterminate,
+                        placeholderLabel,
+                        successRate
+                    );
                     if (clone) {
                         dropEl.after(clone);
                     }
                 });
             } else {
                 // Process single element
-                const clone = this.processChildElement(child, amount, isIndeterminate, placeholderLabel);
+                const clone = this.processChildElement(child, amount, isIndeterminate, placeholderLabel, successRate);
                 if (clone) {
                     child.parentNode.insertBefore(clone, child.nextSibling);
                 }
@@ -191,9 +219,12 @@ class OutputTotals {
      * Process a single child element and return clone with calculated total
      * @param {HTMLElement} child - The child element to process
      * @param {number} amount - Number of actions
+     * @param {boolean} isIndeterminate - Whether the amount is indeterminate
+     * @param {string} placeholderLabel - Placeholder text for indeterminate
+     * @param {number} [successRate=1] - Success rate multiplier
      * @returns {HTMLElement|null} Clone element or null
      */
-    processChildElement(child, amount, isIndeterminate, placeholderLabel) {
+    processChildElement(child, amount, isIndeterminate, placeholderLabel, successRate = 1) {
         // Look for output element (first child with numbers or ranges)
         const hasRange = child.children[0]?.innerText?.includes('-');
         const hasNumbers = child.children[0]?.innerText?.match(/[\d.]+/);
@@ -232,23 +263,26 @@ class OutputTotals {
             // Range output (e.g., "1.3 - 4")
             const minOutput = parseFloat(output[0].trim());
             const maxOutput = parseFloat(output[1].trim());
-            const expectedMin = (minOutput * amount * dropRate).toLocaleString('en-US', {
+            const expectedMin = (minOutput * amount * dropRate * successRate).toLocaleString('en-US', {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
-            const expectedMax = (maxOutput * amount * dropRate).toLocaleString('en-US', {
+            const expectedMax = (maxOutput * amount * dropRate * successRate).toLocaleString('en-US', {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
-            const expectedAvg = (((minOutput + maxOutput) / 2) * amount * dropRate).toLocaleString('en-US', {
-                minimumFractionDigits: 1,
-                maximumFractionDigits: 1,
-            });
+            const expectedAvg = (((minOutput + maxOutput) / 2) * amount * dropRate * successRate).toLocaleString(
+                'en-US',
+                {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                }
+            );
             clone.innerText = `${expectedMin} - ${expectedMax} (${expectedAvg})`;
         } else {
             // Single value output
             const value = parseFloat(output[0].trim());
-            const expectedValue = (value * amount * dropRate).toLocaleString('en-US', {
+            const expectedValue = (value * amount * dropRate * successRate).toLocaleString('en-US', {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
