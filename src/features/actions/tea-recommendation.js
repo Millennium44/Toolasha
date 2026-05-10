@@ -44,25 +44,26 @@ function getCurrentLocationTab() {
  * @returns {Promise<Object|null>} { actionType, itemHrid, enhancementLevel, itemName } or null
  */
 async function getAlchemyContext() {
-    // Determine action type from active action or DOM tab
+    // Determine action type from DOM tab first (reflects what the user is viewing)
     let actionType = null;
-    const actionHrid = alchemyProfit.getCurrentActionHrid();
 
-    if (actionHrid) {
-        if (actionHrid === '/actions/alchemy/coinify') actionType = 'coinify';
-        else if (actionHrid === '/actions/alchemy/transmute') actionType = 'transmute';
-        else if (actionHrid === '/actions/alchemy/decompose') actionType = 'decompose';
-    }
+    const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+    const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
+    const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
+
+    if (tabText.includes('coinify')) actionType = 'coinify';
+    else if (tabText.includes('transmute')) actionType = 'transmute';
+    else if (tabText.includes('decompose')) actionType = 'decompose';
 
     if (!actionType) {
-        // Fall back to selected tab
-        const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
-        const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
-        const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
+        // Fall back to active action in queue
+        const actionHrid = alchemyProfit.getCurrentActionHrid();
 
-        if (tabText.includes('coinify')) actionType = 'coinify';
-        else if (tabText.includes('transmute')) actionType = 'transmute';
-        else if (tabText.includes('decompose')) actionType = 'decompose';
+        if (actionHrid) {
+            if (actionHrid === '/actions/alchemy/coinify') actionType = 'coinify';
+            else if (actionHrid === '/actions/alchemy/transmute') actionType = 'transmute';
+            else if (actionHrid === '/actions/alchemy/decompose') actionType = 'decompose';
+        }
     }
 
     if (!actionType) return null;
