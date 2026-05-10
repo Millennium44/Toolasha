@@ -10,7 +10,7 @@ import { runSimulation } from './combat-sim-runner.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { getItemPrices, getItemPrice } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
-import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
 
 /** Enhancement breakpoints by slot type */
@@ -170,15 +170,18 @@ function isAbilityCompatible(abilityStyle, weaponStyle) {
  * @param {number} startLevel - Starting enhancement level
  * @param {number} targetLevel - Target enhancement level
  * @param {Object} gameData - Game data from buildGameDataPayload()
+ * @param {Object} [options] - Options
+ * @param {string} [options.slot] - Equipment slot HRID (forces auto-detect for back items)
  * @returns {number} Expected gold cost
  */
-function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
+function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, options = {}) {
     const itemDetails = gameData.itemDetailMap[itemHrid];
     if (!itemDetails?.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
         return 0;
     }
 
-    const enhancingParams = getEnhancingParams();
+    // Back items are non-tradeable, always use player's actual enhancing stats
+    const enhancingParams = options.slot === '/equipment_types/back' ? getAutoDetectedParams() : getEnhancingParams();
     const itemLevel = itemDetails.itemLevel || 1;
 
     // Calculate per-attempt material cost (matches tooltip-enhancement pricing)
@@ -656,7 +659,8 @@ export function calculateUpgradeCost(candidate, gameData) {
             candidate.currentHrid,
             candidate.currentLevel,
             candidate.upgradeLevel,
-            gameData
+            gameData,
+            { slot: candidate.slot }
         );
     }
 

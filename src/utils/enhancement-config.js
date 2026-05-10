@@ -33,7 +33,7 @@ export function getEnhancingParams() {
  * Get auto-detected enhancing parameters from character data
  * @returns {Object} Auto-detected parameters
  */
-function getAutoDetectedParams() {
+export function getAutoDetectedParams() {
     // Get character data
     const equipment = dataManager.getEquipment();
     const skills = dataManager.getSkills();
