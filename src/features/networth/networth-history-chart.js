@@ -267,7 +267,15 @@ class NetworthHistoryChart {
             { value: 6, label: '6h' },
             { value: 12, label: '12h' },
             { value: 24, label: '24h' },
+            { value: 48, label: '48h' },
+            { value: 168, label: '7d' },
         ];
+        // Check if current value is a custom one not in presets
+        const isCustomValue = this.movingAvgWindow > 0 && !maOptions.some((o) => o.value === this.movingAvgWindow);
+        if (isCustomValue) {
+            maOptions.push({ value: this.movingAvgWindow, label: `${this.movingAvgWindow}h` });
+        }
+        maOptions.push({ value: -1, label: 'Custom...' });
         for (const opt of maOptions) {
             const option = document.createElement('option');
             option.value = opt.value;
@@ -276,7 +284,28 @@ class NetworthHistoryChart {
             maSelect.appendChild(option);
         }
         maSelect.addEventListener('change', () => {
-            this.movingAvgWindow = parseInt(maSelect.value, 10);
+            const val = parseInt(maSelect.value, 10);
+            if (val === -1) {
+                const input = prompt('Enter moving average window in hours:');
+                const parsed = parseInt(input, 10);
+                if (parsed > 0) {
+                    this.movingAvgWindow = parsed;
+                    // Add custom option if not already present
+                    const existing = maSelect.querySelector(`option[value="${parsed}"]`);
+                    if (!existing) {
+                        const customOpt = document.createElement('option');
+                        customOpt.value = parsed;
+                        customOpt.textContent = `${parsed}h`;
+                        maSelect.insertBefore(customOpt, maSelect.querySelector('option[value="-1"]'));
+                    }
+                    maSelect.value = parsed;
+                } else {
+                    maSelect.value = this.movingAvgWindow;
+                    return;
+                }
+            } else {
+                this.movingAvgWindow = val;
+            }
             this._saveChartPrefs();
             this.renderChart(this.currentRange, this.currentCustomFrom, this.currentCustomTo);
         });
@@ -755,7 +784,7 @@ class NetworthHistoryChart {
             }
             datasets.push({
                 type: 'line',
-                label: `${this.movingAvgWindow}h Moving Avg`,
+                label: `${this.movingAvgWindow >= 24 && this.movingAvgWindow % 24 === 0 ? `${this.movingAvgWindow / 24}d` : `${this.movingAvgWindow}h`} Moving Avg`,
                 data: maData,
                 borderColor: '#f59e0b',
                 backgroundColor: 'transparent',
