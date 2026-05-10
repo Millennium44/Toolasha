@@ -534,9 +534,9 @@ class NetworthHistoryChart {
         };
         document.addEventListener('keydown', this.escHandler);
 
-        // Click outside to close
+        // Click outside to close (but not if clicking in the delete popup)
         this.outsideClickHandler = (e) => {
-            if (!modal.contains(e.target)) {
+            if (!modal.contains(e.target) && !this._deletePopup?.contains(e.target)) {
                 this.closeModal();
             }
         };
