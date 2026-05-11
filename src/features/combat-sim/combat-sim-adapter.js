@@ -772,9 +772,10 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
     dto.equipment = newEquipment;
 
     // Ability levels come from current character (not the snapshot)
+    // Use characterAbilities (all learned) not combatUnit.combatAbilities (equipped only)
     const characterData = dataManager.characterData;
     const currentAbilityLevels = {};
-    for (const ability of characterData?.combatUnit?.combatAbilities || []) {
+    for (const ability of characterData?.characterAbilities || []) {
         if (ability?.abilityHrid) {
             currentAbilityLevels[ability.abilityHrid] = ability.level || 1;
         }
