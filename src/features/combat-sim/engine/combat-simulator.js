@@ -36,10 +36,12 @@ class CombatSimulator {
      * @param {Array} players
      * @param {Object} zone
      * @param {Function} [onProgress] - Optional progress callback receiving { zone, difficultyTier, progress }
+     * @param {Labyrinth} [labyrinth] - Optional labyrinth encounter manager (replaces zone encounter logic)
      */
-    constructor(players, zone, onProgress) {
+    constructor(players, zone, onProgress, labyrinth) {
         this.players = players;
         this.zone = zone;
+        this.labyrinth = labyrinth || null;
         this.onProgress = onProgress;
         this.eventQueue = new EventQueue();
         this.simResult = new SimResult(zone, players.length);
@@ -206,6 +208,15 @@ class CombatSimulator {
                 this.simResult.maxWaveReached = this.zone.dungeonSpawnInfo.maxWaves;
             }
         }
+
+        // Labyrinth result tracking
+        if (this.labyrinth) {
+            this.simResult.isLabyrinth = true;
+            this.simResult.labyAttemptCount = this.labyrinth.attemptCount;
+            this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;
+            this.simResult.roomLevel = this.labyrinth.roomLevel;
+        }
+
         this.simResult.simulatedTime = this.simulationTime;
 
         for (let i = 0; i < this.players.length; i++) {
@@ -307,7 +318,12 @@ class CombatSimulator {
                 // First combat start event
                 this.players[i].generatePermanentBuffs();
             }
-            this.players[i].reset(this.simulationTime);
+            if (this.labyrinth) {
+                // Labyrinth: full reset every encounter (independent fights)
+                this.players[i].reset(0);
+            } else {
+                this.players[i].reset(this.simulationTime);
+            }
         }
 
         const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);
@@ -337,10 +353,15 @@ class CombatSimulator {
     startNewEncounter() {
         if (this.allPlayersDead) {
             this.allPlayersDead = false;
-            this.zone.failWave();
+            if (!this.labyrinth) {
+                this.zone.failWave();
+            }
         }
 
-        if (!this.zone.isDungeon) {
+        if (this.labyrinth) {
+            this.enemies = this.labyrinth.getMonster();
+            this.labyrinth.updateEncounterStartTime(this.simulationTime);
+        } else if (!this.zone.isDungeon) {
             this.enemies = this.zone.getRandomEncounter();
         } else {
             this.enemies = this.zone.getNextWave();
@@ -577,6 +598,16 @@ class CombatSimulator {
     }
 
     checkEncounterEnd() {
+        // Labyrinth timeout check
+        if (this.labyrinth && this.enemies && this.labyrinth.checkTimeout(this.simulationTime)) {
+            // Timeout = loss. Clear everything and immediately restart.
+            this.enemies = null;
+            this.eventQueue.clear();
+            const combatStartEvent = new CombatStartEvent(this.simulationTime);
+            this.eventQueue.addEvent(combatStartEvent);
+            return true;
+        }
+
         if (this.enemies) {
             const deadEnemies = this.enemies.filter(
                 (enemy) => enemy.combatDetails.currentHitpoints <= 0 && enemy.experienceRate === 0
@@ -596,6 +627,17 @@ class CombatSimulator {
 
         if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {
             this.eventQueue.clearEventsOfType(AutoAttackEvent.type);
+
+            if (this.labyrinth) {
+                // Labyrinth win: immediate restart (no respawn delay)
+                this.enemies = null;
+                this.simResult.addEncounterEnd();
+                this.eventQueue.clear();
+                const combatStartEvent = new CombatStartEvent(this.simulationTime);
+                this.eventQueue.addEvent(combatStartEvent);
+                return true;
+            }
+
             const enemyRespawnEvent = new EnemyRespawnEvent(this.simulationTime + ENEMY_RESPAWN_INTERVAL);
             this.eventQueue.addEvent(enemyRespawnEvent);
 
@@ -630,7 +672,7 @@ class CombatSimulator {
                 player.combatDetails.currentHitpoints <= 0 &&
                 !this.eventQueue.containsEventOfTypeAndHrid(PlayerRespawnEvent.type, player.hrid)
             ) {
-                if (!this.zone.isDungeon) {
+                if (!this.zone.isDungeon && !this.labyrinth) {
                     const playerRespawnEvent = new PlayerRespawnEvent(
                         this.simulationTime + PLAYER_RESPAWN_INTERVAL,
                         player.hrid
@@ -642,7 +684,14 @@ class CombatSimulator {
         });
 
         if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {
-            if (this.zone.isDungeon) {
+            if (this.labyrinth) {
+                // Labyrinth death = loss. Immediate restart.
+                this.enemies = null;
+                this.eventQueue.clear();
+                const combatStartEvent = new CombatStartEvent(this.simulationTime);
+                this.eventQueue.addEvent(combatStartEvent);
+                return true;
+            } else if (this.zone.isDungeon) {
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);
                 this.wipeLogs.index = 0;
                 this.wipeLogs.count = 0;

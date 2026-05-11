@@ -6,7 +6,7 @@
  */
 
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
-import { runSimulation } from './combat-sim-runner.js';
+import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { getItemPrices, getItemPrice } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
@@ -846,9 +846,143 @@ function computeGoldPerImprovement(cost, deltas) {
     };
 }
 
+/**
+ * Run labyrinth upgrade analysis: baseline sim + one sim per candidate.
+ * Ranks upgrades by win rate delta.
+ * @param {Object} params
+ * @param {Array} params.playerDTOs - Player DTOs (only first used — labyrinth is solo)
+ * @param {number} params.playerIndex - Index of the player to analyze
+ * @param {string} params.monsterHrid - Labyrinth monster HRID
+ * @param {number} params.roomLevel - Room level to test at
+ * @param {string[]} params.crates - Crate item HRIDs
+ * @param {number} params.hours - Hours to simulate per candidate
+ * @param {Object} params.communityBuffs - Community buffs
+ * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
+ * @param {number} [params.abilityTargetLevel] - Target ability level
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal: () => boolean }
+ * @returns {Promise<Object>} { baseline: {winRate, encounters, attempts}, results: [{candidate, cost, winRate, winRateDelta}] }
+ */
+export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = {}) {
+    const {
+        playerDTOs,
+        playerIndex,
+        monsterHrid,
+        roomLevel,
+        crates,
+        hours,
+        communityBuffs,
+        upgradeMode,
+        abilityTargetLevel,
+    } = params;
+    const { abortSignal } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+
+    const playerDTO = playerDTOs[playerIndex];
+
+    // Need a zoneHrid for SimResult context
+    const zoneHrid =
+        Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
+
+    // Generate candidates and compute costs
+    const candidates = generateCandidates(playerDTO, gameData, upgradeMode, abilityTargetLevel);
+    const candidatesWithCost = candidates.map((c) => ({
+        ...c,
+        cost: calculateUpgradeCost(c, gameData),
+    }));
+
+    const total = candidatesWithCost.length + 1;
+    let current = 0;
+
+    // Run baseline labyrinth sim
+    onProgress?.({ current: 0, total, description: 'Running baseline...' });
+    const baselineResult = await runLabyrinthSimulation({
+        gameData,
+        playerDTOs: [playerDTOs[playerIndex]],
+        zoneHrid,
+        monsterHrid,
+        roomLevel,
+        crates,
+        hours,
+        communityBuffs,
+    });
+    current++;
+
+    if (abortSignal?.()) return { baseline: null, results: [] };
+
+    const baselineAttempts = baselineResult.labyAttemptCount || 1;
+    const baselineEncounters = baselineResult.encounters || 0;
+    const baselineWinRate = baselineEncounters / baselineAttempts;
+
+    onProgress?.({ current, total, description: `Baseline: ${(baselineWinRate * 100).toFixed(1)}%` });
+
+    // Run sim for each candidate
+    const results = [];
+    for (const candidate of candidatesWithCost) {
+        if (abortSignal?.()) break;
+
+        onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
+
+        // Clone DTO and apply candidate upgrade
+        const modifiedDTO = JSON.parse(JSON.stringify(playerDTOs[playerIndex]));
+
+        if (candidate.slot.startsWith('ability_')) {
+            const slotIdx = parseInt(candidate.slot.split('_')[1]);
+            modifiedDTO.abilities[slotIdx] = {
+                hrid: candidate.upgradeHrid,
+                level: candidate.upgradeLevel,
+                triggers: null,
+            };
+        } else {
+            modifiedDTO.equipment[candidate.slot] = {
+                hrid: candidate.upgradeHrid,
+                enhancementLevel: candidate.upgradeLevel,
+            };
+        }
+
+        const simResult = await runLabyrinthSimulation({
+            gameData,
+            playerDTOs: [modifiedDTO],
+            zoneHrid,
+            monsterHrid,
+            roomLevel,
+            crates,
+            hours,
+            communityBuffs,
+        });
+
+        if (abortSignal?.()) break;
+
+        const attempts = simResult.labyAttemptCount || 1;
+        const encounters = simResult.encounters || 0;
+        const winRate = encounters / attempts;
+        const winRateDelta = winRate - baselineWinRate;
+
+        results.push({
+            candidate,
+            cost: candidate.cost,
+            winRate,
+            winRateDelta,
+            goldPerWinRate: winRateDelta > 0 ? candidate.cost / (winRateDelta * 100) : Infinity,
+        });
+        current++;
+        onProgress?.({ current, total, description: candidate.description });
+    }
+
+    // Sort by best win rate improvement (descending)
+    results.sort((a, b) => b.winRateDelta - a.winRateDelta);
+
+    return {
+        baseline: { winRate: baselineWinRate, encounters: baselineEncounters, attempts: baselineAttempts },
+        results,
+    };
+}
+
 export default {
     generateCandidates,
     calculateUpgradeCost,
     runUpgradeAnalysis,
+    runLabyrinthUpgradeAnalysis,
     getEquipmentTierProgression,
 };

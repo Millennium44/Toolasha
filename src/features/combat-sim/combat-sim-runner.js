@@ -311,6 +311,74 @@ export async function runSimulation(params, onProgress) {
 }
 
 /**
+ * Build labyrinth crate buff arrays from crate item HRIDs.
+ * @param {string[]} crateHrids - Array of crate item HRIDs (e.g., ['/items/expert_coffee_crate'])
+ * @param {Object} gameData - Game data containing labyrinthCrateDetailMap
+ * @returns {Array<Object>} Buff objects compatible with zoneBuffs
+ */
+export function buildCrateBuffs(crateHrids, gameData) {
+    if (!crateHrids || crateHrids.length === 0) return [];
+
+    const crateMap = gameData.labyrinthCrateDetailMap;
+    if (!crateMap) return [];
+
+    let buffs = [];
+    for (const hrid of crateHrids) {
+        if (crateMap[hrid]) {
+            buffs = buffs.concat(crateMap[hrid]);
+        }
+    }
+    return buffs;
+}
+
+/**
+ * Run a labyrinth simulation.
+ * @param {Object} params
+ * @param {Object} params.gameData - Game data maps from buildGameDataPayload()
+ * @param {Array<Object>} params.playerDTOs - Player DTOs from buildAllPlayerDTOs()
+ * @param {string} params.zoneHrid - Zone HRID (used for SimResult context; any combat zone works)
+ * @param {string} params.monsterHrid - Labyrinth monster HRID
+ * @param {number} params.roomLevel - Room level (scales monster stats)
+ * @param {string[]} params.crates - Crate item HRIDs
+ * @param {number} params.hours - Hours to simulate
+ * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+ * @param {Function} [onProgress] - Called with (percent: 0-100)
+ * @returns {Promise<Object>} SimResult with labyrinth fields
+ */
+export async function runLabyrinthSimulation(params, onProgress) {
+    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, hours, communityBuffs } = params;
+
+    const extraBuffs = buildExtraBuffs(communityBuffs);
+    const ONE_HOUR_NS = 3600 * 1e9;
+
+    // Cancel any previous run
+    cancelSimulation();
+
+    const taskId = ++taskIdCounter;
+    const message = {
+        type: 'start_simulation',
+        taskId,
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        difficultyTier: 0,
+        simulationTimeLimit: hours * ONE_HOUR_NS,
+        extraBuffs,
+        labyrinth: {
+            monsterHrid,
+            roomLevel,
+            crates: crates || [],
+        },
+    };
+
+    const result = await runWorkerChunk(message, onProgress);
+
+    if (onProgress) onProgress(100);
+
+    return result;
+}
+
+/**
  * Terminate all active simulation workers and reject pending promises.
  */
 export function cancelSimulation() {

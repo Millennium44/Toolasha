@@ -3,15 +3,19 @@ import CombatUnit from './combat-unit.js';
 import Drops from './drops.js';
 import { getGameData } from './game-data.js';
 
+const LABYRINTH_BASE_ROOM_LEVEL = 100;
+
 class Monster extends CombatUnit {
     difficultyTier = 0;
+    roomLevel = 0;
 
-    constructor(hrid, difficultyTier = 0) {
+    constructor(hrid, difficultyTier = 0, roomLevel = 0) {
         super();
 
         this.isPlayer = false;
         this.hrid = hrid;
         this.difficultyTier = difficultyTier;
+        this.roomLevel = roomLevel;
 
         const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;
         const gameMonster = combatMonsterDetailMap[this.hrid];
@@ -21,11 +25,16 @@ class Monster extends CombatUnit {
 
         this.enrageTime = gameMonster.enrageTime;
 
+        // Labyrinth scaling: ability levels scale by roomLevel / 100
+        const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;
+
         for (let i = 0; i < gameMonster.abilities.length; i++) {
             if (gameMonster.abilities[i].minDifficultyTier > this.difficultyTier) {
                 continue;
             }
-            this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, gameMonster.abilities[i].level);
+            const baseLevel = gameMonster.abilities[i].level;
+            const scaledLevel = this.roomLevel > 0 ? Math.floor(baseLevel * labyrinthScaleFactor) : baseLevel;
+            this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, scaledLevel);
         }
         if (gameMonster.dropTable) {
             for (let i = 0; i < gameMonster.dropTable.length; i++) {
@@ -60,13 +69,21 @@ class Monster extends CombatUnit {
         const defLevelMultiplier = 1.0 + 0.15 * this.difficultyTier;
         const levelBonus = 20.0 * this.difficultyTier;
 
-        this.staminaLevel = levelMultiplier * (gameMonster.combatDetails.staminaLevel + levelBonus);
-        this.intelligenceLevel = levelMultiplier * (gameMonster.combatDetails.intelligenceLevel + levelBonus);
-        this.attackLevel = levelMultiplier * (gameMonster.combatDetails.attackLevel + levelBonus);
-        this.meleeLevel = levelMultiplier * (gameMonster.combatDetails.meleeLevel + levelBonus);
-        this.defenseLevel = defLevelMultiplier * (gameMonster.combatDetails.defenseLevel + levelBonus);
-        this.rangedLevel = levelMultiplier * (gameMonster.combatDetails.rangedLevel + levelBonus);
-        this.magicLevel = levelMultiplier * (gameMonster.combatDetails.magicLevel + levelBonus);
+        // Labyrinth scaling: all levels multiply by roomLevel / 100
+        const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;
+
+        this.staminaLevel =
+            levelMultiplier * (gameMonster.combatDetails.staminaLevel + levelBonus) * labyrinthScaleFactor;
+        this.intelligenceLevel =
+            levelMultiplier * (gameMonster.combatDetails.intelligenceLevel + levelBonus) * labyrinthScaleFactor;
+        this.attackLevel =
+            levelMultiplier * (gameMonster.combatDetails.attackLevel + levelBonus) * labyrinthScaleFactor;
+        this.meleeLevel = levelMultiplier * (gameMonster.combatDetails.meleeLevel + levelBonus) * labyrinthScaleFactor;
+        this.defenseLevel =
+            defLevelMultiplier * (gameMonster.combatDetails.defenseLevel + levelBonus) * labyrinthScaleFactor;
+        this.rangedLevel =
+            levelMultiplier * (gameMonster.combatDetails.rangedLevel + levelBonus) * labyrinthScaleFactor;
+        this.magicLevel = levelMultiplier * (gameMonster.combatDetails.magicLevel + levelBonus) * labyrinthScaleFactor;
 
         const expMultiplier = 1.0 + 0.5 * this.difficultyTier;
         const expBonus = 5.0 * this.difficultyTier;
@@ -154,6 +171,15 @@ class Monster extends CombatUnit {
         }
 
         super.updateCombatDetails();
+
+        // Labyrinth: scale armor and resistances after combat details are calculated
+        if (this.roomLevel > 0) {
+            const scaleFactor = this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL;
+            this.combatDetails.totalArmor *= scaleFactor;
+            this.combatDetails.totalWaterResistance *= scaleFactor;
+            this.combatDetails.totalNatureResistance *= scaleFactor;
+            this.combatDetails.totalFireResistance *= scaleFactor;
+        }
     }
 }
 

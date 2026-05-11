@@ -8,6 +8,7 @@
 
 import { setGameData } from './engine/game-data.js';
 import CombatSimulator from './engine/combat-simulator.js';
+import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
 import Zone from './engine/zone.js';
 
@@ -17,30 +18,50 @@ onmessage = function (event) {
     if (type !== 'start_simulation') return;
 
     try {
-        const { gameData, playerDTOs, zoneHrid, difficultyTier, simulationTimeLimit, extraBuffs } = event.data;
+        const {
+            gameData,
+            playerDTOs,
+            zoneHrid,
+            difficultyTier,
+            simulationTimeLimit,
+            extraBuffs,
+            labyrinth: labyrinthData,
+        } = event.data;
 
         // Set game data for the engine singleton
         setGameData(gameData);
 
-        // Create Zone
+        // Create Zone (used as fallback even in labyrinth mode for SimResult constructor)
         const zone = new Zone(zoneHrid, difficultyTier);
+
+        // Create Labyrinth if specified
+        let labyrinth = null;
+        if (labyrinthData) {
+            labyrinth = new Labyrinth(labyrinthData.monsterHrid, labyrinthData.roomLevel, labyrinthData.crates || []);
+        }
 
         // Create Players
         const players = playerDTOs.map((dto) => {
             const player = Player.createFromDTO(structuredClone(dto));
-            player.zoneBuffs = zone.buffs;
+            // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs
+            player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;
             player.extraBuffs = extraBuffs;
             return player;
         });
 
         // Create simulator with progress callback
-        const combatSimulator = new CombatSimulator(players, zone, (progressData) => {
-            postMessage({
-                type: 'progress',
-                taskId,
-                progress: Math.round(progressData.progress * 100),
-            });
-        });
+        const combatSimulator = new CombatSimulator(
+            players,
+            zone,
+            (progressData) => {
+                postMessage({
+                    type: 'progress',
+                    taskId,
+                    progress: Math.round(progressData.progress * 100),
+                });
+            },
+            labyrinth
+        );
 
         // Run simulation
         const simResult = combatSimulator.simulate(simulationTimeLimit);

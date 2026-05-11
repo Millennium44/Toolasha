@@ -21,10 +21,12 @@ import {
     applyLoadoutSnapshotToDTO,
     parseShykaiImport,
     getZonesThatDropItem,
+    getLabyrinthMonsters,
 } from './combat-sim-adapter.js';
-import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
+import { runSimulation, cancelSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
+import { findMaxLabyrinthLevel } from './labyrinth-level-finder.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
-import { runUpgradeAnalysis } from './upgrade-advisor.js';
+import { runUpgradeAnalysis, runLabyrinthUpgradeAnalysis } from './upgrade-advisor.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
@@ -88,6 +90,9 @@ class CombatSimUI {
         this._seekResults = null;
         this._seekSortCol = null;
         this._seekSortAsc = true;
+        // Labyrinth state
+        this._labyFindMaxMode = false;
+        this._labyResults = null;
     }
 
     /**
@@ -165,6 +170,7 @@ class CombatSimUI {
             <button id="mwi-csim-tab-configure" style="${tabStyle(true)}">Configure</button>
             <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
             <button id="mwi-csim-tab-seek" style="${tabStyle(false)}">Seek</button>
+            <button id="mwi-csim-tab-labyrinth" style="${tabStyle(false)}">Labyrinth</button>
             <button id="mwi-csim-tab-upgrade" style="${tabStyle(false)}">Upgrade</button>
         `;
 
@@ -425,6 +431,7 @@ class CombatSimUI {
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
+                <option value="labyrinth">Labyrinth Win Rate</option>
             </select>
             <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Target Lv</label>
@@ -476,6 +483,124 @@ class CombatSimUI {
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
+        // Labyrinth tab content
+        const labyrinthContent = document.createElement('div');
+        labyrinthContent.id = 'mwi-csim-labyrinth-content';
+        labyrinthContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+
+        const labyControls = document.createElement('div');
+        labyControls.style.cssText = `
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+        `;
+        labyControls.innerHTML = `
+            <label style="color:#888; font-size:12px;">Monster</label>
+            <select id="mwi-csim-laby-monster" style="${selectStyle}"></select>
+            <label style="color:#888; font-size:12px;">Level</label>
+            <input id="mwi-csim-laby-level" type="number" min="20" max="300" value="100" style="${inputStyle}">
+            <label style="color:#888; font-size:12px;">Hours</label>
+            <input id="mwi-csim-laby-hours" type="number" min="1" max="10000" value="10" style="${inputStyle}">
+            <button id="mwi-csim-laby-run" style="
+                margin-left: auto;
+                background: ${ACCENT_BTN_BG};
+                color: ${ACCENT};
+                border: 1px solid ${ACCENT_BTN_BORDER};
+                border-radius: 6px;
+                padding: 5px 14px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;">Simulate</button>
+        `;
+
+        const labyCrateRow = document.createElement('div');
+        labyCrateRow.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 6px 14px;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+            font-size: 12px;
+        `;
+        const crateSelectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+        labyCrateRow.innerHTML = `
+            <label style="color:#888;">Coffee</label>
+            <select id="mwi-csim-laby-coffee" style="${crateSelectStyle}">
+                <option value="">None</option>
+                <option value="/items/basic_coffee_crate">Basic</option>
+                <option value="/items/advanced_coffee_crate">Advanced</option>
+                <option value="/items/expert_coffee_crate" selected>Expert</option>
+            </select>
+            <label style="color:#888;">Food</label>
+            <select id="mwi-csim-laby-food" style="${crateSelectStyle}">
+                <option value="">None</option>
+                <option value="/items/basic_food_crate">Basic</option>
+                <option value="/items/advanced_food_crate">Advanced</option>
+                <option value="/items/expert_food_crate" selected>Expert</option>
+            </select>
+            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer; margin-left:auto;" title="Binary search for highest beatable level at the specified win rate threshold">
+                <input type="checkbox" id="mwi-csim-laby-findmax" style="margin:0; cursor:pointer;">
+                Find Max ≥
+            </label>
+            <input id="mwi-csim-laby-threshold" type="number" min="1" max="100" value="95" style="width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+            <span style="color:#888; font-size:12px;">%</span>
+        `;
+
+        const labyProgress = document.createElement('div');
+        labyProgress.id = 'mwi-csim-laby-progress';
+        labyProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
+        labyProgress.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div style="
+                    flex:1;
+                    background:#1a1a2e;
+                    border-radius:4px;
+                    height:18px;
+                    overflow:hidden;
+                    position:relative;
+                    border:1px solid #333;">
+                    <div id="mwi-csim-laby-progress-fill" style="
+                        height:100%;
+                        width:0%;
+                        background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT});
+                        border-radius:3px;
+                        transition:width 0.2s ease;"></div>
+                    <span id="mwi-csim-laby-progress-text" style="
+                        position:absolute;
+                        top:0; left:0; right:0;
+                        text-align:center;
+                        font-size:11px;
+                        line-height:18px;
+                        color:#e0e0e0;
+                        font-weight:600;">0%</span>
+                </div>
+                <button id="mwi-csim-laby-stop" style="
+                    background:rgba(255,80,80,0.2);
+                    color:#f44;
+                    border:1px solid rgba(255,80,80,0.4);
+                    border-radius:4px;
+                    padding:2px 10px;
+                    font-size:11px;
+                    cursor:pointer;
+                    font-weight:600;">Stop</button>
+            </div>
+        `;
+
+        const labyResults = document.createElement('div');
+        labyResults.id = 'mwi-csim-laby-results';
+        labyResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+
+        labyrinthContent.appendChild(labyControls);
+        labyrinthContent.appendChild(labyCrateRow);
+        labyrinthContent.appendChild(labyProgress);
+        labyrinthContent.appendChild(labyResults);
+
         // Status bar
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
@@ -488,6 +613,7 @@ class CombatSimUI {
         this.panel.appendChild(configureContent);
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
+        this.panel.appendChild(labyrinthContent);
         this.panel.appendChild(upgradeContent);
         this.panel.appendChild(status);
         document.body.appendChild(this.panel);
@@ -507,6 +633,9 @@ class CombatSimUI {
             .addEventListener('click', () => this._switchTab('configure'));
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
         this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
+        this.panel
+            .querySelector('#mwi-csim-tab-labyrinth')
+            .addEventListener('click', () => this._switchTab('labyrinth'));
         this.panel.querySelector('#mwi-csim-tab-upgrade').addEventListener('click', () => this._switchTab('upgrade'));
         this.panel.querySelector('#mwi-csim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
         this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
@@ -518,6 +647,9 @@ class CombatSimUI {
             levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
+            }
+            if (e.target.value === 'labyrinth') {
+                this._setStatus('Uses monster/level/crates from Labyrinth tab. Click Analyze.');
             }
         });
 
@@ -568,7 +700,23 @@ class CombatSimUI {
             cancelAllZonesSimulation();
         });
 
+        // Labyrinth listeners
+        this.panel.querySelector('#mwi-csim-laby-run').addEventListener('click', () => this._onLabyrinthSimulate());
+        this.panel.querySelector('#mwi-csim-laby-stop').addEventListener('click', () => {
+            cancelSimulation();
+            this.isRunning = false;
+            this._setStatus('Labyrinth simulation cancelled.');
+            this.panel.querySelector('#mwi-csim-laby-progress').style.display = 'none';
+        });
+        this.panel.querySelector('#mwi-csim-laby-findmax').addEventListener('change', (e) => {
+            this._labyFindMaxMode = e.target.checked;
+            const levelInput = this.panel.querySelector('#mwi-csim-laby-level');
+            levelInput.disabled = e.target.checked;
+            levelInput.style.opacity = e.target.checked ? '0.4' : '1';
+        });
+
         this.populateZones();
+        this._populateLabyrinthMonsters();
     }
 
     /**
@@ -1335,10 +1483,12 @@ class CombatSimUI {
         const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
         const seekContent = this.panel.querySelector('#mwi-csim-seek-content');
         const upgradeContent = this.panel.querySelector('#mwi-csim-upgrade-content');
+        const labyrinthContent = this.panel.querySelector('#mwi-csim-labyrinth-content');
         const tabConfigure = this.panel.querySelector('#mwi-csim-tab-configure');
         const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
         const tabSeek = this.panel.querySelector('#mwi-csim-tab-seek');
         const tabUpgrade = this.panel.querySelector('#mwi-csim-tab-upgrade');
+        const tabLabyrinth = this.panel.querySelector('#mwi-csim-tab-labyrinth');
 
         const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
@@ -1348,10 +1498,12 @@ class CombatSimUI {
         resultsContent.style.display = 'none';
         if (seekContent) seekContent.style.display = 'none';
         if (upgradeContent) upgradeContent.style.display = 'none';
+        if (labyrinthContent) labyrinthContent.style.display = 'none';
         tabConfigure.style.cssText = inactiveStyle;
         tabResults.style.cssText = inactiveStyle;
         if (tabSeek) tabSeek.style.cssText = inactiveStyle;
         if (tabUpgrade) tabUpgrade.style.cssText = inactiveStyle;
+        if (tabLabyrinth) tabLabyrinth.style.cssText = inactiveStyle;
 
         if (tab === 'configure') {
             configureContent.style.display = 'flex';
@@ -1362,6 +1514,10 @@ class CombatSimUI {
             if (tabSeek) tabSeek.style.cssText = activeStyle;
             this._populateSeekItems();
             this._setStatus('Search for a combat drop item, then click Seek.');
+        } else if (tab === 'labyrinth') {
+            if (labyrinthContent) labyrinthContent.style.display = 'flex';
+            if (tabLabyrinth) tabLabyrinth.style.cssText = activeStyle;
+            this._setStatus('Select a monster and click Simulate.');
         } else if (tab === 'upgrade') {
             if (upgradeContent) upgradeContent.style.display = 'flex';
             if (tabUpgrade) tabUpgrade.style.cssText = activeStyle;
@@ -3906,6 +4062,11 @@ class CombatSimUI {
         const upgradeMode = this.panel.querySelector('#mwi-csim-upgrade-mode')?.value || 'equipment';
         const abilityTargetLevel = parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0;
 
+        // Labyrinth mode uses labyrinth tab inputs
+        if (upgradeMode === 'labyrinth') {
+            return this._onLabyrinthUpgradeAnalyze(playerIndex);
+        }
+
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -4115,6 +4276,434 @@ class CombatSimUI {
                 }
             });
         });
+    }
+
+    // ─── Labyrinth Upgrade Analysis ─────────────────────────────────────────────
+
+    /**
+     * Run labyrinth upgrade analysis using monster/level/crates from the Labyrinth tab.
+     * @private
+     */
+    async _onLabyrinthUpgradeAnalyze(playerIndex) {
+        const monsterHrid = this.panel.querySelector('#mwi-csim-laby-monster')?.value;
+        const roomLevel = parseInt(this.panel.querySelector('#mwi-csim-laby-level')?.value) || 100;
+        const hours = Math.min(
+            10000,
+            Math.max(1, parseInt(this.panel.querySelector('#mwi-csim-laby-hours')?.value) || 10)
+        );
+
+        if (!monsterHrid) {
+            this._setStatus('Select a monster in the Labyrinth tab first.');
+            return;
+        }
+
+        const crates = [];
+        const coffeeHrid = this.panel.querySelector('#mwi-csim-laby-coffee')?.value;
+        const foodHrid = this.panel.querySelector('#mwi-csim-laby-food')?.value;
+        if (coffeeHrid) crates.push(coffeeHrid);
+        if (foodHrid) crates.push(foodHrid);
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+
+        let playerDTOs;
+        if (this._editedDTOs) {
+            playerDTOs = Object.values(this._editedDTOs);
+        } else {
+            const result = await buildAllPlayerDTOs();
+            playerDTOs = result.players;
+        }
+
+        if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
+            this._setStatus('No player data available.');
+            return;
+        }
+
+        const communityBuffs = getCommunityBuffs();
+
+        // Show progress, hide results
+        const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
+        const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
+        const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
+        progressEl.style.display = 'block';
+        resultsEl.innerHTML = '';
+        runBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        this._upgradeAborted = false;
+
+        try {
+            const results = await runLabyrinthUpgradeAnalysis(
+                {
+                    playerDTOs,
+                    playerIndex,
+                    monsterHrid,
+                    roomLevel,
+                    crates,
+                    hours,
+                    communityBuffs,
+                    upgradeMode: 'equipment',
+                },
+                ({ current, total, description }) => {
+                    if (this._upgradeAborted) return;
+                    const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
+                    const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
+                    const pct = Math.round((current / total) * 100);
+                    if (fill) fill.style.width = pct + '%';
+                    if (text) text.textContent = `${current} / ${total}`;
+                    this._setStatus(description);
+                },
+                { abortSignal: () => this._upgradeAborted }
+            );
+
+            if (this._upgradeAborted) {
+                this._setStatus('Analysis cancelled.');
+            } else {
+                this._renderLabyrinthUpgradeResults(results, monsterHrid, roomLevel, gameData);
+                this._setStatus(`Labyrinth analysis complete. ${results.results.length} upgrades evaluated.`);
+            }
+        } catch (error) {
+            console.error('[CombatSimUI] Labyrinth upgrade analysis failed:', error);
+            this._setStatus('Analysis failed: ' + error.message);
+        } finally {
+            progressEl.style.display = 'none';
+            runBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * Render labyrinth upgrade analysis results.
+     * @private
+     */
+    _renderLabyrinthUpgradeResults(results, monsterHrid, roomLevel, gameData) {
+        const container = this.panel.querySelector('#mwi-csim-upgrade-results');
+        if (!container) return;
+
+        if (!results.results.length) {
+            container.innerHTML =
+                '<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found.</div>';
+            return;
+        }
+
+        const monsterData = gameData.combatMonsterDetailMap?.[monsterHrid];
+        const monsterName = monsterData?.name || monsterHrid.split('/').pop();
+        const baseWinRate = results.baseline?.winRate || 0;
+
+        const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
+        const thStyle = 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+
+        let html = `
+            <div style="margin-bottom:8px; font-size:12px; color:#888;">
+                ${monsterName} Lv${roomLevel} — Baseline: <span style="color:${ACCENT}; font-weight:600;">${(baseWinRate * 100).toFixed(1)}%</span>
+            </div>
+            <table style="${tableStyle}">
+            <thead><tr>
+                <th style="${thStyle}">Upgrade</th>
+                <th style="${thStyle}">Cost</th>
+                <th style="${thStyle}">Win Rate</th>
+                <th style="${thStyle}">Delta</th>
+                <th style="${thStyle}">Gold/1%</th>
+            </tr></thead><tbody>`;
+
+        for (const r of results.results) {
+            const delta = r.winRateDelta * 100;
+            let deltaColor = '#888';
+            if (delta > 0.5) deltaColor = '#4caf50';
+            else if (delta > 0) deltaColor = '#8bc34a';
+            else if (delta < -0.5) deltaColor = '#f44336';
+            else if (delta < 0) deltaColor = '#ff9800';
+
+            const deltaStr = delta > 0 ? `+${delta.toFixed(2)}%` : `${delta.toFixed(2)}%`;
+            const costStr = r.cost > 0 ? formatKMB(r.cost) : '—';
+            const goldPerStr = r.goldPerWinRate === Infinity ? '∞' : formatKMB(r.goldPerWinRate);
+            const winRateStr = (r.winRate * 100).toFixed(1) + '%';
+
+            html += `<tr>
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle} font-variant-numeric:tabular-nums;">${costStr}</td>
+                <td style="${tdStyle} font-variant-numeric:tabular-nums;">${winRateStr}</td>
+                <td style="${tdStyle} color:${deltaColor}; font-weight:600;">${deltaStr}</td>
+                <td style="${tdStyle} font-variant-numeric:tabular-nums;">${goldPerStr}</td>
+            </tr>`;
+        }
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+
+    // ─── Labyrinth Tab Methods ───────────────────────────────────────────────────
+
+    /**
+     * Populate the labyrinth monster dropdown.
+     * @private
+     */
+    _populateLabyrinthMonsters() {
+        const select = this.panel?.querySelector('#mwi-csim-laby-monster');
+        if (!select) return;
+
+        const monsters = getLabyrinthMonsters();
+        select.innerHTML = '';
+
+        for (const monster of monsters) {
+            const option = document.createElement('option');
+            option.value = monster.hrid;
+            option.textContent = monster.name;
+            select.appendChild(option);
+        }
+    }
+
+    /**
+     * Handle Labyrinth Simulate button.
+     * @private
+     */
+    async _onLabyrinthSimulate() {
+        if (this.isRunning) {
+            cancelSimulation();
+            this._setStatus('Labyrinth simulation cancelled.');
+            return;
+        }
+
+        const monsterHrid = this.panel.querySelector('#mwi-csim-laby-monster')?.value;
+        const roomLevel = parseInt(this.panel.querySelector('#mwi-csim-laby-level')?.value) || 100;
+        const hours = Math.min(
+            10000,
+            Math.max(1, parseInt(this.panel.querySelector('#mwi-csim-laby-hours')?.value) || 10)
+        );
+
+        if (!monsterHrid) {
+            this._setStatus('No monster selected.');
+            return;
+        }
+
+        const gameData = buildGameDataPayload();
+        if (!gameData) {
+            this._setStatus('No game data available.');
+            return;
+        }
+
+        // Build crate list from selections
+        const crates = [];
+        const coffeeHrid = this.panel.querySelector('#mwi-csim-laby-coffee')?.value;
+        const foodHrid = this.panel.querySelector('#mwi-csim-laby-food')?.value;
+        if (coffeeHrid) crates.push(coffeeHrid);
+        if (foodHrid) crates.push(foodHrid);
+
+        // Get player DTOs
+        let playerDTOs;
+        if (this._editedDTOs) {
+            playerDTOs = Object.values(this._editedDTOs);
+        } else {
+            const result = await buildAllPlayerDTOs();
+            playerDTOs = result.players;
+        }
+
+        if (!playerDTOs.length) {
+            this._setStatus('No character data available.');
+            return;
+        }
+
+        // Labyrinth is solo — use only the first player
+        playerDTOs = [playerDTOs[0]];
+
+        const communityBuffs = getCommunityBuffs();
+
+        // Need a zoneHrid for SimResult — use any valid combat zone
+        const zones = getCombatZones();
+        const zoneHrid = zones[0]?.hrid || '/actions/combat/fly';
+
+        // UI state
+        this.isRunning = true;
+        const runBtn = this.panel.querySelector('#mwi-csim-laby-run');
+        runBtn.disabled = true;
+        runBtn.style.opacity = '0.5';
+        runBtn.style.cursor = 'not-allowed';
+
+        const progressContainer = this.panel.querySelector('#mwi-csim-laby-progress');
+        const progressFill = this.panel.querySelector('#mwi-csim-laby-progress-fill');
+        const progressText = this.panel.querySelector('#mwi-csim-laby-progress-text');
+        progressContainer.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressText.textContent = '0%';
+
+        const simStartTime = Date.now();
+
+        try {
+            if (this._labyFindMaxMode) {
+                // Binary search for max beatable level
+                const threshold =
+                    Math.min(
+                        100,
+                        Math.max(1, parseInt(this.panel.querySelector('#mwi-csim-laby-threshold')?.value) || 95)
+                    ) / 100;
+                const maxResult = await findMaxLabyrinthLevel(
+                    { gameData, playerDTOs, zoneHrid, monsterHrid, crates, communityBuffs, simHours: hours, threshold },
+                    ({ level, winRate, step, totalSteps }) => {
+                        const pct = Math.round((step / totalSteps) * 100);
+                        progressFill.style.width = `${pct}%`;
+                        progressText.textContent = `Lv ${level}: ${(winRate * 100).toFixed(1)}%`;
+                        this._setStatus(`Find Max: testing level ${level} (step ${step}/${totalSteps})...`);
+                    }
+                );
+
+                this._displayLabyrinthFindMax(monsterHrid, maxResult, gameData);
+                const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
+                this._setStatus(
+                    `Find Max complete in ${totalElapsed}: Max Level ${maxResult.maxLevel} (${(maxResult.winRate * 100).toFixed(1)}% win rate)`
+                );
+            } else {
+                // Single level simulation
+                const simResult = await runLabyrinthSimulation(
+                    { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, hours, communityBuffs },
+                    (percent) => {
+                        progressFill.style.width = `${percent}%`;
+                        progressText.textContent = `${percent}%`;
+                    }
+                );
+
+                this._displayLabyrinthResults(simResult, monsterHrid, roomLevel, hours, gameData);
+                const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
+                this._setStatus(`Labyrinth sim complete in ${totalElapsed}`);
+            }
+        } catch (error) {
+            if (error.message === 'Cancelled') {
+                this._setStatus('Labyrinth simulation cancelled.');
+            } else {
+                console.error('[CombatSimUI] Labyrinth sim failed:', error);
+                this._setStatus(`Labyrinth error: ${error.message || 'Unknown error'}`);
+            }
+        } finally {
+            this.isRunning = false;
+            runBtn.disabled = false;
+            runBtn.style.opacity = '1';
+            runBtn.style.cursor = 'pointer';
+            progressContainer.style.display = 'none';
+        }
+    }
+
+    /**
+     * Display labyrinth simulation results.
+     * @private
+     */
+    _displayLabyrinthResults(simResult, monsterHrid, roomLevel, hours, gameData) {
+        const container = this.panel.querySelector('#mwi-csim-laby-results');
+        if (!container) return;
+
+        const attempts = simResult.labyAttemptCount || 1;
+        const encounters = simResult.encounters || 0;
+        const winRate = encounters / attempts;
+        const encountersPerHr = encounters / hours;
+        const simTimeNs = simResult.simulatedTime || hours * 3600 * 1e9;
+        const avgFightTimeS = attempts > 0 ? simTimeNs / attempts / 1e9 : 0;
+
+        // Get monster name
+        const monsterData = gameData.combatMonsterDetailMap?.[monsterHrid];
+        const monsterName = monsterData?.name || monsterHrid.split('/').pop();
+
+        const rowStyle = 'display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #1a1a1a;';
+        const labelStyle = 'color:#888;';
+        const valueStyle = 'color:#e0e0e0; font-weight:600; font-variant-numeric:tabular-nums;';
+
+        let winColor = '#4caf50';
+        if (winRate < 0.5) winColor = '#f44336';
+        else if (winRate < 0.9) winColor = '#ff9800';
+        else if (winRate < 0.95) winColor = '#ffeb3b';
+
+        let html = `
+            <div style="margin-bottom:12px;">
+                <div style="font-size:14px; font-weight:700; color:${ACCENT}; margin-bottom:8px;">
+                    ${monsterName} — Level ${roomLevel}
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Win Rate</span>
+                    <span style="color:${winColor}; font-weight:700; font-size:14px;">${(winRate * 100).toFixed(1)}%</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Encounters / hr</span>
+                    <span style="${valueStyle}">${encountersPerHr.toFixed(1)}</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Avg Fight Time</span>
+                    <span style="${valueStyle}">${avgFightTimeS.toFixed(1)}s</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Total Attempts</span>
+                    <span style="${valueStyle}">${formatWithSeparator(attempts)}</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Total Kills</span>
+                    <span style="${valueStyle}">${formatWithSeparator(encounters)}</span>
+                </div>
+            </div>
+        `;
+
+        // Deaths
+        const playerDeaths = simResult.deaths?.player1 || 0;
+        if (playerDeaths > 0) {
+            html += `
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Player Deaths</span>
+                    <span style="color:#f44336; font-weight:600;">${formatWithSeparator(playerDeaths)}</span>
+                </div>
+            `;
+        }
+
+        // Max enrage
+        if (simResult.maxEnrageStack > 0) {
+            html += `
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Max Enrage Stack</span>
+                    <span style="${valueStyle}">${simResult.maxEnrageStack}</span>
+                </div>
+            `;
+        }
+
+        container.innerHTML = html;
+    }
+
+    /**
+     * Display Find Max Level results.
+     * @private
+     */
+    _displayLabyrinthFindMax(monsterHrid, maxResult, gameData) {
+        const container = this.panel.querySelector('#mwi-csim-laby-results');
+        if (!container) return;
+
+        const monsterData = gameData.combatMonsterDetailMap?.[monsterHrid];
+        const monsterName = monsterData?.name || monsterHrid.split('/').pop();
+
+        const rowStyle = 'display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #1a1a1a;';
+        const labelStyle = 'color:#888;';
+        const valueStyle = 'color:#e0e0e0; font-weight:600; font-variant-numeric:tabular-nums;';
+
+        const html = `
+            <div style="margin-bottom:12px;">
+                <div style="font-size:14px; font-weight:700; color:${ACCENT}; margin-bottom:8px;">
+                    ${monsterName} — Find Max Level
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Max Beatable Level</span>
+                    <span style="color:#4caf50; font-weight:700; font-size:16px;">${maxResult.maxLevel}</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Win Rate at Max</span>
+                    <span style="${valueStyle}">${(maxResult.winRate * 100).toFixed(1)}%</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span style="${labelStyle}">Max Floor</span>
+                    <span style="${valueStyle}">${Math.floor(maxResult.maxLevel / 20)}</span>
+                </div>
+            </div>
+            <div style="color:#555; font-size:11px; margin-top:8px;">
+                Set your automation cap to level ${maxResult.maxLevel} for this monster.
+            </div>
+        `;
+
+        container.innerHTML = html;
     }
 }
 

@@ -38,6 +38,7 @@ export function buildGameDataPayload() {
         enhancementLevelTotalBonusMultiplierTable: clientData.enhancementLevelTotalBonusMultiplierTable,
         abilitySlotsLevelRequirementList: clientData.abilitySlotsLevelRequirementList,
         openableLootDropMap: clientData.openableLootDropMap,
+        labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
     };
 }
 
@@ -649,6 +650,44 @@ export function getCombatZones() {
     zones.sort((a, b) => a.sortIndex - b.sortIndex);
 
     return zones;
+}
+
+/**
+ * Get all labyrinth monsters sorted by name.
+ * @returns {Array<{hrid: string, name: string}>}
+ */
+export function getLabyrinthMonsters() {
+    const clientData = dataManager.getInitClientData();
+    if (!clientData?.combatMonsterDetailMap) return [];
+
+    return Object.values(clientData.combatMonsterDetailMap)
+        .filter((m) => m.isLabyrinthMonster === true)
+        .map((m) => ({ hrid: m.hrid, name: m.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Get labyrinth crate options grouped by category.
+ * @returns {{coffee: Array, food: Array, tea: Array}}
+ */
+export function getLabyrinthCrates() {
+    return {
+        coffee: [
+            { hrid: '/items/basic_coffee_crate', name: 'Basic Coffee' },
+            { hrid: '/items/advanced_coffee_crate', name: 'Advanced Coffee' },
+            { hrid: '/items/expert_coffee_crate', name: 'Expert Coffee' },
+        ],
+        food: [
+            { hrid: '/items/basic_food_crate', name: 'Basic Food' },
+            { hrid: '/items/advanced_food_crate', name: 'Advanced Food' },
+            { hrid: '/items/expert_food_crate', name: 'Expert Food' },
+        ],
+        tea: [
+            { hrid: '/items/basic_tea_crate', name: 'Basic Tea' },
+            { hrid: '/items/advanced_tea_crate', name: 'Advanced Tea' },
+            { hrid: '/items/expert_tea_crate', name: 'Expert Tea' },
+        ],
+    };
 }
 
 /**
