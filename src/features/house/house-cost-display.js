@@ -25,6 +25,8 @@ class HouseCostDisplay {
         this.cleanupObserver = null; // Marketplace cleanup observer
         this.timerRegistry = createTimerRegistry();
         this.autofillManager = createAutofillManager('MissingMats-Houses');
+        this._itemsUpdatedHandler = null; // Inventory change listener
+        this._cumulativeState = null; // State for refreshing cumulative display
     }
 
     /**
@@ -62,6 +64,10 @@ class HouseCostDisplay {
             () => this.handleMarketplaceCleanup(),
             this.currentMaterialsTabs
         );
+
+        // Listen for inventory changes to refresh the cumulative display
+        this._itemsUpdatedHandler = () => this._onInventoryChanged();
+        dataManager.on('items_updated', this._itemsUpdatedHandler);
 
         this.autofillManager.initialize();
     }
@@ -327,6 +333,9 @@ class HouseCostDisplay {
 
         // Initial render
         await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, currentLevel, parseInt(dropdown.value));
+
+        // Store state for inventory-change refresh
+        this._cumulativeState = { costContainer, houseRoomHrid, currentLevel, dropdown };
 
         // Update on change
         dropdown.addEventListener('change', async () => {
@@ -722,6 +731,20 @@ class HouseCostDisplay {
     }
 
     /**
+     * Handle inventory changes — refresh the cumulative display if visible
+     */
+    async _onInventoryChanged() {
+        if (!this._cumulativeState) return;
+        const { costContainer, houseRoomHrid, currentLevel, dropdown } = this._cumulativeState;
+        // Only refresh if the container is still in the DOM
+        if (!costContainer.isConnected) {
+            this._cumulativeState = null;
+            return;
+        }
+        await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, currentLevel, parseInt(dropdown.value));
+    }
+
+    /**
      * Disable the feature
      */
     disable() {
@@ -741,6 +764,13 @@ class HouseCostDisplay {
             this.cleanupObserver();
             this.cleanupObserver = null;
         }
+
+        // Remove inventory listener
+        if (this._itemsUpdatedHandler) {
+            dataManager.off('items_updated', this._itemsUpdatedHandler);
+            this._itemsUpdatedHandler = null;
+        }
+        this._cumulativeState = null;
 
         this.autofillManager.cleanup();
         this.timerRegistry.clearAll();
