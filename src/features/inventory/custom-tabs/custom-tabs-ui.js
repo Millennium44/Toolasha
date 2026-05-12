@@ -44,6 +44,7 @@ import {
     removeItemFromBindings,
     syncLoadoutBinding,
     cleanOrphanedBindings,
+    getBaseHrid,
     LINEBREAK_HRID,
 } from './custom-tabs-data.js';
 
@@ -584,12 +585,14 @@ export default class CustomTabsUI {
         // enhancement level changes. A 200ms debounce caused the enhanced item to disappear
         // from the custom tab for ~200ms while the new tile had no toolasha-ct-visible class.
         let rafId = null;
-        this._onItemsUpdated = () => {
+        this._onItemsUpdated = (data) => {
             if (rafId) cancelAnimationFrame(rafId);
             rafId = requestAnimationFrame(() => {
                 rafId = null;
                 if (this._isActive) this._applyLayout();
             });
+            // Check if any changed items have a higher enhancement than bound items
+            this._checkBindingEnhancements(data);
         };
         dataManager.on('items_updated', this._onItemsUpdated);
 
@@ -2568,6 +2571,104 @@ export default class CustomTabsUI {
     }
 
     /**
+     * Check if any changed items have a higher enhancement level than what's in bindings.
+     * Runs on every items_updated tick but only does cheap Set lookups for the changed items.
+     * @param {Object} data - The items_updated event data
+     */
+    _checkBindingEnhancements(data) {
+        const changedItems = data?.endCharacterItems;
+        if (!changedItems || changedItems.length === 0) return;
+
+        // Build set of bound base HRIDs and their current enhancement levels
+        if (!this._boundBaseHrids) this._rebuildBoundBaseHrids();
+        if (this._boundBaseHrids.size === 0) return;
+
+        let anyChanged = false;
+        const loadoutSnapshot = getLoadoutSnapshot();
+
+        for (const item of changedItems) {
+            if (!item.itemHrid || item.count === 0) continue;
+            const baseHrid = item.itemHrid;
+            const newLevel = item.enhancementLevel || 0;
+
+            // Check if this base HRID is in any binding
+            const currentLevel = this._boundBaseHrids.get(baseHrid);
+            if (currentLevel === undefined || newLevel <= currentLevel) continue;
+
+            // Higher enhancement found — update bindings in all tabs
+            const oldHrid = currentLevel > 0 ? `${baseHrid}+${currentLevel}` : baseHrid;
+            const newHrid = newLevel > 0 ? `${baseHrid}+${newLevel}` : baseHrid;
+
+            this._walkAndSwapBinding(oldHrid, newHrid);
+            anyChanged = true;
+
+            // Also update the loadout snapshot
+            loadoutSnapshot.updateEnhancementLevel(baseHrid, newLevel);
+
+            // Update the cached level
+            this._boundBaseHrids.set(baseHrid, newLevel);
+        }
+
+        if (anyChanged) {
+            this._save();
+            if (this._isActive) this._applyLayout();
+        }
+    }
+
+    /**
+     * Build a Map of baseHrid → highest enhancement level across all bindings.
+     * Cached and invalidated when bindings change.
+     */
+    _rebuildBoundBaseHrids() {
+        this._boundBaseHrids = new Map();
+        const walk = (tabs) => {
+            for (const tab of tabs) {
+                if (tab.loadoutBindings) {
+                    for (const items of Object.values(tab.loadoutBindings)) {
+                        for (const hrid of items) {
+                            const base = getBaseHrid(hrid);
+                            const plusIdx = hrid.lastIndexOf('+');
+                            const level =
+                                plusIdx !== -1 && /^\d+$/.test(hrid.substring(plusIdx + 1))
+                                    ? parseInt(hrid.substring(plusIdx + 1), 10)
+                                    : 0;
+                            const existing = this._boundBaseHrids.get(base) ?? -1;
+                            if (level > existing) this._boundBaseHrids.set(base, level);
+                        }
+                    }
+                }
+                if (tab.children.length > 0) walk(tab.children);
+            }
+        };
+        walk(this._config.tabs);
+    }
+
+    /**
+     * Swap an old HRID for a new one in all loadout bindings across all tabs.
+     * @param {string} oldHrid
+     * @param {string} newHrid
+     */
+    _walkAndSwapBinding(oldHrid, newHrid) {
+        const walk = (tabs) => {
+            for (const tab of tabs) {
+                if (tab.loadoutBindings) {
+                    for (const [_name, items] of Object.entries(tab.loadoutBindings)) {
+                        const idx = items.indexOf(oldHrid);
+                        if (idx !== -1) {
+                            items[idx] = newHrid;
+                            // Also swap in tab.items
+                            const itemIdx = tab.items.indexOf(oldHrid);
+                            if (itemIdx !== -1) tab.items[itemIdx] = newHrid;
+                        }
+                    }
+                }
+                if (tab.children.length > 0) walk(tab.children);
+            }
+        };
+        walk(this._config.tabs);
+    }
+
+    /**
      * Handle loadout snapshot updates — sync bound tabs automatically.
      * Called whenever any loadout is created/updated/deleted in-game.
      */
@@ -2628,6 +2729,7 @@ export default class CustomTabsUI {
         walkAndSync(this._config.tabs);
 
         if (anyChanged) {
+            this._boundBaseHrids = null; // Invalidate cache
             this._save();
             if (this._isActive) this._applyLayout();
         }
@@ -2695,6 +2797,7 @@ export default class CustomTabsUI {
                 // Record binding so this tab auto-syncs with loadout changes
                 if (loadoutItems.length > 0) {
                     this._config = addLoadoutBinding(this._config, tabId, snapshot.name, loadoutItems);
+                    this._boundBaseHrids = null; // Invalidate cache
                 }
                 this._save();
                 this._renderLoadoutButtons(container, tabId);
