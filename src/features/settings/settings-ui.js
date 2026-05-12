@@ -15,6 +15,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
+import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -385,6 +386,16 @@ class SettingsUI {
             const content = document.createElement('div');
             content.className = 'toolasha-settings-group-content';
 
+            // Add computed stats summary for enhancement simulator group
+            if (groupKey === 'enhancementSimulator') {
+                const summary = document.createElement('div');
+                summary.id = 'enhanceSim-stats-summary';
+                summary.style.cssText =
+                    'padding:8px 12px; margin-bottom:8px; background:#1a1a2e; border:1px solid #333; border-radius:4px; font-size:12px; color:#aaa; line-height:1.6;';
+                summary.innerHTML = this.buildEnhanceSimSummaryHTML();
+                content.appendChild(summary);
+            }
+
             // Add settings in this group
             for (const [settingId, settingDef] of Object.entries(group.settings)) {
                 if (settingDef.hidden) continue;
@@ -532,10 +543,7 @@ class SettingsUI {
             case 'checkbox': {
                 const checked = currentSetting?.isTrue ?? settingDef.default ?? false;
                 return `
-                    <label class="toolasha-switch">
-                        <input type="checkbox" id="${settingId}" ${checked ? 'checked' : ''}>
-                        <span class="toolasha-slider"></span>
-                    </label>
+                    <input type="checkbox" id="${settingId}" ${checked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer; accent-color:#6b9fff;">
                 `;
             }
 
@@ -625,6 +633,38 @@ class SettingsUI {
                             value="${value}"
                             style="width: 80px; padding: 4px; background: #2a2a2a; color: white; border: 1px solid #555; border-radius: 3px;"
                             readonly>
+                    </div>
+                `;
+            }
+
+            case 'enhanceGear': {
+                const val = currentSetting?.value ?? settingDef.default ?? { enabled: true, level: 0 };
+                const enabled = val.enabled ?? true;
+                const tier = val.tier || '';
+                const level = val.level ?? 0;
+                const hasTiers = settingDef.tiers && settingDef.tiers.length > 0;
+                const checkedMeansAuto = settingDef.checkedMeansAuto || false;
+
+                // Inputs disabled when: gear unchecked (not equipped) OR checkedMeansAuto and checked
+                const inputsDisabled = checkedMeansAuto ? enabled : !enabled;
+                const disabledStyle = inputsDisabled ? 'opacity:0.4; pointer-events:none;' : '';
+
+                let tierHTML = '';
+                if (hasTiers) {
+                    const options = settingDef.tiers
+                        .map(
+                            (t) =>
+                                `<option value="${t.value}" ${t.value === tier ? 'selected' : ''}>${t.label}</option>`
+                        )
+                        .join('');
+                    tierHTML = `<select id="${settingId}_tier" class="toolasha-select-input" style="width:100px; font-size:12px; padding:2px 4px; ${disabledStyle}">${options}</select>`;
+                }
+
+                return `
+                    <div style="display:flex; align-items:center; gap:6px;" data-checked-means-auto="${checkedMeansAuto}">
+                        <input type="checkbox" id="${settingId}_enabled" ${enabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+                        ${tierHTML}
+                        <input type="number" id="${settingId}_level" value="${level}" min="0" max="20" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px; text-align:center; ${disabledStyle}">
                     </div>
                 `;
             }
@@ -958,12 +998,49 @@ class SettingsUI {
         const input = event.target;
         if (!input.id) return;
 
-        const settingId = input.id;
+        let settingId = input.id;
 
         // Block changes to locked settings while Iron Cow mode is active
         if (ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(settingId)) return;
-        const type = input.closest('.toolasha-setting')?.dataset.type || 'checkbox';
+        const settingEl = input.closest('.toolasha-setting');
+        const type = settingEl?.dataset.type || 'checkbox';
         const isCheckboxType = type === 'checkbox' || type === 'checkboxWithButton';
+
+        // Handle enhanceGear compound inputs
+        if (type === 'enhanceGear') {
+            // The real setting ID is on the container element
+            settingId = settingEl?.dataset.settingId;
+            if (!settingId) return;
+
+            const enabledEl = document.getElementById(`${settingId}_enabled`);
+            const tierEl = document.getElementById(`${settingId}_tier`);
+            const levelEl = document.getElementById(`${settingId}_level`);
+
+            const value = {
+                enabled: enabledEl?.checked ?? true,
+                tier: tierEl?.value || '',
+                level: parseInt(levelEl?.value, 10) || 0,
+            };
+
+            // Update disabled state on sub-inputs
+            const container = enabledEl?.parentElement;
+            const checkedMeansAuto = container?.dataset.checkedMeansAuto === 'true';
+            const inputsDisabled = checkedMeansAuto ? value.enabled : !value.enabled;
+            const style = inputsDisabled ? 'opacity:0.4; pointer-events:none;' : '';
+            if (tierEl)
+                tierEl.style.cssText =
+                    tierEl.style.cssText.replace(/opacity:[^;]*;?\s*pointer-events:[^;]*;?/g, '') + style;
+            if (levelEl)
+                levelEl.style.cssText =
+                    levelEl.style.cssText.replace(/opacity:[^;]*;?\s*pointer-events:[^;]*;?/g, '') + style;
+
+            await settingsStorage.setSetting(settingId, value);
+            if (!this.currentSettings[settingId]) this.currentSettings[settingId] = {};
+            this.currentSettings[settingId].value = value;
+            this.config.setSettingValue(settingId, value);
+            this.updateEnhanceSimSummary();
+            return;
+        }
 
         let value;
 
@@ -1018,6 +1095,126 @@ class SettingsUI {
         // Update disabled state for dependent settings
         if (isCheckboxType) {
             this.applyDisabledByState();
+
+            // When enhanceSim_autoDetect is toggled, manage gear input display
+            if (settingId === 'enhanceSim_autoDetect') {
+                if (value) {
+                    this.populateEnhanceSimFromDetection();
+                } else {
+                    this.restoreEnhanceSimSavedValues();
+                }
+                this.updateEnhanceSimSummary();
+            }
+        }
+
+        // Update enhancement sim summary if any enhance setting changed
+        if (settingId.startsWith('enhanceSim_')) {
+            this.updateEnhanceSimSummary();
+        }
+    }
+
+    /**
+     * Populate enhancement sim gear inputs with auto-detected values from character data.
+     * Saves current values first so they can be restored when toggling off.
+     */
+    populateEnhanceSimFromDetection() {
+        const detected = getDetectedGearSettings();
+        if (!detected) return;
+
+        // Save current input values before overwriting
+        this._enhanceSimSavedValues = {};
+
+        for (const [settingId, value] of Object.entries(detected)) {
+            if (value && typeof value === 'object' && 'enabled' in value) {
+                // Compound gear setting
+                const enabledEl = document.getElementById(`${settingId}_enabled`);
+                const tierEl = document.getElementById(`${settingId}_tier`);
+                const levelEl = document.getElementById(`${settingId}_level`);
+
+                // Save current state
+                this._enhanceSimSavedValues[settingId] = {
+                    enabled: enabledEl?.checked ?? true,
+                    tier: tierEl?.value || '',
+                    level: levelEl?.value || '0',
+                };
+
+                // Apply detected values
+                if (enabledEl) enabledEl.checked = value.enabled;
+                if (tierEl && value.tier) tierEl.value = value.tier;
+                if (levelEl) levelEl.value = value.level;
+            } else {
+                // Simple setting (checkbox or value)
+                const el = document.getElementById(settingId);
+                if (!el) continue;
+
+                if (typeof value === 'boolean') {
+                    this._enhanceSimSavedValues[settingId] = el.checked;
+                    el.checked = value;
+                } else {
+                    this._enhanceSimSavedValues[settingId] = el.value;
+                    el.value = value;
+                }
+            }
+        }
+    }
+
+    /**
+     * Restore previously saved enhancement sim values when auto-detect is toggled off.
+     */
+    restoreEnhanceSimSavedValues() {
+        if (!this._enhanceSimSavedValues) return;
+
+        for (const [settingId, saved] of Object.entries(this._enhanceSimSavedValues)) {
+            if (saved && typeof saved === 'object' && 'enabled' in saved) {
+                // Compound gear setting
+                const enabledEl = document.getElementById(`${settingId}_enabled`);
+                const tierEl = document.getElementById(`${settingId}_tier`);
+                const levelEl = document.getElementById(`${settingId}_level`);
+
+                if (enabledEl) enabledEl.checked = saved.enabled;
+                if (tierEl) tierEl.value = saved.tier;
+                if (levelEl) levelEl.value = saved.level;
+            } else if (typeof saved === 'boolean') {
+                const el = document.getElementById(settingId);
+                if (el) el.checked = saved;
+            } else {
+                const el = document.getElementById(settingId);
+                if (el) el.value = saved;
+            }
+        }
+
+        this._enhanceSimSavedValues = null;
+    }
+
+    /**
+     * Build HTML for the enhancement sim computed stats summary.
+     * @returns {string} HTML string
+     */
+    buildEnhanceSimSummaryHTML() {
+        try {
+            const params = getEnhancingParams();
+            const fmt = (v) => (typeof v === 'number' ? v.toFixed(2).replace(/\.?0+$/, '') : v);
+            return `
+                <span style="color:#6b9fff; font-weight:bold;">Computed Stats</span><br>
+                Effective Level: <span style="color:#e0e0e0;">${fmt(params.enhancingLevel)}</span> &nbsp;|&nbsp;
+                Tool Success: <span style="color:#e0e0e0;">${fmt(params.toolBonus)}%</span> &nbsp;|&nbsp;
+                Speed: <span style="color:#e0e0e0;">${fmt(params.speedBonus)}%</span><br>
+                Drink Conc: <span style="color:#e0e0e0;">${fmt((params.guzzlingBonus - 1) * 100)}%</span> &nbsp;|&nbsp;
+                Rare Find: <span style="color:#e0e0e0;">${fmt(params.rareFindBonus)}%</span> &nbsp;|&nbsp;
+                Experience: <span style="color:#e0e0e0;">${fmt(params.experienceBonus)}%</span>
+            `;
+        } catch {
+            return '<span style="color:#666;">Stats unavailable (game data not loaded)</span>';
+        }
+    }
+
+    /**
+     * Update the enhancement sim stats summary in place.
+     */
+    updateEnhanceSimSummary() {
+        const el = document.getElementById('enhanceSim-stats-summary');
+        if (el) {
+            el.innerHTML = this.buildEnhanceSimSummaryHTML();
         }
     }
 
