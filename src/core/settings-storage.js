@@ -264,27 +264,62 @@ class SettingsStorage {
     }
 
     /**
-     * Export settings as JSON
+     * Export all settings as JSON (full dump of settings store)
+     * Includes global keys and current character's keys.
+     * Excludes transient cache data.
      * @returns {Promise<string>} JSON string
      */
     async exportSettings() {
-        const settings = await this.loadSettings();
-        return JSON.stringify(settings, null, 2);
+        const allData = await storage.getAll(this.storageArea);
+
+        // Exclude transient cache keys
+        const EXCLUDE_PREFIXES = ['marketplace_cache'];
+        const exported = {};
+
+        for (const [key, value] of Object.entries(allData)) {
+            if (EXCLUDE_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+            exported[key] = value;
+        }
+
+        return JSON.stringify(exported, null, 2);
     }
 
     /**
      * Import settings from JSON
+     * Only imports global keys and keys matching the current character ID.
+     * Character-specific keys for other characters are skipped.
      * @param {string} jsonString - JSON string
-     * @returns {Promise<boolean>} Success
+     * @returns {Promise<{imported: number, skipped: number}>} Import result
      */
     async importSettings(jsonString) {
         try {
-            const imported = JSON.parse(jsonString);
-            await this.saveSettings(imported);
-            return true;
+            const data = JSON.parse(jsonString);
+            const currentCharId = this.currentCharacterId;
+            let imported = 0;
+            let skipped = 0;
+
+            for (const [key, value] of Object.entries(data)) {
+                // Check if this is a character-specific key (contains a character ID pattern)
+                const charIdMatch = key.match(/_([0-9a-f]{24})$/i) || key.match(/_(\d{10,})$/);
+
+                if (charIdMatch) {
+                    const keyCharId = charIdMatch[1];
+                    if (currentCharId && keyCharId !== currentCharId) {
+                        // Key belongs to a different character — skip
+                        skipped++;
+                        continue;
+                    }
+                }
+
+                // Import global keys and current character's keys
+                await storage.setJSON(key, value, this.storageArea, true);
+                imported++;
+            }
+
+            return { imported, skipped };
         } catch (error) {
             console.error('[Settings Storage] Import failed:', error);
-            return false;
+            return null;
         }
     }
 }

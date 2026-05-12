@@ -396,6 +396,45 @@ class Storage {
     }
 
     /**
+     * Get all key-value pairs from an object store
+     * @param {string} storeName - Object store name
+     * @returns {Promise<Object>} Map of key → value
+     */
+    async getAll(storeName = 'settings') {
+        if (!this.db) {
+            console.warn(`[Storage] Database not available, cannot get all from store: ${storeName}`);
+            return {};
+        }
+
+        return new Promise((resolve, _reject) => {
+            try {
+                const transaction = this.db.transaction([storeName], 'readonly');
+                const store = transaction.objectStore(storeName);
+                const result = {};
+                const cursorRequest = store.openCursor();
+
+                cursorRequest.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        result[cursor.key] = cursor.value;
+                        cursor.continue();
+                    } else {
+                        resolve(result);
+                    }
+                };
+
+                cursorRequest.onerror = () => {
+                    console.error(`[Storage] Failed to get all from ${storeName}:`, cursorRequest.error);
+                    resolve({});
+                };
+            } catch (error) {
+                console.error(`[Storage] GetAll transaction failed for store ${storeName}:`, error);
+                resolve({});
+            }
+        });
+    }
+
+    /**
      * Force immediate save of all pending debounced writes
      */
     async flushAll() {

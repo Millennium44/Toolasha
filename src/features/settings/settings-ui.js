@@ -1358,10 +1358,14 @@ class SettingsUI {
 
             try {
                 const text = await file.text();
-                const success = await settingsStorage.importSettings(text);
+                const result = await settingsStorage.importSettings(text);
 
-                if (success) {
-                    alert('Settings imported successfully. Please refresh the page.');
+                if (result) {
+                    const msg =
+                        `Settings imported successfully (${result.imported} keys imported` +
+                        (result.skipped > 0 ? `, ${result.skipped} skipped from other characters` : '') +
+                        '). Please refresh the page.';
+                    alert(msg);
                     window.location.reload();
                 } else {
                     alert('Failed to import settings. Please check the file format.');
