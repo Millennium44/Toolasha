@@ -5,7 +5,7 @@
 
 import houseCostCalculator from './house-cost-calculator.js';
 import config from '../../core/config.js';
-import { coinFormatter } from '../../utils/formatters.js';
+import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
@@ -27,6 +27,7 @@ class HouseCostDisplay {
         this.autofillManager = createAutofillManager('MissingMats-Houses');
         this._itemsUpdatedHandler = null; // Inventory change listener
         this._cumulativeState = null; // State for refreshing cumulative display
+        this._costContext = null; // { houseRoomHrid, currentLevel, targetLevel } for recalculating missing mats
     }
 
     /**
@@ -336,9 +337,11 @@ class HouseCostDisplay {
 
         // Store state for inventory-change refresh
         this._cumulativeState = { costContainer, houseRoomHrid, currentLevel, dropdown };
+        this._costContext = { houseRoomHrid, currentLevel, targetLevel: parseInt(dropdown.value) };
 
         // Update on change
         dropdown.addEventListener('change', async () => {
+            this._costContext = { houseRoomHrid, currentLevel, targetLevel: parseInt(dropdown.value) };
             await this.updateCompactCumulativeDisplay(
                 costContainer,
                 houseRoomHrid,
@@ -685,6 +688,7 @@ class HouseCostDisplay {
                 // Navigate to marketplace
                 navigateToMarketplace(mat.itemHrid, 0);
             });
+            tab.setAttribute('data-item-name', material.itemName);
             tabsContainer.appendChild(tab);
             this.currentMaterialsTabs.push(tab);
         }
@@ -734,6 +738,9 @@ class HouseCostDisplay {
      * Handle inventory changes — refresh the cumulative display if visible
      */
     async _onInventoryChanged() {
+        // Update marketplace tabs (visible while shopping)
+        this._updateMarketplaceTabs();
+
         if (!this._cumulativeState) return;
         const { costContainer, houseRoomHrid, currentLevel, dropdown } = this._cumulativeState;
         // Only refresh if the container is still in the DOM
@@ -742,6 +749,60 @@ class HouseCostDisplay {
             return;
         }
         await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, currentLevel, parseInt(dropdown.value));
+    }
+
+    /**
+     * Update marketplace tab badges when inventory changes.
+     * Recalculates missing amounts and updates each tab's display.
+     */
+    async _updateMarketplaceTabs() {
+        if (this.currentMaterialsTabs.length === 0) return;
+        if (!this._costContext) return;
+
+        const { houseRoomHrid, currentLevel, targetLevel } = this._costContext;
+        const costData = await houseCostCalculator.calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel);
+        const updatedMaterials = this.getMissingMaterials(costData);
+
+        for (const tab of this.currentMaterialsTabs) {
+            const itemHrid = tab.getAttribute('data-item-hrid');
+            const material = updatedMaterials.find((m) => m.itemHrid === itemHrid);
+
+            const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+            if (!badgeSpan) continue;
+
+            let statusColor;
+            let statusText;
+            let displayName = tab.getAttribute('data-item-name') || itemHrid;
+
+            if (!material) {
+                statusColor = '#4ade80';
+                statusText = 'Complete';
+            } else if (!material.isTradeable) {
+                statusColor = '#888888';
+                statusText = 'Not Tradeable';
+                displayName = material.itemName;
+            } else {
+                statusColor = '#ef4444';
+                statusText = `Missing: ${formatWithSeparator(material.missing)}`;
+                displayName = material.itemName;
+            }
+
+            const titleCaseName = displayName
+                .split(' ')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+
+            badgeSpan.innerHTML = `
+                <div style="text-align: center;">
+                    <div>${titleCaseName}</div>
+                    <div style="font-size: 0.75em; color: ${statusColor};">
+                        ${statusText}
+                    </div>
+                </div>
+            `;
+
+            tab.setAttribute('data-missing-quantity', material ? material.missing.toString() : '0');
+        }
     }
 
     /**
@@ -771,6 +832,7 @@ class HouseCostDisplay {
             this._itemsUpdatedHandler = null;
         }
         this._cumulativeState = null;
+        this._costContext = null;
 
         this.autofillManager.cleanup();
         this.timerRegistry.clearAll();
