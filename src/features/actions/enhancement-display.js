@@ -613,6 +613,12 @@ function formatEnhancementDisplay(
                 `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${houseSuccess.toFixed(2)}%</div>`
             );
         }
+        const achievementSuccess = params.achievementSuccessBonus || 0;
+        if (achievementSuccess > 0) {
+            lines.push(
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementSuccess.toFixed(2)}%</div>`
+            );
+        }
         if (successLevelAdvantage > 0) {
             lines.push(
                 `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`

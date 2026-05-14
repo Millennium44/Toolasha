@@ -718,6 +718,22 @@ class DataManager {
     }
 
     /**
+     * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/enhancing")
+     * @param {string} buffTypeHrid - Buff type HRID (e.g., "/buff_types/enhancing_success")
+     * @returns {number} Ratio boost value (decimal) or 0 if not found
+     */
+    getAchievementBuffRatioBoost(actionTypeHrid, buffTypeHrid) {
+        const achievementMap = this.characterData?.achievementActionTypeBuffsMap;
+        if (!achievementMap) return 0;
+
+        const achievementBuffs = achievementMap[actionTypeHrid];
+        if (!Array.isArray(achievementBuffs)) return 0;
+
+        const buff = achievementBuffs.find((entry) => entry?.typeHrid === buffTypeHrid);
+        return buff?.ratioBoost || 0;
+    }
+
+    /**
      * Get personal buff flat boost for an action type and buff type (seal buffs from Labyrinth).
      * When scroll simulation is armed for this action type, returns max(active, simulated).
      * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/foraging")
