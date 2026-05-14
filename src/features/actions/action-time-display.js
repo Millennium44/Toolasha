@@ -625,9 +625,10 @@ class ActionTimeDisplay {
      * Create the display panel in the DOM
      */
     createDisplayPanel() {
-        if (this.displayElement) {
-            return; // Already created
+        if (this.displayElement && this.displayElement.isConnected) {
+            return; // Already created and still in the DOM
         }
+        this.displayElement = null;
 
         // Find the action name container (use wildcard for hash-suffixed class)
         const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
