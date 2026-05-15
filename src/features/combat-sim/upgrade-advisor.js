@@ -8,10 +8,11 @@
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
-import { getItemPrices, getItemPrice } from '../../utils/market-data.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
+import { calculateAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -631,17 +632,18 @@ export function generateCandidates(playerDTO, gameData, mode = 'equipment', abil
  */
 export function calculateUpgradeCost(candidate, gameData) {
     if (candidate.type === 'ability_level') {
-        // Cost = (targetLevel - currentLevel) * book market price
-        const bookHrid = candidate.currentHrid.replace('/abilities/', '/items/');
-        const bookPrice = getItemPrice(bookHrid, { mode: 'ask', context: 'profit', side: 'buy' }) || 0;
-        return bookPrice * (candidate.upgradeLevel - candidate.currentLevel);
+        const levelXpTable = gameData.levelExperienceTable || [];
+        const currentXp = levelXpTable[candidate.currentLevel] || 0;
+        return calculateAbilityLevelUpCost(
+            candidate.currentHrid,
+            candidate.currentLevel,
+            currentXp,
+            candidate.upgradeLevel
+        );
     }
 
     if (candidate.type === 'ability_swap') {
-        // Cost = targetLevel * book price for new ability (books are consumed, not recoverable)
-        const bookHrid = candidate.upgradeHrid.replace('/abilities/', '/items/');
-        const bookPrice = getItemPrice(bookHrid, { mode: 'ask', context: 'profit', side: 'buy' }) || 0;
-        return bookPrice * candidate.upgradeLevel;
+        return calculateAbilityLevelUpCost(candidate.upgradeHrid, 0, 0, candidate.upgradeLevel);
     }
 
     if (candidate.type === 'enhancement') {

@@ -74,6 +74,9 @@ import emptyQueueNotification from '../features/notifications/empty-queue-notifi
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 
+// Dev tools
+import pformancePanel from '../features/dev/pformance-panel.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -124,6 +127,7 @@ toolashaRoot.UI = {
     guildXPDisplay,
     emptyQueueNotification,
     queueMonitor,
+    pformancePanel,
 };
 
 console.log('[Toolasha] UI library loaded');

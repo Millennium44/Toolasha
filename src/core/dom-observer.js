@@ -5,6 +5,8 @@
  * Supports optional debouncing to reduce CPU usage during bulk DOM changes
  */
 
+import performanceMonitor from '../utils/performance-monitor.js';
+
 class DOMObserver {
     constructor() {
         this.observer = null;
@@ -40,7 +42,9 @@ class DOMObserver {
                                 if (handler.debounce) {
                                     this.debouncedCallback(handler, node, mutation);
                                 } else {
+                                    const start = performance.now();
                                     handler.callback(node, mutation);
+                                    performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
                                 }
                             } catch (error) {
                                 console.error(`[DOM Observer] Handler error (${handler.name}):`, error);
@@ -92,7 +96,9 @@ class DOMObserver {
             // (e.g., task list updated multiple times, we only care about final state)
             if (elements.length > 0) {
                 const lastElement = elements[elements.length - 1];
+                const start = performance.now();
                 handler.callback(lastElement.node, lastElement.mutation);
+                performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
             }
         }, delay);
 

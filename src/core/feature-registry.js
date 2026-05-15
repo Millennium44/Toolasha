@@ -5,6 +5,7 @@
 
 import config from './config.js';
 import dataManager from './data-manager.js';
+import performanceMonitor from '../utils/performance-monitor.js';
 
 /**
  * Feature Registry
@@ -33,11 +34,13 @@ async function initializeFeatures() {
             }
 
             // Initialize feature
+            const start = performance.now();
             if (feature.async) {
                 await feature.initialize();
             } else {
                 feature.initialize();
             }
+            performanceMonitor.snapshot(`init:${feature.key}`, performance.now() - start);
         } catch (error) {
             errors.push({
                 feature: feature.name,

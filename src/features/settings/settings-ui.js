@@ -16,6 +16,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
+import pformancePanel from '../dev/pformance-panel.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -922,6 +923,12 @@ class SettingsUI {
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
+
+        const pformanceBtn = document.createElement('button');
+        pformanceBtn.textContent = 'PFormance';
+        pformanceBtn.className = 'toolasha-utility-button';
+        pformanceBtn.addEventListener('click', () => pformancePanel.show());
+        buttonsDiv.appendChild(pformanceBtn);
 
         container.appendChild(buttonsDiv);
     }
