@@ -204,6 +204,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'actionCountdown',
+            name: 'Action Bar Countdown',
+            category: 'Actions',
+            module: Actions.actionCountdown,
+            async: false,
+        },
+        {
             key: 'quickInputButtons',
             name: 'Quick Input Buttons',
             category: 'Actions',

@@ -8,6 +8,7 @@
 // Action features
 import { initActionPanelObserver } from '../features/actions/panel-observer.js';
 import actionTimeDisplay from '../features/actions/action-time-display.js';
+import actionCountdown from '../features/actions/action-countdown.js';
 import quickInputButtons from '../features/actions/quick-input-buttons.js';
 import outputTotals from '../features/actions/output-totals.js';
 import maxProduceable from '../features/actions/max-produceable.js';
@@ -35,6 +36,7 @@ if (typeof unsafeWindow !== 'undefined') {
 toolashaRoot.Actions = {
     initActionPanelObserver,
     actionTimeDisplay,
+    actionCountdown,
     quickInputButtons,
     outputTotals,
     maxProduceable,

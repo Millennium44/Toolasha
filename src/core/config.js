@@ -151,6 +151,12 @@ class Config {
                 description: 'Shows total time and completion time for queued actions',
                 settingKey: 'totalActionTime',
             },
+            actionCountdown: {
+                enabled: true,
+                name: 'Action Bar Countdown',
+                category: 'Actions',
+                description: 'Live countdown timer on the action progress bar',
+            },
             quickInputButtons: {
                 enabled: true,
                 name: 'Quick Input Buttons',

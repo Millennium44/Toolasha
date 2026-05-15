@@ -102,6 +102,13 @@ export const settingsGroups = {
                 ],
                 help: 'Choose what information to display in the action bar. Full shows all stats, Compact limits width for wide monitors, Minimal shows only remaining actions and time to complete.',
             },
+            actionPanel_liveCountdown: {
+                id: 'actionPanel_liveCountdown',
+                label: 'Action bar: Live countdown timer',
+                type: 'checkbox',
+                default: false,
+                help: 'Replaces the static time display on the action progress bar with a live countdown in seconds',
+            },
             actionPanel_totalTime: {
                 id: 'actionPanel_totalTime',
                 label: 'Action panel: Total time, times to reach target level, exp/hour',
