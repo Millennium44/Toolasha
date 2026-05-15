@@ -275,6 +275,11 @@ class SettingsUI {
             // Apply disabled state now that elements are in the document
             this.applyDisabledByState();
 
+            // Populate auto-detected values if auto-detect is already on
+            if (config.getSettingValue('enhanceSim_autoDetect', false)) {
+                this.populateEnhanceSimFromDetection();
+            }
+
             // Store reference
             this.settingsPanel = tabPanel;
         } catch (error) {
