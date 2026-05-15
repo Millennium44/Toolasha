@@ -366,7 +366,7 @@ class PopOutChat {
             return;
         }
 
-        this.popoutWindow = window.open('', 'mwi-chat-popout', 'width=960,height=720,resizable=yes');
+        this.popoutWindow = window.open('about:blank', 'mwi-chat-popout', 'width=960,height=720,resizable=yes');
 
         if (!this.popoutWindow) {
             console.error('[PopOutChat] window.open() blocked — allow pop-ups for this site');
