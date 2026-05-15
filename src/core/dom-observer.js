@@ -41,10 +41,12 @@ class DOMObserver {
                             try {
                                 if (handler.debounce) {
                                     this.debouncedCallback(handler, node, mutation);
-                                } else {
+                                } else if (performanceMonitor.enabled) {
                                     const start = performance.now();
                                     handler.callback(node, mutation);
                                     performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
+                                } else {
+                                    handler.callback(node, mutation);
                                 }
                             } catch (error) {
                                 console.error(`[DOM Observer] Handler error (${handler.name}):`, error);
@@ -96,9 +98,13 @@ class DOMObserver {
             // (e.g., task list updated multiple times, we only care about final state)
             if (elements.length > 0) {
                 const lastElement = elements[elements.length - 1];
-                const start = performance.now();
-                handler.callback(lastElement.node, lastElement.mutation);
-                performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
+                if (performanceMonitor.enabled) {
+                    const start = performance.now();
+                    handler.callback(lastElement.node, lastElement.mutation);
+                    performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
+                } else {
+                    handler.callback(lastElement.node, lastElement.mutation);
+                }
             }
         }, delay);
 

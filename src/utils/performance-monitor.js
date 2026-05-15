@@ -11,6 +11,14 @@ class PerformanceMonitor {
         this.measurements = new Map();
         this.snapshots = new Map();
         this.windowMs = WINDOW_MS;
+        this.enabled = false;
+        this._onVisibilityChange = () => {
+            this._tabVisible = !document.hidden;
+        };
+        this._tabVisible = true;
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', this._onVisibilityChange);
+        }
     }
 
     /**
@@ -19,6 +27,7 @@ class PerformanceMonitor {
      * @param {number} durationMs - Duration in milliseconds
      */
     record(name, durationMs) {
+        if (!this.enabled || !this._tabVisible) return;
         if (!this.measurements.has(name)) {
             this.measurements.set(name, []);
         }
@@ -43,13 +52,19 @@ class PerformanceMonitor {
     wrap(name, fn) {
         const monitor = this;
         return function (...args) {
+            if (!monitor.enabled || !monitor._tabVisible) return fn.apply(this, args);
             const start = performance.now();
-            const result = fn.apply(this, args);
-            if (result && typeof result.then === 'function') {
-                return result.finally(() => monitor.record(name, performance.now() - start));
+            try {
+                const result = fn.apply(this, args);
+                if (result && typeof result.then === 'function') {
+                    return result.finally(() => monitor.record(name, performance.now() - start));
+                }
+                monitor.record(name, performance.now() - start);
+                return result;
+            } catch (error) {
+                monitor.record(name, performance.now() - start);
+                throw error;
             }
-            monitor.record(name, performance.now() - start);
-            return result;
         };
     }
 
@@ -78,7 +93,7 @@ class PerformanceMonitor {
             calls,
             totalMs,
             avgMs: totalMs / calls,
-            cpuPercent: (totalMs / this.windowMs) * 100,
+            cpuPercent: Math.min((totalMs / this.windowMs) * 100, 100),
         };
     }
 

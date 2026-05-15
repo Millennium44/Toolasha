@@ -42,6 +42,7 @@ class PFormancePanel {
             bringPanelToFront(this.panel);
             return;
         }
+        performanceMonitor.enabled = true;
         this._createPanel();
         this._startUpdating();
     }
@@ -195,6 +196,7 @@ class PFormancePanel {
 
     _removePanel() {
         this._stopUpdating();
+        performanceMonitor.enabled = false;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
