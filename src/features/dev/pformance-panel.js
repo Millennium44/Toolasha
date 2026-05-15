@@ -4,10 +4,13 @@
  * and DOM observer handlers.
  */
 
-import performanceMonitor from '../../utils/performance-monitor.js';
 import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+
+function getPerformanceMonitor() {
+    return window.Toolasha?.Core?.performanceMonitor;
+}
 
 const COLORS = {
     background: 'rgba(5, 5, 15, 0.95)',
@@ -42,7 +45,7 @@ class PFormancePanel {
             bringPanelToFront(this.panel);
             return;
         }
-        performanceMonitor.enabled = true;
+        getPerformanceMonitor().enabled = true;
         this._createPanel();
         this._startUpdating();
     }
@@ -196,7 +199,7 @@ class PFormancePanel {
 
     _removePanel() {
         this._stopUpdating();
-        performanceMonitor.enabled = false;
+        getPerformanceMonitor().enabled = false;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -208,8 +211,10 @@ class PFormancePanel {
 
     _updateContent() {
         if (!this.contentEl) return;
-        const allStats = performanceMonitor.getAllStats();
-        const snapshots = performanceMonitor.getSnapshots();
+        const pm = getPerformanceMonitor();
+        if (!pm) return;
+        const allStats = pm.getAllStats();
+        const snapshots = pm.getSnapshots();
 
         const initEntries = [];
         const domEntries = [];
@@ -325,7 +330,7 @@ class PFormancePanel {
                 row.appendChild(this._cell(entry.name, 'left'));
                 row.appendChild(this._cell(entry.totalMs.toFixed(1), 'right'));
             } else {
-                const callsPerSec = (entry.calls / (performanceMonitor.windowMs / 1000)).toFixed(1);
+                const callsPerSec = (entry.calls / ((getPerformanceMonitor()?.windowMs || 5000) / 1000)).toFixed(1);
                 row.appendChild(this._cell(entry.name, 'left'));
                 row.appendChild(this._cell(callsPerSec, 'right'));
                 row.appendChild(this._cell(entry.totalMs.toFixed(1), 'right'));
