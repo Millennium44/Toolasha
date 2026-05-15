@@ -772,11 +772,12 @@ class NetworthHistoryChart {
         if (this.movingAvgWindow > 0) {
             const realPoints = chartData.filter((p) => !isNaN(p.y));
             const maData = [];
+            const half = Math.floor(this.movingAvgWindow / 2);
             for (let i = 0; i < realPoints.length; i++) {
-                const windowStart = Math.max(0, i - this.movingAvgWindow + 1);
+                const reach = Math.min(half, i, realPoints.length - 1 - i);
                 let sum = 0;
                 let count = 0;
-                for (let j = windowStart; j <= i; j++) {
+                for (let j = i - reach; j <= i + reach; j++) {
                     sum += realPoints[j].y;
                     count++;
                 }
