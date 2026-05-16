@@ -258,6 +258,14 @@ export function getDetectedGearSettings() {
         '/items/chance_cape': 'normal',
         '/items/chance_cape_r': 'refined',
     };
+    const CHARM_HRIDS = {
+        '/items/trainee_enhancing_charm': 'trainee',
+        '/items/basic_enhancing_charm': 'basic',
+        '/items/advanced_enhancing_charm': 'advanced',
+        '/items/expert_enhancing_charm': 'expert',
+        '/items/master_enhancing_charm': 'master',
+        '/items/grandmaster_enhancing_charm': 'grandmaster',
+    };
     const FIXED_HRIDS = {
         '/items/enchanted_gloves': 'gloves',
         '/items/enhancers_top': 'top',
@@ -274,6 +282,7 @@ export function getDetectedGearSettings() {
     result.enhanceSim_gear_neck = { enabled: false, tier: 'philo', level: 0 };
     result.enhanceSim_gear_cape = { enabled: false, tier: 'normal', level: 0 };
     result.enhanceSim_gear_guzzling = { enabled: false, level: 0 };
+    result.enhanceSim_gear_charm = { enabled: false, tier: 'grandmaster', level: 0 };
 
     if (equipment) {
         for (const item of equipment.values()) {
@@ -285,6 +294,8 @@ export function getDetectedGearSettings() {
                 result.enhanceSim_gear_enhancer = { enabled: true, tier: ENHANCER_HRIDS[hrid], level: enhLevel };
             } else if (CAPE_HRIDS[hrid]) {
                 result.enhanceSim_gear_cape = { enabled: true, tier: CAPE_HRIDS[hrid], level: enhLevel };
+            } else if (CHARM_HRIDS[hrid]) {
+                result.enhanceSim_gear_charm = { enabled: true, tier: CHARM_HRIDS[hrid], level: enhLevel };
             } else if (FIXED_HRIDS[hrid]) {
                 const slot = FIXED_HRIDS[hrid];
                 result[`enhanceSim_gear_${slot}`] = { enabled: true, level: enhLevel };
@@ -337,6 +348,14 @@ function getManualParams() {
     const CAPE_TIERS = {
         normal: '/items/chance_cape',
         refined: '/items/chance_cape_r',
+    };
+    const CHARM_TIERS = {
+        trainee: '/items/trainee_enhancing_charm',
+        basic: '/items/basic_enhancing_charm',
+        advanced: '/items/advanced_enhancing_charm',
+        expert: '/items/expert_enhancing_charm',
+        master: '/items/master_enhancing_charm',
+        grandmaster: '/items/grandmaster_enhancing_charm',
     };
     const FIXED_GEAR = {
         gloves: '/items/enchanted_gloves',
@@ -421,6 +440,14 @@ function getManualParams() {
         drinkConcentration = bonus.drinkConc;
     }
 
+    // Charm (provides experience/wisdom bonus)
+    const charm = getGear('enhanceSim_gear_charm', { enabled: true, tier: 'grandmaster', level: 0 });
+    if (charm.enabled) {
+        const hrid = CHARM_TIERS[charm.tier] || CHARM_TIERS.grandmaster;
+        const bonus = getGearSlotBonus(hrid, charm.level, itemDetailMap);
+        equipmentExperience += bonus.experience;
+    }
+
     // --- COMMUNITY BUFF ---
     const communityBuff = getGear('enhanceSim_communityBuff', { enabled: true, level: 1 });
     let communityBuffLevel;
@@ -440,13 +467,51 @@ function getManualParams() {
     const houseSpeedBonus = houseLevel * 1.0;
     const houseSuccessBonus = houseLevel * 0.05;
 
+    // House wisdom: 0.05% per level per room (same as auto-detect)
+    const houseRooms = dataManager.getHouseRooms();
+    let houseWisdomBonus = 0;
+    for (const [_hrid, room] of houseRooms) {
+        const level = room.level || 0;
+        if (level >= 1) {
+            houseWisdomBonus += 0.05 * level;
+        }
+    }
+
     // --- SCALE TEA BONUSES WITH DRINK CONCENTRATION ---
     const scaledTeaLevelBonus = teaLevelBonus > 0 ? teaLevelBonus * (1 + drinkConcentration / 100) : 0;
     const scaledTeaSpeedBonus = teaSpeedBonus > 0 ? teaSpeedBonus * (1 + drinkConcentration / 100) : 0;
 
+    // Tea wisdom bonus (Wisdom Tea/Coffee provide 12% wisdom, scales with drink concentration)
+    let baseTeaWisdom = 0;
+    const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
+    if (drinkSlots && drinkSlots.length > 0) {
+        for (const drink of drinkSlots) {
+            if (!drink || !drink.itemHrid) continue;
+            const drinkDetails = itemDetailMap[drink.itemHrid];
+            if (!drinkDetails?.consumableDetail?.buffs) continue;
+            const wisdomBuff = drinkDetails.consumableDetail.buffs.find(
+                (buff) => buff.typeHrid === '/buff_types/wisdom'
+            );
+            if (wisdomBuff && wisdomBuff.flatBoost) {
+                baseTeaWisdom += wisdomBuff.flatBoost * 100;
+            }
+        }
+    }
+    const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
+
+    // Community wisdom buff
+    const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
+    const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
+
+    // Achievement wisdom buff
+    const achievementWisdomBonus =
+        dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+
     // --- TOTALS ---
     const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
     const totalSpeedBonus = equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus;
+    const totalExperienceBonus =
+        equipmentExperience + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
     const guzzlingBonus = 1 + drinkConcentration / 100;
 
     return {
@@ -455,7 +520,7 @@ function getManualParams() {
         toolBonus: totalToolBonus,
         speedBonus: totalSpeedBonus,
         rareFindBonus: equipmentRareFind,
-        experienceBonus: equipmentExperience,
+        experienceBonus: totalExperienceBonus,
         guzzlingBonus: guzzlingBonus,
         teas: teas,
 

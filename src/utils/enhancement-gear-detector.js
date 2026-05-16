@@ -46,6 +46,7 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         neck: [], // neck (accessories have 5× multiplier)
         ring: [], // ring (accessories have 5× multiplier)
         earring: [], // earring (accessories have 5× multiplier)
+        charm: [], // charm (5× multiplier)
     };
 
     // Dynamic stat names based on skill
@@ -118,6 +119,8 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
             slotCandidates.ring.push(itemBonuses);
         } else if (equipmentType === '/equipment_types/earring') {
             slotCandidates.earring.push(itemBonuses);
+        } else if (equipmentType === '/equipment_types/charm') {
+            slotCandidates.charm.push(itemBonuses);
         }
     }
 
@@ -143,6 +146,7 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
     const bestNeck = selectBest(slotCandidates.neck);
     const bestRing = selectBest(slotCandidates.ring);
     const bestEarring = selectBest(slotCandidates.earring);
+    const bestCharm = selectBest(slotCandidates.charm);
 
     // Add bonuses from best items in each slot
     if (bestTool) {
@@ -208,6 +212,13 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         gear.speedBonus += bestEarring.speedBonus;
         gear.rareFindBonus += bestEarring.rareFindBonus;
         gear.experienceBonus += bestEarring.experienceBonus;
+    }
+
+    if (bestCharm) {
+        gear.toolBonus += bestCharm.toolBonus;
+        gear.speedBonus += bestCharm.speedBonus;
+        gear.rareFindBonus += bestCharm.rareFindBonus;
+        gear.experienceBonus += bestCharm.experienceBonus;
     }
 
     return gear;
