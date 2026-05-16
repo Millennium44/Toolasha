@@ -395,6 +395,12 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            expectedValue_includeCowbells: {
+                id: 'expectedValue_includeCowbells',
+                label: 'Include cowbell value in expected value calculations',
+                type: 'checkbox',
+                default: true,
+            },
             showConsumTips: {
                 id: 'showConsumTips',
                 label: 'HP/MP consumables: Restore speed, cost performance',
