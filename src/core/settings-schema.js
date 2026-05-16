@@ -1816,10 +1816,15 @@ export const settingsGroups = {
         settings: {
             collectionFilters: {
                 id: 'collectionFilters',
-                label: 'Enable Collection Filters & Favorites',
+                label: 'Collection Filters: Count-range, dungeon, and skilling-outfit filters',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds count-range filters, dungeon/skilling-outfit checkboxes, and favorites (★) to the Collections panel',
+            },
+            collectionFavorites: {
+                id: 'collectionFavorites',
+                label: 'Collection Favorites: Star (★) items to mark and filter favorites',
+                type: 'checkbox',
+                default: true,
             },
             collectionFilters_skillingBadges: {
                 id: 'collectionFilters_skillingBadges',

@@ -475,6 +475,8 @@ function registerFeatures() {
             category: 'Collection',
             module: UI.collectionFilters,
             async: true,
+            customCheck: () =>
+                config.isFeatureEnabled('collectionFilters') || config.isFeatureEnabled('collectionFavorites'),
         },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },

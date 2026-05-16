@@ -254,7 +254,7 @@ function matchDungeon(dungeon, itemId) {
  * Build the initial FLAGS array (called once per instance construction).
  * @returns {Array}
  */
-function buildFlags() {
+function buildFlags(includeFavorites = true) {
     // Each flag object:
     //   { label, className, checked, fn, generateCSS? }
     const matchFromTo = (from, to, _itemId, n) => from <= n && n <= to;
@@ -297,14 +297,17 @@ function buildFlags() {
             checked: false,
             fn: (itemId, n) => itemId.includes('celestial') && n === 0,
         },
-        {
+    ];
+
+    if (includeFavorites) {
+        flags.push({
             label: 'Always Show Favorites',
             className: 'favorite',
             checked: true,
-            fn: null, // applied separately
+            fn: null,
             generateCSS: false,
-        },
-    ];
+        });
+    }
 
     // Fill in derived fields (same logic as original script)
     flags.forEach((f) => {
@@ -370,7 +373,7 @@ function buildCheckboxHtml(f) {
  * @param {Array} flags
  * @returns {string}
  */
-function buildCSSText(flags) {
+function buildCSSText(flags, includeFavorites = true) {
     const hideRules = flags
         .filter((f) => f.generateCSS !== false)
         .map(
@@ -380,25 +383,8 @@ function buildCSSText(flags) {
         )
         .join('\n');
 
-    return `
-.toolasha-cf.Collection_collection__3H6c8 {
-    border-radius: var(--radius-sm, 4px);
-    margin-left: 4px;
-    padding: 2px;
-}
-
-.AchievementsPanel_controls__3bGFT .Checkbox_checkbox__dP0DH {
-    margin-right: 0;
-}
-
-.AchievementsPanel_controls__3bGFT {
-    row-gap: 10px;
-}
-
-.Collection_collectionContainer__3ZlUO {
-    position: relative;
-}
-
+    const starCSS = includeFavorites
+        ? `
 .Collection_collectionContainer__3ZlUO .toolasha-cf.star {
     position: absolute;
     top: 0;
@@ -421,11 +407,34 @@ function buildCSSText(flags) {
     margin-top: -5px;
 }
 
-${hideRules}
-
 .AchievementsPanel_categories__34hno.toolasha-cf.show-favorite .Collection_collectionContainer__3ZlUO.cf-favorite {
     display: initial !important;
 }
+`
+        : '';
+
+    return `
+.toolasha-cf.Collection_collection__3H6c8 {
+    border-radius: var(--radius-sm, 4px);
+    margin-left: 4px;
+    padding: 2px;
+}
+
+.AchievementsPanel_controls__3bGFT .Checkbox_checkbox__dP0DH {
+    margin-right: 0;
+}
+
+.AchievementsPanel_controls__3bGFT {
+    row-gap: 10px;
+}
+
+.Collection_collectionContainer__3ZlUO {
+    position: relative;
+}
+
+${hideRules}
+
+${starCSS}
 `;
 }
 
@@ -452,18 +461,19 @@ class CollectionFilters {
     // -------------------------------------------------------------------------
 
     setupSettingListener() {
-        config.onSettingChange('collectionFilters', (value) => {
-            if (value) {
+        const reinit = () => {
+            this.disable();
+            if (config.getSetting('collectionFilters') || config.getSetting('collectionFavorites')) {
                 this.initialize();
-            } else {
-                this.disable();
             }
-        });
+        };
+
+        config.onSettingChange('collectionFilters', reinit);
+        config.onSettingChange('collectionFavorites', reinit);
 
         config.onSettingChange('collectionFilters_skillingBadges', (value) => {
             if (!this.isInitialized) return;
             if (value) {
-                // Re-initialize to register the skilling observer
                 this.disable();
                 this.initialize();
             } else {
@@ -474,9 +484,16 @@ class CollectionFilters {
 
     async initialize() {
         if (this.isInitialized) return;
-        if (!config.getSetting('collectionFilters')) return;
+        const filtersOn = config.getSetting('collectionFilters');
+        const favoritesOn = config.getSetting('collectionFavorites');
+        if (!filtersOn && !favoritesOn) return;
 
         this.isInitialized = true;
+        this._filtersEnabled = filtersOn;
+        this._favoritesEnabled = favoritesOn;
+
+        // Rebuild flags based on which features are active
+        this.flags = buildFlags(favoritesOn);
 
         // Inject CSS
         this._buildCSS();
@@ -548,7 +565,7 @@ class CollectionFilters {
 
     async _load() {
         // Reset flags to defaults before loading saved state
-        this.flags = buildFlags();
+        this.flags = buildFlags(this._favoritesEnabled);
 
         const [savedFlags, savedFavorites, savedCollections, savedShowUncollected, savedTimestamp] = await Promise.all([
             storage.getJSON(this._charKey('flags'), 'collections', {}),
@@ -569,7 +586,7 @@ class CollectionFilters {
             this.sortMode = savedFlags.__sortMode;
         }
 
-        this.favorites = savedFavorites;
+        this.favorites = this._favoritesEnabled ? savedFavorites : {};
         this.collections = savedCollections;
         this.collectionsLastUpdated = savedTimestamp;
         this.showUncollected = savedShowUncollected;
@@ -605,7 +622,7 @@ class CollectionFilters {
         this._removeCSS();
         const style = document.createElement('style');
         style.id = 'toolasha-cf-styles';
-        style.textContent = buildCSSText(this.flags);
+        style.textContent = buildCSSText(this.flags, this._favoritesEnabled);
         document.head.appendChild(style);
     }
 
@@ -639,43 +656,46 @@ class CollectionFilters {
             // Update cached counts
             this.collections[itemId] = n;
 
-            // Apply/remove filter classes
-            this.flags.forEach((f) => {
-                if (f.fn === null) return; // favorites handled below
-                if (f.fn(itemId, n)) {
-                    el.classList.add(f.className);
-                } else {
-                    el.classList.remove(f.className);
-                }
-            });
-
-            // Favorites class
-            if (this.favorites[itemId]) {
-                el.classList.add('cf-favorite');
-            } else {
-                el.classList.remove('cf-favorite');
+            // Apply/remove filter classes (only when filters enabled)
+            if (this._filtersEnabled) {
+                this.flags.forEach((f) => {
+                    if (f.fn === null) return;
+                    if (f.fn(itemId, n)) {
+                        el.classList.add(f.className);
+                    } else {
+                        el.classList.remove(f.className);
+                    }
+                });
             }
 
-            // Star button
-            let starEl = el.querySelector('.toolasha-cf.star');
-            if (!starEl) {
-                el.insertAdjacentHTML('beforeend', '<div class="toolasha-cf star"></div>');
-                starEl = el.querySelector('.toolasha-cf.star');
-                starEl.addEventListener(
-                    'click',
-                    (event) => {
-                        event.stopPropagation();
-                        if (this.favorites[itemId]) {
-                            delete this.favorites[itemId];
-                            el.classList.remove('cf-favorite');
-                        } else {
-                            this.favorites[itemId] = true;
-                            el.classList.add('cf-favorite');
-                        }
-                        this._saveFavorites();
-                    },
-                    true
-                );
+            // Favorites class + star button (only when favorites enabled)
+            if (this._favoritesEnabled) {
+                if (this.favorites[itemId]) {
+                    el.classList.add('cf-favorite');
+                } else {
+                    el.classList.remove('cf-favorite');
+                }
+
+                let starEl = el.querySelector('.toolasha-cf.star');
+                if (!starEl) {
+                    el.insertAdjacentHTML('beforeend', '<div class="toolasha-cf star"></div>');
+                    starEl = el.querySelector('.toolasha-cf.star');
+                    starEl.addEventListener(
+                        'click',
+                        (event) => {
+                            event.stopPropagation();
+                            if (this.favorites[itemId]) {
+                                delete this.favorites[itemId];
+                                el.classList.remove('cf-favorite');
+                            } else {
+                                this.favorites[itemId] = true;
+                                el.classList.add('cf-favorite');
+                            }
+                            this._saveFavorites();
+                        },
+                        true
+                    );
+                }
             }
         });
 
@@ -693,12 +713,14 @@ class CollectionFilters {
             '.AchievementsPanel_controls__3bGFT > .AchievementsPanel_checkboxControl__3e6CJ'
         );
 
-        // Build showIf for charms/celestials (depend on showUncollected)
-        this.flags.forEach((f) => {
-            if (f.className === 'charm' || f.className === 'celestial') {
-                f.showIf = () => this.showUncollected;
-            }
-        });
+        // Build showIf for charms/celestials (depend on showUncollected, only relevant for filters)
+        if (this._filtersEnabled) {
+            this.flags.forEach((f) => {
+                if (f.className === 'charm' || f.className === 'celestial') {
+                    f.showIf = () => this.showUncollected;
+                }
+            });
+        }
 
         // Inject checkbox HTML
         panelEl.insertAdjacentHTML('beforeend', this.flags.map((f) => buildCheckboxHtml(f)).join(''));
