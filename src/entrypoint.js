@@ -596,6 +596,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'alchemy_actionProtection',
+            name: 'Alchemy Action Protection',
+            category: 'Alchemy',
+            module: UI.alchemyActionProtection,
+            async: true,
+        },
+        {
             key: 'enhancementFeature',
             name: 'Enhancement Tracker',
             category: 'Enhancement',

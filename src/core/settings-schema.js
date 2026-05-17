@@ -260,6 +260,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Records decompose sessions and displays history in a viewer tab in the Alchemy panel',
             },
+            alchemy_actionProtection: {
+                id: 'alchemy_actionProtection',
+                label: 'Alchemy panel: Protect categories from accidental alchemy actions',
+                type: 'checkbox',
+                default: true,
+                help: 'Blocks alchemy action buttons for 3 seconds when the selected item belongs to a protected category. A shield icon appears in the alchemy panel to configure protected categories.',
+            },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
                 label: 'Show "Missing Mats Marketplace" button on production panels',

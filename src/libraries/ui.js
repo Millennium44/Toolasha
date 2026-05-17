@@ -59,6 +59,7 @@ import coinifyHistoryTracker from '../features/alchemy/coinify-history-tracker.j
 import coinifyHistoryViewer from '../features/alchemy/coinify-history-viewer.js';
 import decomposeHistoryTracker from '../features/alchemy/decompose-history-tracker.js';
 import decomposeHistoryViewer from '../features/alchemy/decompose-history-viewer.js';
+import alchemyActionProtection from '../features/alchemy/alchemy-action-protection.js';
 
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
@@ -121,6 +122,7 @@ toolashaRoot.UI = {
     coinifyHistoryViewer,
     decomposeHistoryTracker,
     decomposeHistoryViewer,
+    alchemyActionProtection,
     enhancementFeature,
     xphCalculator,
     guildXPTracker,
