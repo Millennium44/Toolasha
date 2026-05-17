@@ -536,7 +536,12 @@ class NetworthHistoryChart {
 
         // Click outside to close (but not if clicking in the delete popup)
         this.outsideClickHandler = (e) => {
-            if (!modal.contains(e.target) && !this._deletePopup?.contains(e.target)) {
+            const breakdownPopout = document.getElementById('mwi-nw-24h-breakdown');
+            if (
+                !modal.contains(e.target) &&
+                !this._deletePopup?.contains(e.target) &&
+                !breakdownPopout?.contains(e.target)
+            ) {
                 this.closeModal();
             }
         };
@@ -751,7 +756,12 @@ class NetworthHistoryChart {
         for (const cat of CATEGORIES) {
             if (!this.categoryVisibility[cat.key]) continue;
 
-            const catData = chartData.map((p) => ({ x: p.x, y: p._raw ? p._raw[cat.key] : NaN }));
+            const catData = chartData.map((p) => {
+                if (!p._raw) return { x: p.x, y: NaN };
+                let val = p._raw[cat.key];
+                if (cat.key === 'inventory') val = (val || 0) - (p._raw.gold || 0);
+                return { x: p.x, y: val };
+            });
             datasets.push({
                 type: 'line',
                 label: cat.label,
@@ -860,7 +870,8 @@ class NetworthHistoryChart {
                                 if (!raw) return [];
                                 const lines = [];
                                 if (raw.gold) lines.push(`Gold: ${networthFormatter(raw.gold)}`);
-                                if (raw.inventory) lines.push(`Inventory: ${networthFormatter(raw.inventory)}`);
+                                const inventoryExGold = (raw.inventory || 0) - (raw.gold || 0);
+                                if (inventoryExGold > 0) lines.push(`Inventory: ${networthFormatter(inventoryExGold)}`);
                                 if (raw.equipment) lines.push(`Equipment: ${networthFormatter(raw.equipment)}`);
                                 if (raw.listings) lines.push(`Listings: ${networthFormatter(raw.listings)}`);
                                 if (raw.house) lines.push(`House: ${networthFormatter(raw.house)}`);
@@ -1005,8 +1016,12 @@ class NetworthHistoryChart {
         // Per-category rate stats for each visible category line
         for (const cat of CATEGORIES) {
             if (!this.categoryVisibility[cat.key]) continue;
-            const firstVal = first[cat.key] ?? 0;
-            const lastVal = last[cat.key] ?? 0;
+            let firstVal = first[cat.key] ?? 0;
+            let lastVal = last[cat.key] ?? 0;
+            if (cat.key === 'inventory') {
+                firstVal -= first.gold ?? 0;
+                lastVal -= last.gold ?? 0;
+            }
             const catChange = lastVal - firstVal;
             const rate = hoursElapsed > 0 ? catChange / hoursElapsed : 0;
             const rateColor = rate >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
