@@ -630,6 +630,12 @@ class ActionTimeDisplay {
         }
         this.displayElement = null;
 
+        // Remove any orphaned display element left in the DOM from a previous render cycle
+        const orphan = document.getElementById('mwi-action-time-display');
+        if (orphan) {
+            orphan.remove();
+        }
+
         // Find the action name container (use wildcard for hash-suffixed class)
         const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
         if (!actionNameContainer) {
