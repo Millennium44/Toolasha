@@ -771,7 +771,13 @@ export async function calculateNetworth() {
 
             const listingValue = value * (1 - fee) + listing.unclaimedCoinCount;
             listingsValue += listingValue;
-            listingsBreakdown.push({ name: itemName, isSell: true, value: listingValue });
+            listingsBreakdown.push({
+                itemHrid: listing.itemHrid,
+                enhancementLevel,
+                name: itemName,
+                isSell: true,
+                value: listingValue,
+            });
         } else {
             // Buying: value is locked coins + unclaimed items
             const unclaimedValue = await calculateItemValue(
@@ -781,7 +787,13 @@ export async function calculateNetworth() {
 
             const listingValue = quantity * listing.price + unclaimedValue;
             listingsValue += listingValue;
-            listingsBreakdown.push({ name: itemName, isSell: false, value: listingValue });
+            listingsBreakdown.push({
+                itemHrid: listing.itemHrid,
+                enhancementLevel,
+                name: itemName,
+                isSell: false,
+                value: listingValue,
+            });
         }
     }
 

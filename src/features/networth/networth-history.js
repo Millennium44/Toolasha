@@ -139,6 +139,35 @@ class NetworthHistory {
             items[key] = { count: 1, value: Math.round(item.value || 0) };
         }
 
+        // Houses (fixed assets)
+        for (const room of data.fixedAssets.houses.breakdown) {
+            items[`house:${room.hrid}`] = { count: room.level, value: Math.round(room.cost) };
+        }
+
+        // Abilities (fixed assets)
+        for (const ability of data.fixedAssets.abilities.breakdown) {
+            items[`ability:${ability.hrid}`] = { count: 1, value: Math.round(ability.cost) };
+        }
+
+        // Ability books (fixed assets)
+        for (const book of data.fixedAssets.abilityBooks.breakdown) {
+            if (!book.itemHrid) continue;
+            items[`abilitybook:${book.itemHrid}`] = { count: book.count || 1, value: Math.round(book.value || 0) };
+        }
+
+        // Market listings
+        for (const listing of data.currentAssets.listings.breakdown) {
+            if (!listing.itemHrid) continue;
+            const dir = listing.isSell ? 'sell' : 'buy';
+            const key = `listing:${dir}:${listing.itemHrid}:${listing.enhancementLevel || 0}`;
+            if (items[key]) {
+                items[key].value += Math.round(listing.value);
+                items[key].count += 1;
+            } else {
+                items[key] = { count: 1, value: Math.round(listing.value) };
+            }
+        }
+
         this.detailHistory.push({ t: Date.now(), items });
 
         // Trim to rolling window
