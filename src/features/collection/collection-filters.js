@@ -254,7 +254,7 @@ function matchDungeon(dungeon, itemId) {
  * Build the initial FLAGS array (called once per instance construction).
  * @returns {Array}
  */
-function buildFlags(includeFavorites = true) {
+function buildFlags(includeFilters = true, includeFavorites = true) {
     // Each flag object:
     //   { label, className, checked, fn, generateCSS? }
     const matchFromTo = (from, to, _itemId, n) => from <= n && n <= to;
@@ -264,40 +264,44 @@ function buildFlags(includeFavorites = true) {
         !matchDungeon('d3', itemId) &&
         !matchDungeon('d4', itemId);
 
-    const flags = [
-        { from: 1, to: 9, checked: true },
-        { from: 10, to: 79, checked: true },
-        { from: 80, to: 99, checked: true },
-        { from: 100, to: 799, checked: true },
-        { from: 800, to: 999, checked: true },
-        { from: 1000, to: 7999, checked: true },
-        { from: 8000, to: 9999, checked: true },
-        { label: '10k-100k', from: 10000, to: 99999, checked: true },
-        { label: '100k+', from: 100000, to: Infinity, checked: true },
-        { label: 'Not dungeon', className: 'nod', checked: true, fn: matchNoDungeon },
-        { dungeon: 'd1', checked: true },
-        { dungeon: 'd2', checked: true },
-        { dungeon: 'd3', checked: true },
-        { dungeon: 'd4', checked: true },
-        {
-            label: 'Skilling Outfits',
-            className: 'skilling-outfit',
-            checked: true,
-            fn: (itemId) => SKILLING_OUTFITS.has(itemId),
-        },
-        {
-            label: 'Uncollected Charms',
-            className: 'charm',
-            checked: false,
-            fn: (itemId, n) => itemId.includes('charm') && n === 0,
-        },
-        {
-            label: 'Uncollected Celestials',
-            className: 'celestial',
-            checked: false,
-            fn: (itemId, n) => itemId.includes('celestial') && n === 0,
-        },
-    ];
+    const flags = [];
+
+    if (includeFilters) {
+        flags.push(
+            { from: 1, to: 9, checked: true },
+            { from: 10, to: 79, checked: true },
+            { from: 80, to: 99, checked: true },
+            { from: 100, to: 799, checked: true },
+            { from: 800, to: 999, checked: true },
+            { from: 1000, to: 7999, checked: true },
+            { from: 8000, to: 9999, checked: true },
+            { label: '10k-100k', from: 10000, to: 99999, checked: true },
+            { label: '100k+', from: 100000, to: Infinity, checked: true },
+            { label: 'Not dungeon', className: 'nod', checked: true, fn: matchNoDungeon },
+            { dungeon: 'd1', checked: true },
+            { dungeon: 'd2', checked: true },
+            { dungeon: 'd3', checked: true },
+            { dungeon: 'd4', checked: true },
+            {
+                label: 'Skilling Outfits',
+                className: 'skilling-outfit',
+                checked: true,
+                fn: (itemId) => SKILLING_OUTFITS.has(itemId),
+            },
+            {
+                label: 'Uncollected Charms',
+                className: 'charm',
+                checked: false,
+                fn: (itemId, n) => itemId.includes('charm') && n === 0,
+            },
+            {
+                label: 'Uncollected Celestials',
+                className: 'celestial',
+                checked: false,
+                fn: (itemId, n) => itemId.includes('celestial') && n === 0,
+            }
+        );
+    }
 
     if (includeFavorites) {
         flags.push({
@@ -493,7 +497,7 @@ class CollectionFilters {
         this._favoritesEnabled = favoritesOn;
 
         // Rebuild flags based on which features are active
-        this.flags = buildFlags(favoritesOn);
+        this.flags = buildFlags(filtersOn, favoritesOn);
 
         // Inject CSS
         this._buildCSS();
@@ -565,7 +569,7 @@ class CollectionFilters {
 
     async _load() {
         // Reset flags to defaults before loading saved state
-        this.flags = buildFlags(this._favoritesEnabled);
+        this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
 
         const [savedFlags, savedFavorites, savedCollections, savedShowUncollected, savedTimestamp] = await Promise.all([
             storage.getJSON(this._charKey('flags'), 'collections', {}),
