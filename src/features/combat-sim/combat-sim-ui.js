@@ -4340,6 +4340,26 @@ class CombatSimUI {
             this.panel = null;
         }
         this.isRunning = false;
+
+        // Clear cached character data so next open loads fresh state
+        this._editorInitialized = false;
+        this._editedDTOs = null;
+        this._originalDTOs = null;
+        this._editedPlayerInfo = null;
+        this._selfHrid = null;
+        this._missingMembers = [];
+        this._lastSimResult = null;
+        this._lastSimHours = null;
+        this._lastGameData = null;
+        this._simHistory = [];
+        this._comparisonIndex = null;
+        this._comparisonBaseline = null;
+        this._comparisonSlots = [];
+        this._activeDetailIndex = null;
+        this._allZonesResults = null;
+        this._labyResults = null;
+        this._seekResults = null;
+        this._selectedLoadoutName = '';
     }
 
     /**
