@@ -47,6 +47,7 @@ export const IRON_COW_SETTINGS = new Set([
     'actionPanel_showProfitDetail',
     'actionPanel_foragingTotal',
     'actionPanel_hideNegativeProfit',
+    'actionQueue_showValue',
     'actionQueue_valueMode',
     'alchemy_profitDisplay',
     'itemTooltip_profit',

@@ -145,6 +145,12 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionQueue_showValue: {
+                id: 'actionQueue_showValue',
+                label: 'Queued actions: Show profit/value for queued actions',
+                type: 'checkbox',
+                default: true,
+            },
             actionPanel_enhanceMatLimitProtections: {
                 id: 'actionPanel_enhanceMatLimitProtections',
                 label: 'Enhancement material limit: Include protection items',
