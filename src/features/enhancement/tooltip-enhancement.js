@@ -204,7 +204,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         // No mirror used - return traditional result
         optimalStrategy = {
             protectFrom: optimalTraditional.protectFrom,
-            label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
+            label: optimalTraditional.protectFrom === 0 ? 'Never' : `+${optimalTraditional.protectFrom}`,
             expectedAttempts: optimalTraditional.expectedAttempts,
             totalTime: optimalTraditional.totalTime,
             baseCost: optimalTraditional.baseCost,
@@ -749,7 +749,11 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
     // Optimal strategy
-    html += '<div>Strategy: ' + optimalStrategy.label + '</div>';
+    if (optimalStrategy.protectFrom === 0) {
+        html += '<div>No protection needed for +' + targetLevel + '</div>';
+    } else {
+        html += '<div>Protect from: ' + optimalStrategy.label + '</div>';
+    }
 
     // Show Philosopher's Mirror usage if applicable
     if (optimalStrategy.usedMirror && optimalStrategy.mirrorStartLevel) {
