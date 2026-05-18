@@ -26,6 +26,7 @@ class HouseCostDisplay {
         this.timerRegistry = createTimerRegistry();
         this.autofillManager = createAutofillManager('MissingMats-Houses');
         this._itemsUpdatedHandler = null; // Inventory change listener
+        this._houseRoomsUpdatedHandler = null; // House room level change listener
         this._cumulativeState = null; // State for refreshing cumulative display
         this._costContext = null; // { houseRoomHrid, currentLevel, targetLevel } for recalculating missing mats
     }
@@ -69,6 +70,10 @@ class HouseCostDisplay {
         // Listen for inventory changes to refresh the cumulative display
         this._itemsUpdatedHandler = () => this._onInventoryChanged();
         dataManager.on('items_updated', this._itemsUpdatedHandler);
+
+        // Listen for house room level changes to refresh the dropdown and display
+        this._houseRoomsUpdatedHandler = () => this._onHouseRoomUpdated();
+        dataManager.on('house_rooms_updated', this._houseRoomsUpdatedHandler);
 
         this.autofillManager.initialize();
     }
@@ -757,6 +762,46 @@ class HouseCostDisplay {
     }
 
     /**
+     * Handle house room level changes — refresh the dropdown and cumulative display
+     */
+    async _onHouseRoomUpdated() {
+        if (!this._cumulativeState) return;
+        const { costContainer, houseRoomHrid, dropdown } = this._cumulativeState;
+        if (!costContainer.isConnected) {
+            this._cumulativeState = null;
+            return;
+        }
+
+        const newLevel = houseCostCalculator.getCurrentRoomLevel(houseRoomHrid);
+        if (newLevel >= 8) {
+            costContainer.innerHTML = '';
+            this._cumulativeState = null;
+            this._costContext = null;
+            return;
+        }
+
+        // Remove dropdown options at or below the new current level
+        while (dropdown.options.length > 0 && parseInt(dropdown.options[0].value) <= newLevel) {
+            dropdown.remove(0);
+        }
+
+        if (dropdown.options.length === 0) {
+            costContainer.innerHTML = '';
+            this._cumulativeState = null;
+            this._costContext = null;
+            return;
+        }
+
+        dropdown.value = dropdown.options[0].value;
+        const targetLevel = parseInt(dropdown.value);
+
+        this._cumulativeState.currentLevel = newLevel;
+        this._costContext = { houseRoomHrid, currentLevel: newLevel, targetLevel };
+
+        await this.updateCompactCumulativeDisplay(costContainer, houseRoomHrid, newLevel, targetLevel);
+    }
+
+    /**
      * Update marketplace tab badges when inventory changes.
      * Recalculates missing amounts and updates each tab's display.
      */
@@ -836,6 +881,13 @@ class HouseCostDisplay {
             dataManager.off('items_updated', this._itemsUpdatedHandler);
             this._itemsUpdatedHandler = null;
         }
+
+        // Remove house room listener
+        if (this._houseRoomsUpdatedHandler) {
+            dataManager.off('house_rooms_updated', this._houseRoomsUpdatedHandler);
+            this._houseRoomsUpdatedHandler = null;
+        }
+
         this._cumulativeState = null;
         this._costContext = null;
 
