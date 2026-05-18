@@ -575,7 +575,32 @@ export const settingsGroups = {
                 label: 'Neck',
                 type: 'enhanceGear',
                 default: { enabled: true, tier: 'philo', level: 10 },
-                tiers: [{ value: 'philo', label: 'Philo' }],
+                tiers: [
+                    { value: 'philo', label: 'Philo' },
+                    { value: 'speed', label: 'Speed' },
+                ],
+                disabledBy: 'enhanceSim_autoDetect',
+            },
+            enhanceSim_gear_ring: {
+                id: 'enhanceSim_gear_ring',
+                label: 'Ring',
+                type: 'enhanceGear',
+                default: { enabled: true, tier: 'philo', level: 10 },
+                tiers: [
+                    { value: 'philo', label: 'Philo' },
+                    { value: 'rarefind', label: 'Rare Find' },
+                ],
+                disabledBy: 'enhanceSim_autoDetect',
+            },
+            enhanceSim_gear_earring: {
+                id: 'enhanceSim_gear_earring',
+                label: 'Earring',
+                type: 'enhanceGear',
+                default: { enabled: true, tier: 'philo', level: 10 },
+                tiers: [
+                    { value: 'philo', label: 'Philo' },
+                    { value: 'rarefind', label: 'Rare Find' },
+                ],
                 disabledBy: 'enhanceSim_autoDetect',
             },
             enhanceSim_gear_cape: {
