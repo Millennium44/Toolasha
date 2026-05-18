@@ -640,8 +640,11 @@ class TooltipPrices {
                 if (material.isUpgradeItem) {
                     const craftAsk = getProductionCost(material.itemHrid, 'ask');
                     const craftBid = getProductionCost(material.itemHrid, 'bid');
-                    if (craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice)) askPrice = craftAsk;
+                    const isCrafted = craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice);
+                    if (isCrafted) askPrice = craftAsk;
                     if (craftBid > 0 && (bidPrice === 0 || craftBid < bidPrice)) bidPrice = craftBid;
+                    const label = isCrafted ? 'Craft' : 'Buy';
+                    return { ...material, itemName: `${label} ${material.itemName}`, askPrice, bidPrice };
                 }
 
                 return { ...material, askPrice, bidPrice };

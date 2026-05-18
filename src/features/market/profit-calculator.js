@@ -358,13 +358,15 @@ class ProfitCalculator {
 
             if (itemDetails) {
                 let resolved;
+                let isCrafted = false;
                 if (actionDetails.upgradeItemHrid === '/items/coin') {
                     resolved = { price: 1, custom: false, missing: false };
                 } else {
                     resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
 
                     const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
-                    if (craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price)) {
+                    isCrafted = craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price);
+                    if (isCrafted) {
                         resolved = { price: craftCost, custom: false, missing: false };
                     }
                 }
@@ -382,6 +384,7 @@ class ProfitCalculator {
                     missingPrice: resolved.missing,
                     customPrice: resolved.custom,
                     isUpgradeItem: true,
+                    isCrafted,
                 });
             }
         }
