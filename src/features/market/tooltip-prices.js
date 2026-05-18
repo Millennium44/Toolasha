@@ -14,6 +14,7 @@ import {
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
     buildEnhancementMilestonesHTML,
+    getProductionCost,
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
@@ -633,14 +634,17 @@ class TooltipPrices {
                     return { ...material, askPrice: 1, bidPrice: 1 };
                 }
 
-                const askResult = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' });
-                const bidResult = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' });
+                let askPrice = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' }).price;
+                let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price;
 
-                return {
-                    ...material,
-                    askPrice: askResult.price,
-                    bidPrice: bidResult.price,
-                };
+                if (material.isUpgradeItem) {
+                    const craftAsk = getProductionCost(material.itemHrid, 'ask');
+                    const craftBid = getProductionCost(material.itemHrid, 'bid');
+                    if (craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice)) askPrice = craftAsk;
+                    if (craftBid > 0 && (bidPrice === 0 || craftBid < bidPrice)) bidPrice = craftBid;
+                }
+
+                return { ...material, askPrice, bidPrice };
             });
 
             // Calculate totals using actual amounts (not count - materialCosts uses 'amount' field)

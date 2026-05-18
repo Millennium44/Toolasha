@@ -9,6 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
+import { getProductionCost } from '../enhancement/tooltip-enhancement.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
@@ -361,6 +362,11 @@ class ProfitCalculator {
                     resolved = { price: 1, custom: false, missing: false };
                 } else {
                     resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+
+                    const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
+                    if (craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price)) {
+                        resolved = { price: craftCost, custom: false, missing: false };
+                    }
                 }
 
                 // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
@@ -375,6 +381,7 @@ class ProfitCalculator {
                     totalCost: resolved.price * reducedAmount,
                     missingPrice: resolved.missing,
                     customPrice: resolved.custom,
+                    isUpgradeItem: true,
                 });
             }
         }
