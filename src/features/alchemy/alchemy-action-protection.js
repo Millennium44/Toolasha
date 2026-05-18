@@ -123,23 +123,32 @@ class AlchemyActionProtection {
     _setupShieldButton() {
         const unregister = domObserver.onClass(
             'AlchemyActionProtection-Shield',
-            'AlchemyPanel_tabsComponentContainer',
-            (tabContainer) => {
-                this._injectShieldButton(tabContainer);
+            'SkillActionDetail_primaryItemSelectorContainer',
+            (itemSelectorContainer) => {
+                this._injectShieldButton(itemSelectorContainer);
             }
         );
         this.unregisterHandlers.push(unregister);
+
+        // Check for already-existing element (alchemy panel may already be open)
+        const existing = document.querySelector('[class*="SkillActionDetail_primaryItemSelectorContainer"]');
+        if (existing) {
+            this._injectShieldButton(existing);
+        }
     }
 
-    _injectShieldButton(tabContainer) {
-        const parent = tabContainer.parentElement;
+    _injectShieldButton(itemSelectorContainer) {
+        const alchemyComponent = itemSelectorContainer.closest('[class*="SkillActionDetail_alchemyComponent"]');
+        if (!alchemyComponent) return;
+
+        const parent = itemSelectorContainer.parentElement;
         if (!parent || parent.querySelector('.mwi-alchemy-protection-btn')) return;
 
-        const btn = document.createElement('span');
+        const btn = document.createElement('div');
         btn.className = 'mwi-alchemy-protection-btn';
         btn.textContent = '\u{1F6E1}\u{FE0F}';
         btn.style.cssText =
-            'cursor:pointer; font-size:16px; margin-left:8px; opacity:0.7; transition:opacity 0.1s; vertical-align:middle; display:inline-block; position:relative; z-index:10;';
+            'cursor:pointer; font-size:16px; opacity:0.7; transition:opacity 0.1s; text-align:center; margin-bottom:2px;';
         btn.addEventListener('mouseenter', () => {
             btn.style.opacity = '1';
         });
@@ -148,18 +157,21 @@ class AlchemyActionProtection {
         });
         btn.addEventListener('click', () => this.openConfigPopup());
 
-        tabContainer.appendChild(btn);
+        parent.insertBefore(btn, itemSelectorContainer);
 
+        const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
         const updateVisibility = () => {
             const type = this._getAlchemyType();
-            btn.style.display = type ? 'inline-block' : 'none';
+            btn.style.display = type ? 'block' : 'none';
         };
 
         updateVisibility();
 
-        const observer = new MutationObserver(updateVisibility);
-        observer.observe(tabContainer, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
-        this.unregisterHandlers.push(() => observer.disconnect());
+        if (tabContainer) {
+            const observer = new MutationObserver(updateVisibility);
+            observer.observe(tabContainer, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
+            this.unregisterHandlers.push(() => observer.disconnect());
+        }
     }
 
     _getAlchemyType() {
