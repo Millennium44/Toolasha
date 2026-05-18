@@ -158,7 +158,7 @@ class ExpectedValueCalculator {
                 // Get price and tradeable status
                 const price = this.getDropPrice(itemHrid);
                 const itemDetails = dataManager.getItemDetails(itemHrid);
-                const canBeSold = itemDetails?.tradeable !== false;
+                const canBeSold = itemDetails?.isTradable !== false;
 
                 priceMap[itemHrid] = {
                     price,
@@ -219,7 +219,7 @@ class ExpectedValueCalculator {
 
             // Check if item is tradeable (for tax calculation)
             const itemDetails = dataManager.getItemDetails(itemHrid);
-            const canBeSold = itemDetails?.tradeable !== false;
+            const canBeSold = itemDetails?.isTradable !== false;
 
             // Special case: Coin never has market tax (it's currency, not a market item)
             const isCoin = itemHrid === this.COIN_HRID;
@@ -368,7 +368,7 @@ class ExpectedValueCalculator {
             const price = this.getDropPrice(itemHrid);
 
             // Calculate expected value for this drop
-            const itemCanBeSold = itemDetails.tradeable !== false;
+            const itemCanBeSold = itemDetails.isTradable !== false;
 
             // Special case: Coin never has market tax (it's currency, not a market item)
             const isCoin = itemHrid === this.COIN_HRID;

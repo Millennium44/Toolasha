@@ -324,7 +324,7 @@ class TooltipPrices {
 
         // Show enhancement milestones for unenhanced equipment items
         if (enhancementLevel === 0 && config.getSetting('itemTooltip_enhancementMilestones')) {
-            const isTradeable = itemDetails.tradeable !== false;
+            const isTradeable = itemDetails.isTradable !== false;
             const enhancementConfig = isTradeable ? getEnhancingParams() : getAutoDetectedParams();
             if (enhancementConfig) {
                 const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
@@ -346,7 +346,7 @@ class TooltipPrices {
         // Show enhancement path for enhanced items (1-20)
         if (enhancementLevel > 0 && config.getSetting('itemTooltip_enhancementPath')) {
             // Use auto-detected stats for untradeable items (you're the one enhancing)
-            const isTradeable = itemDetails.tradeable !== false;
+            const isTradeable = itemDetails.isTradable !== false;
             const enhancementConfig = isTradeable ? getEnhancingParams() : getAutoDetectedParams();
             if (enhancementConfig) {
                 // Calculate optimal enhancement path
