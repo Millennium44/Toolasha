@@ -22,6 +22,8 @@ import {
     navigateToMarketplace,
 } from '../../utils/marketplace-tabs.js';
 import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
+import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
+import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 
@@ -400,28 +402,46 @@ function updateEnhancementButton(panel) {
     const protectFromLevel = getProtectFromLevelFromUI(panel);
     const repeatCount = getRepeatCountFromUI(panel);
 
+    // Auto-calculate optimal protection if user hasn't set one
+    let resolvedProtectFrom = protectFromLevel;
+    let resolvedProtectionItem = protectionItemHrid;
+    let autoProtection = false;
+    if (protectFromLevel === 0) {
+        const enhancingConfig = getEnhancingParams();
+        const pathResult = calculateEnhancementPath(itemHrid, targetLevel, enhancingConfig);
+        if (pathResult?.optimalStrategy) {
+            resolvedProtectFrom = pathResult.optimalStrategy.protectFrom;
+            resolvedProtectionItem = pathResult.optimalStrategy.protectionItemHrid || protectionItemHrid;
+            autoProtection = true;
+        }
+    }
+
     // Calculate missing materials
     const missingMaterials = calculateEnhancementMaterialRequirements(
         itemHrid,
         startLevel,
         targetLevel,
-        protectionItemHrid,
-        protectFromLevel,
+        resolvedProtectionItem,
+        resolvedProtectFrom,
         repeatCount
     );
 
     const disabled = missingMaterials.length === 0;
 
     // Create button
+    const strategyInfo = autoProtection
+        ? { protectFrom: resolvedProtectFrom, protectionItemHrid: resolvedProtectionItem }
+        : null;
     const button = createEnhancementMissingMaterialsButton(
         missingMaterials,
         itemHrid,
         startLevel,
         targetLevel,
-        protectionItemHrid,
-        protectFromLevel,
+        resolvedProtectionItem,
+        resolvedProtectFrom,
         repeatCount,
-        disabled
+        disabled,
+        strategyInfo
     );
 
     // Find insertion point
@@ -457,7 +477,8 @@ function createEnhancementMissingMaterialsButton(
     protectionItemHrid,
     protectFromLevel,
     repeatCount,
-    disabled
+    disabled,
+    strategyInfo
 ) {
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
@@ -502,7 +523,8 @@ function createEnhancementMissingMaterialsButton(
                 targetLevel,
                 protectionItemHrid,
                 protectFromLevel,
-                repeatCount
+                repeatCount,
+                strategyInfo
             );
         });
     }
@@ -525,10 +547,19 @@ async function handleEnhancementMissingMaterialsClick(
     targetLevel,
     protectionItemHrid,
     protectFromLevel,
-    repeatCount
+    repeatCount,
+    strategyInfo
 ) {
-    // Store context for live updates
-    storedEnhancementContext = { itemHrid, startLevel, targetLevel, protectionItemHrid, protectFromLevel, repeatCount };
+    // Store context for live updates (already resolved values)
+    storedEnhancementContext = {
+        itemHrid,
+        startLevel,
+        targetLevel,
+        protectionItemHrid,
+        protectFromLevel,
+        repeatCount,
+        strategyInfo,
+    };
     storedActionHrid = null;
     storedNumActions = 0;
 
@@ -556,7 +587,7 @@ async function handleEnhancementMissingMaterialsClick(
     );
 
     // Create custom tabs
-    createMissingMaterialTabs(freshMaterials);
+    createMissingMaterialTabs(freshMaterials, strategyInfo);
 
     // Setup inventory listener for live updates
     setupInventoryListener();
@@ -728,10 +759,55 @@ function makeMaterialClickHandler(tabRef) {
 }
 
 /**
+ * Create a strategy indicator element for the marketplace tab row
+ * @param {Object} strategyInfo - Auto-calculated protection strategy
+ * @returns {HTMLElement}
+ */
+function createStrategyIndicator(strategyInfo) {
+    const indicator = document.createElement('div');
+    indicator.setAttribute('data-mwi-custom-tab', 'true');
+    indicator.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: #aaa;
+        white-space: nowrap;
+    `;
+
+    if (strategyInfo.protectFrom === 0) {
+        indicator.textContent = 'No protection needed';
+    } else {
+        // Get item sprite URL from existing DOM
+        const spriteUse = document.querySelector('use[href*="items_sprite"]');
+        if (spriteUse && strategyInfo.protectionItemHrid) {
+            const spriteUrl = spriteUse.getAttribute('href').split('#')[0];
+            const iconName = strategyInfo.protectionItemHrid.split('/').pop();
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', '20');
+            svg.setAttribute('height', '20');
+            svg.style.flexShrink = '0';
+            const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+            use.setAttribute('href', `${spriteUrl}#${iconName}`);
+            svg.appendChild(use);
+            indicator.appendChild(svg);
+        }
+
+        const label = document.createElement('span');
+        label.textContent = `From: +${strategyInfo.protectFrom}`;
+        indicator.appendChild(label);
+    }
+
+    return indicator;
+}
+
+/**
  * Create custom tabs for missing materials
  * @param {Array} missingMaterials - Array of missing material objects
+ * @param {Object|null} strategyInfo - Auto-calculated protection strategy info
  */
-function createMissingMaterialTabs(missingMaterials) {
+function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
 
     if (!tabsContainer) {
@@ -771,6 +847,14 @@ function createMissingMaterialTabs(missingMaterials) {
 
     // Create tab for each missing material
     currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)
+
+    // Add strategy indicator if auto-calculated
+    if (strategyInfo) {
+        const indicator = createStrategyIndicator(strategyInfo);
+        tabsContainer.appendChild(indicator);
+        currentMaterialsTabs.push(indicator);
+    }
+
     for (const material of missingMaterials) {
         const tabRef = { tab: null };
         const handler = makeMaterialClickHandler(tabRef);
