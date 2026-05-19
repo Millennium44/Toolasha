@@ -95,7 +95,7 @@ export function getAutoDetectedParams() {
     const teaWisdomBonus = baseTeaWisdom > 0 ? baseTeaWisdom * (1 + drinkConcentration / 100) : 0;
 
     // Get Enhancing skill level
-    const enhancingSkill = skills.find((s) => s.skillHrid === '/skills/enhancing');
+    const enhancingSkill = skills?.find((s) => s.skillHrid === '/skills/enhancing');
     if (!enhancingSkill) {
         console.error('[EnhancementConfig] Skill not found: /skills/enhancing');
     }
