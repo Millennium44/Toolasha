@@ -9,7 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
-import { getProductionCost } from '../enhancement/tooltip-enhancement.js';
+import { getProductionCost, getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
@@ -146,8 +146,22 @@ class ProfitCalculator {
         // Build time breakdown for display
         const timeBreakdown = this.calculateTimeBreakdown(baseTime, equipmentSpeedBonus + personalSpeedBonus);
 
+        // Adjust action time for crafting chain if upgrade item is crafted
+        let effectiveActionTime = actionTime;
+        if (actionDetails.upgradeItemHrid && config.getSetting('profitCalc_craftUpgradeItems')) {
+            const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid);
+            if (upgradeChainTime > 0) {
+                const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
+                const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
+                if (craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price)) {
+                    const chainTimeWithSpeed = upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus);
+                    effectiveActionTime += chainTimeWithSpeed;
+                }
+            }
+        }
+
         // Actions per hour (base rate without efficiency)
-        const actionsPerHour = calculateActionsPerHour(actionTime);
+        const actionsPerHour = calculateActionsPerHour(effectiveActionTime);
 
         // Get output amount (how many items per action)
         // Use 'count' field from action output
@@ -239,7 +253,7 @@ class ProfitCalculator {
         return {
             itemName: itemDetails.name,
             itemHrid,
-            actionTime,
+            actionTime: effectiveActionTime,
             actionsPerHour,
             itemsPerHour,
             totalItemsPerHour, // Items/hour including Gourmet bonus
@@ -364,7 +378,8 @@ class ProfitCalculator {
                 } else {
                     resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
 
-                    const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
+                    const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
+                    const craftCost = craftEnabled ? getProductionCost(actionDetails.upgradeItemHrid, 'ask') : 0;
                     isCrafted = craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price);
                     if (isCrafted) {
                         resolved = { price: craftCost, custom: false, missing: false };

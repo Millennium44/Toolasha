@@ -384,6 +384,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Displays best profit/hr highlighted, with other alternative actions (craft, coinify, decompose, transmute) summarized below',
             },
+            profitCalc_craftUpgradeItems: {
+                id: 'profitCalc_craftUpgradeItems',
+                label: 'Profit: Use crafting cost for upgrade items if cheaper',
+                type: 'checkbox',
+                default: true,
+                help: 'When enabled, uses crafting cost instead of market price for upgrade items if cheaper, and factors crafting time into profit/hr calculations.',
+            },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
                 label: 'Show expected value for openable containers',

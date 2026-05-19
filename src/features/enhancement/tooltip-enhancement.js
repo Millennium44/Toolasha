@@ -663,6 +663,39 @@ export function getProductionCost(itemHrid, mode = 'ask') {
 }
 
 /**
+ * Get total crafting chain time for an item's upgrade path (recursive).
+ * Sums base action times through the upgrade item chain, stopping when market is cheaper.
+ * @param {string} itemHrid - Item HRID to get production chain time for
+ * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
+ */
+export function getProductionChainTime(itemHrid) {
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.actionDetailMap) return 0;
+
+    let action = null;
+    for (const act of Object.values(gameData.actionDetailMap)) {
+        if (act.outputItems?.[0]?.itemHrid === itemHrid) {
+            action = act;
+            break;
+        }
+    }
+
+    if (!action || !action.baseTimeCost) return 0;
+
+    let totalTime = action.baseTimeCost / 1e9;
+
+    if (action.upgradeItemHrid) {
+        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+        const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
+        if (craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice)) {
+            totalTime += getProductionChainTime(action.upgradeItemHrid);
+        }
+    }
+
+    return totalTime;
+}
+
+/**
  * Get cheapest protection item price
  * Tests: item itself, mirror of protection, and specific protection items
  * @private

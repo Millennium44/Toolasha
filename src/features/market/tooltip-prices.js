@@ -608,6 +608,50 @@ class TooltipPrices {
     }
 
     /**
+     * Get upgrade chain sub-rows for a crafted upgrade item (recursive).
+     * Each row represents one level of the chain with its direct inputs cost only.
+     * @param {string} itemHrid - Upgrade item to expand
+     * @param {number} depth - Current nesting depth
+     * @returns {Array} Flat array of sub-row objects
+     */
+    _getUpgradeChainRows(itemHrid, depth) {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.actionDetailMap) return [];
+
+        let action = null;
+        for (const act of Object.values(gameData.actionDetailMap)) {
+            if (act.outputItems?.[0]?.itemHrid === itemHrid) {
+                action = act;
+                break;
+            }
+        }
+        if (!action || !action.upgradeItemHrid) return [];
+
+        const upgradeHrid = action.upgradeItemHrid;
+        const upgradeDetails = dataManager.getItemDetails(upgradeHrid);
+        if (!upgradeDetails) return [];
+
+        let askPrice = resolveItemPrice(upgradeHrid, { mode: 'ask', side: 'buy' }).price;
+        let bidPrice = resolveItemPrice(upgradeHrid, { mode: 'bid', side: 'buy' }).price;
+
+        const craftAsk = getProductionCost(upgradeHrid, 'ask');
+        const craftBid = getProductionCost(upgradeHrid, 'bid');
+        const isCrafted = craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice);
+
+        if (isCrafted) {
+            const deeperRows = this._getUpgradeChainRows(upgradeHrid, depth + 1);
+            const deeperAsk = deeperRows.reduce((s, r) => s + r.askPrice * r.amount, 0);
+            const deeperBid = deeperRows.reduce((s, r) => s + r.bidPrice * r.amount, 0);
+            askPrice = craftAsk - deeperAsk;
+            bidPrice = (craftBid || craftAsk) - deeperBid;
+            return [{ itemName: `Craft ${upgradeDetails.name}`, amount: 1, askPrice, bidPrice, depth }, ...deeperRows];
+        }
+
+        if (craftBid > 0 && (bidPrice === 0 || craftBid < bidPrice)) bidPrice = craftBid;
+        return [{ itemName: `Buy ${upgradeDetails.name}`, amount: 1, askPrice, bidPrice, depth }];
+    }
+
+    /**
      * Build detailed profit display with materials table
      * @param {Object} profitData - Profit calculation data
      * @returns {string} HTML string for detailed display
@@ -638,22 +682,42 @@ class TooltipPrices {
                 let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price;
 
                 if (material.isUpgradeItem) {
-                    const craftAsk = getProductionCost(material.itemHrid, 'ask');
-                    const craftBid = getProductionCost(material.itemHrid, 'bid');
+                    const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
+                    const craftAsk = craftEnabled ? getProductionCost(material.itemHrid, 'ask') : 0;
+                    const craftBid = craftEnabled ? getProductionCost(material.itemHrid, 'bid') : 0;
                     const isCrafted = craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice);
-                    if (isCrafted) askPrice = craftAsk;
+                    if (isCrafted) {
+                        // Split: show only direct inputs cost on this row, sub-rows handle deeper chain
+                        const subRows = this._getUpgradeChainRows(material.itemHrid, 1);
+                        const subAskTotal = subRows.reduce((s, r) => s + r.askPrice * r.amount, 0);
+                        const subBidTotal = subRows.reduce((s, r) => s + r.bidPrice * r.amount, 0);
+                        askPrice = craftAsk - subAskTotal;
+                        bidPrice = (craftBid || craftAsk) - subBidTotal;
+                        return { ...material, itemName: `Craft ${material.itemName}`, askPrice, bidPrice, subRows };
+                    }
                     if (craftBid > 0 && (bidPrice === 0 || craftBid < bidPrice)) bidPrice = craftBid;
-                    const label = isCrafted ? 'Craft' : 'Buy';
-                    return { ...material, itemName: `${label} ${material.itemName}`, askPrice, bidPrice };
+                    return { ...material, itemName: `Buy ${material.itemName}`, askPrice, bidPrice };
                 }
 
                 return { ...material, askPrice, bidPrice };
             });
 
-            // Calculate totals using actual amounts (not count - materialCosts uses 'amount' field)
-            const totalCount = materialsWithPrices.reduce((sum, m) => sum + m.amount, 0);
-            const totalAsk = materialsWithPrices.reduce((sum, m) => sum + m.askPrice * m.amount, 0);
-            const totalBid = materialsWithPrices.reduce((sum, m) => sum + m.bidPrice * m.amount, 0);
+            // Calculate totals (include sub-rows for correct additive sum)
+            let totalCount = 0;
+            let totalAsk = 0;
+            let totalBid = 0;
+            for (const m of materialsWithPrices) {
+                totalCount += m.amount;
+                totalAsk += m.askPrice * m.amount;
+                totalBid += m.bidPrice * m.amount;
+                if (m.subRows) {
+                    for (const sub of m.subRows) {
+                        totalCount += sub.amount;
+                        totalAsk += sub.askPrice * sub.amount;
+                        totalBid += sub.bidPrice * sub.amount;
+                    }
+                }
+            }
 
             // Total row
             html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
@@ -671,6 +735,17 @@ class TooltipPrices {
                 html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.askPrice)}</td>`;
                 html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.bidPrice)}</td>`;
                 html += '</tr>';
+                if (material.subRows) {
+                    for (const sub of material.subRows) {
+                        const indent = 8 + sub.depth * 10;
+                        html += '<tr>';
+                        html += `<td style="padding: 2px 4px; padding-left: ${indent}px; opacity: 0.8;">${sub.itemName}</td>`;
+                        html += `<td style="padding: 2px 4px; text-align: center; opacity: 0.8;">${sub.amount.toFixed(1)}</td>`;
+                        html += `<td style="padding: 2px 4px; text-align: right; opacity: 0.8;">${formatKMB(sub.askPrice)}</td>`;
+                        html += `<td style="padding: 2px 4px; text-align: right; opacity: 0.8;">${formatKMB(sub.bidPrice)}</td>`;
+                        html += '</tr>';
+                    }
+                }
             }
 
             html += '</table>';
