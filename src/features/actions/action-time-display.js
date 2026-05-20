@@ -1018,7 +1018,7 @@ class ActionTimeDisplay {
         if (limitType?.startsWith('material:')) {
             limitingItemHrid = limitType.slice('material:'.length);
         } else if (limitType === 'gold') {
-            limitingItemHrid = '/items/gold_coin';
+            limitingItemHrid = '/items/coin';
         }
 
         // Get queue size for display (total queued, doesn't change)
@@ -1763,7 +1763,7 @@ class ActionTimeDisplay {
                 }
 
                 if (actionDetails.coinCost && actionDetails.coinCost > 0) {
-                    const availableGold = byHrid['/items/gold_coin'] || 0;
+                    const availableGold = byHrid['/items/coin'] || 0;
                     const maxFromGold = Math.floor(availableGold / actionDetails.coinCost);
                     if (maxFromGold < minLimit) {
                         minLimit = maxFromGold;
@@ -1810,7 +1810,7 @@ class ActionTimeDisplay {
 
         // Check gold/coin constraint (if action has a coin cost)
         if (hasCoinCost) {
-            const availableGold = byHrid['/items/gold_coin'] || 0;
+            const availableGold = byHrid['/items/coin'] || 0;
             const maxActionsFromGold = Math.floor(availableGold / actionDetails.coinCost);
 
             if (maxActionsFromGold < minLimit) {
