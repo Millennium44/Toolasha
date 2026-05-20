@@ -184,6 +184,16 @@ class WebSocketHook {
                 return;
             }
 
+            // Only subclass native WebSocket constructors. Third-party wrappers
+            // (other userscripts replacing window.WebSocket) are passed through
+            // as-is — Toolasha still intercepts via MessageEvent.data hook and
+            // WebSocket.prototype patches.
+            const isNative = /\[native code\]/.test(Function.prototype.toString.call(OriginalWebSocket));
+            if (!isNative) {
+                hookInstance.currentWebSocket = OriginalWebSocket;
+                return;
+            }
+
             class ToolashaWebSocket extends OriginalWebSocket {
                 constructor(...args) {
                     super(...args);
