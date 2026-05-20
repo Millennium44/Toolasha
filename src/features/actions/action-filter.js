@@ -204,7 +204,7 @@ class ActionFilter {
         updateCraftBtn();
         craftBtn.addEventListener('click', async () => {
             const current = config.getSetting('profitCalc_craftUpgradeItems');
-            config.setSettingValue('profitCalc_craftUpgradeItems', !current);
+            config.setSetting('profitCalc_craftUpgradeItems', !current);
             updateCraftBtn();
             await this._refreshProfitDisplays();
         });
