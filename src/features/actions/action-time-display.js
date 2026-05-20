@@ -474,8 +474,6 @@ class ActionTimeDisplay {
             limitLabel = 'mat';
         } else if (limitType && limitType.startsWith('upgrade:')) {
             limitLabel = 'upgrade';
-        } else if (limitType === 'alchemy_item') {
-            limitLabel = 'item';
         } else {
             limitLabel = 'max';
         }
@@ -1117,8 +1115,6 @@ class ActionTimeDisplay {
                     limitLabel = 'mat limit';
                 } else if (limitType && limitType.startsWith('upgrade:')) {
                     limitLabel = 'upgrade limit';
-                } else if (limitType === 'alchemy_item') {
-                    limitLabel = 'item limit';
                 } else {
                     limitLabel = 'max';
                 }
@@ -1744,17 +1740,50 @@ class ActionTimeDisplay {
         if (isAlchemyAction && actionObj && actionObj.primaryItemHash) {
             const { itemHrid: alchItemHrid, level: enhancementLevel } = this.parseItemHash(actionObj.primaryItemHash);
             if (alchItemHrid) {
+                let minLimit = Infinity;
+                let limitType = 'unknown';
+
                 const enhancedKey = `${alchItemHrid}::${enhancementLevel}`;
                 const availableCount = byEnhancedKey[enhancedKey] || 0;
+                const alchItemDetails = dataManager.getItemDetails(alchItemHrid);
+                const bulkMultiplier = alchItemDetails?.alchemyDetail?.bulkMultiplier || 1;
+                const maxFromItem = Math.floor(availableCount / bulkMultiplier);
+                if (maxFromItem < minLimit) {
+                    minLimit = maxFromItem;
+                    limitType = `material:${alchItemHrid}`;
+                }
 
-                // Get bulk multiplier from item details (how many items per action)
-                const itemDetails = dataManager.getItemDetails(alchItemHrid);
-                const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier || 1;
+                if (actionDetails.coinCost && actionDetails.coinCost > 0) {
+                    const availableGold = byHrid['/items/gold_coin'] || 0;
+                    const maxFromGold = Math.floor(availableGold / actionDetails.coinCost);
+                    if (maxFromGold < minLimit) {
+                        minLimit = maxFromGold;
+                        limitType = 'gold';
+                    }
+                }
 
-                // Calculate max queued actions based on available items
-                const maxActions = Math.floor(availableCount / bulkMultiplier);
+                if (actionObj.secondaryItemHash) {
+                    const { itemHrid: catalystHrid } = this.parseItemHash(actionObj.secondaryItemHash);
+                    if (catalystHrid) {
+                        const availableCatalyst = byHrid[catalystHrid] || 0;
+                        let baseSuccessRate = 0.7;
+                        if (actionDetails.hrid?.includes('decompose')) {
+                            baseSuccessRate = 0.6;
+                        } else if (actionDetails.hrid?.includes('transmute')) {
+                            baseSuccessRate = alchItemDetails?.alchemyDetail?.transmuteSuccessRate || 0.5;
+                        }
+                        if (baseSuccessRate > 0) {
+                            const maxFromCatalyst = Math.floor(availableCatalyst / baseSuccessRate);
+                            if (maxFromCatalyst < minLimit) {
+                                minLimit = maxFromCatalyst;
+                                limitType = `material:${catalystHrid}`;
+                            }
+                        }
+                    }
+                }
 
-                return { maxActions, limitType: 'alchemy_item' };
+                if (minLimit === Infinity) return null;
+                return { maxActions: minLimit, limitType };
             }
         }
 
@@ -2263,8 +2292,6 @@ class ActionTimeDisplay {
                         limitLabel = 'mat';
                     } else if (limitType && limitType.startsWith('upgrade:')) {
                         limitLabel = 'upgrade';
-                    } else if (limitType === 'alchemy_item') {
-                        limitLabel = 'item';
                     } else {
                         limitLabel = 'max';
                     }
