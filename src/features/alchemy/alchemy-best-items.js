@@ -8,7 +8,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -225,6 +225,7 @@ class AlchemyBestItems {
                 profitPerHour: profitData.profitPerHour,
                 xpPerHour,
                 catalyst: profitData.winningCatalystHrid || null,
+                profitData,
             });
         }
 
@@ -616,6 +617,9 @@ class AlchemyBestItems {
             xpTd.style.cssText = 'padding: 4px 8px; text-align: right; color: #93c5fd;';
             row.appendChild(xpTd);
 
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', () => this.toggleBreakdown(row, item, tbody));
+
             tbody.appendChild(row);
         }
 
@@ -635,6 +639,132 @@ class AlchemyBestItems {
                 container.appendChild(more);
             }
         }
+    }
+
+    /**
+     * Toggle breakdown expansion for a row
+     */
+    toggleBreakdown(row, item, tbody) {
+        const existing = row.nextElementSibling;
+        if (existing?.classList.contains('mwi-best-items-breakdown')) {
+            existing.remove();
+            return;
+        }
+
+        // Collapse any other open breakdown
+        tbody.querySelectorAll('.mwi-best-items-breakdown').forEach((el) => el.remove());
+
+        const expansionRow = document.createElement('tr');
+        expansionRow.classList.add('mwi-best-items-breakdown');
+        const td = document.createElement('td');
+        td.setAttribute('colspan', '6');
+        td.style.cssText = 'padding: 8px 16px; background: #1e1e1e; font-size: 0.75rem;';
+        td.appendChild(this.renderBreakdownContent(item));
+        expansionRow.appendChild(td);
+        row.after(expansionRow);
+    }
+
+    /**
+     * Render breakdown content for an expanded item row
+     */
+    renderBreakdownContent(item) {
+        const container = document.createElement('div');
+        const profitData = item.profitData;
+
+        if (!profitData) {
+            container.textContent = 'No breakdown data available';
+            container.style.color = '#888';
+            return container;
+        }
+
+        // Revenue section
+        if (profitData.dropRevenues?.length > 0) {
+            const revenueHeader = document.createElement('div');
+            revenueHeader.style.cssText = 'color: #fff; font-weight: 500; margin-bottom: 2px;';
+            const totalRevenue = profitData.dropRevenues
+                .filter((d) => !d.isSelfReturn)
+                .reduce((sum, d) => sum + d.revenuePerHour, 0);
+            revenueHeader.textContent = `Revenue: ${formatKMB(Math.round(totalRevenue))}/hr`;
+            container.appendChild(revenueHeader);
+
+            for (const drop of profitData.dropRevenues) {
+                const itemDetails = dataManager.getItemDetails(drop.itemHrid);
+                const itemName = itemDetails?.name || drop.itemHrid.split('/').pop();
+                const dropRatePct = formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
+                const dropsDisplay =
+                    drop.dropsPerHour >= 10000
+                        ? formatKMB(Math.round(drop.dropsPerHour))
+                        : drop.dropsPerHour.toFixed(2);
+
+                const line = document.createElement('div');
+                line.style.cssText = 'margin-left: 8px; color: #aaa;';
+                if (drop.isSelfReturn) {
+                    line.style.textDecoration = 'line-through';
+                    line.style.opacity = '0.6';
+                }
+                line.textContent = `\u2022 ${itemName}: ${dropsDisplay}/hr (${dropRatePct} \u00d7 ${formatPercentage(profitData.successRate, 1)} success) @ ${formatWithSeparator(Math.round(drop.price))} \u2192 ${formatKMB(Math.round(drop.revenuePerHour))}/hr`;
+                container.appendChild(line);
+            }
+        }
+
+        // Costs section
+        const totalCosts =
+            (profitData.materialCostPerHour || 0) +
+            (profitData.catalystCostPerHour || 0) +
+            (profitData.totalTeaCostPerHour || 0);
+
+        if (totalCosts > 0 || profitData.requirementCosts?.length > 0) {
+            const costsHeader = document.createElement('div');
+            costsHeader.style.cssText = 'color: #fff; font-weight: 500; margin-top: 6px; margin-bottom: 2px;';
+            costsHeader.textContent = `Costs: ${formatKMB(Math.round(totalCosts))}/hr`;
+            container.appendChild(costsHeader);
+
+            // Input materials
+            if (profitData.requirementCosts) {
+                for (const req of profitData.requirementCosts) {
+                    const itemDetails = dataManager.getItemDetails(req.itemHrid);
+                    const itemName = itemDetails?.name || req.itemHrid.split('/').pop();
+                    const line = document.createElement('div');
+                    line.style.cssText = 'margin-left: 8px; color: #aaa;';
+                    line.textContent = `\u2022 ${itemName}: ${req.count}\u00d7 @ ${formatWithSeparator(Math.round(req.price))} \u2192 ${formatKMB(Math.round(req.costPerHour))}/hr`;
+                    container.appendChild(line);
+                }
+            }
+
+            // Catalyst
+            if (profitData.catalystCost?.itemHrid && profitData.catalystCostPerHour > 0) {
+                const catDetails = dataManager.getItemDetails(profitData.catalystCost.itemHrid);
+                const catName = catDetails?.name || profitData.catalystCost.itemHrid.split('/').pop();
+                const line = document.createElement('div');
+                line.style.cssText = 'margin-left: 8px; color: #aaa;';
+                line.textContent = `\u2022 ${catName} @ ${formatWithSeparator(Math.round(profitData.catalystCost.price))} \u2192 ${formatKMB(Math.round(profitData.catalystCostPerHour))}/hr`;
+                container.appendChild(line);
+            }
+
+            // Tea
+            if (profitData.consumableCosts?.length > 0) {
+                for (const tea of profitData.consumableCosts) {
+                    const teaDetails = dataManager.getItemDetails(tea.itemHrid);
+                    const teaName = teaDetails?.name || tea.itemHrid.split('/').pop();
+                    const line = document.createElement('div');
+                    line.style.cssText = 'margin-left: 8px; color: #aaa;';
+                    line.textContent = `\u2022 ${teaName} \u2192 ${formatKMB(Math.round(tea.costPerHour))}/hr`;
+                    container.appendChild(line);
+                }
+            }
+        }
+
+        // Stats line
+        const statsLine = document.createElement('div');
+        statsLine.style.cssText = 'color: #888; margin-top: 6px; font-size: 0.7rem;';
+        const parts = [];
+        if (profitData.actionsPerHour) parts.push(`${Math.round(profitData.actionsPerHour)}/hr`);
+        if (profitData.successRate) parts.push(`${formatPercentage(profitData.successRate, 1)} success`);
+        if (profitData.efficiency != null) parts.push(`${formatPercentage(profitData.efficiency, 1)} efficiency`);
+        statsLine.textContent = parts.join(' | ');
+        container.appendChild(statsLine);
+
+        return container;
     }
 }
 
