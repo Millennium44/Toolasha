@@ -12,7 +12,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import estimatedListingAge from './estimated-listing-age.js';
-import { coinFormatter, formatRelativeTime } from '../../utils/formatters.js';
+import { coinFormatter, formatKMB, formatRelativeTime } from '../../utils/formatters.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 
@@ -716,7 +716,7 @@ class ListingPriceDisplay {
             content = coinFormatter(null);
             color = '#004FFF'; // Blue for no data
         } else {
-            content = coinFormatter(topOrderPrice);
+            content = formatKMB(topOrderPrice, 1);
 
             // Color coding based on competitiveness
             if (isSell) {
@@ -830,7 +830,7 @@ class ListingPriceDisplay {
             totalPrice = (orderQuantity - filledQuantity) * Math.floor(calculatePriceAfterTax(price, taxRate));
         }
 
-        return createStyledCell(coinFormatter(totalPrice), this.getAmountColor(totalPrice));
+        return createStyledCell(formatKMB(totalPrice, 1), this.getAmountColor(totalPrice));
     }
 
     /**
