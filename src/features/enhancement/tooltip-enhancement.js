@@ -16,6 +16,15 @@ import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber, numberFormatter, formatKMB } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import marketAPI from '../../api/marketplace.js';
+
+const _costCache = new Map();
+const _chainTimeCache = new Map();
+
+marketAPI.on(() => {
+    _costCache.clear();
+    _chainTimeCache.clear();
+});
 
 /**
  * Calculate optimal enhancement path for an item
@@ -590,6 +599,14 @@ export function getRealisticBaseItemPrice(itemHrid) {
  * @private
  */
 export function getProductionCost(itemHrid, mode = 'ask') {
+    const cacheKey = `${itemHrid}|${mode}`;
+    if (_costCache.has(cacheKey)) return _costCache.get(cacheKey);
+    const result = _computeProductionCost(itemHrid, mode);
+    _costCache.set(cacheKey, result);
+    return result;
+}
+
+function _computeProductionCost(itemHrid, mode = 'ask') {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -669,6 +686,13 @@ export function getProductionCost(itemHrid, mode = 'ask') {
  * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
  */
 export function getProductionChainTime(itemHrid) {
+    if (_chainTimeCache.has(itemHrid)) return _chainTimeCache.get(itemHrid);
+    const result = _computeProductionChainTime(itemHrid);
+    _chainTimeCache.set(itemHrid, result);
+    return result;
+}
+
+function _computeProductionChainTime(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
 
@@ -734,10 +758,12 @@ export function getCheapestProtectionPrice(itemHrid) {
  * @private
  */
 function fib(n) {
-    if (n === 0 || n === 1) {
-        return 1;
+    let a = 1,
+        b = 1;
+    for (let i = 2; i <= n; i++) {
+        [a, b] = [b, a + b];
     }
-    return fib(n - 1) + fib(n - 2);
+    return b;
 }
 
 /**
@@ -745,13 +771,13 @@ function fib(n) {
  * @private
  */
 function mirrorFib(n) {
-    if (n === 0) {
-        return 1;
+    if (n === 0) return 1;
+    let a = 1,
+        b = 2;
+    for (let i = 2; i <= n; i++) {
+        [a, b] = [b, a + b + 1];
     }
-    if (n === 1) {
-        return 2;
-    }
-    return mirrorFib(n - 1) + mirrorFib(n - 2) + 1;
+    return b;
 }
 
 /**
