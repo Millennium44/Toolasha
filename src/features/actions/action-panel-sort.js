@@ -21,6 +21,7 @@ class ActionPanelSort {
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
         this.handlers = {};
+        this.pinChangeListeners = [];
     }
 
     /**
@@ -185,6 +186,14 @@ class ActionPanelSort {
         // Save to storage
         await storage.setJSON(this._getPinnedStorageKey(), Array.from(this.pinnedActions), 'settings', true);
 
+        for (const cb of this.pinChangeListeners) {
+            try {
+                cb();
+            } catch {
+                /* ignore */
+            }
+        }
+
         return this.pinnedActions.has(actionHrid);
     }
 
@@ -195,6 +204,15 @@ class ActionPanelSort {
      */
     isPinned(actionHrid) {
         return this.pinnedActions.has(actionHrid);
+    }
+
+    onPinChange(cb) {
+        this.pinChangeListeners.push(cb);
+    }
+
+    offPinChange(cb) {
+        const idx = this.pinChangeListeners.indexOf(cb);
+        if (idx > -1) this.pinChangeListeners.splice(idx, 1);
     }
 
     /**

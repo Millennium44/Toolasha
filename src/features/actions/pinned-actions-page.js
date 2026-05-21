@@ -223,6 +223,9 @@ class PinnedActionsPage {
         `;
         mainPanel.appendChild(this.pageContainer);
 
+        this._onPinChange = () => this.loadActions();
+        actionPanelSort.onPinChange(this._onPinChange);
+
         this.loadActions();
         this.setupNavigationObserver(mainPanel);
     }
@@ -917,6 +920,11 @@ class PinnedActionsPage {
         if (!this.isActive) return;
 
         this.closeFilterPopup();
+
+        if (this._onPinChange) {
+            actionPanelSort.offPinChange(this._onPinChange);
+            this._onPinChange = null;
+        }
 
         for (const { el, prevDisplay } of this.hiddenElements) {
             el.style.display = prevDisplay;
