@@ -149,7 +149,7 @@ class Config {
                 name: 'Action Queue Time Display',
                 category: 'Actions',
                 description: 'Shows total time and completion time for queued actions',
-                settingKey: 'totalActionTime',
+                settingKey: 'actionBar_enabled',
             },
             actionCountdown: {
                 enabled: true,

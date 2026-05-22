@@ -60,25 +60,36 @@ class ActionTimeDisplay {
     /**
      * Initialize the action time display
      */
-    initialize() {
+    async initialize() {
         if (this.isInitialized) {
             return;
         }
 
-        const displayMode = config.getSettingValue('totalActionTime', 'full');
-        if (!displayMode || displayMode === 'off') {
+        // Migrate old display mode setting to new granular toggles
+        await this.migrateDisplayMode();
+
+        if (!config.getSetting('actionBar_enabled')) {
             return;
         }
 
-        // Set up setting change listener to update display mode in real-time
-        config.onSettingChange('totalActionTime', (newMode) => {
-            if (!newMode || newMode === 'off') {
-                this.disable();
-                return;
-            }
-            // Re-trigger display update with new mode
-            this.updateDisplay();
-        });
+        // Set up setting change listeners for all action bar toggles
+        const actionBarSettings = [
+            'actionBar_enabled',
+            'actionBar_compactWidth',
+            'actionBar_showQueueCount',
+            'actionBar_showActionDuration',
+            'actionBar_showActionsPerHour',
+            'actionBar_showTimeRemaining',
+        ];
+        for (const key of actionBarSettings) {
+            config.onSettingChange(key, (newValue) => {
+                if (key === 'actionBar_enabled' && !newValue) {
+                    this.disable();
+                    return;
+                }
+                this.updateDisplay();
+            });
+        }
 
         // Set up handler for character switching
         if (!this.characterInitHandler) {
@@ -155,6 +166,25 @@ class ActionTimeDisplay {
         this.initializeQueueTooltipObserver();
 
         this.isInitialized = true;
+    }
+
+    /**
+     * Migrate old totalActionTime display mode to granular toggle settings
+     */
+    async migrateDisplayMode() {
+        const oldMode = config.getSettingValue('totalActionTime', null);
+        const alreadyMigrated = config.getSettingValue('actionBar_enabled', null);
+        if (oldMode === null || alreadyMigrated !== null) return;
+
+        if (oldMode === 'off') {
+            config.setSetting('actionBar_enabled', false);
+        } else if (oldMode === 'minimal') {
+            config.setSetting('actionBar_showActionDuration', false);
+            config.setSetting('actionBar_showActionsPerHour', false);
+        } else if (oldMode === 'compact') {
+            config.setSetting('actionBar_compactWidth', true);
+        }
+        // 'full' maps to all defaults (all on, compact off)
     }
 
     /**
@@ -745,9 +775,9 @@ class ActionTimeDisplay {
             this.displayElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
 
-            const combatDisplayMode = config.getSettingValue('totalActionTime', 'full');
+            const combatCompact = config.getSetting('actionBar_compactWidth');
 
-            if (combatDisplayMode === 'full') {
+            if (!combatCompact) {
                 // FULL MODE: Expand parent containers so HP/MP bars match skilling progress bar width
                 actionNameElement.style.removeProperty('overflow');
                 actionNameElement.style.removeProperty('text-overflow');
@@ -799,8 +829,7 @@ class ActionTimeDisplay {
 
         // Handle enhancing actions with specialized display
         if (actionDetails.type === '/action_types/enhancing') {
-            const displayMode = config.getSettingValue('totalActionTime', 'full');
-            this.buildEnhancingDisplay(action, actionDetails, actionNameElement, displayMode);
+            this.buildEnhancingDisplay(action, actionDetails, actionNameElement);
             this.reconnectActionNameObserver(actionNameElement);
             return;
         }
@@ -809,41 +838,17 @@ class ActionTimeDisplay {
         // ONLY for non-combat actions (combat needs normal width for HP/MP bars)
         // Use setProperty with 'important' to ensure we override game's styles
 
-        // Check display mode setting
-        const displayMode = config.getSettingValue('totalActionTime', 'full');
+        // Check compact width setting
+        const compactWidth = config.getSetting('actionBar_compactWidth');
 
-        if (displayMode === 'compact') {
+        if (compactWidth) {
             // COMPACT MODE: Limit to 800px and reset parents
             actionNameElement.style.setProperty('max-width', '800px', 'important');
             actionNameElement.style.setProperty('overflow', 'hidden', 'important');
             actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
             actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('width', '', 'important'); // Reset width
+            actionNameElement.style.setProperty('width', '', 'important');
 
-            // Reset parent containers to their original game constraints
-            const parent1 = actionNameElement.parentElement;
-            const parent2 = parent1?.parentElement;
-
-            if (parent1) {
-                parent1.style.removeProperty('max-width');
-                parent1.style.removeProperty('width');
-                parent1.style.removeProperty('overflow');
-            }
-
-            if (parent2) {
-                parent2.style.removeProperty('max-width');
-                parent2.style.removeProperty('width');
-                parent2.style.removeProperty('overflow');
-            }
-        } else if (displayMode === 'minimal') {
-            // MINIMAL MODE: Keep game's default width constraints, just show less info
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('max-width', 'none', 'important');
-            actionNameElement.style.setProperty('width', '', 'important'); // Reset to default
-
-            // Reset parent containers to game defaults (don't expand)
             const parent1 = actionNameElement.parentElement;
             const parent2 = parent1?.parentElement;
 
@@ -859,14 +864,13 @@ class ActionTimeDisplay {
                 parent2.style.removeProperty('overflow');
             }
         } else {
-            // FULL DETAILS MODE: Expand containers to show all text
+            // FULL WIDTH: Expand containers to show all text
             actionNameElement.style.setProperty('overflow', 'visible', 'important');
             actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
             actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
             actionNameElement.style.setProperty('max-width', 'none', 'important');
             actionNameElement.style.setProperty('width', 'auto', 'important');
 
-            // Remove max-width constraints from first 2 parent levels
             const parent1 = actionNameElement.parentElement;
             const parent2 = parent1?.parentElement;
 
@@ -1098,23 +1102,11 @@ class ActionTimeDisplay {
         // Line 1: Append stats to game's action name div
         const statsToAppend = [];
 
-        // For minimal mode, only show remaining actions (not detailed stats)
-        if (displayMode === 'minimal') {
-            // Only show remaining actions count
-            if (queueSizeDisplay !== Infinity) {
-                statsToAppend.push(`(${queueSizeDisplay.toLocaleString()} remaining)`);
-            } else if (materialLimit !== null) {
-                statsToAppend.push(`(∞ · ${this.formatLargeNumber(materialLimit)} max)`);
-            } else {
-                statsToAppend.push(`(∞)`);
-            }
-        } else {
-            // Full and Compact modes: Show all stats
-            // Queue size (with thousand separators)
+        // Queue count
+        if (config.getSetting('actionBar_showQueueCount')) {
             if (queueSizeDisplay !== Infinity) {
                 statsToAppend.push(`(${queueSizeDisplay.toLocaleString()} queued)`);
             } else if (materialLimit !== null) {
-                // Show infinity with material limit and what's limiting it
                 let limitLabel = '';
                 if (limitType === 'gold') {
                     limitLabel = 'gold limit';
@@ -1129,11 +1121,15 @@ class ActionTimeDisplay {
             } else {
                 statsToAppend.push(`(∞)`);
             }
+        }
 
-            // Time per action and actions/hour
+        // Time per action
+        if (config.getSetting('actionBar_showActionDuration')) {
             statsToAppend.push(`${actionTime.toFixed(2)}s/action`);
+        }
 
-            // Show both actions/hr (with efficiency) and items/hr (actual item output)
+        // Actions/hr and items/hr
+        if (config.getSetting('actionBar_showActionsPerHour')) {
             statsToAppend.push(
                 `${actionsPerHourWithEfficiency.toFixed(0)} actions/hr (${itemsPerHour.toFixed(0)} items/hr)`
             );
@@ -1143,9 +1139,12 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimates in our div
-        // Show time info if we have a finite number of remaining actions
-        // This includes both finite actions (hasMaxCount) and infinite actions with inventory count
-        if (remainingQueuedActions !== Infinity && !isNaN(remainingQueuedActions) && remainingQueuedActions > 0) {
+        if (
+            config.getSetting('actionBar_showTimeRemaining') &&
+            remainingQueuedActions !== Infinity &&
+            !isNaN(remainingQueuedActions) &&
+            remainingQueuedActions > 0
+        ) {
             const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : '';
             this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${matsLabel} ${timeStr} → ${clockTime}`;
@@ -1190,7 +1189,7 @@ class ActionTimeDisplay {
      * @param {HTMLElement} actionNameElement - Action name DOM element
      * @param {string} displayMode - Display mode ('full', 'compact', 'minimal')
      */
-    buildEnhancingDisplay(action, actionDetails, actionNameElement, displayMode) {
+    buildEnhancingDisplay(action, actionDetails, actionNameElement) {
         // Parse primaryItemHash to get item HRID and current enhancement level
         if (!action.primaryItemHash) {
             this.displayElement.innerHTML = '';
@@ -1294,17 +1293,12 @@ class ActionTimeDisplay {
         const materialTime = materialLimit !== null ? materialLimit * perActionTime : null;
 
         // Apply CSS overrides for non-combat display
-        if (displayMode === 'compact') {
+        const enhCompact = config.getSetting('actionBar_compactWidth');
+        if (enhCompact) {
             actionNameElement.style.setProperty('max-width', '800px', 'important');
             actionNameElement.style.setProperty('overflow', 'hidden', 'important');
             actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
             actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('width', '', 'important');
-        } else if (displayMode === 'minimal') {
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('max-width', 'none', 'important');
             actionNameElement.style.setProperty('width', '', 'important');
         } else {
             actionNameElement.style.setProperty('overflow', 'visible', 'important');
@@ -1330,23 +1324,25 @@ class ActionTimeDisplay {
         // Build stats line — enhancing is always infinite, so skip queue count display
         const statsToAppend = [];
 
-        if (displayMode === 'minimal') {
-            statsToAppend.push(`${actualSuccessRate.toFixed(1)}% success`);
-            statsToAppend.push(`~${formatWithSeparator(expectedAttempts)} to target`);
-        } else {
+        if (config.getSetting('actionBar_showActionDuration')) {
             statsToAppend.push(`${perActionTime.toFixed(2)}s/action`);
-            statsToAppend.push(`${actualSuccessRate.toFixed(1)}% success`);
-            statsToAppend.push(`~${formatWithSeparator(expectedAttempts)} to target`);
+        }
+        statsToAppend.push(`${actualSuccessRate.toFixed(1)}% success`);
+        statsToAppend.push(`~${formatWithSeparator(expectedAttempts)} to target`);
 
-            if (protectFrom > 0 && expectedProtections > 0) {
-                statsToAppend.push(`~${formatWithSeparator(expectedProtections)} protections`);
-            }
+        if (protectFrom > 0 && expectedProtections > 0) {
+            statsToAppend.push(`~${formatWithSeparator(expectedProtections)} protections`);
         }
 
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
-        // Line 2: Time estimate — always material-based for enhancing (stable, not volatile)
-        if (materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
+        // Line 2: Time estimate — always material-based for enhancing
+        if (
+            config.getSetting('actionBar_showTimeRemaining') &&
+            materialTime !== null &&
+            materialTime > 0 &&
+            isFinite(materialTime)
+        ) {
             const timeStr = timeReadable(materialTime);
 
             const completionTime = new Date();
@@ -1581,10 +1577,10 @@ class ActionTimeDisplay {
         const statsSpan = document.createElement('span');
         statsSpan.className = 'mwi-appended-stats';
 
-        // Check display mode
-        const displayMode = config.getSettingValue('totalActionTime', 'full');
+        // Check compact width toggle
+        const compactWidth = config.getSetting('actionBar_compactWidth');
 
-        if (displayMode === 'compact') {
+        if (compactWidth) {
             // COMPACT MODE: Truncate stats if too long
             statsSpan.style.cssText = `
                 color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});

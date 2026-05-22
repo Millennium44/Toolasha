@@ -90,17 +90,42 @@ export const settingsGroups = {
         title: 'Action Panel Enhancements',
         icon: '⚡',
         settings: {
-            totalActionTime: {
-                id: 'totalActionTime',
-                label: 'Top left: Action bar display mode',
-                type: 'select',
-                default: 'full',
-                options: [
-                    { value: 'full', label: 'Full Details (all stats + time)' },
-                    { value: 'compact', label: 'Compact (all stats, limited width)' },
-                    { value: 'minimal', label: 'Minimal (remaining + time only)' },
-                ],
-                help: 'Choose what information to display in the action bar. Full shows all stats, Compact limits width for wide monitors, Minimal shows only remaining actions and time to complete.',
+            actionBar_enabled: {
+                id: 'actionBar_enabled',
+                label: 'Action bar: Enable action bar display',
+                type: 'checkbox',
+                default: true,
+            },
+            actionBar_compactWidth: {
+                id: 'actionBar_compactWidth',
+                label: 'Action bar: Compact width (800px limit)',
+                type: 'checkbox',
+                default: false,
+                help: 'Limits action bar width to 800px. Useful for wide monitors.',
+            },
+            actionBar_showQueueCount: {
+                id: 'actionBar_showQueueCount',
+                label: 'Action bar: Queue/remaining count',
+                type: 'checkbox',
+                default: true,
+            },
+            actionBar_showActionDuration: {
+                id: 'actionBar_showActionDuration',
+                label: 'Action bar: Time per action (e.g. 14.94s/action)',
+                type: 'checkbox',
+                default: true,
+            },
+            actionBar_showActionsPerHour: {
+                id: 'actionBar_showActionsPerHour',
+                label: 'Action bar: Actions/hr and items/hr',
+                type: 'checkbox',
+                default: true,
+            },
+            actionBar_showTimeRemaining: {
+                id: 'actionBar_showTimeRemaining',
+                label: 'Action bar: Time remaining and completion ETA',
+                type: 'checkbox',
+                default: true,
             },
             actionPanel_liveCountdown: {
                 id: 'actionPanel_liveCountdown',
