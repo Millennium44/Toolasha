@@ -1114,7 +1114,8 @@ class CombatSimUI {
                 }
             } else {
                 const spawns = action.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
-                for (const spawn of spawns) {
+                const bossSpawns = action.combatZoneInfo?.fightInfo?.bossSpawns || [];
+                for (const spawn of [...spawns, ...bossSpawns]) {
                     const monster = combatMonsterDetailMap[spawn.combatMonsterHrid];
                     if (!monster) continue;
                     for (const drop of monster.dropTable || []) {
