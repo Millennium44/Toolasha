@@ -164,6 +164,30 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionPanel_showFilter: {
+                id: 'actionPanel_showFilter',
+                label: 'Skill page: Filter actions input',
+                type: 'checkbox',
+                default: true,
+            },
+            actionPanel_showSort: {
+                id: 'actionPanel_showSort',
+                label: 'Skill page: Sort button',
+                type: 'checkbox',
+                default: true,
+            },
+            actionPanel_showPricingMode: {
+                id: 'actionPanel_showPricingMode',
+                label: 'Skill page: Pricing mode button',
+                type: 'checkbox',
+                default: true,
+            },
+            actionPanel_showCraftToggle: {
+                id: 'actionPanel_showCraftToggle',
+                label: 'Skill page: Craft toggle button',
+                type: 'checkbox',
+                default: true,
+            },
             actionQueue: {
                 id: 'actionQueue',
                 label: 'Queued actions: Show total time and completion time',
