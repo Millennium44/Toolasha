@@ -18,15 +18,8 @@ function getBaseItemLevel(itemHrid) {
         const gameData = dataManager.getInitClientData();
         const itemData = gameData?.itemDetailMap?.[itemHrid];
 
-        // First try direct level field (works for consumables, resources, etc.)
-        if (itemData?.level) {
-            return itemData.level;
-        }
-
-        // For equipment, check levelRequirements array
-        if (itemData?.equipmentDetail?.levelRequirements?.length > 0) {
-            // Return the level from the first requirement (highest requirement)
-            return itemData.equipmentDetail.levelRequirements[0].level;
+        if (itemData?.itemLevel) {
+            return itemData.itemLevel;
         }
 
         return 0;
