@@ -25,6 +25,7 @@ import * as combatSimIntegration from '../features/combat/combat-sim-integration
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
 import combatSim from '../features/combat-sim/combat-sim.js';
+import labSim from '../features/combat-sim/lab-sim.js';
 
 // Combat stats
 import combatStats from '../features/combat-stats/combat-stats.js';
@@ -70,6 +71,7 @@ toolashaRoot.Combat = {
     combatScore,
     characterCardButton,
     combatSim,
+    labSim,
 };
 
 console.log('[Toolasha] Combat library loaded');

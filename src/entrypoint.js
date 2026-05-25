@@ -422,6 +422,13 @@ function registerFeatures() {
             module: Combat.combatSim,
             async: false,
         },
+        {
+            key: 'combatSim',
+            name: 'Lab Simulator',
+            category: 'Combat',
+            module: Combat.labSim,
+            async: false,
+        },
     ];
 
     // UI Features
