@@ -413,6 +413,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            itemTooltip_artisanPrices: {
+                id: 'itemTooltip_artisanPrices',
+                label: 'Adjust tooltip prices for Artisan Tea reduction',
+                type: 'checkbox',
+                default: true,
+                help: 'When viewing a recipe on an action panel, adjusts the total price to reflect actual material cost after Artisan Tea reduction',
+            },
             itemTooltip_profit: {
                 id: 'itemTooltip_profit',
                 label: 'Show production cost and profit',

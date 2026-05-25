@@ -24,6 +24,8 @@ import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import dom from '../../utils/dom.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../combat-stats/combat-stats-calculator.js';
+import { calculateArtisanBonus } from '../../utils/material-calculator.js';
+import { getActionHridFromName } from '../../utils/game-lookups.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
@@ -297,7 +299,8 @@ class TooltipPrices {
         if (config.getSetting('itemTooltip_prices') && price && (price.ask > 0 || price.bid > 0)) {
             // Get item amount from tooltip (for stacks)
             const amount = this.extractItemAmount(tooltipElement);
-            this.injectPriceDisplay(tooltipElement, price, amount, isCollectionTooltip);
+            const artisanAmount = this._getArtisanAdjustedAmount(tooltipElement, amount);
+            this.injectPriceDisplay(tooltipElement, price, amount, isCollectionTooltip, artisanAmount);
         }
 
         // Always show detailed craft profit if enabled
@@ -506,13 +509,50 @@ class TooltipPrices {
     }
 
     /**
+     * Get artisan-adjusted amount if tooltip is inside an action panel.
+     * @param {Element} tooltipElement - Tooltip popper element
+     * @param {number} baseAmount - Base recipe amount from tooltip
+     * @returns {number|null} Adjusted amount, or null if not applicable
+     */
+    _getArtisanAdjustedAmount(tooltipElement, baseAmount) {
+        if (baseAmount <= 1) return null;
+        if (!config.getSetting('itemTooltip_artisanPrices')) return null;
+
+        const trigger = document.querySelector(`[aria-describedby="${tooltipElement.id}"]`);
+        if (!trigger) return null;
+
+        const actionPanel =
+            trigger.closest('[class*="SkillActionDetail_regularComponent"]') ||
+            trigger.closest('[class*="SkillActionDetail_enhancingComponent"]');
+        if (!actionPanel) return null;
+
+        const actionNameEl = actionPanel.querySelector('[class*="SkillActionDetail_name"]');
+        if (!actionNameEl) return null;
+
+        const actionHrid = getActionHridFromName(actionNameEl.textContent.trim());
+        if (!actionHrid) return null;
+
+        const actionDetails = dataManager.getActionDetails(actionHrid);
+        if (!actionDetails) return null;
+
+        const artisanBonus = calculateArtisanBonus(actionDetails);
+        if (artisanBonus <= 0) return null;
+
+        const adjusted = Math.ceil(baseAmount * (1 - artisanBonus));
+        if (adjusted >= baseAmount) return null;
+
+        return adjusted;
+    }
+
+    /**
      * Inject price display into tooltip
      * @param {Element} tooltipElement - Tooltip element
      * @param {Object} price - { ask, bid }
-     * @param {number} amount - Item amount
+     * @param {number} amount - Item amount (base recipe amount)
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     * @param {number|null} artisanAmount - Artisan-adjusted amount, or null if not applicable
      */
-    injectPriceDisplay(tooltipElement, price, amount, isCollectionTooltip = false) {
+    injectPriceDisplay(tooltipElement, price, amount, isCollectionTooltip = false, artisanAmount = null) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
             : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
@@ -541,11 +581,13 @@ class TooltipPrices {
         const bidDisplay = price.bid > 0 ? formatTooltipPrice(price.bid) : '-';
 
         // Calculate totals (only if both prices valid and amount > 1)
+        const effectiveAmount = artisanAmount || amount;
         let totalDisplay = '';
-        if (amount > 1 && price.ask > 0 && price.bid > 0) {
-            const totalAsk = price.ask * amount;
-            const totalBid = price.bid * amount;
-            totalDisplay = ` (${formatTooltipPrice(totalAsk)} / ${formatTooltipPrice(totalBid)})`;
+        if (effectiveAmount > 1 && price.ask > 0 && price.bid > 0) {
+            const totalAsk = price.ask * effectiveAmount;
+            const totalBid = price.bid * effectiveAmount;
+            const amountLabel = artisanAmount ? ` ×${numberFormatter(artisanAmount)}` : '';
+            totalDisplay = ` (${formatTooltipPrice(totalAsk)} / ${formatTooltipPrice(totalBid)}${amountLabel})`;
         }
 
         // Format: "Price: 1,200 / 950" or "Price: 1,200 / -" or "Price: - / 950"

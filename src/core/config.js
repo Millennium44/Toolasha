@@ -79,6 +79,13 @@ class Config {
                 description: 'Shows bid/ask prices in item tooltips',
                 settingKey: 'itemTooltip_prices',
             },
+            tooltipArtisanPrices: {
+                enabled: true,
+                name: 'Artisan-Adjusted Tooltip Prices',
+                category: 'Market',
+                description: 'Adjusts tooltip price totals for Artisan Tea material reduction',
+                settingKey: 'itemTooltip_artisanPrices',
+            },
             tooltipProfit: {
                 enabled: true,
                 name: 'Profit Calculator in Tooltips',

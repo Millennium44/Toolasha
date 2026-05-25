@@ -227,7 +227,7 @@ export function calculateMaterialRequirements(actionHrid, numActions, accountFor
  * @param {Object} actionDetails - Action details from game data
  * @returns {number} Artisan bonus (0-1 decimal, e.g., 0.1129 for 11.29% reduction)
  */
-function calculateArtisanBonus(actionDetails) {
+export function calculateArtisanBonus(actionDetails) {
     try {
         const gameData = dataManager.getInitClientData();
         if (!gameData) {
