@@ -50,6 +50,7 @@ class MarketplaceShortcuts {
         const unregisterModal = domObserver.onClass('MarketplaceShortcuts_modal', 'Modal_modalContainer', (modal) => {
             this.autofillQuantity(modal);
             this.injectQuickInputButtons(modal);
+            this.injectMultiplierButtons(modal);
             this.injectOwnedCount(modal);
             this.focusQuantityInput(modal);
         });
@@ -700,6 +701,77 @@ class MarketplaceShortcuts {
     }
 
     /**
+     * Inject ÷2 and ×2 multiplier buttons into price and quantity rows.
+     * @param {HTMLElement} modal - Modal container element
+     */
+    injectMultiplierButtons(modal) {
+        if (!config.getSetting('market_multiplierButtons')) return;
+
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
+        if (!header) return;
+
+        const headerText = header.textContent.trim();
+        const isMarketplaceModal =
+            headerText.includes('Buy Now') ||
+            headerText.includes('Buy Listing') ||
+            headerText.includes('Sell Now') ||
+            headerText.includes('Sell Listing');
+        if (!isMarketplaceModal) return;
+
+        setTimeout(() => {
+            if (modal.querySelector('.mwi-mp-multiplier')) return;
+
+            const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
+            const quantityRow = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"]');
+
+            for (const row of [priceRow, quantityRow]) {
+                if (!row) continue;
+
+                const input = row.querySelector('input[type="number"]');
+                if (!input) continue;
+
+                const buttonContainers = row.querySelectorAll('div[class*="MarketplacePanel_buttonContainer"]');
+                if (buttonContainers.length < 2) continue;
+
+                const firstContainer = buttonContainers[0];
+                const lastContainer = buttonContainers[buttonContainers.length - 1];
+
+                const existingBtn = firstContainer.querySelector('button');
+                const btnClass = existingBtn?.className || '';
+
+                const divideWrapper = document.createElement('div');
+                divideWrapper.className = firstContainer.className + ' mwi-mp-multiplier';
+                const divideBtn = document.createElement('button');
+                divideBtn.className = btnClass;
+                divideBtn.textContent = '÷2';
+                divideBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const current = parseInt(input.value) || 0;
+                    setReactInputValue(input, Math.max(1, Math.floor(current / 2)));
+                });
+                divideWrapper.appendChild(divideBtn);
+
+                const multiplyWrapper = document.createElement('div');
+                multiplyWrapper.className = lastContainer.className + ' mwi-mp-multiplier';
+                const multiplyBtn = document.createElement('button');
+                multiplyBtn.className = btnClass;
+                multiplyBtn.textContent = '×2';
+                multiplyBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const current = parseInt(input.value) || 0;
+                    setReactInputValue(input, current * 2);
+                });
+                multiplyWrapper.appendChild(multiplyBtn);
+
+                firstContainer.insertAdjacentElement('beforebegin', divideWrapper);
+                lastContainer.insertAdjacentElement('afterend', multiplyWrapper);
+            }
+        }, 100);
+    }
+
+    /**
      * Disable and cleanup
      */
     disable() {
@@ -715,6 +787,7 @@ class MarketplaceShortcuts {
 
         document.querySelectorAll('.mwi-marketplace-dropdown').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-mp-quick-input').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-mp-multiplier').forEach((el) => el.remove());
 
         this.itemNameToHridCache = null;
         this.isInitialized = false;

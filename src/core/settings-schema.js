@@ -1542,6 +1542,13 @@ export const settingsGroups = {
                 default: '',
                 help: 'Comma-separated preset values (e.g. 50,500,5000). Leave blank for defaults (10, 100, 1000). Max 8 values.',
             },
+            market_multiplierButtons: {
+                id: 'market_multiplierButtons',
+                label: 'Marketplace: ÷2 and ×2 buttons on order dialogs',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds ÷2 and ×2 buttons to the price and quantity rows in buy/sell dialogs',
+            },
             market_showOwnedInBuyModal: {
                 id: 'market_showOwnedInBuyModal',
                 label: 'Marketplace: Show owned count in buy dialogs',
