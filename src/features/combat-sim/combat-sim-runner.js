@@ -346,9 +346,19 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @returns {Promise<Object>} SimResult with labyrinth fields
  */
 export async function runLabyrinthSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, hours, communityBuffs } = params;
+    const {
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        monsterHrid,
+        roomLevel,
+        crates,
+        hours,
+        communityBuffs,
+        labyrinthCombatBuffs,
+    } = params;
 
-    const extraBuffs = buildExtraBuffs(communityBuffs);
+    const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const ONE_HOUR_NS = 3600 * 1e9;
 
     // Cancel any previous run

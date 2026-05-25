@@ -458,6 +458,14 @@ class DataManager {
             this.emit('character_info_updated', data);
         });
 
+        // Handle setting_updated (labyrinth skip thresholds, crate selection, etc.)
+        this.webSocketHook.on('setting_updated', (data) => {
+            if (this.characterData && data.characterSetting) {
+                this.characterData.characterSetting = data.characterSetting;
+            }
+            this.emit('setting_updated', data);
+        });
+
         // Handle quests_updated (keep characterQuests in sync mid-session)
         this.webSocketHook.on('quests_updated', (data) => {
             if (data.endCharacterQuests && Array.isArray(data.endCharacterQuests)) {

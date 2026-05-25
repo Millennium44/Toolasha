@@ -388,6 +388,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthClearRate',
+            name: 'Labyrinth Clear Rate',
+            category: 'Combat',
+            module: Combat.labyrinthClearRate,
+            async: false,
+        },
+        {
             key: 'loadoutSort',
             name: 'Loadout Sort',
             category: 'Combat',
