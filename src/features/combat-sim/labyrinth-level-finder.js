@@ -35,6 +35,7 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
         monsterHrid,
         crates,
         communityBuffs,
+        labyrinthCombatBuffs,
         threshold = DEFAULT_THRESHOLD,
         minLevel = DEFAULT_MIN_LEVEL,
         maxLevel = DEFAULT_MAX_LEVEL,
@@ -61,6 +62,7 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
             crates,
             hours: simHours,
             communityBuffs,
+            labyrinthCombatBuffs,
         });
 
         const attempts = simResult.labyAttemptCount || 1;
@@ -83,6 +85,7 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
     return {
         maxLevel: bestLevel,
         winRate: bestWinRate,
+        steps: step,
     };
 }
 

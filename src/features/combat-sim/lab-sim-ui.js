@@ -627,14 +627,15 @@ class LabSimUI {
                         zoneHrid,
                         monsterHrid,
                         crates,
-                        hours,
+                        simHours: hours,
                         communityBuffs,
                         labyrinthCombatBuffs,
+                        threshold,
                     },
-                    threshold,
                     (progress) => {
-                        progressFill.style.width = `${progress.percent}%`;
-                        progressText.textContent = `Level ${progress.currentLevel} (${progress.step})`;
+                        const percent = Math.round((progress.step / progress.totalSteps) * 100);
+                        progressFill.style.width = `${percent}%`;
+                        progressText.textContent = `Level ${progress.level} — ${(progress.winRate * 100).toFixed(0)}% (step ${progress.step}/${progress.totalSteps})`;
                     }
                 );
 
