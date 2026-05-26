@@ -386,6 +386,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Display total value, average time, and daily output in loot logs',
             },
+            lootLogHistory: {
+                id: 'lootLogHistory',
+                label: 'Loot Log: Persist and display historical entries',
+                type: 'checkbox',
+                default: true,
+                help: 'Saves loot log entries and displays older entries below current ones in the loot log panel',
+            },
             inventoryCountDisplay: {
                 id: 'inventoryCountDisplay',
                 label: 'Action panels: Show current inventory count of output item',

@@ -9,7 +9,7 @@ class Storage {
         this.db = null;
         this.available = false;
         this.dbName = 'ToolashaDB';
-        this.dbVersion = 15; // Bumped for queueSnapshots store
+        this.dbVersion = 16; // Bumped for lootLogHistory store
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName}
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
@@ -155,6 +155,11 @@ class Storage {
                 // Create queueSnapshots store if it doesn't exist (for cross-character queue monitor)
                 if (!db.objectStoreNames.contains('queueSnapshots')) {
                     db.createObjectStore('queueSnapshots');
+                }
+
+                // Create lootLogHistory store if it doesn't exist (for extended loot log)
+                if (!db.objectStoreNames.contains('lootLogHistory')) {
+                    db.createObjectStore('lootLogHistory');
                 }
             };
         });

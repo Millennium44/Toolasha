@@ -12,6 +12,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, numberFormatter } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import lootLogHistory from './loot-log-history.js';
 
 class LootLogStats {
     constructor() {
@@ -21,6 +22,10 @@ class LootLogStats {
         this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
         this.itemsSpriteUrl = null;
+        this.actionsSpriteUrl = null;
+        this.historyEnabled = false;
+        this.historicalBatchSize = 20;
+        this.historicalRendered = 0;
     }
 
     /**
@@ -31,6 +36,8 @@ class LootLogStats {
 
         const enabled = config.getSetting('lootLogStats');
         if (!enabled) return;
+
+        this.historyEnabled = config.getSetting('lootLogHistory');
 
         // Listen for loot_log_updated messages from WebSocket
         const wsHandler = (data) => this.handleLootLogUpdate(data);
@@ -45,6 +52,16 @@ class LootLogStats {
         );
         this.unregisterHandlers.push(unregisterObserver);
 
+        // Watch for loot log container to inject historical entries
+        if (this.historyEnabled) {
+            const unregisterHistoryObserver = domObserver.onClass(
+                'LootLogHistory',
+                'LootLogPanel_actionLoots__3oTid',
+                () => this.renderHistoricalEntries()
+            );
+            this.unregisterHandlers.push(unregisterHistoryObserver);
+        }
+
         this.initialized = true;
     }
 
@@ -58,10 +75,19 @@ class LootLogStats {
         // Store loot log data for matching with DOM elements
         this.currentLootLogData = data.lootLog;
 
+        // Persist to history if enabled
+        if (this.historyEnabled) {
+            lootLogHistory.mergeAndSave(data.lootLog);
+        }
+
         // Process existing loot log elements after short delay
         const timeout = setTimeout(() => {
             const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
             lootLogElements.forEach((element) => this.processLootLogElement(element));
+
+            if (this.historyEnabled) {
+                this.renderHistoricalEntries();
+            }
         }, 200);
 
         this.timerRegistry.registerTimeout(timeout);
@@ -528,6 +554,312 @@ class LootLogStats {
     }
 
     /**
+     * Render historical entries below native loot log entries
+     */
+    async renderHistoricalEntries() {
+        const container = document.querySelector('.LootLogPanel_actionLoots__3oTid');
+        if (!container) return;
+
+        // Remove existing historical section
+        const existing = container.querySelector('.mwi-loot-log-history');
+        if (existing) existing.remove();
+
+        if (!this.currentLootLogData) return;
+
+        // Build set of current IDs
+        const currentIds = new Set(this.currentLootLogData.map((e) => e.characterActionId));
+
+        // Get historical entries not in current set
+        const historicalEntries = await lootLogHistory.getHistoricalEntries(currentIds);
+        if (historicalEntries.length === 0) return;
+
+        // Create separator
+        const separator = document.createElement('div');
+        separator.style.cssText = `
+            text-align: center;
+            padding: 8px 0;
+            margin-top: 8px;
+            border-top: 1px solid rgba(96, 165, 250, 0.3);
+            color: rgba(96, 165, 250, 0.7);
+            font-size: 0.85em;
+        `;
+        separator.textContent = `— Historical Entries (${historicalEntries.length}) —`;
+
+        // Create wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mwi-loot-log-history';
+        wrapper.appendChild(separator);
+
+        // Render first batch
+        this.historicalRendered = 0;
+        const batch = historicalEntries.slice(0, this.historicalBatchSize);
+        for (const entry of batch) {
+            const el = this.renderHistoricalEntry(entry);
+            if (el) wrapper.appendChild(el);
+        }
+        this.historicalRendered = batch.length;
+
+        // "Show more" button if needed
+        if (historicalEntries.length > this.historicalBatchSize) {
+            const showMoreBtn = document.createElement('button');
+            showMoreBtn.className = 'mwi-loot-log-history-more';
+            showMoreBtn.textContent = `Show more (${historicalEntries.length - this.historicalRendered} remaining)`;
+            showMoreBtn.style.cssText = `
+                display: block;
+                width: 100%;
+                margin-top: 8px;
+                padding: 6px;
+                background: rgba(96, 165, 250, 0.1);
+                border: 1px solid rgba(96, 165, 250, 0.3);
+                border-radius: 4px;
+                color: rgba(96, 165, 250, 0.8);
+                cursor: pointer;
+                font-size: 0.85em;
+            `;
+            showMoreBtn.addEventListener('click', () => {
+                const nextBatch = historicalEntries.slice(
+                    this.historicalRendered,
+                    this.historicalRendered + this.historicalBatchSize
+                );
+                for (const entry of nextBatch) {
+                    const el = this.renderHistoricalEntry(entry);
+                    if (el) wrapper.insertBefore(el, showMoreBtn);
+                }
+                this.historicalRendered += nextBatch.length;
+                const remaining = historicalEntries.length - this.historicalRendered;
+                if (remaining <= 0) {
+                    showMoreBtn.remove();
+                } else {
+                    showMoreBtn.textContent = `Show more (${remaining} remaining)`;
+                }
+            });
+            wrapper.appendChild(showMoreBtn);
+        }
+
+        container.appendChild(wrapper);
+    }
+
+    /**
+     * Render a single historical loot log entry matching native styling
+     * @param {Object} entry - Historical log entry from storage
+     * @returns {HTMLElement|null}
+     */
+    renderHistoricalEntry(entry) {
+        if (!entry) return null;
+
+        // Skip enhancing entries
+        if (entry.actionHrid === '/actions/enhancing/enhance') return null;
+
+        const entryEl = document.createElement('div');
+        entryEl.className = 'mwi-loot-log-history-entry';
+        entryEl.style.cssText = `
+            border-left: 3px solid rgba(96, 165, 250, 0.3);
+            opacity: 0.9;
+            padding: 8px 8px 8px 12px;
+            margin-top: 8px;
+            position: relative;
+            background: rgba(28, 33, 40, 0.8);
+            border-radius: 8px;
+        `;
+
+        // Delete button (red X)
+        const deleteBtn = document.createElement('span');
+        deleteBtn.textContent = '✕';
+        deleteBtn.style.cssText = `
+            position: absolute;
+            top: 4px;
+            right: 8px;
+            color: rgba(239, 68, 68, 0.6);
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 3px;
+        `;
+        deleteBtn.addEventListener('mouseenter', () => {
+            deleteBtn.style.color = 'rgba(239, 68, 68, 1)';
+            deleteBtn.style.background = 'rgba(239, 68, 68, 0.1)';
+        });
+        deleteBtn.addEventListener('mouseleave', () => {
+            deleteBtn.style.color = 'rgba(239, 68, 68, 0.6)';
+            deleteBtn.style.background = 'none';
+        });
+        deleteBtn.addEventListener('click', async () => {
+            await this.deleteHistoricalEntry(entry.characterActionId);
+            entryEl.remove();
+            // Update separator count
+            const wrapper = document.querySelector('.mwi-loot-log-history');
+            if (wrapper) {
+                const sep = wrapper.querySelector('div');
+                const remaining = wrapper.querySelectorAll('.mwi-loot-log-history-entry').length;
+                if (remaining === 0) {
+                    wrapper.remove();
+                } else if (sep) {
+                    sep.textContent = `— Historical Entries (${remaining}) —`;
+                }
+            }
+        });
+        entryEl.appendChild(deleteBtn);
+
+        // Header row: action icon + "Category - Action Name (count)"
+        const headerDiv = document.createElement('div');
+        headerDiv.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 2px;';
+
+        const actionIcon = this.createActionIcon(entry.actionHrid, 20);
+        if (actionIcon) headerDiv.appendChild(actionIcon);
+
+        const actionLabel = document.createElement('span');
+        actionLabel.style.cssText = 'font-weight: bold; color: #fff;';
+        const category = this.getActionCategory(entry.actionHrid);
+        const name = this.getActionName(entry.actionHrid);
+        const countStr = entry.actionCount ? ` (${numberFormatter(entry.actionCount)})` : '';
+        actionLabel.textContent = category ? `${category} - ${name}${countStr}` : `${name}${countStr}`;
+        headerDiv.appendChild(actionLabel);
+
+        entryEl.appendChild(headerDiv);
+
+        // Start Time row + total value
+        const timeDiv = document.createElement('div');
+        timeDiv.style.cssText = 'margin-bottom: 2px;';
+
+        const startDate = new Date(entry.startTime);
+        timeDiv.textContent = `Start Time: ${startDate.toLocaleString()}`;
+        entryEl.appendChild(timeDiv);
+
+        this.injectTotalValue(timeDiv, entry);
+
+        // Duration row + avg time + daily output
+        const durationDiv = document.createElement('div');
+        durationDiv.style.cssText = 'margin-bottom: 6px;';
+
+        if (entry.startTime && entry.endTime) {
+            const durationSec = (new Date(entry.endTime) - new Date(entry.startTime)) / 1000;
+            durationDiv.textContent = `Duration: ${this.formatDuration(durationSec)}`;
+        }
+        entryEl.appendChild(durationDiv);
+
+        this.injectTimeAndDailyOutput(durationDiv, entry);
+
+        // Drops grid - large icons with counts below (matching native style)
+        if (entry.drops && Object.keys(entry.drops).length > 0) {
+            const dropsDiv = document.createElement('div');
+            dropsDiv.style.cssText = 'display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;';
+
+            for (const [hrid, count] of Object.entries(entry.drops)) {
+                const baseHrid = hrid.replace(/::\d+$/, '');
+                const dropEl = document.createElement('div');
+                dropEl.style.cssText = `
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    width: 60px;
+                `;
+
+                const icon = this.createItemIcon(baseHrid, 48);
+                if (icon) {
+                    icon.style.cssText = `
+                        width: 48px;
+                        height: 48px;
+                        background: rgba(255, 255, 255, 0.03);
+                        border-radius: 4px;
+                        padding: 4px;
+                    `;
+                    dropEl.appendChild(icon);
+                }
+
+                const countEl = document.createElement('span');
+                countEl.style.cssText = 'font-size: 0.8em; color: #ccc; margin-top: 2px;';
+                countEl.textContent = numberFormatter(count);
+                dropEl.appendChild(countEl);
+
+                dropsDiv.appendChild(dropEl);
+            }
+
+            entryEl.appendChild(dropsDiv);
+        }
+
+        return entryEl;
+    }
+
+    /**
+     * Delete a single historical entry by characterActionId
+     * @param {number} characterActionId
+     */
+    async deleteHistoricalEntry(characterActionId) {
+        const key = lootLogHistory._getKey();
+        if (!key) return;
+        const entries = await lootLogHistory._load();
+        const filtered = entries.filter((e) => e.characterActionId !== characterActionId);
+        await lootLogHistory._save(filtered);
+    }
+
+    /**
+     * Get action category from HRID (e.g. "/actions/cooking/donut" → "Cooking")
+     * @param {string} actionHrid
+     * @returns {string|null}
+     */
+    getActionCategory(actionHrid) {
+        if (!actionHrid) return null;
+        const parts = actionHrid.split('/');
+        // Format: /actions/category/name
+        if (parts.length >= 3) {
+            const category = parts[2];
+            return category.charAt(0).toUpperCase() + category.slice(1);
+        }
+        return null;
+    }
+
+    /**
+     * Create an SVG action icon element
+     * @param {string} actionHrid - Action HRID
+     * @param {number} size - Icon size in pixels
+     * @returns {SVGElement|null}
+     */
+    createActionIcon(actionHrid, size) {
+        const spriteUrl = this.getActionsSpriteUrl();
+        if (!spriteUrl) return null;
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', String(size));
+        svg.setAttribute('height', String(size));
+        svg.style.flexShrink = '0';
+
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        const iconName = actionHrid.split('/').pop();
+        use.setAttribute('href', `${spriteUrl}#${iconName}`);
+        svg.appendChild(use);
+
+        return svg;
+    }
+
+    /**
+     * Get the actions sprite URL (cached after first lookup)
+     * @returns {string|null}
+     */
+    getActionsSpriteUrl() {
+        if (!this.actionsSpriteUrl) {
+            const el = document.querySelector('use[href*="actions_sprite"]');
+            if (el) {
+                const href = el.getAttribute('href');
+                this.actionsSpriteUrl = href ? href.split('#')[0] : null;
+            }
+        }
+        return this.actionsSpriteUrl;
+    }
+
+    /**
+     * Get action display name from HRID
+     * @param {string} actionHrid - Action HRID
+     * @returns {string}
+     */
+    getActionName(actionHrid) {
+        if (!actionHrid) return 'Unknown';
+        const details = dataManager.getActionDetails(actionHrid);
+        if (details?.name) return details.name;
+        return actionHrid.split('/').pop().replace(/_/g, ' ');
+    }
+
+    /**
      * Cleanup when disabling feature
      */
     cleanup() {
@@ -541,6 +873,10 @@ class LootLogStats {
         const dayValueSpans = document.querySelectorAll('.mwi-loot-log-day-value');
         dayValueSpans.forEach((span) => span.remove());
 
+        // Remove historical entries section
+        const historySection = document.querySelectorAll('.mwi-loot-log-history');
+        historySection.forEach((el) => el.remove());
+
         // Unregister all handlers
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
@@ -552,6 +888,8 @@ class LootLogStats {
         this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
         this.itemsSpriteUrl = null;
+        this.actionsSpriteUrl = null;
+        this.historicalRendered = 0;
         this.initialized = false;
     }
 }
