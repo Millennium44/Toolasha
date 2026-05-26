@@ -119,8 +119,8 @@ class QueueSnapshot {
 
             this.snapshots.set(oldId, snapshot);
 
-            // Persist to IndexedDB
-            storage.set(`queueSnapshot_${oldId}`, snapshot, STORE_NAME);
+            // Persist to IndexedDB immediately (must complete before _loadSnapshots re-runs on re-init)
+            storage.set(`queueSnapshot_${oldId}`, snapshot, STORE_NAME, true);
         } catch (error) {
             console.error('[QueueSnapshot] Failed to create snapshot:', error);
         }
