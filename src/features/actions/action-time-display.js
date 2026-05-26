@@ -105,6 +105,22 @@ class ActionTimeDisplay {
             });
         }
 
+        // Listen for actions_updated so display refreshes when new actions arrive via WebSocket
+        // (the DOM updates optimistically before the WS message, so the mutation observer fires
+        // before characterActions is populated — this ensures we retry once the data is available)
+        if (!this.actionsUpdatedHandler) {
+            this.actionsUpdatedHandler = () => {
+                this.updateDisplay();
+            };
+            dataManager.on('actions_updated', this.actionsUpdatedHandler);
+            this.cleanupRegistry.registerCleanup(() => {
+                if (this.actionsUpdatedHandler) {
+                    dataManager.off('actions_updated', this.actionsUpdatedHandler);
+                    this.actionsUpdatedHandler = null;
+                }
+            });
+        }
+
         this.cleanupRegistry.registerCleanup(() => {
             const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
             if (actionNameElement) {
