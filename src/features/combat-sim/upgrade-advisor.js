@@ -999,7 +999,7 @@ export function generateLabyrinthBuffCandidates() {
             buffKey: def.key,
             currentLevel,
             step: def.step,
-            tokenCost: def.tokenCost,
+            tokenCost: def.tokenCost * (currentLevel + 1),
             description: `${def.name} Lv${currentLevel}\u2192${currentLevel + 1}`,
             uniqueKey: def.uniqueKey,
             typeHrid: def.typeHrid,
