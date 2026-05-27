@@ -135,7 +135,10 @@ class QueueSnapshot {
             for (const key of keys) {
                 const snapshot = await storage.get(key, STORE_NAME);
                 if (snapshot?.characterId) {
-                    this.snapshots.set(snapshot.characterId, snapshot);
+                    const existing = this.snapshots.get(snapshot.characterId);
+                    if (!existing || existing.timestamp <= snapshot.timestamp) {
+                        this.snapshots.set(snapshot.characterId, snapshot);
+                    }
                 }
             }
         } catch (error) {
