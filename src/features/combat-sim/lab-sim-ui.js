@@ -691,10 +691,11 @@ class LabSimUI {
         if (!container) return;
 
         const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
+        const attempts = simResult.labyAttemptCount || 0;
         const encounters = simResult.encounters || 0;
         const deaths = simResult.deaths?.player1 || 0;
         const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
-        const winRate = encounters > 0 ? (((encounters - deaths) / encounters) * 100).toFixed(2) : '0.00';
+        const winRate = attempts > 0 ? ((encounters / attempts) * 100).toFixed(2) : '0.00';
 
         const monsterName = monsterHrid.split('/').pop().replace(/_/g, ' ');
 
@@ -705,7 +706,7 @@ class LabSimUI {
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 20px; font-size:12px;">
                     <div><span style="color:#888;">Win Rate:</span> <span style="color:${parseFloat(winRate) >= 95 ? '#4caf50' : parseFloat(winRate) >= 50 ? '#ff9800' : '#f44336'}; font-weight:600;">${winRate}%</span></div>
-                    <div><span style="color:#888;">Encounters:</span> ${formatWithSeparator(encounters)}</div>
+                    <div><span style="color:#888;">Encounters:</span> ${formatWithSeparator(attempts)}</div>
                     <div><span style="color:#888;">Deaths:</span> <span style="color:${deaths > 0 ? '#f44336' : '#4caf50'};">${formatWithSeparator(deaths)}</span></div>
                     <div><span style="color:#888;">Sim Time:</span> ${simHours.toFixed(1)}h</div>
                 </div>
