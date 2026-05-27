@@ -512,7 +512,9 @@ function registerFeatures() {
             customCheck: () =>
                 config.getSetting('taskProfitCalculator') ||
                 config.getSetting('taskGoMerge') ||
-                config.getSetting('taskQueuedIndicator'),
+                config.getSetting('taskQueuedIndicator') ||
+                config.getSetting('taskMaterialsIndicator') ||
+                config.getSetting('taskEfficiencyRating'),
         },
         {
             key: 'taskRerollTracker',

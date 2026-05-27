@@ -353,12 +353,16 @@ class TaskProfitDisplay {
         config.onSettingChange('taskProfitCalculator', (value) => {
             if (value) {
                 this.initialize();
+                this.updateTaskProfits(true);
+            } else if (
+                config.getSetting('taskGoMerge') ||
+                config.getSetting('taskQueuedIndicator') ||
+                config.getSetting('taskMaterialsIndicator') ||
+                config.getSetting('taskEfficiencyRating')
+            ) {
+                this.updateTaskProfits(true);
             } else {
                 this.disable();
-                // Re-initialize if other features hosted by this module are still enabled
-                if (config.getSetting('taskGoMerge') || config.getSetting('taskQueuedIndicator')) {
-                    this.initialize();
-                }
             }
         });
 
@@ -412,7 +416,9 @@ class TaskProfitDisplay {
         if (
             !config.getSetting('taskProfitCalculator') &&
             !config.getSetting('taskGoMerge') &&
-            !config.getSetting('taskQueuedIndicator')
+            !config.getSetting('taskQueuedIndicator') &&
+            !config.getSetting('taskMaterialsIndicator') &&
+            !config.getSetting('taskEfficiencyRating')
         ) {
             return;
         }
@@ -627,10 +633,6 @@ class TaskProfitDisplay {
      * Update all task profit displays
      */
     updateTaskProfits(forceRefresh = false) {
-        if (!config.getSetting('taskProfitCalculator')) {
-            return;
-        }
-
         const taskListNode = document.querySelector(GAME.TASK_LIST);
         if (!taskListNode) return;
 
@@ -1244,83 +1246,79 @@ class TaskProfitDisplay {
             profitContainer.dataset.completionSeconds = completionSeconds;
         }
 
-        // Create main profit display (Option B format: compact with time)
-        const profitLine = document.createElement('div');
-        const profitLineColor = profitData.hasMissingPrices
-            ? config.COLOR_ACCENT
-            : profitData.totalProfit >= 0
-              ? '#4ade80'
-              : config.COLOR_LOSS;
-        profitLine.style.cssText = `
-            color: ${profitLineColor};
-            cursor: pointer;
-            user-select: none;
-        `;
-        const totalProfitLabel = profitData.hasMissingPrices ? '-- ⚠' : formatKMB(Math.round(profitData.totalProfit));
-        profitLine.innerHTML = `💰 ${totalProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ▸`;
-
-        // Create breakdown section (hidden by default)
-        const breakdownSection = document.createElement('div');
-        breakdownSection.className = 'mwi-task-profit-breakdown';
-        breakdownSection.style.cssText = `
-            display: none;
-            margin-top: 6px;
-            padding: 8px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 4px;
-            font-size: 0.7rem;
-            color: #ddd;
-        `;
-
-        // Build breakdown HTML
-        breakdownSection.innerHTML = this.buildBreakdownHTML(profitData);
-
-        // Store listener references for cleanup
+        const showProfit = config.getSetting('taskProfitCalculator');
         const listeners = new Map();
 
-        // Add click handlers for expandable sections
-        breakdownSection.querySelectorAll('.mwi-expandable-header').forEach((header) => {
-            const listener = (e) => {
-                e.stopPropagation();
-                const section = header.getAttribute('data-section');
-                const detailSection = breakdownSection.querySelector(
-                    `.mwi-expandable-section[data-section="${section}"]`
-                );
-
-                if (detailSection) {
-                    const isHidden = detailSection.style.display === 'none';
-                    detailSection.style.display = isHidden ? 'block' : 'none';
-
-                    // Update arrow
-                    const currentText = header.textContent;
-                    header.textContent = currentText.replace(isHidden ? '▸' : '▾', isHidden ? '▾' : '▸');
-                }
-            };
-
-            header.addEventListener('click', listener);
-            listeners.set(header, listener);
-        });
-
-        // Toggle breakdown on click
-        const profitLineListener = (e) => {
-            e.stopPropagation();
-            const isHidden = breakdownSection.style.display === 'none';
-            breakdownSection.style.display = isHidden ? 'block' : 'none';
-            const updatedProfitLabel = profitData.hasMissingPrices
+        if (showProfit) {
+            const profitLine = document.createElement('div');
+            const profitLineColor = profitData.hasMissingPrices
+                ? config.COLOR_ACCENT
+                : profitData.totalProfit >= 0
+                  ? '#4ade80'
+                  : config.COLOR_LOSS;
+            profitLine.style.cssText = `
+                color: ${profitLineColor};
+                cursor: pointer;
+                user-select: none;
+            `;
+            const totalProfitLabel = profitData.hasMissingPrices
                 ? '-- ⚠'
                 : formatKMB(Math.round(profitData.totalProfit));
-            profitLine.innerHTML = `💰 ${updatedProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
-        };
+            profitLine.innerHTML = `💰 ${totalProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ▸`;
 
-        profitLine.addEventListener('click', profitLineListener);
-        listeners.set(profitLine, profitLineListener);
+            const breakdownSection = document.createElement('div');
+            breakdownSection.className = 'mwi-task-profit-breakdown';
+            breakdownSection.style.cssText = `
+                display: none;
+                margin-top: 6px;
+                padding: 8px;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 4px;
+                font-size: 0.7rem;
+                color: #ddd;
+            `;
+            breakdownSection.innerHTML = this.buildBreakdownHTML(profitData);
 
-        // Store all listeners for cleanup
+            breakdownSection.querySelectorAll('.mwi-expandable-header').forEach((header) => {
+                const listener = (e) => {
+                    e.stopPropagation();
+                    const section = header.getAttribute('data-section');
+                    const detailSection = breakdownSection.querySelector(
+                        `.mwi-expandable-section[data-section="${section}"]`
+                    );
+                    if (detailSection) {
+                        const isHidden = detailSection.style.display === 'none';
+                        detailSection.style.display = isHidden ? 'block' : 'none';
+                        const currentText = header.textContent;
+                        header.textContent = currentText.replace(isHidden ? '▸' : '▾', isHidden ? '▾' : '▸');
+                    }
+                };
+                header.addEventListener('click', listener);
+                listeners.set(header, listener);
+            });
+
+            const profitLineListener = (e) => {
+                e.stopPropagation();
+                const isHidden = breakdownSection.style.display === 'none';
+                breakdownSection.style.display = isHidden ? 'block' : 'none';
+                const updatedProfitLabel = profitData.hasMissingPrices
+                    ? '-- ⚠'
+                    : formatKMB(Math.round(profitData.totalProfit));
+                profitLine.innerHTML = `💰 ${updatedProfitLabel} | <span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
+            };
+            profitLine.addEventListener('click', profitLineListener);
+            listeners.set(profitLine, profitLineListener);
+
+            profitContainer.appendChild(profitLine);
+            profitContainer.appendChild(breakdownSection);
+        } else if (completionSeconds !== null) {
+            const timeLine = document.createElement('div');
+            timeLine.style.cssText = `color: ${config.COLOR_ACCENT};`;
+            timeLine.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate}`;
+            profitContainer.appendChild(timeLine);
+        }
+
         this.eventListeners.set(profitContainer, listeners);
-
-        profitContainer.appendChild(profitLine);
-
-        profitContainer.appendChild(breakdownSection);
 
         if (config.getSetting('taskMaterialsIndicator')) {
             const materialsBadge = buildMaterialsBadge(profitData);
