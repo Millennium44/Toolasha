@@ -717,7 +717,10 @@ class ActionTimeDisplay {
      */
     updateDisplay() {
         if (!this.displayElement) {
-            return;
+            this.createDisplayPanel();
+            if (!this.displayElement) {
+                return;
+            }
         }
 
         if (!this.displayElement.isConnected) {
@@ -1543,15 +1546,19 @@ class ActionTimeDisplay {
         });
     }
 
-    scheduleUpdateRetry() {
-        if (this.retryUpdateTimeout) {
+    scheduleUpdateRetry(attempt = 0) {
+        if (this.retryUpdateTimeout || attempt >= 3) {
             return;
         }
 
+        const delays = [150, 300, 500];
         this.retryUpdateTimeout = setTimeout(() => {
             this.retryUpdateTimeout = null;
             this.updateDisplay();
-        }, 150);
+            if (!this.displayElement || !this.displayElement.innerHTML) {
+                this.scheduleUpdateRetry(attempt + 1);
+            }
+        }, delays[attempt]);
         this.cleanupRegistry.registerTimeout(this.retryUpdateTimeout);
     }
 
