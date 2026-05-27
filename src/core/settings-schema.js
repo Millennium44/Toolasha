@@ -2008,6 +2008,12 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            collectionFavoritesSection: {
+                id: 'collectionFavoritesSection',
+                label: 'Collection Favorites: Show favorites section at top of grid',
+                type: 'checkbox',
+                default: true,
+            },
             collectionFilters_skillingBadges: {
                 id: 'collectionFilters_skillingBadges',
                 label: 'Show collection count badges on skilling action tiles',

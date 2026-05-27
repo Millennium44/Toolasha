@@ -439,6 +439,31 @@ function buildCSSText(flags, includeFavorites = true) {
 ${hideRules}
 
 ${starCSS}
+
+.toolasha-cf-favorites-header {
+    width: 100%;
+    font-size: 11px;
+    font-weight: 600;
+    color: orange;
+    margin-bottom: 4px;
+    padding: 4px 0 2px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.toolasha-cf-favorites-header::before {
+    content: "\\2605";
+}
+
+.toolasha-cf-favorites-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 6px;
+}
 `;
 }
 
@@ -646,8 +671,24 @@ class CollectionFilters {
         const catsEl = panelEl.parentElement?.querySelector('.AchievementsPanel_categories__34hno');
         if (!catsEl) return;
 
+        // Move tiles back from favorites section before scanning
+        const existingSection = catsEl.parentElement?.querySelector('.toolasha-cf-favorites-section');
+        if (existingSection) {
+            const movedTiles = existingSection.querySelectorAll('.Collection_collectionContainer__3ZlUO');
+            for (const tile of movedTiles) {
+                if (tile._favOrigParent) {
+                    tile._favOrigParent.insertBefore(tile, tile._favOrigNext || null);
+                } else {
+                    catsEl.appendChild(tile);
+                }
+            }
+            existingSection.remove();
+        }
+
         // --- Scan all collection tiles ---
+        let tileCount = 0;
         catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO').forEach((el) => {
+            tileCount++;
             const useEl = el.querySelector('use');
             if (!useEl) return;
             const href = useEl.getAttribute('href') || useEl.getAttribute('xlink:href') || '';
@@ -696,6 +737,7 @@ class CollectionFilters {
                                 el.classList.add('cf-favorite');
                             }
                             this._saveFavorites();
+                            this._renderFavoritesSection(catsEl);
                         },
                         true
                     );
@@ -802,6 +844,9 @@ class CollectionFilters {
         // --- Apply sorting ---
         this._applySorting(catsEl);
 
+        // --- Render favorites section at top ---
+        this._renderFavoritesSection(catsEl);
+
         // --- Watch for tiles being added (tiles load after controls bar) ---
         if (this.catsObserver) {
             this.catsObserver.disconnect();
@@ -813,6 +858,10 @@ class CollectionFilters {
         // Observe panelEl.parentElement (not just catsEl) so we detect tiles even when the game
         // replaces the catsEl element entirely on first data load (React reconciliation).
         const hasTiles = catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO').length > 0;
+        if (hasTiles && tileCount === 0) {
+            this._rerenderPanel(panelEl);
+            return;
+        }
         if (!hasTiles) {
             const observeTarget = panelEl.parentElement ?? catsEl;
             this.catsObserver = new MutationObserver(() => {
@@ -828,6 +877,51 @@ class CollectionFilters {
             });
             this.catsObserver.observe(observeTarget, { childList: true, subtree: true });
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Favorites section
+    // -------------------------------------------------------------------------
+
+    _renderFavoritesSection(catsEl) {
+        const parent = catsEl.parentElement;
+        if (!parent) return;
+
+        // Move tiles back to their original positions
+        const existingSection = parent.querySelector('.toolasha-cf-favorites-section');
+        if (existingSection) {
+            const movedTiles = existingSection.querySelectorAll('.Collection_collectionContainer__3ZlUO');
+            for (const tile of movedTiles) {
+                if (tile._favOrigParent) {
+                    tile._favOrigParent.insertBefore(tile, tile._favOrigNext || null);
+                } else {
+                    catsEl.appendChild(tile);
+                }
+            }
+            existingSection.remove();
+        }
+
+        if (!config.getSetting('collectionFavoritesSection')) return;
+        if (!this._favoritesEnabled || Object.keys(this.favorites).length === 0) return;
+
+        const favTiles = catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO.cf-favorite');
+        if (favTiles.length === 0) return;
+
+        const section = document.createElement('div');
+        section.className = 'toolasha-cf-favorites-section';
+
+        const header = document.createElement('div');
+        header.className = 'toolasha-cf-favorites-header';
+        header.textContent = 'Favorites';
+        section.appendChild(header);
+
+        for (const tile of favTiles) {
+            tile._favOrigParent = tile.parentElement;
+            tile._favOrigNext = tile.nextSibling;
+            section.appendChild(tile);
+        }
+
+        parent.insertBefore(section, catsEl);
     }
 
     // -------------------------------------------------------------------------
