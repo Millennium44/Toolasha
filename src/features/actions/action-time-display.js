@@ -674,13 +674,11 @@ class ActionTimeDisplay {
         }
         this.displayElement = null;
 
-        // Remove any orphaned display element left in the DOM from a previous render cycle
         const orphan = document.getElementById('mwi-action-time-display');
         if (orphan) {
             orphan.remove();
         }
 
-        // Find the action name container (use wildcard for hash-suffixed class)
         const actionNameContainer = document.querySelector('div[class*="Header_actionName"]');
         if (!actionNameContainer) {
             return;
@@ -772,17 +770,22 @@ class ActionTimeDisplay {
         const cachedActions = dataManager.getCurrentActions();
         let action;
 
-        // ONLY match against the first action (current action), not queued actions
-        // This prevents showing stats from queued actions when party combat interrupts
+        // Match against the front action (lowest ordinal = most active).
+        // Sort needed because the array is in insertion order, not ordinal order.
         if (cachedActions.length > 0) {
-            action = this.matchCurrentActionFromText(cachedActions.slice(0, 1), actionNameText);
+            const sorted = cachedActions.sort((a, b) => a.ordinal - b.ordinal);
+            action = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
         }
 
         if (!action) {
             this.displayElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
-            this.scheduleUpdateRetry();
-            // Reconnect observer
+            // Only retry if no cached actions (data not loaded yet).
+            // If cached actions exist but none match, data updated before DOM —
+            // the mutation observer will trigger updateDisplay when DOM catches up.
+            if (cachedActions.length === 0) {
+                this.scheduleUpdateRetry();
+            }
             this.reconnectActionNameObserver(actionNameElement);
             return;
         }
