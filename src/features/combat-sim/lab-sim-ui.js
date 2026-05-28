@@ -388,6 +388,27 @@ class LabSimUI {
                 font-weight:600;
                 cursor:pointer;
                 font-family:inherit;">Stop</button>
+            <select id="mwi-labsim-skilling-filter" style="
+                background:#1a1a2e;
+                color:#e0e0e0;
+                border:1px solid #444;
+                border-radius:4px;
+                padding:4px 6px;
+                font-size:11px;
+                font-family:inherit;
+                margin-left:auto;">
+                <option value="">All Skills</option>
+                <option value="/skills/woodcutting">Woodcutting</option>
+                <option value="/skills/foraging">Foraging</option>
+                <option value="/skills/milking">Milking</option>
+                <option value="/skills/cooking">Cooking</option>
+                <option value="/skills/brewing">Brewing</option>
+                <option value="/skills/cheesesmithing">Cheesesmithing</option>
+                <option value="/skills/crafting">Crafting</option>
+                <option value="/skills/tailoring">Tailoring</option>
+                <option value="/skills/alchemy">Alchemy</option>
+                <option value="/skills/enhancing">Enhancing</option>
+            </select>
         `;
 
         const skillingCrateRow = document.createElement('div');
@@ -521,6 +542,9 @@ class LabSimUI {
             .addEventListener('click', () => this._onSkillingUpgradeAnalyze());
         this.panel.querySelector('#mwi-labsim-skilling-stop').addEventListener('click', () => {
             this._skillingAborted = true;
+        });
+        this.panel.querySelector('#mwi-labsim-skilling-filter').addEventListener('change', () => {
+            this._renderSkillLoadoutTable();
         });
 
         this._populateMonsters();
@@ -1232,10 +1256,13 @@ class LabSimUI {
         const selectStyle =
             'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; font-size:11px; width:100%;';
 
+        const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || '';
+        const visibleSkills = targetSkill ? skills.filter((s) => s.hrid === targetSkill) : skills;
+
         let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Skill Loadouts</div>`;
         html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:3px 10px;">';
 
-        for (const skill of skills) {
+        for (const skill of visibleSkills) {
             const current = this._skillLoadouts[skill.hrid] || '';
             html += `<div style="display:flex; align-items:center; gap:4px; font-size:11px;">`;
             html += `<span style="color:#888; width:85px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${skill.label}">${skill.label}</span>`;
@@ -1399,6 +1426,7 @@ class LabSimUI {
 
         const crateHrids = this._getSkillingCrates();
         const skillEquipmentMap = this._buildSkillEquipmentMap(gameData);
+        const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
 
         const progressEl = this.panel.querySelector('#mwi-labsim-skilling-progress');
         const resultsEl = this.panel.querySelector('#mwi-labsim-skilling-results');
@@ -1414,7 +1442,7 @@ class LabSimUI {
 
         try {
             const analysisResult = runSkillingUpgradeAnalysis(
-                { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap },
+                { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill },
                 ({ current, total, description }) => {
                     if (this._skillingAborted) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');

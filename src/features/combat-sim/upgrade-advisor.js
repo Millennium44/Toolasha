@@ -1414,12 +1414,14 @@ export function computeSkillingClearRatesFromEditor(
  * @returns {number} Average clear rate (0-1)
  */
 function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
-    const { metricOverride = null, skillEquipmentMap = {} } = options;
+    const { metricOverride = null, skillEquipmentMap = {}, targetSkill = null } = options;
 
     let total = 0;
     let count = 0;
 
-    for (const skillHrid of LABYRINTH_SKILLS) {
+    const skillsToEval = targetSkill ? [targetSkill] : LABYRINTH_SKILLS;
+
+    for (const skillHrid of skillsToEval) {
         const skillId = skillHrid.replace('/skills/', '');
         const actionTypeHrid = `/action_types/${skillId}`;
         const dtoKey = SKILLING_DTO_KEYS[skillHrid];
@@ -1554,7 +1556,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
  * @returns {Object} { baseline, results }
  */
 export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
-    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {} } = params;
+    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {}, targetSkill = null } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
     if (!gameData) throw new Error('No game data available');
@@ -1562,7 +1564,7 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
     const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap);
-    const clearRateOpts = { skillEquipmentMap };
+    const clearRateOpts = { skillEquipmentMap, targetSkill };
 
     const total = buffCandidates.length + equipCandidates.length + 1;
     let current = 0;
@@ -1635,7 +1637,7 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
             modifiedDTO,
             crateHrids,
             gameData,
-            { skillEquipmentMap: modifiedSkillEquipMap }
+            { skillEquipmentMap: modifiedSkillEquipMap, targetSkill }
         );
         const clearRateDelta = modifiedClearRate - baselineClearRate;
 
