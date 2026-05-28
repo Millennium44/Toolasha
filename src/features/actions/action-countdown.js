@@ -147,7 +147,7 @@ class ActionCountdown {
 
         if (remaining !== undefined) {
             remaining = Math.max(0, remaining);
-            span.textContent = remaining.toFixed(1) + 's';
+            span.textContent = remaining.toFixed(1) + 's / ' + this.totalTime.toFixed(1) + 's';
         }
     }
 
