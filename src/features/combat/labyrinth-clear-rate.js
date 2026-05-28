@@ -1202,6 +1202,139 @@ class LabyrinthClearRate {
         return '#d9534f';
     }
 
+    /**
+     * Compute skilling metrics from override buff arrays instead of live data.
+     * @param {string} skillId - e.g. "woodcutting"
+     * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
+     * @param {Object} overrides
+     * @param {Array} [overrides.equipmentBuffs] - Equipment buff objects for this action type
+     * @param {Array} [overrides.communityBuffs] - Community buff objects
+     * @param {Array} [overrides.houseBuffs] - House room buff objects
+     * @param {Array} [overrides.crateBuffs] - Crate buff objects
+     * @param {Object} [overrides.tokenUpgrades] - {speed, efficiency, success, doubleProgress}
+     * @returns {Object} {skillLevelBonus, efficiencyBonus, actionSpeedBonus, successBonus, doubleProgressBonus}
+     */
+    getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides) {
+        const metrics = {
+            skillLevelBonus: 0,
+            efficiencyBonus: 0,
+            actionSpeedBonus: 0,
+            successBonus: 0,
+            doubleProgressBonus: 0,
+        };
+
+        const skillLevelType = `/buff_types/${skillId}_level`;
+        const skillSuccessType = `/buff_types/${skillId}_success`;
+
+        const buffSources = [
+            overrides.equipmentBuffs,
+            overrides.communityBuffs,
+            overrides.houseBuffs,
+            dataManager.characterData?.achievementActionTypeBuffsMap?.[actionTypeHrid],
+        ];
+
+        for (const buffs of buffSources) {
+            if (!Array.isArray(buffs)) continue;
+            for (const buff of buffs) {
+                if (!buff?.typeHrid) continue;
+                const amount = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+                if (amount === 0) continue;
+                this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType);
+            }
+        }
+
+        for (const buff of overrides.crateBuffs || []) {
+            if (!buff?.typeHrid) continue;
+            const amount = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+            if (amount === 0) continue;
+            this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType);
+        }
+
+        const upgrades = overrides.tokenUpgrades || { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 };
+        metrics.actionSpeedBonus += upgrades.speed * UPGRADE_STEP;
+        metrics.efficiencyBonus += upgrades.efficiency * UPGRADE_STEP;
+        metrics.successBonus += upgrades.success * UPGRADE_SUCCESS_STEP;
+        metrics.doubleProgressBonus += upgrades.doubleProgress * UPGRADE_STEP;
+
+        return metrics;
+    }
+
+    /**
+     * Compute skilling clear from pre-built metrics and base level.
+     * @param {Object} metrics - From getSkillingMetrics() or getSkillingMetricsFromOverrides()
+     * @param {number} baseLevel - Character skill level
+     * @param {number} roomLevel - Labyrinth room level
+     * @returns {Object} Clear result with stats
+     */
+    computeSkillingClearWithParams(metrics, baseLevel, roomLevel) {
+        const effectiveLevel = baseLevel + metrics.skillLevelBonus;
+        const levelDelta = effectiveLevel - roomLevel;
+        const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
+        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus));
+
+        const workPower = effectiveLevel * (1 + metrics.efficiencyBonus);
+        const progressPerSuccess = Math.max(0, Math.floor(workPower));
+        const targetProgress = roomLevel * 10;
+
+        const actionSeconds = BASE_SKILLING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
+        const attempts = Math.max(1, Math.floor(ROOM_DURATION / actionSeconds));
+
+        const clearStats = this.computeNonEnhancingClearStats(
+            attempts,
+            successChance,
+            doubleChance,
+            progressPerSuccess,
+            targetProgress
+        );
+        const result = this.buildResult(clearStats, actionSeconds);
+        result.type = 'skilling';
+        result.effectiveLevel = effectiveLevel;
+        result.baseLevel = baseLevel;
+        result.successChance = successChance;
+        result.doubleChance = doubleChance;
+        result.attempts = attempts;
+        result.actionSeconds = actionSeconds;
+        result.workPower = workPower;
+        result.progressPerSuccess = progressPerSuccess;
+        result.targetProgress = targetProgress;
+        result.roomLevel = roomLevel;
+        result.xpPerRoom = roomLevel * 50;
+        return result;
+    }
+
+    /**
+     * Compute enhancing clear from pre-built metrics and base level.
+     * @param {Object} metrics - From getSkillingMetrics() or getSkillingMetricsFromOverrides()
+     * @param {number} baseLevel - Character enhancing level
+     * @param {number} roomLevel - Labyrinth room level
+     * @returns {Object} Clear result with stats
+     */
+    computeEnhancingClearWithParams(metrics, baseLevel, roomLevel) {
+        const effectiveLevel = baseLevel + metrics.skillLevelBonus;
+        const levelDelta = effectiveLevel - roomLevel;
+        const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
+        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus));
+
+        const actionSeconds = BASE_ENHANCING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
+        const attempts = Math.max(1, Math.floor(ROOM_DURATION / actionSeconds));
+        const targetLevel = 5;
+
+        const clearStats = this.computeEnhancingClearStats(attempts, successChance, doubleChance, targetLevel);
+        const result = this.buildResult(clearStats, actionSeconds);
+        result.type = 'enhancing';
+        result.effectiveLevel = effectiveLevel;
+        result.baseLevel = baseLevel;
+        result.successChance = successChance;
+        result.doubleChance = doubleChance;
+        result.attempts = attempts;
+        result.actionSeconds = actionSeconds;
+        result.targetLevel = targetLevel;
+        result.roomLevel = roomLevel;
+        return result;
+    }
+
     formatTime(seconds) {
         if (!Number.isFinite(seconds) || seconds <= 0) return '—';
         if (seconds >= 9999) return '∞';

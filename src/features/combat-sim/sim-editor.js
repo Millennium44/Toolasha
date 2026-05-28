@@ -24,10 +24,12 @@ export class SimEditor {
      * @param {Object} options
      * @param {HTMLElement} options.editorEl - Container element the editor renders into
      * @param {boolean} [options.labMode=false] - When true, filters coffees from consumable picker
+     * @param {boolean} [options.skillingMode=false] - When true, shows skilling skills/loadouts/token upgrades
      */
-    constructor({ editorEl, labMode = false }) {
+    constructor({ editorEl, labMode = false, skillingMode = false }) {
         this._editorEl = editorEl;
         this.labMode = labMode;
+        this.skillingMode = skillingMode;
 
         this._editedDTOs = null;
         this._editedPlayerInfo = null;
@@ -289,47 +291,54 @@ export class SimEditor {
             </div>
         </div>`;
 
-        // Loadout dropdown + Reset button
-        const allSnapshots = loadoutSnapshot.getAllSnapshots();
-        const combatSnapshots = allSnapshots.filter(
-            (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
-        );
+        // Loadout dropdown + Reset button (skip in skillingMode — loadouts assigned per-skill)
+        if (!this.skillingMode) {
+            const allSnapshots = loadoutSnapshot.getAllSnapshots();
+            const filteredSnapshots = allSnapshots.filter(
+                (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
+            );
 
-        // Apply custom loadout sort order if available
-        if (this._loadoutSortOrder?.length) {
-            combatSnapshots.sort((a, b) => {
-                const aIdx = this._loadoutSortOrder.findIndex((o) => o.name === a.name);
-                const bIdx = this._loadoutSortOrder.findIndex((o) => o.name === b.name);
-                const aPos = aIdx === -1 ? Infinity : aIdx;
-                const bPos = bIdx === -1 ? Infinity : bIdx;
-                return aPos - bPos;
-            });
-        }
-        html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
-        if (combatSnapshots.length > 0) {
-            html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
-            html += `<select id="mwi-csim-loadout-select" style="
-                flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
-            html += `<option value=""${!this._selectedLoadoutName ? ' selected' : ''}>— Current Gear —</option>`;
-            for (const snap of combatSnapshots) {
-                const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
-                const selected = this._selectedLoadoutName === snap.name ? ' selected' : '';
-                html += `<option value="${snap.name}"${selected}>${label}</option>`;
+            if (this._loadoutSortOrder?.length) {
+                filteredSnapshots.sort((a, b) => {
+                    const aIdx = this._loadoutSortOrder.findIndex((o) => o.name === a.name);
+                    const bIdx = this._loadoutSortOrder.findIndex((o) => o.name === b.name);
+                    const aPos = aIdx === -1 ? Infinity : aIdx;
+                    const bPos = bIdx === -1 ? Infinity : bIdx;
+                    return aPos - bPos;
+                });
             }
-            html += `</select>`;
+            html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
+            if (filteredSnapshots.length > 0) {
+                html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
+                html += `<select id="mwi-csim-loadout-select" style="
+                    flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
+                html += `<option value=""${!this._selectedLoadoutName ? ' selected' : ''}>— Current Gear —</option>`;
+                for (const snap of filteredSnapshots) {
+                    const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
+                    const selected = this._selectedLoadoutName === snap.name ? ' selected' : '';
+                    html += `<option value="${snap.name}"${selected}>${label}</option>`;
+                }
+                html += `</select>`;
+            }
+            html += `<button id="mwi-csim-reset" style="
+                margin-left:auto; background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;
+                padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;
+                font-family:inherit; flex-shrink:0;">Reset to Current</button>`;
+            html += '</div>';
         }
-        html += `<button id="mwi-csim-reset" style="
-            margin-left:auto; background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;
-            padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;
-            font-family:inherit; flex-shrink:0;">Reset to Current</button>`;
-        html += '</div>';
 
-        html += this._renderEquipmentSection(dto, gameData);
-        html += this._renderAbilitiesSection(dto, gameData);
-        html += this._renderConsumablesSection(dto, gameData);
+        if (!this.skillingMode) {
+            html += this._renderEquipmentSection(dto, gameData);
+            html += this._renderAbilitiesSection(dto, gameData);
+            html += this._renderConsumablesSection(dto, gameData);
+        }
         html += this._renderSkillLevelsSection(dto);
         html += this._renderHouseRoomsSection(dto, gameData);
+        if (this.skillingMode) {
+            html += this._renderTokenUpgradesSection(dto);
+            html += this._renderCommunityBuffsSection(dto);
+        }
 
         editorArea.innerHTML = html;
         this._wireEditorEvents(editorArea, dto);
@@ -1019,7 +1028,7 @@ export class SimEditor {
 
     /** @private */
     _renderSkillLevelsSection(dto) {
-        const skills = [
+        const combatSkills = [
             { key: 'staminaLevel', label: 'Stamina' },
             { key: 'intelligenceLevel', label: 'Intelligence' },
             { key: 'attackLevel', label: 'Attack' },
@@ -1028,6 +1037,19 @@ export class SimEditor {
             { key: 'rangedLevel', label: 'Ranged' },
             { key: 'magicLevel', label: 'Magic' },
         ];
+        const skillingSkills = [
+            { key: 'woodcuttingLevel', label: 'Woodcutting' },
+            { key: 'foragingLevel', label: 'Foraging' },
+            { key: 'milkingLevel', label: 'Milking' },
+            { key: 'cookingLevel', label: 'Cooking' },
+            { key: 'brewingLevel', label: 'Brewing' },
+            { key: 'cheesesmithingLevel', label: 'Cheesesmithing' },
+            { key: 'craftingLevel', label: 'Crafting' },
+            { key: 'tailoringLevel', label: 'Tailoring' },
+            { key: 'alchemyLevel', label: 'Alchemy' },
+            { key: 'enhancingLevel', label: 'Enhancing' },
+        ];
+        const skills = this.skillingMode ? skillingSkills : combatSkills;
 
         const summary = skills.map((s) => `${s.label.slice(0, 3)} ${dto[s.key]}`).join(' / ');
 
@@ -1075,6 +1097,74 @@ export class SimEditor {
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}</span>`;
             html += `<input type="number" min="0" max="8" value="${level}"
                 data-house-hrid="${hrid}"
+                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div></div>';
+        return html;
+    }
+
+    /** @private */
+    _renderTokenUpgradesSection(dto) {
+        const upgrades = [
+            { key: 'speed', label: 'Speed' },
+            { key: 'efficiency', label: 'Efficiency' },
+            { key: 'success', label: 'Success Rate' },
+            { key: 'doubleProgress', label: 'Double Progress' },
+        ];
+        const tokens = dto.tokenUpgrades || {};
+        const activeCount = upgrades.filter((u) => (tokens[u.key] || 0) > 0).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="token-section">`;
+        html += `<span data-arrow="token-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Token Upgrades`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-token-section" style="display:none;">`;
+        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px;">`;
+
+        for (const upgrade of upgrades) {
+            const val = tokens[upgrade.key] || 0;
+            html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${upgrade.label}</span>`;
+            html += `<input type="number" min="0" max="12" value="${val}"
+                data-token-upgrade="${upgrade.key}"
+                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += '</div>';
+        }
+
+        html += '</div></div></div>';
+        return html;
+    }
+
+    /** @private */
+    _renderCommunityBuffsSection(dto) {
+        const buffs = [
+            { key: 'productionEfficiency', label: 'Prod. Efficiency' },
+            { key: 'enhancingSpeed', label: 'Enhancing Speed' },
+            { key: 'gatheringQuantity', label: 'Gathering Qty' },
+            { key: 'experience', label: 'Experience' },
+        ];
+        const levels = dto.communityBuffLevels || {};
+        const activeCount = buffs.filter((b) => (levels[b.key] || 0) > 0).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="community-section">`;
+        html += `<span data-arrow="community-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Community Buffs`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-community-section" style="display:none;">`;
+        html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px;">`;
+
+        for (const buff of buffs) {
+            const val = levels[buff.key] || 0;
+            html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${buff.label}">${buff.label}</span>`;
+            html += `<input type="number" min="0" max="30" value="${val}"
+                data-community-buff="${buff.key}"
                 style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += '</div>';
@@ -1155,6 +1245,26 @@ export class SimEditor {
                 } else {
                     dto.houseRooms[hrid] = val;
                 }
+            });
+        });
+
+        editorArea.querySelectorAll('[data-token-upgrade]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.dataset.tokenUpgrade;
+                const val = Math.max(0, Math.min(12, parseInt(input.value) || 0));
+                input.value = val;
+                if (!dto.tokenUpgrades) dto.tokenUpgrades = {};
+                dto.tokenUpgrades[key] = val;
+            });
+        });
+
+        editorArea.querySelectorAll('[data-community-buff]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.dataset.communityBuff;
+                const val = Math.max(0, Math.min(30, parseInt(input.value) || 0));
+                input.value = val;
+                if (!dto.communityBuffLevels) dto.communityBuffLevels = {};
+                dto.communityBuffLevels[key] = val;
             });
         });
 
@@ -1349,6 +1459,16 @@ export class SimEditor {
             defenseLevel: 'Defense',
             rangedLevel: 'Ranged',
             magicLevel: 'Magic',
+            woodcuttingLevel: 'Woodcutting',
+            foragingLevel: 'Foraging',
+            milkingLevel: 'Milking',
+            cookingLevel: 'Cooking',
+            brewingLevel: 'Brewing',
+            cheesesmithingLevel: 'Cheesesmithing',
+            craftingLevel: 'Crafting',
+            tailoringLevel: 'Tailoring',
+            alchemyLevel: 'Alchemy',
+            enhancingLevel: 'Enhancing',
         };
         for (const [key, label] of Object.entries(skillLabels)) {
             if (original[key] !== edited[key]) {
@@ -1366,6 +1486,29 @@ export class SimEditor {
                     const editName = editHrid ? itemDetailMap[editHrid]?.name || editHrid.split('/').pop() : 'Empty';
                     changes.push(`${prefix} ${i + 1}: ${origName}\u2192${editName}`);
                 }
+            }
+        }
+
+        const tokenLabels = { speed: 'Speed', efficiency: 'Efficiency', success: 'Success', doubleProgress: 'DblProg' };
+        for (const [key, label] of Object.entries(tokenLabels)) {
+            const origVal = original.tokenUpgrades?.[key] || 0;
+            const editVal = edited.tokenUpgrades?.[key] || 0;
+            if (origVal !== editVal) {
+                changes.push(`Token ${label} ${origVal}\u2192${editVal}`);
+            }
+        }
+
+        const cbLabels = {
+            productionEfficiency: 'ProdEff',
+            enhancingSpeed: 'EnhSpd',
+            gatheringQuantity: 'GathQty',
+            experience: 'Exp',
+        };
+        for (const [key, label] of Object.entries(cbLabels)) {
+            const origVal = original.communityBuffLevels?.[key] || 0;
+            const editVal = edited.communityBuffLevels?.[key] || 0;
+            if (origVal !== editVal) {
+                changes.push(`CB ${label} ${origVal}\u2192${editVal}`);
             }
         }
 

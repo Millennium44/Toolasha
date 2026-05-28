@@ -15,6 +15,7 @@ import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
 import { calculateAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
+import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -966,16 +967,13 @@ const LABYRINTH_BUFF_DEFS = [
 
 const LABYRINTH_SKILLS = [
     '/skills/woodcutting',
-    '/skills/mining',
     '/skills/foraging',
-    '/skills/farming',
     '/skills/milking',
     '/skills/cooking',
     '/skills/brewing',
     '/skills/cheesesmithing',
     '/skills/crafting',
     '/skills/tailoring',
-    '/skills/smithing',
     '/skills/alchemy',
     '/skills/enhancing',
 ];
@@ -1340,6 +1338,330 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     };
 }
 
+// ─── Editor-Based Skilling Analysis ──────────────────────────────────────────
+
+const SKILLING_DTO_KEYS = {
+    '/skills/woodcutting': 'woodcuttingLevel',
+    '/skills/foraging': 'foragingLevel',
+    '/skills/milking': 'milkingLevel',
+    '/skills/cooking': 'cookingLevel',
+    '/skills/brewing': 'brewingLevel',
+    '/skills/cheesesmithing': 'cheesesmithingLevel',
+    '/skills/crafting': 'craftingLevel',
+    '/skills/tailoring': 'tailoringLevel',
+    '/skills/alchemy': 'alchemyLevel',
+    '/skills/enhancing': 'enhancingLevel',
+};
+
+/**
+ * Compute per-skill clear results from editor state.
+ * @param {number} roomLevel
+ * @param {Object} editorDTO - Player DTO from editor
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @param {Object} [skillEquipmentMap] - Per-skill equipment overrides { '/skills/X': { slot: { hrid, enhancementLevel } } }
+ * @returns {Array<Object>} Per-skill results with skill name, clear chance, etc.
+ */
+export function computeSkillingClearRatesFromEditor(
+    roomLevel,
+    editorDTO,
+    crateHrids,
+    gameData,
+    skillEquipmentMap = {}
+) {
+    const results = [];
+
+    for (const skillHrid of LABYRINTH_SKILLS) {
+        const skillId = skillHrid.replace('/skills/', '');
+        const actionTypeHrid = `/action_types/${skillId}`;
+        const dtoKey = SKILLING_DTO_KEYS[skillHrid];
+        const baseLevel = editorDTO[dtoKey] || 1;
+
+        const editorState = {
+            equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
+            houseRooms: editorDTO.houseRooms,
+            tokenUpgrades: editorDTO.tokenUpgrades,
+            communityBuffLevels: editorDTO.communityBuffLevels,
+        };
+
+        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+
+        let result;
+        if (skillHrid === '/skills/enhancing') {
+            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel);
+        } else {
+            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel);
+        }
+        result.skillHrid = skillHrid;
+        result.skillId = skillId;
+        result.skillName = skillId.charAt(0).toUpperCase() + skillId.slice(1);
+        results.push(result);
+    }
+
+    return results;
+}
+
+/**
+ * Compute average skilling clear rate from editor state.
+ * @param {number} roomLevel
+ * @param {Object} editorDTO - Player DTO from editor
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @param {Object} [options]
+ * @param {Object} [options.metricOverride] - { key, delta } to add to one metric across all skills
+ * @param {Object} [options.skillEquipmentMap] - Per-skill equipment overrides
+ * @returns {number} Average clear rate (0-1)
+ */
+function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
+    const { metricOverride = null, skillEquipmentMap = {} } = options;
+
+    let total = 0;
+    let count = 0;
+
+    for (const skillHrid of LABYRINTH_SKILLS) {
+        const skillId = skillHrid.replace('/skills/', '');
+        const actionTypeHrid = `/action_types/${skillId}`;
+        const dtoKey = SKILLING_DTO_KEYS[skillHrid];
+        const baseLevel = editorDTO[dtoKey] || 1;
+
+        const editorState = {
+            equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
+            houseRooms: editorDTO.houseRooms,
+            tokenUpgrades: editorDTO.tokenUpgrades,
+            communityBuffLevels: editorDTO.communityBuffLevels,
+        };
+
+        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
+
+        if (metricOverride) {
+            metrics[metricOverride.key] = (metrics[metricOverride.key] || 0) + metricOverride.delta;
+        }
+
+        let clearChance;
+        if (skillHrid === '/skills/enhancing') {
+            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+        } else {
+            clearChance = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+        }
+
+        total += clearChance;
+        count++;
+    }
+
+    return count > 0 ? total / count : 0;
+}
+
+/**
+ * Generate labyrinth buff candidates from editor token upgrade levels.
+ * @param {Object} tokenUpgrades - { speed, efficiency, success, doubleProgress }
+ * @returns {Array} Buff candidates with type 'labyrinth_buff'
+ */
+function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
+    const skillingDefs = LABYRINTH_BUFF_DEFS.filter((d) => d.category === 'skilling');
+    const editorKeyMap = {
+        labyrinthSkillActionSpeedLevel: 'speed',
+        labyrinthSkillingEfficiencyLevel: 'efficiency',
+        labyrinthSkillingSuccessLevel: 'success',
+        labyrinthSkillingDoubleProgressLevel: 'doubleProgress',
+    };
+
+    const candidates = [];
+    for (const def of skillingDefs) {
+        const editorKey = editorKeyMap[def.key];
+        const currentLevel = Math.max(0, Math.floor(Number(tokenUpgrades?.[editorKey]) || 0));
+        if (currentLevel >= def.maxLevel) continue;
+
+        candidates.push({
+            type: 'labyrinth_buff',
+            category: def.category,
+            buffKey: def.key,
+            editorKey,
+            currentLevel,
+            step: def.step,
+            tokenCost: def.tokenCost * (currentLevel + 1),
+            description: `${def.name} Lv${currentLevel}\u2192${currentLevel + 1}`,
+            metric: def.metric,
+        });
+    }
+    return candidates;
+}
+
+/**
+ * Generate skilling equipment enhancement candidates from editor equipment.
+ * Considers per-skill equipment overrides to find all unique items that need upgrading.
+ * @param {Object} editorDTO - Player DTO from editor
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @param {Object} [skillEquipmentMap] - Per-skill equipment overrides
+ * @returns {Array} Enhancement candidates with gold cost
+ */
+export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap = {}) {
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const candidates = [];
+    const seen = new Set();
+
+    const equipmentSets = [editorDTO.equipment || {}];
+    for (const skillEquip of Object.values(skillEquipmentMap)) {
+        if (skillEquip) equipmentSets.push(skillEquip);
+    }
+
+    for (const equipment of equipmentSets) {
+        for (const [slot, equip] of Object.entries(equipment)) {
+            if (!equip?.hrid) continue;
+            const dedupKey = `${slot}:${equip.hrid}:${equip.enhancementLevel || 0}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
+
+            const itemDetails = itemDetailMap[equip.hrid];
+            if (!itemDetails?.equipmentDetail?.noncombatStats) continue;
+
+            const hasNoncombat = Object.values(itemDetails.equipmentDetail.noncombatStats).some((v) => v > 0);
+            if (!hasNoncombat) continue;
+
+            const currentLevel = equip.enhancementLevel || 0;
+            const nextBP = getNextBreakpoint(currentLevel, slot, equip.hrid);
+            if (!nextBP) continue;
+
+            const itemName = itemDetails.name || equip.hrid.split('/').pop();
+            const candidate = {
+                slot,
+                currentHrid: equip.hrid,
+                currentLevel,
+                upgradeHrid: equip.hrid,
+                upgradeLevel: nextBP,
+                description: `${itemName} +${currentLevel} \u2192 +${nextBP}`,
+                type: 'enhancement',
+            };
+            candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidates.push(candidate);
+        }
+    }
+
+    return candidates;
+}
+
+/**
+ * Run skilling upgrade analysis from editor state.
+ * @param {Object} params
+ * @param {Object} params.editorDTO - Player DTO from editor
+ * @param {number} params.roomLevel - Room level
+ * @param {string[]} params.crateHrids - Selected crate HRIDs
+ * @param {Object} [params.skillEquipmentMap] - Per-skill equipment overrides
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal: () => boolean }
+ * @returns {Object} { baseline, results }
+ */
+export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
+    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {} } = params;
+    const { abortSignal } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+
+    const tokenUpgrades = editorDTO.tokenUpgrades || {};
+    const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
+    const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap);
+    const clearRateOpts = { skillEquipmentMap };
+
+    const total = buffCandidates.length + equipCandidates.length + 1;
+    let current = 0;
+
+    onProgress?.({ current: 0, total, description: 'Computing baseline...' });
+    const baselineClearRate = computeAverageSkillingClearRateFromEditor(
+        roomLevel,
+        editorDTO,
+        crateHrids,
+        gameData,
+        clearRateOpts
+    );
+    current++;
+
+    if (abortSignal?.()) return { baseline: null, results: [] };
+
+    onProgress?.({ current, total, description: `Baseline: ${(baselineClearRate * 100).toFixed(1)}%` });
+
+    const results = [];
+
+    for (const buffCandidate of buffCandidates) {
+        if (abortSignal?.()) break;
+
+        onProgress?.({ current, total, description: `Evaluating: ${buffCandidate.description}` });
+
+        const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
+        modifiedDTO.tokenUpgrades[buffCandidate.editorKey] = buffCandidate.currentLevel + 1;
+
+        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+            roomLevel,
+            modifiedDTO,
+            crateHrids,
+            gameData,
+            clearRateOpts
+        );
+        const clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        results.push({
+            candidate: buffCandidate,
+            costType: 'token',
+            tokenCost: buffCandidate.tokenCost,
+            clearRate: modifiedClearRate,
+            clearRateDelta,
+            metricType: 'clearRate',
+        });
+        current++;
+        onProgress?.({ current, total, description: buffCandidate.description });
+    }
+
+    for (const candidate of equipCandidates) {
+        if (abortSignal?.()) break;
+
+        onProgress?.({ current, total, description: `Evaluating: ${candidate.description}` });
+
+        const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
+        const modifiedSkillEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
+        const upgradePayload = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
+
+        if (modifiedDTO.equipment?.[candidate.slot]?.hrid === candidate.currentHrid) {
+            modifiedDTO.equipment[candidate.slot] = upgradePayload;
+        }
+        for (const skillEquip of Object.values(modifiedSkillEquipMap)) {
+            if (skillEquip?.[candidate.slot]?.hrid === candidate.currentHrid) {
+                skillEquip[candidate.slot] = upgradePayload;
+            }
+        }
+
+        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+            roomLevel,
+            modifiedDTO,
+            crateHrids,
+            gameData,
+            { skillEquipmentMap: modifiedSkillEquipMap }
+        );
+        const clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        results.push({
+            candidate,
+            costType: 'gold',
+            cost: candidate.cost,
+            clearRate: modifiedClearRate,
+            clearRateDelta,
+            goldPerClearRate: clearRateDelta > 0 ? candidate.cost / (clearRateDelta * 100) : Infinity,
+            metricType: 'clearRate',
+        });
+        current++;
+        onProgress?.({ current, total, description: candidate.description });
+    }
+
+    results.sort((a, b) => {
+        if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
+        return (b.clearRateDelta ?? 0) - (a.clearRateDelta ?? 0);
+    });
+
+    return {
+        baseline: { clearRate: baselineClearRate },
+        results,
+    };
+}
+
 export default {
     generateCandidates,
     calculateUpgradeCost,
@@ -1347,4 +1669,7 @@ export default {
     runLabyrinthUpgradeAnalysis,
     generateLabyrinthBuffCandidates,
     getEquipmentTierProgression,
+    computeSkillingClearRatesFromEditor,
+    generateSkillingEquipmentCandidates,
+    runSkillingUpgradeAnalysis,
 };
