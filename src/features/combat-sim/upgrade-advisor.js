@@ -1509,6 +1509,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
     for (const equipment of equipmentSets) {
         for (const [slot, equip] of Object.entries(equipment)) {
             if (!equip?.hrid) continue;
+            if (slot === '/equipment_types/trinket' || slot === '/equipment_types/charm') continue;
             const dedupKey = `${slot}:${equip.hrid}:${equip.enhancementLevel || 0}`;
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);

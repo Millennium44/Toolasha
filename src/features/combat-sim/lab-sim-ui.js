@@ -1058,7 +1058,7 @@ class LabSimUI {
         });
 
         // Sort state
-        const sortState = { token: { key: 'deltaVal', dir: 'desc' }, gold: { key: 'deltaVal', dir: 'desc' } };
+        const sortState = { token: { key: 'tokensPerPct', dir: 'asc' }, gold: { key: 'goldPerPct', dir: 'asc' } };
 
         const sortRows = (rows, key, dir) => {
             rows.sort((a, b) => {
@@ -1497,7 +1497,7 @@ class LabSimUI {
             };
         });
 
-        const sortState = { token: { key: 'deltaVal', dir: 'desc' }, gold: { key: 'deltaVal', dir: 'desc' } };
+        const sortState = { token: { key: 'tokensPerPct', dir: 'asc' }, gold: { key: 'goldPerPct', dir: 'asc' } };
 
         const sortRows = (rows, key, dir) => {
             rows.sort((a, b) => {
