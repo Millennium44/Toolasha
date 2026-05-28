@@ -127,6 +127,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionBar_showRecycleTime: {
+                id: 'actionBar_showRecycleTime',
+                label: 'Action bar: Transmute recycle time estimate',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows estimated total time accounting for self-return recycling during transmute actions',
+            },
             actionPanel_liveCountdown: {
                 id: 'actionPanel_liveCountdown',
                 label: 'Action bar: Live countdown timer',

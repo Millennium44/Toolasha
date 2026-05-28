@@ -29,6 +29,7 @@ import {
     parseGatheringBonus,
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
+import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import {
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
@@ -1095,6 +1096,42 @@ class ActionTimeDisplay {
         }
         const totalTimeSeconds = baseActionsNeeded * actionTime;
 
+        // Calculate transmute recycle time estimate
+        let recycleTimeSeconds = null;
+        if (
+            actionDetails.hrid?.includes('transmute') &&
+            actionDetails.type === '/action_types/alchemy' &&
+            action.primaryItemHash &&
+            config.getSetting('actionBar_showRecycleTime')
+        ) {
+            const { itemHrid: transmuteItemHrid } = this.parseItemHash(action.primaryItemHash);
+            if (transmuteItemHrid) {
+                const transmuteItemDetails = itemDetailMap[transmuteItemHrid];
+                const dropTable = transmuteItemDetails?.alchemyDetail?.transmuteDropTable;
+                if (dropTable) {
+                    const selfReturn = dropTable.find((d) => d.itemHrid === transmuteItemHrid);
+                    if (selfReturn && selfReturn.dropRate > 0) {
+                        const baseSuccessRate = transmuteItemDetails.alchemyDetail.transmuteSuccessRate || 0;
+                        let catalystBonus = 0;
+                        if (action.secondaryItemHash) {
+                            const { itemHrid: catHrid } = this.parseItemHash(action.secondaryItemHash);
+                            if (catHrid?.includes('prime_catalyst')) {
+                                catalystBonus = 0.25;
+                            } else if (catHrid?.includes('catalyst_of_transmutation')) {
+                                catalystBonus = 0.15;
+                            }
+                        }
+                        const teaBonus = getAlchemySuccessBonus();
+                        const successRate = Math.min(1.0, baseSuccessRate * (1 + catalystBonus + teaBonus));
+                        const recycleRate = selfReturn.dropRate * successRate;
+                        if (recycleRate > 0 && recycleRate < 1) {
+                            recycleTimeSeconds = totalTimeSeconds / (1 - recycleRate);
+                        }
+                    }
+                }
+            }
+        }
+
         // Calculate completion time
         const completionTime = new Date();
         completionTime.setSeconds(completionTime.getSeconds() + totalTimeSeconds);
@@ -1176,7 +1213,28 @@ class ActionTimeDisplay {
         ) {
             const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : '';
-            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${matsLabel} ${timeStr} → ${clockTime}`;
+            let recycleHtml = '';
+            if (recycleTimeSeconds !== null) {
+                const recycleCompletion = new Date();
+                recycleCompletion.setSeconds(recycleCompletion.getSeconds() + recycleTimeSeconds);
+                const recycleTimeStr = timeReadable(recycleTimeSeconds);
+                const recycleIsToday = recycleCompletion.toDateString() === new Date().toDateString();
+                const recycleClockTime = recycleCompletion.toLocaleString(
+                    'en-US',
+                    recycleIsToday
+                        ? { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }
+                        : {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              hour12: true,
+                          }
+                );
+                recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleTimeStr} → ${recycleClockTime}</span>`;
+            }
+            this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${matsLabel} ${timeStr} → ${clockTime}${recycleHtml}`;
         } else {
             this.displayElement.innerHTML = '';
         }
