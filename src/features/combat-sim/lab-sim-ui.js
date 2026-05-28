@@ -424,7 +424,7 @@ class LabSimUI {
 
         const skillingEditorArea = document.createElement('div');
         skillingEditorArea.id = 'mwi-labsim-skilling-editor';
-        skillingEditorArea.style.cssText = 'overflow-y:auto; padding:10px 14px; max-height:200px;';
+        skillingEditorArea.style.cssText = 'overflow-y:auto; padding:10px 14px; max-height:200px; flex-shrink:0;';
         skillingEditorArea.innerHTML =
             '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
 
