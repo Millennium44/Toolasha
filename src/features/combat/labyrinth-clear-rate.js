@@ -827,7 +827,16 @@ class LabyrinthClearRate {
      * Inject recommend controls (button + target input) into the automation panel
      */
     injectRecommendControls() {
-        if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) return;
+        const defaultRate = config.getSetting('labyrinthRecommendTargetRate') || 70;
+        const defaultHours = config.getSetting('labyrinthRecommendSimHours') || 1;
+
+        if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) {
+            const rateInput = document.getElementById('mwi-recommend-target-rate');
+            const hoursInput = document.getElementById('mwi-recommend-sim-hours');
+            if (rateInput && !rateInput.dataset.userEdited) rateInput.value = defaultRate;
+            if (hoursInput && !hoursInput.dataset.userEdited) hoursInput.value = defaultHours;
+            return;
+        }
 
         const table = document.querySelector('[class*="LabyrinthPanel_automationTable"]');
         if (!table) return;
@@ -841,9 +850,6 @@ class LabyrinthClearRate {
             'width:50px; background:#1a1a2e; color:#e0e0e0; border:1px solid #555; border-radius:4px; padding:2px 4px; font-size:0.75rem; text-align:center;';
         const labelStyle = 'color:#888; font-size:0.75rem; white-space:nowrap;';
 
-        const defaultRate = config.getSetting('labyrinthRecommendTargetRate') || 70;
-        const defaultHours = config.getSetting('labyrinthRecommendSimHours') || 1;
-
         const rateLabel = document.createElement('span');
         rateLabel.style.cssText = labelStyle;
         rateLabel.textContent = 'Target Win %';
@@ -856,6 +862,9 @@ class LabyrinthClearRate {
         rateInput.step = '1';
         rateInput.value = defaultRate;
         rateInput.style.cssText = inputStyle;
+        rateInput.addEventListener('input', () => {
+            rateInput.dataset.userEdited = '1';
+        });
 
         const hoursLabel = document.createElement('span');
         hoursLabel.style.cssText = labelStyle;
@@ -869,6 +878,9 @@ class LabyrinthClearRate {
         hoursInput.step = '1';
         hoursInput.value = defaultHours;
         hoursInput.style.cssText = inputStyle;
+        hoursInput.addEventListener('input', () => {
+            hoursInput.dataset.userEdited = '1';
+        });
 
         const button = document.createElement('button');
         button.textContent = 'Recommend';
