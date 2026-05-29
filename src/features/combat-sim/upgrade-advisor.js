@@ -482,6 +482,66 @@ function buildUpgradeMap(gameData) {
 }
 
 /**
+ * Get the primary damage style of an item's combat stats.
+ * @param {Object} combatStats - Item combat stats
+ * @returns {string} 'slash', 'stab', 'smash', 'ranged', 'magic', or 'unknown'
+ */
+function getItemDamageStyle(combatStats) {
+    if (!combatStats) return 'unknown';
+    const slash = combatStats.slashDamage || 0;
+    const stab = combatStats.stabDamage || 0;
+    const smash = combatStats.smashDamage || 0;
+    const ranged = combatStats.rangedDamage || 0;
+    const magic = combatStats.magicDamage || 0;
+
+    if (slash >= stab && slash >= smash && slash >= ranged && slash >= magic && slash > 0) return 'slash';
+    if (stab >= slash && stab >= smash && stab >= ranged && stab >= magic && stab > 0) return 'stab';
+    if (smash >= slash && smash >= stab && smash >= ranged && smash >= magic && smash > 0) return 'smash';
+    if (ranged >= slash && ranged >= stab && ranged >= smash && ranged >= magic && ranged > 0) return 'ranged';
+    if (magic > 0) return 'magic';
+    return 'unknown';
+}
+
+/**
+ * Find the best off-hand item for a given combat style and level range.
+ * For melee/ranged: picks highest-level defensive off-hand.
+ * For magic: prefers off-hands with magic stats, falls back to defensive.
+ * @param {Object} gameData - Game data
+ * @param {string} damageStyle - Primary damage style of the weapon
+ * @param {number} maxItemLevel - Maximum item level to consider
+ * @returns {{hrid: string, itemLevel: number}|null}
+ */
+function findBestOffHand(gameData, damageStyle, maxItemLevel) {
+    let best = null;
+    const isMagic = damageStyle === 'magic';
+
+    for (const [itemHrid, item] of Object.entries(gameData.itemDetailMap)) {
+        const eq = item.equipmentDetail;
+        if (!eq || eq.type !== '/equipment_types/off_hand') continue;
+        if (!hasCombatStats(item)) continue;
+        if ((item.itemLevel || 0) > maxItemLevel) continue;
+
+        const level = item.itemLevel || 0;
+        const stats = eq.combatStats || {};
+
+        if (isMagic) {
+            const hasMagicStats = (stats.magicDamage || 0) > 0 || (stats.magicAccuracy || 0) > 0;
+            if (!best) {
+                best = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
+            } else if (hasMagicStats && !best.isMagic) {
+                best = { hrid: itemHrid, itemLevel: level, isMagic: true };
+            } else if (hasMagicStats === best.isMagic && level > best.itemLevel) {
+                best = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
+            }
+        } else if (!best || level > best.itemLevel) {
+            best = { hrid: itemHrid, itemLevel: level };
+        }
+    }
+
+    return best ? { hrid: best.hrid, itemLevel: best.itemLevel } : null;
+}
+
+/**
  * Generate upgrade candidates for a player's equipment and/or abilities.
  * @param {Object} playerDTO - Player DTO with equipment
  * @param {Object} gameData - Game data from buildGameDataPayload()
@@ -579,6 +639,100 @@ export function generateCandidates(
                 }
             }
         }
+
+        // Cross-slot candidates: two_hand ↔ main_hand + off_hand
+        const twoHandEquip = playerDTO.equipment['/equipment_types/two_hand'];
+        const mainHandEquip = playerDTO.equipment['/equipment_types/main_hand'];
+        const offHandEquip = playerDTO.equipment['/equipment_types/off_hand'];
+
+        if (twoHandEquip) {
+            // Case A: Player has two_hand → suggest main_hand + best off_hand
+            const twoHandItem = gameData.itemDetailMap[twoHandEquip.hrid];
+            const twoHandStats = twoHandItem?.equipmentDetail?.combatStats;
+            const damageStyle = getItemDamageStyle(twoHandStats);
+
+            if (damageStyle !== 'unknown') {
+                const twoHandLevel = twoHandItem?.itemLevel || 0;
+                const enhLevel = twoHandEquip.enhancementLevel || 0;
+
+                // Find main_hand weapons with matching style at or above current level
+                for (const [itemHrid, item] of Object.entries(gameData.itemDetailMap)) {
+                    const eq = item.equipmentDetail;
+                    if (!eq || eq.type !== '/equipment_types/main_hand') continue;
+                    if (!hasCombatStats(item)) continue;
+                    if ((item.itemLevel || 0) < twoHandLevel) continue;
+
+                    const style = getItemDamageStyle(eq.combatStats);
+                    if (style !== damageStyle) continue;
+
+                    // Find best off-hand at this tier
+                    const bestOH = findBestOffHand(gameData, damageStyle, item.itemLevel || 999);
+                    if (!bestOH) continue;
+
+                    const mainName = item.name || itemHrid.split('/').pop();
+                    const ohItem = gameData.itemDetailMap[bestOH.hrid];
+                    const ohName = ohItem?.name || bestOH.hrid.split('/').pop();
+                    const currentName = twoHandItem?.name || twoHandEquip.hrid.split('/').pop();
+
+                    candidates.push({
+                        slot: '/equipment_types/two_hand',
+                        currentHrid: twoHandEquip.hrid,
+                        currentLevel: enhLevel,
+                        upgradeHrid: itemHrid,
+                        upgradeLevel: enhLevel,
+                        addedSlots: {
+                            '/equipment_types/main_hand': { hrid: itemHrid, enhancementLevel: enhLevel },
+                            '/equipment_types/off_hand': { hrid: bestOH.hrid, enhancementLevel: enhLevel },
+                        },
+                        clearedSlots: ['/equipment_types/two_hand'],
+                        description: `${currentName} → ${mainName} + ${ohName} (+${enhLevel})`,
+                        type: 'cross_slot',
+                    });
+                }
+            }
+        } else if (mainHandEquip) {
+            // Case B: Player has main_hand (+off_hand) → suggest best two_hand
+            const mainHandItem = gameData.itemDetailMap[mainHandEquip.hrid];
+            const mainHandStats = mainHandItem?.equipmentDetail?.combatStats;
+            const damageStyle = getItemDamageStyle(mainHandStats);
+
+            if (damageStyle !== 'unknown') {
+                const mainHandLevel = mainHandItem?.itemLevel || 0;
+                const enhLevel = mainHandEquip.enhancementLevel || 0;
+
+                // Find two_hand weapons with matching style above current main_hand level
+                for (const [itemHrid, item] of Object.entries(gameData.itemDetailMap)) {
+                    const eq = item.equipmentDetail;
+                    if (!eq || eq.type !== '/equipment_types/two_hand') continue;
+                    if (!hasCombatStats(item)) continue;
+                    if ((item.itemLevel || 0) <= mainHandLevel) continue;
+
+                    const style = getItemDamageStyle(eq.combatStats);
+                    if (style !== damageStyle) continue;
+                    if (getItemRole(eq.combatStats) === 'defensive') continue;
+
+                    const twoHandName = item.name || itemHrid.split('/').pop();
+                    const currentName = mainHandItem?.name || mainHandEquip.hrid.split('/').pop();
+
+                    const clearedSlots = ['/equipment_types/main_hand'];
+                    if (offHandEquip) clearedSlots.push('/equipment_types/off_hand');
+
+                    candidates.push({
+                        slot: '/equipment_types/main_hand',
+                        currentHrid: mainHandEquip.hrid,
+                        currentLevel: enhLevel,
+                        upgradeHrid: itemHrid,
+                        upgradeLevel: enhLevel,
+                        addedSlots: {
+                            '/equipment_types/two_hand': { hrid: itemHrid, enhancementLevel: enhLevel },
+                        },
+                        clearedSlots,
+                        description: `${currentName} → ${twoHandName} (+${enhLevel})`,
+                        type: 'cross_slot',
+                    });
+                }
+            }
+        }
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
@@ -666,6 +820,22 @@ export function calculateUpgradeCost(candidate, gameData) {
 
     if (candidate.type === 'ability_swap') {
         return calculateAbilityLevelUpCost(candidate.upgradeHrid, 0, 0, candidate.upgradeLevel);
+    }
+
+    if (candidate.type === 'cross_slot') {
+        let buyCost = 0;
+        for (const [, item] of Object.entries(candidate.addedSlots)) {
+            const price = resolveItemPrice(item.hrid, {
+                side: 'buy',
+                enhancementLevel: item.enhancementLevel,
+            });
+            buyCost += price.price;
+        }
+        const sellPrice = resolveItemPrice(candidate.currentHrid, {
+            side: 'sell',
+            enhancementLevel: candidate.currentLevel,
+        }).price;
+        return Math.max(0, buyCost - sellPrice);
     }
 
     if (candidate.type === 'enhancement') {
@@ -1133,6 +1303,13 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
                 level: candidate.upgradeLevel,
                 triggers: null,
             };
+        } else if (candidate.type === 'cross_slot') {
+            for (const slot of candidate.clearedSlots) {
+                modifiedDTO.equipment[slot] = null;
+            }
+            for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+                modifiedDTO.equipment[slot] = item;
+            }
         } else {
             modifiedDTO.equipment[candidate.slot] = {
                 hrid: candidate.upgradeHrid,
