@@ -870,10 +870,6 @@ function computeGoldPerImprovement(cost, deltas) {
 
 // ─── Labyrinth Buff Upgrade Candidates ──────────────────────────────────────
 
-const LAB_ROOM_DURATION = 120;
-const LAB_SKILLING_TIME = 10;
-const LAB_ENHANCING_TIME = 8;
-
 const LABYRINTH_BUFF_DEFS = [
     {
         key: 'labyrinthCombatDamageLevel',
@@ -1039,68 +1035,6 @@ function buildModifiedCombatBuffs(baseBuffs, candidate) {
 }
 
 /**
- * Compute average clear rate across all labyrinth skills at a given room level.
- * @param {number} roomLevel
- * @param {Object} [metricOverride] - { key, delta } to add to one metric
- * @returns {number} Average clear rate (0-1)
- */
-function computeAverageSkillingClearRate(roomLevel, metricOverride = null) {
-    const skills = dataManager.getSkills();
-    if (!skills?.length) return 0;
-
-    let total = 0;
-    let count = 0;
-
-    for (const skillHrid of LABYRINTH_SKILLS) {
-        const skillId = skillHrid.replace('/skills/', '');
-        const actionTypeHrid = `/action_types/${skillId}`;
-        const metrics = labyrinthClearRate.getSkillingMetrics(skillId, actionTypeHrid);
-
-        if (metricOverride) {
-            metrics[metricOverride.key] = (metrics[metricOverride.key] || 0) + metricOverride.delta;
-        }
-
-        const skill = skills.find((s) => s.skillHrid === skillHrid);
-        const baseLevel = skill?.level || 1;
-        const effectiveLevel = baseLevel + metrics.skillLevelBonus;
-        const levelDelta = effectiveLevel - roomLevel;
-        const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
-        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
-        const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus));
-
-        let clearChance;
-        if (skillHrid === '/skills/enhancing') {
-            const actionSeconds = LAB_ENHANCING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
-            const attempts = Math.max(1, Math.floor(LAB_ROOM_DURATION / actionSeconds));
-            clearChance = labyrinthClearRate.computeEnhancingClearStats(
-                attempts,
-                successChance,
-                doubleChance,
-                5
-            ).clearChance;
-        } else {
-            const workPower = effectiveLevel * (1 + metrics.efficiencyBonus);
-            const progressPerSuccess = Math.max(0, Math.floor(workPower));
-            const targetProgress = roomLevel * 10;
-            const actionSeconds = LAB_SKILLING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
-            const attempts = Math.max(1, Math.floor(LAB_ROOM_DURATION / actionSeconds));
-            clearChance = labyrinthClearRate.computeNonEnhancingClearStats(
-                attempts,
-                successChance,
-                doubleChance,
-                progressPerSuccess,
-                targetProgress
-            ).clearChance;
-        }
-
-        total += clearChance;
-        count++;
-    }
-
-    return count > 0 ? total / count : 0;
-}
-
-/**
  * Run labyrinth upgrade analysis: baseline sim + equipment sims + buff sims.
  * Ranks upgrades by win rate / clear rate delta, grouped by cost type (token vs gold).
  * @param {Object} params
@@ -1148,18 +1082,12 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         cost: calculateUpgradeCost(c, gameData),
     }));
 
-    // Generate buff candidates
+    // Generate buff candidates (skilling buffs handled in skilling tab)
     const buffCandidates = generateLabyrinthBuffCandidates();
     const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
-    const skillingBuffCandidates = buffCandidates.filter((c) => c.category === 'skilling');
     const experienceBuffCandidates = buffCandidates.filter((c) => c.category === 'experience');
 
-    const total =
-        candidatesWithCost.length +
-        combatBuffCandidates.length +
-        skillingBuffCandidates.length +
-        experienceBuffCandidates.length +
-        1;
+    const total = candidatesWithCost.length + combatBuffCandidates.length + experienceBuffCandidates.length + 1;
     let current = 0;
 
     // Run baseline labyrinth sim
@@ -1279,29 +1207,6 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         onProgress?.({ current, total, description: buffCandidate.description });
     }
 
-    // ── Skilling buff calculations (instant math, no sim) ──
-    const baselineClearRate = computeAverageSkillingClearRate(roomLevel);
-    for (const buffCandidate of skillingBuffCandidates) {
-        if (abortSignal?.()) break;
-
-        const modifiedClearRate = computeAverageSkillingClearRate(roomLevel, {
-            key: buffCandidate.metric,
-            delta: buffCandidate.step,
-        });
-        const clearRateDelta = modifiedClearRate - baselineClearRate;
-
-        results.push({
-            candidate: buffCandidate,
-            costType: 'token',
-            tokenCost: buffCandidate.tokenCost,
-            clearRate: modifiedClearRate,
-            clearRateDelta,
-            metricType: 'clearRate',
-        });
-        current++;
-        onProgress?.({ current, total, description: buffCandidate.description });
-    }
-
     // ── Experience buff (flat % increase, no sim needed) ──
     for (const buffCandidate of experienceBuffCandidates) {
         const currentBonus = buffCandidate.currentLevel * buffCandidate.step;
@@ -1332,7 +1237,6 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRate: baselineWinRate,
             encounters: baselineEncounters,
             attempts: baselineAttempts,
-            clearRate: baselineClearRate,
         },
         results,
     };
