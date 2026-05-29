@@ -285,7 +285,7 @@ function getItemRole(combatStats) {
         return 'magic_water';
     }
 
-    // Check for primary offensive stats
+    // Check for primary offensive stats (exclude defensiveDamage — it's a tank stat)
     const melee = (combatStats.stabDamage || 0) + (combatStats.slashDamage || 0) + (combatStats.smashDamage || 0);
     const ranged = combatStats.rangedDamage || 0;
     const magic = combatStats.magicDamage || 0;
@@ -296,6 +296,9 @@ function getItemRole(combatStats) {
         if (magic >= melee && magic >= ranged) return 'magic';
         return 'melee';
     }
+
+    // Items with only defensiveDamage and no offensive damage are tanks
+    if (combatStats.defensiveDamage > 0) return 'defensive';
 
     // Check accuracy as secondary signal
     const meleeAcc =
