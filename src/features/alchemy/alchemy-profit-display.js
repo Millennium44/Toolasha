@@ -29,6 +29,7 @@ class AlchemyProfitDisplay {
         this.equipmentChangeHandler = null;
         this.sectionExpanded = new Map(); // Persistent expand/collapse state across rebuilds
         this.cachedInputField = null; // Cache input field since it gets removed when action starts
+        this._alchemyTargetLevel = null;
     }
 
     /**
@@ -1306,6 +1307,8 @@ class AlchemyProfitDisplay {
             lines.push('');
 
             // Target level calculator
+            const savedTarget = this._alchemyTargetLevel;
+            const initialTargetLevel = savedTarget && savedTarget > currentLevel ? savedTarget : nextLevel;
             lines.push(
                 `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Target Level Calculator:</span>`
             );
@@ -1314,7 +1317,7 @@ class AlchemyProfitDisplay {
                 <input
                     type="number"
                     id="mwi-alchemy-target-level-input"
-                    value="${nextLevel}"
+                    value="${initialTargetLevel}"
                     min="${nextLevel}"
                     max="200"
                     style="
@@ -1347,6 +1350,7 @@ class AlchemyProfitDisplay {
 
             const updateTargetLevel = () => {
                 const targetLevelValue = parseInt(targetLevelInput.value);
+                this._alchemyTargetLevel = targetLevelValue;
                 if (targetLevelValue > currentLevel && targetLevelValue <= 200) {
                     const result = calculateMultiLevelProgress(
                         currentLevel,
@@ -1367,6 +1371,10 @@ class AlchemyProfitDisplay {
 
             targetLevelInput.addEventListener('input', updateTargetLevel);
             targetLevelInput.addEventListener('change', updateTargetLevel);
+
+            if (initialTargetLevel !== nextLevel) {
+                updateTargetLevel();
+            }
 
             // Create summary for collapsed view
             const summary = `${timeReadable(timeNeeded)} to Level ${nextLevel}`;
