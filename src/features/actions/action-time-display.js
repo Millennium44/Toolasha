@@ -1629,15 +1629,16 @@ class ActionTimeDisplay {
      * @returns {string} Clean action name text
      */
     getCleanActionName(actionNameElement) {
-        // Find our marker span (if it exists)
+        // Walk direct children to join their text with spaces, preserving word boundaries
+        // that textContent would collapse (e.g. <span>Dragon</span><span>Fruit</span> → "Dragon Fruit")
         const markerSpan = actionNameElement.querySelector('.mwi-appended-stats');
-        if (markerSpan) {
-            // Remove the marker span temporarily to get clean text
-            const cleanText = actionNameElement.textContent.replace(markerSpan.textContent, '').trim();
-            return cleanText;
+        const parts = [];
+        for (const node of actionNameElement.childNodes) {
+            if (node === markerSpan) continue;
+            const text = node.textContent.trim();
+            if (text) parts.push(text);
         }
-        // No marker found, return as-is
-        return actionNameElement.textContent.trim();
+        return parts.join(' ').replace(/\s+/g, ' ').trim();
     }
 
     /**
