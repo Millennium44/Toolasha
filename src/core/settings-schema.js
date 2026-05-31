@@ -260,6 +260,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays XP and level progress estimates inside action panels',
             },
+            actionPanel_showSpeedTime: {
+                id: 'actionPanel_showSpeedTime',
+                label: 'Action panel: Show action speed & time',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays speed breakdown, efficiency, and total time inside action panels',
+            },
             actionPanel_showExpPerHour: {
                 id: 'actionPanel_showExpPerHour',
                 label: 'Action page: Show exp/hr on tiles',

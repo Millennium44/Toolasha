@@ -741,13 +741,13 @@ class QuickInputButtons {
             }
 
             // Insert sections into DOM
-            const hideActionStats = !config.getSetting('actionPanel_showProfitDetail');
+            const hideSpeedTime = !config.getSetting('actionPanel_showSpeedTime');
             const hideLevelProgress = !config.getSetting('actionPanel_showLevelProgress');
 
             inputContainer.insertAdjacentElement('afterend', queueContent);
             let lastInserted = queueContent;
 
-            if (speedSection && !hideActionStats) {
+            if (speedSection && !hideSpeedTime) {
                 lastInserted.insertAdjacentElement('afterend', speedSection);
                 lastInserted = speedSection;
             }
