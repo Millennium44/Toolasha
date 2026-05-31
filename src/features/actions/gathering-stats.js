@@ -330,6 +330,8 @@ class GatheringStats {
      */
     addBestActionIndicators() {
         let bestProfit = null;
+        let bestProfitExp = null;
+        let bestProfitHrid = null;
         let bestExp = null;
         let bestOverall = null;
         let bestProfitPanels = [];
@@ -348,6 +350,8 @@ class GatheringStats {
             if (!hasMissingPrices && profitPerHour !== null) {
                 if (bestProfit === null || profitPerHour > bestProfit) {
                     bestProfit = profitPerHour;
+                    bestProfitExp = expPerHour;
+                    bestProfitHrid = data.actionHrid;
                     bestProfitPanels = [actionPanel];
                 } else if (profitPerHour === bestProfit) {
                     bestProfitPanels.push(actionPanel);
@@ -363,20 +367,41 @@ class GatheringStats {
                     bestExpPanels.push(actionPanel);
                 }
             }
+        }
 
-            // Find best overall (profit × exp product)
-            if (!hasMissingPrices && profitPerHour !== null && expPerHour !== null && expPerHour > 0) {
-                const overallValue = profitPerHour * expPerHour;
-                if (bestOverall === null || overallValue > bestOverall) {
-                    bestOverall = overallValue;
-                    bestOverallPanels = [actionPanel];
-                } else if (overallValue === bestOverall) {
-                    bestOverallPanels.push(actionPanel);
-                }
+        // Second pass: compute gold-neutral effective XP/hr and find best overall
+        for (const [actionPanel, data] of this.actionElements.entries()) {
+            if (!document.body.contains(actionPanel) || !data.displayElement) {
+                continue;
+            }
+
+            const { profitPerHour, expPerHour, hasMissingPrices } = data;
+            if (hasMissingPrices || profitPerHour === null || expPerHour === null || expPerHour <= 0) {
+                continue;
+            }
+
+            let effectiveXp;
+            if (profitPerHour >= 0) {
+                effectiveXp = expPerHour;
+            } else if (bestProfit > 0) {
+                const loss = Math.abs(profitPerHour);
+                const recoveryRatio = loss / bestProfit;
+                effectiveXp = (expPerHour + recoveryRatio * (bestProfitExp || 0)) / (1 + recoveryRatio);
+            } else {
+                continue;
+            }
+
+            data.effectiveXpPerHour = effectiveXp;
+
+            if (bestOverall === null || effectiveXp > bestOverall) {
+                bestOverall = effectiveXp;
+                bestOverallPanels = [actionPanel];
+            } else if (effectiveXp === bestOverall) {
+                bestOverallPanels.push(actionPanel);
             }
         }
 
-        // Second pass: update emoji indicators in-place on existing spans.
+        // Third pass: update emoji indicators and effective XP display in-place.
         // Avoids rewriting innerHTML (which would cause a flash + re-size).
         const EMOJIS = [' 💰', ' 🧠', ' 🏆'];
         const stripEmoji = (text) => {
@@ -384,6 +409,10 @@ class GatheringStats {
             for (const e of EMOJIS) t = t.replace(e, '');
             return t;
         };
+
+        const bestProfitName = bestProfitHrid
+            ? dataManager.getActionDetails(bestProfitHrid)?.name || bestProfitHrid
+            : null;
 
         for (const [actionPanel, data] of this.actionElements.entries()) {
             if (!document.body.contains(actionPanel) || !data.displayElement) {
@@ -406,7 +435,22 @@ class GatheringStats {
 
             const overallSpan = data.displayElement.querySelector('[data-stat="overall"]');
             if (overallSpan) {
-                overallSpan.textContent = stripEmoji(overallSpan.textContent) + (isBestOverall ? ' 🏆' : '');
+                const effXp = data.effectiveXpPerHour;
+                const label = effXp != null ? `Eff. XP/hr: ${formatKMB(effXp)}` : stripEmoji(overallSpan.textContent);
+                overallSpan.textContent = label + (isBestOverall ? ' 🏆' : '');
+
+                if (data.profitPerHour < 0 && bestProfit > 0 && effXp != null) {
+                    const loss = Math.abs(data.profitPerHour);
+                    const ratio = loss / bestProfit;
+                    overallSpan.title =
+                        `Gold-neutral XP rate\n` +
+                        `This action: ${formatKMB(data.expPerHour)} XP/hr, -${formatKMB(loss)}/hr\n` +
+                        `Recovery: ${bestProfitName} (+${formatKMB(bestProfit)}/hr, ${formatKMB(bestProfitExp || 0)} XP/hr)\n` +
+                        `Ratio: ${ratio.toFixed(2)}hr recovery per 1hr action\n` +
+                        `Blended: (${formatKMB(data.expPerHour)} + ${ratio.toFixed(2)} × ${formatKMB(bestProfitExp || 0)}) / ${(1 + ratio).toFixed(2)} = ${formatKMB(effXp)}`;
+                } else {
+                    overallSpan.title = '';
+                }
             }
 
             // Re-fit font sizes now that emoji may have changed span widths.
@@ -438,11 +482,8 @@ class GatheringStats {
         }
 
         if (showProfit && showExp && profitPerHour !== null && expPerHour !== null && expPerHour > 0) {
-            const coinsPerXp = profitPerHour / expPerHour;
-            const efficiencyColor = coinsPerXp >= 0 ? config.COLOR_INFO : config.COLOR_WARNING;
-            const efficiencySign = coinsPerXp >= 0 ? '' : '-';
             html += `<div class="mwi-action-stat-line" style="white-space: nowrap;">`;
-            html += `<span data-stat="overall" style="color: ${efficiencyColor};">Profit/XP: ${efficiencySign}${formatKMB(Math.abs(coinsPerXp))}</span></div>`;
+            html += `<span data-stat="overall" style="color: #fff;">Eff. XP/hr: ${formatKMB(expPerHour)}</span></div>`;
         }
 
         data.displayElement.innerHTML = html;
