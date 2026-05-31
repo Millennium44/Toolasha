@@ -69,6 +69,7 @@ class QuickInputButtons {
         this.presetHours = [0.5, 1, 2, 3, 4, 5, 6, 10, 12, 24];
         this.presetValues = [10, 100, 1000];
         this.cleanupRegistry = createCleanupRegistry();
+        this._targetLevelByAction = new Map();
     }
 
     /**
@@ -1333,6 +1334,9 @@ class QuickInputButtons {
             lines.push('');
 
             // Multi-level calculator (interactive section)
+            const savedTargetLevel = this._targetLevelByAction.get(actionDetails.hrid);
+            const initialTargetLevel =
+                savedTargetLevel && savedTargetLevel > currentLevel ? savedTargetLevel : nextLevel;
             lines.push(
                 `<span style="font-weight: 500; color: var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY});">Target Level Calculator:</span>`
             );
@@ -1341,7 +1345,7 @@ class QuickInputButtons {
                 <input
                     type="number"
                     id="mwi-target-level-input"
-                    value="${nextLevel}"
+                    value="${initialTargetLevel}"
                     min="${nextLevel}"
                     max="200"
                     style="
@@ -1375,6 +1379,7 @@ class QuickInputButtons {
 
             const updateTargetLevel = () => {
                 const targetLevel = parseInt(targetLevelInput.value);
+                this._targetLevelByAction.set(actionDetails.hrid, targetLevel);
 
                 if (targetLevel > currentLevel && targetLevel <= 200) {
                     const result = calculateMultiLevelProgress(
@@ -1402,6 +1407,11 @@ class QuickInputButtons {
 
             targetLevelInput.addEventListener('input', updateTargetLevel);
             targetLevelInput.addEventListener('change', updateTargetLevel);
+
+            // If restoring a saved target level, compute and display the result immediately
+            if (initialTargetLevel !== nextLevel) {
+                updateTargetLevel();
+            }
 
             // Create summary for collapsed view (time to next level)
             const summary = `${timeReadable(singleLevel.timeNeeded)} to Level ${nextLevel}`;
