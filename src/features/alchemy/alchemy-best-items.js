@@ -12,6 +12,7 @@ import { formatKMB, formatWithSeparator, formatPercentage } from '../../utils/fo
 import { getItemPrice } from '../../utils/market-data.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 
 const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
 
@@ -571,10 +572,17 @@ class AlchemyBestItems {
             rankTd.style.cssText = 'padding: 4px 8px; text-align: center; color: #888;';
             row.appendChild(rankTd);
 
-            // Name
+            // Name (clickable → marketplace)
             const nameTd = document.createElement('td');
-            nameTd.textContent = item.name;
-            nameTd.style.cssText = 'padding: 4px 8px; color: #ddd;';
+            nameTd.style.cssText = 'padding: 4px 8px;';
+            const nameLink = document.createElement('span');
+            nameLink.textContent = item.name;
+            nameLink.style.cssText = 'color: #93c5fd; cursor: pointer; text-decoration: underline;';
+            nameLink.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigateToMarketplace(item.itemHrid);
+            });
+            nameTd.appendChild(nameLink);
             row.appendChild(nameTd);
 
             // Level
