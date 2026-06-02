@@ -104,10 +104,26 @@ class DataManager {
 
             // Give up after max attempts
             if (fallbackAttempts >= maxAttempts) {
-                console.error(
-                    '[DataManager] Character data not received after 30 seconds. WebSocket hook may have failed.'
-                );
+                console.error('[DataManager] Character data not received after 30 seconds. Attempting recovery...');
                 stopFallbackInterval();
+
+                webSocketHook.reinstallSimpleHook();
+
+                let recoveryAttempts = 0;
+                this.recoveryInterval = setInterval(() => {
+                    recoveryAttempts++;
+                    if (this.characterData) {
+                        clearInterval(this.recoveryInterval);
+                        this.recoveryInterval = null;
+                        console.log('[DataManager] Recovery successful - character data received.');
+                        return;
+                    }
+                    if (recoveryAttempts >= 20) {
+                        clearInterval(this.recoveryInterval);
+                        this.recoveryInterval = null;
+                        console.error('[DataManager] Recovery failed. Please reload the page.');
+                    }
+                }, 500);
             }
         }, 500); // Check every 500ms
     }
@@ -124,6 +140,11 @@ class DataManager {
         if (this.fallbackInterval) {
             clearInterval(this.fallbackInterval);
             this.fallbackInterval = null;
+        }
+
+        if (this.recoveryInterval) {
+            clearInterval(this.recoveryInterval);
+            this.recoveryInterval = null;
         }
     }
 
