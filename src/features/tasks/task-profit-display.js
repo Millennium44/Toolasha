@@ -768,16 +768,20 @@ class TaskProfitDisplay {
                 combatMarker.style.display = 'none';
                 combatMarker.dataset.taskKey = `${taskData.description}|${taskData.quantity}`;
 
-                // Visible estimate container
-                const estimateContainer = document.createElement('div');
-                estimateContainer.className = 'mwi-task-profit';
-                estimateContainer.style.cssText = 'margin-top: 4px; font-size: 0.75rem;';
-                this._renderCombatEstimateConfig(estimateContainer, taskData);
-
                 const actionNode = taskNode.querySelector(GAME.TASK_ACTION);
                 if (actionNode) {
                     actionNode.appendChild(combatMarker);
-                    actionNode.appendChild(estimateContainer);
+                }
+
+                if (config.getSetting('taskCombatEstimate')) {
+                    const estimateContainer = document.createElement('div');
+                    estimateContainer.className = 'mwi-task-profit';
+                    estimateContainer.style.cssText = 'margin-top: 4px; font-size: 0.75rem;';
+                    this._renderCombatEstimateConfig(estimateContainer, taskData);
+
+                    if (actionNode) {
+                        actionNode.appendChild(estimateContainer);
+                    }
                 }
                 return;
             }

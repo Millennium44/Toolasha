@@ -1294,6 +1294,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            taskCombatEstimate: {
+                id: 'taskCombatEstimate',
+                label: 'Show combat estimate on combat tasks',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays a loadout dropdown and estimate button on combat task cards.',
+            },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
                 label: 'Show task efficiency rating (tokens/profit per hour)',
