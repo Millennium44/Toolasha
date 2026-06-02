@@ -562,8 +562,9 @@ function formatEnhancementDisplay(
 
     if (totalSuccess > 0) {
         lines.push(
-            `<div style="color: #88ff88;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}%</div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-success" style="color: #88ff88; cursor: pointer;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
         );
+        lines.push('<div id="mwi-enh-success" style="display: none;">');
 
         // Show base rate and final rate for current enhancement level
         let currentLevel = null;
@@ -624,6 +625,7 @@ function formatEnhancementDisplay(
                 `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`
             );
         }
+        lines.push('</div>');
     }
 
     // Speed display from game's buff maps (authoritative source)
@@ -631,8 +633,9 @@ function formatEnhancementDisplay(
 
     if (totalSpeed > 0) {
         lines.push(
-            `<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}%</div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-speed" style="color: #88ccff; cursor: pointer;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
         );
+        lines.push('<div id="mwi-enh-speed" style="display: none;">');
 
         // Show breakdown from buff maps (each value is decimal, convert to %)
         if (speedBreakdown.equipment > 0) {
@@ -665,6 +668,7 @@ function formatEnhancementDisplay(
                 `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${(speedBreakdown.levelAdvantage * 100).toFixed(1)}%</div>`
             );
         }
+        lines.push('</div>');
     } else {
         lines.push(`<div style="color: #88ccff;"><span style="color: #888;">Speed:</span> +0.0%</div>`);
     }
@@ -683,8 +687,9 @@ function formatEnhancementDisplay(
     }
     if (params.rareFindBonus > 0) {
         lines.push(
-            `<div style="color: #ffaa55;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}%</div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-rarefind" style="color: #ffaa55; cursor: pointer;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
         );
+        lines.push('<div id="mwi-enh-rarefind" style="display: none;">');
 
         // Show breakdown if available
         const achievementRareFind = params.achievementRareFindBonus || 0;
@@ -707,11 +712,13 @@ function formatEnhancementDisplay(
                 );
             }
         }
+        lines.push('</div>');
     }
     if (params.experienceBonus > 0) {
         lines.push(
-            `<div style="color: #ffdd88;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}%</div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-experience" style="color: #ffdd88; cursor: pointer;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
         );
+        lines.push('<div id="mwi-enh-experience" style="display: none;">');
 
         // Show breakdown: equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
         const teaWisdom = params.teaWisdomBonus || 0;
@@ -749,6 +756,7 @@ function formatEnhancementDisplay(
                 `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementWisdom.toFixed(1)}%</div>`
             );
         }
+        lines.push('</div>');
     }
     lines.push('</div>');
 
@@ -945,6 +953,18 @@ function injectDisplay(panel, html) {
             });
         }
     }
+
+    // Attach click-to-expand handlers for stat breakdowns
+    container.querySelectorAll('.mwi-enh-toggle').forEach((toggle) => {
+        toggle.addEventListener('click', () => {
+            const target = container.querySelector(`#${toggle.dataset.target}`);
+            if (!target) return;
+            const arrow = toggle.querySelector('.mwi-enh-arrow');
+            const isHidden = target.style.display === 'none';
+            target.style.display = isHidden ? '' : 'none';
+            if (arrow) arrow.textContent = isHidden ? '▾' : '▸';
+        });
+    });
 
     // Attach event listener to expand costs table button
     const expandBtn = container.querySelector('#mwi-expand-costs-table-btn');
