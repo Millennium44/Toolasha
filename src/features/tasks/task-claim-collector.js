@@ -62,7 +62,7 @@ class TaskClaimCollector {
         this.proxyButton = document.createElement('button');
         this.proxyButton.id = PROXY_BTN_ID;
         this.proxyButton.className = 'Button_button__1Fe9z Button_small__3fqC7';
-        this.proxyButton.style.marginLeft = '8px';
+        this.proxyButton.style.cssText = 'margin-left: 8px; min-width: 130px;';
         this.proxyButton.addEventListener('click', () => this._claimNext());
 
         const highlightBtn = headerElement.querySelector('[data-mwi-task-highlight]');
