@@ -257,7 +257,7 @@ export function getDetectedGearSettings() {
     };
     const CAPE_HRIDS = {
         '/items/chance_cape': 'normal',
-        '/items/chance_cape_r': 'refined',
+        '/items/chance_cape_refined': 'refined',
     };
     const CHARM_HRIDS = {
         '/items/trainee_enhancing_charm': 'trainee',
@@ -367,7 +367,7 @@ function getManualParams() {
     };
     const CAPE_TIERS = {
         normal: '/items/chance_cape',
-        refined: '/items/chance_cape_r',
+        refined: '/items/chance_cape_refined',
     };
     const CHARM_TIERS = {
         trainee: '/items/trainee_enhancing_charm',
