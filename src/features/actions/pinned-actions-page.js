@@ -29,7 +29,7 @@ const COLUMNS = [
     { key: 'expPerHour', label: 'XP/hr', align: 'right', filterable: false },
 ];
 
-const GRID_COLUMNS = '1fr 120px 50px 90px 90px';
+const GRID_COLUMNS = '28px 1fr 120px 50px 90px 90px';
 
 /**
  * Get game object via React fiber tree traversal
@@ -275,6 +275,10 @@ class PinnedActionsPage {
             });
         }
 
+        if (!this.itemsSpriteUrl) {
+            this.itemsSpriteUrl = await assetManifest.getSpriteUrl('items');
+        }
+
         this.renderTable();
     }
 
@@ -446,6 +450,10 @@ class PinnedActionsPage {
             user-select: none;
         `;
 
+        // Empty header for icon column
+        const iconHeader = document.createElement('div');
+        headerRow.appendChild(iconHeader);
+
         for (const col of COLUMNS) {
             const th = document.createElement('div');
             th.style.cssText = `
@@ -532,7 +540,14 @@ class PinnedActionsPage {
                 background: ${rowBg};
             `;
 
+            const iconSlug = action.outputItemHrid ? action.outputItemHrid.split('/').pop() : '';
+            const iconHtml =
+                this.itemsSpriteUrl && iconSlug
+                    ? `<svg width="24" height="24"><use href="${this.itemsSpriteUrl}#${iconSlug}"></use></svg>`
+                    : '';
+
             row.innerHTML = `
+                <span style="display: flex; align-items: center; justify-content: center;">${iconHtml}</span>
                 <span style="font-weight: 500; text-align: left;">${action.name}</span>
                 <span style="color: #aaa; font-size: 0.9em; text-align: left;">${action.skill}</span>
                 <span style="color: #aaa; text-align: left;">${action.level}</span>
