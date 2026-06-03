@@ -13,6 +13,7 @@ class ItemCountDisplay {
     constructor() {
         this.unregisterObserver = null;
         this.isInitialized = false;
+        this.itemsUpdatedHandler = null;
     }
 
     /**
@@ -29,6 +30,7 @@ class ItemCountDisplay {
 
         this.isInitialized = true;
         this.setupObserver();
+        this.setupInventoryListener();
     }
 
     /**
@@ -49,6 +51,23 @@ class ItemCountDisplay {
         if (existingContainer) {
             this.updateItemCounts(existingContainer);
         }
+    }
+
+    /**
+     * Listen for inventory changes and refresh counts
+     */
+    setupInventoryListener() {
+        let debounceTimer = null;
+        this.itemsUpdatedHandler = () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                const container = document.querySelector('[class*="MarketplacePanel_marketItems"]');
+                if (container) {
+                    this.updateItemCounts(container);
+                }
+            }, 250);
+        };
+        dataManager.on('items_updated', this.itemsUpdatedHandler);
     }
 
     /**
@@ -162,6 +181,11 @@ class ItemCountDisplay {
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;
+        }
+
+        if (this.itemsUpdatedHandler) {
+            dataManager.off('items_updated', this.itemsUpdatedHandler);
+            this.itemsUpdatedHandler = null;
         }
 
         // Remove all injected count displays and reset opacity
