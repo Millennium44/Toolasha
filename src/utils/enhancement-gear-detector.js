@@ -22,6 +22,9 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         rareFindBonus: 0,
         experienceBonus: 0,
 
+        // Per-slot breakdown for display
+        slotBreakdown: [],
+
         // Best items per slot for display
         toolSlot: null, // main_hand or two_hand
         bodySlot: null, // body
@@ -45,7 +48,8 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
         hands: [], // hands
         neck: [], // neck (accessories have 5× multiplier)
         ring: [], // ring (accessories have 5× multiplier)
-        earring: [], // earring (accessories have 5× multiplier)
+        earrings: [], // earrings (accessories have 5× multiplier)
+        back: [], // back (capes)
         charm: [], // charm (5× multiplier)
     };
 
@@ -58,7 +62,9 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
     // Search all items for skill-related bonuses and group by slot
     for (const item of itemsToScan) {
         const itemDetails = itemDetailMap[item.itemHrid];
-        if (!itemDetails?.equipmentDetail?.noncombatStats) continue;
+        if (!itemDetails?.equipmentDetail?.noncombatStats) {
+            continue;
+        }
 
         const stats = itemDetails.equipmentDetail.noncombatStats;
         const enhancementLevel = item.enhancementLevel || 0;
@@ -82,7 +88,9 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
             allStats.skillingRareFind ||
             allStats.skillingExperience;
 
-        if (!hasSkillStats) continue;
+        if (!hasSkillStats) {
+            continue;
+        }
 
         // Calculate bonuses for this item (backward-compatible output)
         const itemBonuses = {
@@ -118,8 +126,10 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
             slotCandidates.neck.push(itemBonuses);
         } else if (equipmentType === '/equipment_types/ring') {
             slotCandidates.ring.push(itemBonuses);
-        } else if (equipmentType === '/equipment_types/earring') {
-            slotCandidates.earring.push(itemBonuses);
+        } else if (equipmentType === '/equipment_types/earrings') {
+            slotCandidates.earrings.push(itemBonuses);
+        } else if (equipmentType === '/equipment_types/back') {
+            slotCandidates.back.push(itemBonuses);
         } else if (equipmentType === '/equipment_types/charm') {
             slotCandidates.charm.push(itemBonuses);
         }
@@ -146,81 +156,37 @@ export function detectSkillGear(skillName, equipment, itemDetailMap) {
     const bestHands = selectBest(slotCandidates.hands);
     const bestNeck = selectBest(slotCandidates.neck);
     const bestRing = selectBest(slotCandidates.ring);
-    const bestEarring = selectBest(slotCandidates.earring);
+    const bestEarrings = selectBest(slotCandidates.earrings);
+    const bestBack = selectBest(slotCandidates.back);
     const bestCharm = selectBest(slotCandidates.charm);
 
     // Add bonuses from best items in each slot
-    if (bestTool) {
-        gear.toolBonus += bestTool.toolBonus;
-        gear.speedBonus += bestTool.speedBonus;
-        gear.rareFindBonus += bestTool.rareFindBonus;
-        gear.experienceBonus += bestTool.experienceBonus;
-        gear.toolSlot = {
-            name: bestTool.itemDetails.name,
-            enhancementLevel: bestTool.enhancementLevel,
-        };
-    }
+    const addSlot = (best) => {
+        if (!best) return;
+        gear.toolBonus += best.toolBonus;
+        gear.speedBonus += best.speedBonus;
+        gear.rareFindBonus += best.rareFindBonus;
+        gear.experienceBonus += best.experienceBonus;
+        gear.slotBreakdown.push({
+            name: best.itemDetails.name,
+            enhancementLevel: best.enhancementLevel,
+            success: best.toolBonus,
+            speed: best.speedBonus,
+            rareFind: best.rareFindBonus,
+            experience: best.experienceBonus,
+        });
+        return { name: best.itemDetails.name, enhancementLevel: best.enhancementLevel };
+    };
 
-    if (bestBody) {
-        gear.toolBonus += bestBody.toolBonus;
-        gear.speedBonus += bestBody.speedBonus;
-        gear.rareFindBonus += bestBody.rareFindBonus;
-        gear.experienceBonus += bestBody.experienceBonus;
-        gear.bodySlot = {
-            name: bestBody.itemDetails.name,
-            enhancementLevel: bestBody.enhancementLevel,
-        };
-    }
-
-    if (bestLegs) {
-        gear.toolBonus += bestLegs.toolBonus;
-        gear.speedBonus += bestLegs.speedBonus;
-        gear.rareFindBonus += bestLegs.rareFindBonus;
-        gear.experienceBonus += bestLegs.experienceBonus;
-        gear.legsSlot = {
-            name: bestLegs.itemDetails.name,
-            enhancementLevel: bestLegs.enhancementLevel,
-        };
-    }
-
-    if (bestHands) {
-        gear.toolBonus += bestHands.toolBonus;
-        gear.speedBonus += bestHands.speedBonus;
-        gear.rareFindBonus += bestHands.rareFindBonus;
-        gear.experienceBonus += bestHands.experienceBonus;
-        gear.handsSlot = {
-            name: bestHands.itemDetails.name,
-            enhancementLevel: bestHands.enhancementLevel,
-        };
-    }
-
-    if (bestNeck) {
-        gear.toolBonus += bestNeck.toolBonus;
-        gear.speedBonus += bestNeck.speedBonus;
-        gear.rareFindBonus += bestNeck.rareFindBonus;
-        gear.experienceBonus += bestNeck.experienceBonus;
-    }
-
-    if (bestRing) {
-        gear.toolBonus += bestRing.toolBonus;
-        gear.speedBonus += bestRing.speedBonus;
-        gear.rareFindBonus += bestRing.rareFindBonus;
-        gear.experienceBonus += bestRing.experienceBonus;
-    }
-
-    if (bestEarring) {
-        gear.toolBonus += bestEarring.toolBonus;
-        gear.speedBonus += bestEarring.speedBonus;
-        gear.rareFindBonus += bestEarring.rareFindBonus;
-        gear.experienceBonus += bestEarring.experienceBonus;
-    }
-
-    if (bestCharm) {
-        gear.toolBonus += bestCharm.toolBonus;
-        gear.speedBonus += bestCharm.speedBonus;
-        gear.rareFindBonus += bestCharm.rareFindBonus;
-        gear.experienceBonus += bestCharm.experienceBonus;
-    }
+    gear.toolSlot = addSlot(bestTool) || null;
+    gear.bodySlot = addSlot(bestBody) || null;
+    gear.legsSlot = addSlot(bestLegs) || null;
+    gear.handsSlot = addSlot(bestHands) || null;
+    addSlot(bestNeck);
+    addSlot(bestRing);
+    addSlot(bestEarrings);
+    addSlot(bestBack);
+    addSlot(bestCharm);
 
     return gear;
 }

@@ -192,6 +192,7 @@ export function getAutoDetectedParams() {
         achievementSuccessBonus: achievementSuccessBonus, // For display
         equipmentSpeedBonus: gear.speedBonus, // For display
         houseSpeedBonus: houseSpeedBonus, // For display
+        slotBreakdown: gear.slotBreakdown || [], // Per-item breakdown for display
     };
 }
 
@@ -409,6 +410,7 @@ function getManualParams() {
     let equipmentRareFind = 0;
     let equipmentExperience = 0;
     let drinkConcentration = 0;
+    const slotBreakdown = [];
 
     // Enhancer
     const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 });
@@ -419,6 +421,15 @@ function getManualParams() {
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Enhancer',
+            enhancementLevel: enhancer.level,
+            success: bonus.success,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
+            experience: bonus.experience,
+        });
     }
 
     // Gloves
@@ -427,6 +438,15 @@ function getManualParams() {
         const bonus = getGearSlotBonus(FIXED_GEAR.gloves, gloves.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[FIXED_GEAR.gloves];
+        slotBreakdown.push({
+            name: details?.name || 'Gloves',
+            enhancementLevel: gloves.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: 0,
+            experience: bonus.experience,
+        });
     }
 
     // Top
@@ -436,6 +456,15 @@ function getManualParams() {
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[FIXED_GEAR.top];
+        slotBreakdown.push({
+            name: details?.name || 'Top',
+            enhancementLevel: top.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
+            experience: bonus.experience,
+        });
     }
 
     // Bottoms
@@ -444,6 +473,15 @@ function getManualParams() {
         const bonus = getGearSlotBonus(FIXED_GEAR.bottoms, bottoms.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[FIXED_GEAR.bottoms];
+        slotBreakdown.push({
+            name: details?.name || 'Bottoms',
+            enhancementLevel: bottoms.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: 0,
+            experience: bonus.experience,
+        });
     }
 
     // Neck
@@ -454,6 +492,15 @@ function getManualParams() {
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Necklace',
+            enhancementLevel: neck.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
+            experience: bonus.experience,
+        });
     }
 
     // Ring
@@ -464,6 +511,15 @@ function getManualParams() {
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Ring',
+            enhancementLevel: ring.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
+            experience: bonus.experience,
+        });
     }
 
     // Earring
@@ -474,6 +530,15 @@ function getManualParams() {
         equipmentSpeedBonus += bonus.speed;
         equipmentRareFind += bonus.rareFind;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Earrings',
+            enhancementLevel: earring.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: bonus.rareFind,
+            experience: bonus.experience,
+        });
     }
 
     // Cape
@@ -483,6 +548,15 @@ function getManualParams() {
         const bonus = getGearSlotBonus(hrid, cape.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Cape',
+            enhancementLevel: cape.level,
+            success: 0,
+            speed: bonus.speed,
+            rareFind: 0,
+            experience: bonus.experience,
+        });
     }
 
     // Guzzling Pouch (provides drink concentration)
@@ -498,6 +572,15 @@ function getManualParams() {
         const hrid = CHARM_TIERS[charm.tier] || CHARM_TIERS.grandmaster;
         const bonus = getGearSlotBonus(hrid, charm.level, itemDetailMap);
         equipmentExperience += bonus.experience;
+        const details = itemDetailMap[hrid];
+        slotBreakdown.push({
+            name: details?.name || 'Charm',
+            enhancementLevel: charm.level,
+            success: 0,
+            speed: 0,
+            rareFind: 0,
+            experience: bonus.experience,
+        });
     }
 
     // --- COMMUNITY BUFF ---
@@ -590,6 +673,7 @@ function getManualParams() {
         equipmentSuccessBonus: equipmentSuccessBonus,
         houseSuccessBonus: houseSuccessBonus,
         achievementSuccessBonus: achievementSuccessBonus,
+        slotBreakdown: slotBreakdown,
     };
 }
 
