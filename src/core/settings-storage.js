@@ -77,7 +77,7 @@ class SettingsStorage {
                 }
 
                 // Copy other properties
-                if (settingDef.options) {
+                if (settingDef.options && typeof settingDef.options !== 'function') {
                     settings[settingId].options = settingDef.options;
                 }
                 if (settingDef.min !== undefined) {

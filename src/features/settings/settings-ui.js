@@ -608,7 +608,8 @@ class SettingsUI {
 
             case 'select': {
                 const value = currentSetting?.value ?? settingDef.default ?? '';
-                const options = settingDef.options || [];
+                const options =
+                    typeof settingDef.options === 'function' ? settingDef.options() : settingDef.options || [];
                 const optionsHTML = options
                     .map((option) => {
                         const optValue = typeof option === 'object' ? option.value : option;

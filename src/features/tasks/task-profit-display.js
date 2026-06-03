@@ -920,12 +920,15 @@ class TaskProfitDisplay {
             .getAllSnapshots()
             .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat');
 
+        const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
+
         let html = '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">';
         html +=
             '<select class="mwi-combat-est-loadout" style="font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
-        html += '<option value="">— Current Gear —</option>';
+        html += `<option value=""${!defaultLoadout ? ' selected' : ''}>— Current Gear —</option>`;
         for (const s of snapshots) {
-            html += `<option value="${s.name}">${s.name}</option>`;
+            const selected = s.name === defaultLoadout ? ' selected' : '';
+            html += `<option value="${s.name}"${selected}>${s.name}</option>`;
         }
         html += '</select>';
         html +=

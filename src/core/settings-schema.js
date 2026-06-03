@@ -1235,6 +1235,25 @@ export const settingsGroups = {
                 default: false,
                 help: 'Display avg completion time as "X.XX min" instead of "Xm Ys"',
             },
+            combatSim_defaultLoadout: {
+                id: 'combatSim_defaultLoadout',
+                label: 'Combat Simulator: Default loadout',
+                type: 'select',
+                default: '',
+                options: () => {
+                    const snapshot = window.Toolasha?.Combat?.loadoutSnapshot;
+                    const loadouts = snapshot
+                        ? snapshot
+                              .getAllSnapshots()
+                              .filter((s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat')
+                        : [];
+                    return [
+                        { value: '', label: 'Current Gear' },
+                        ...loadouts.map((s) => ({ value: s.name, label: s.name })),
+                    ];
+                },
+                help: 'Loadout to use by default for combat estimates instead of currently equipped gear',
+            },
             combatStats: {
                 id: 'combatStats',
                 label: 'Combat Statistics: Show Statistics tab in Combat panel',
