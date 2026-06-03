@@ -1207,6 +1207,34 @@ class TaskProfitDisplay {
         });
 
         container.appendChild(mainLine);
+
+        // Efficiency rating (tokens/hr or gold/hr) — matching skilling task format
+        if (config.getSetting('taskEfficiencyRating') && completionSeconds > 0) {
+            const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
+            const hours = completionSeconds / 3600;
+            let ratingValue, unitLabel;
+
+            if (ratingMode === RATING_MODE_GOLD) {
+                ratingValue = totalProfit / hours;
+                unitLabel = 'gold/hr';
+            } else {
+                const tokensReceived = rewardValue.breakdown?.tokensReceived ?? 0;
+                ratingValue = tokensReceived / hours;
+                unitLabel = 'tokens/hr';
+            }
+
+            const ratingLine = document.createElement('div');
+            ratingLine.className = 'mwi-task-profit-rating';
+            ratingLine.style.cssText = 'margin-top: 2px; font-size: 0.7rem;';
+            ratingLine.dataset.ratingValue = `${ratingValue}`;
+            ratingLine.dataset.ratingMode = ratingMode;
+            ratingLine.style.color = config.COLOR_ACCENT;
+            ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
+            container.appendChild(ratingLine);
+
+            this.updateEfficiencyGradientColors();
+        }
+
         container.appendChild(breakdown);
     }
 
