@@ -93,17 +93,17 @@ function registerFeatures() {
             async: false,
         },
         {
-            key: 'listingPriceDisplay',
-            name: 'Listing Price Display',
-            category: 'Market',
-            module: Market.listingPriceDisplay,
-            async: false,
-        },
-        {
             key: 'estimatedListingAge',
             name: 'Estimated Listing Age',
             category: 'Market',
             module: Market.estimatedListingAge,
+            async: true,
+        },
+        {
+            key: 'listingPriceDisplay',
+            name: 'Listing Price Display',
+            category: 'Market',
+            module: Market.listingPriceDisplay,
             async: false,
         },
         {
