@@ -9,7 +9,6 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateEnhancement, BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
-import { getEnhancingSpeedBreakdown } from '../enhancement/enhancement-xp.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
@@ -109,8 +108,28 @@ export async function displayEnhancementStats(panel, itemHrid) {
         // Detect protection item once (avoid repeated DOM queries)
         const protectionItemHrid = getProtectionItemFromUI(panel);
 
-        // Calculate per-action time from game's buff maps (authoritative source)
-        const speedBreakdown = getEnhancingSpeedBreakdown(itemHrid);
+        // Build speed breakdown from params (respects manual override)
+        const itemLevel = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.itemLevel || 0;
+        const levelAdvantage = params.enhancingLevel > itemLevel ? (params.enhancingLevel - itemLevel) / 100 : 0;
+        const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
+        const personalSpeed = autoDetect
+            ? dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed')
+            : 0;
+        const speedBreakdown = {
+            equipment: (params.equipmentSpeedBonus || 0) / 100,
+            house: (params.houseSpeedBonus || 0) / 100,
+            community: (params.communitySpeedBonus || 0) / 100,
+            consumable: (params.teaSpeedBonus || 0) / 100,
+            personal: personalSpeed,
+            levelAdvantage,
+            total:
+                (params.equipmentSpeedBonus || 0) / 100 +
+                (params.houseSpeedBonus || 0) / 100 +
+                (params.communitySpeedBonus || 0) / 100 +
+                (params.teaSpeedBonus || 0) / 100 +
+                personalSpeed +
+                levelAdvantage,
+        };
         const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
         const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
         const perActionTime = Math.max(MIN_ACTION_TIME_SECONDS, baseTime / (1 + speedBreakdown.total));
