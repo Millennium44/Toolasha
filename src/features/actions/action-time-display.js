@@ -1977,7 +1977,7 @@ class ActionTimeDisplay {
         // Handle enhancing actions specially
         if (isEnhancingAction) {
             // For enhancing, the text is just the item name (e.g., "Cheese Sword")
-            const itemName = actionNameText;
+            const itemName = actionNameText.replace(/\s*\+\d+$/, '');
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
             // Find enhancing action matching this item (excluding already-used actions)
