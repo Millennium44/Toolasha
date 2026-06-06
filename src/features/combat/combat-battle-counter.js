@@ -3,6 +3,7 @@
  * Injects a battle/wave counter next to the action name in the top-left header panel.
  * - Regular zones: "Battle #N" — from battleId in new_battle message
  * - Dungeons: "Wave N · Battle #N" — wave from wave index, battle from battleId
+ * - Labyrinth: "Attempt #N" — from entryCount in labyrinth_updated room data
  *
  * Target: Header_actionName (inline with zone name, e.g. "Chimerical Den · Wave 5")
  * domObserver watches Header_actionName so the span is re-injected whenever
@@ -22,10 +23,13 @@ class CombatBattleCounter {
     constructor() {
         this.initialized = false;
         this.newBattleHandler = null;
+        this.labyrinthHandler = null;
         this.unregisterObserver = null;
         this.battleId = 0;
         this.currentWave = 0;
         this.isDungeon = false;
+        this.isLabyrinth = false;
+        this.labyrinthAttempt = 0;
     }
 
     initialize() {
@@ -34,6 +38,9 @@ class CombatBattleCounter {
 
         this.newBattleHandler = (data) => this._onNewBattle(data);
         webSocketHook.on('new_battle', this.newBattleHandler);
+
+        this.labyrinthHandler = (data) => this._onLabyrinthUpdated(data);
+        webSocketHook.on('labyrinth_updated', this.labyrinthHandler);
 
         this._onActionsUpdated = (data) => this._checkCombatEnded(data);
         dataManager.on('actions_updated', this._onActionsUpdated);
@@ -46,7 +53,7 @@ class CombatBattleCounter {
     }
 
     _checkCombatEnded(data) {
-        if (this.battleId === 0) return;
+        if (this.battleId === 0 && this.labyrinthAttempt === 0) return;
 
         const combatEnded = data.endCharacterActions?.some(
             (a) => a.isDone && a.actionHrid?.startsWith('/actions/combat/')
@@ -62,7 +69,33 @@ class CombatBattleCounter {
             this.battleId = 0;
             this.currentWave = 0;
             this.isDungeon = false;
+            this.isLabyrinth = false;
+            this.labyrinthAttempt = 0;
             document.getElementById(COUNTER_ID)?.remove();
+        }
+    }
+
+    _onLabyrinthUpdated(data) {
+        const labyrinth = data.labyrinth;
+        if (!labyrinth?.isActive) return;
+
+        let pathCoords;
+        try {
+            pathCoords = JSON.parse(labyrinth.pathData || '[]');
+        } catch {
+            return;
+        }
+        if (!pathCoords.length) return;
+
+        const active = pathCoords[pathCoords.length - 1];
+        const room = labyrinth.roomData?.[active.y]?.[active.x];
+        if (!room || room.roomType !== '/labyrinth_room_types/combat') return;
+
+        const entryCount = room.entryCount || 0;
+        if (entryCount > 0) {
+            this.isLabyrinth = true;
+            this.labyrinthAttempt = entryCount;
+            this._injectOrUpdate();
         }
     }
 
@@ -84,7 +117,7 @@ class CombatBattleCounter {
     }
 
     _injectOrUpdate() {
-        if (this.battleId === 0) {
+        if (this.battleId === 0 && this.labyrinthAttempt === 0) {
             document.getElementById(COUNTER_ID)?.remove();
             return;
         }
@@ -101,7 +134,9 @@ class CombatBattleCounter {
             nameRow.appendChild(el);
         }
 
-        if (this.isDungeon) {
+        if (this.isLabyrinth) {
+            el.textContent = `· Attempt #${this.labyrinthAttempt}`;
+        } else if (this.isDungeon) {
             el.textContent = `· Wave ${this.currentWave} · Battle #${this.battleId}`;
         } else {
             el.textContent = `· Battle #${this.battleId}`;
@@ -112,6 +147,10 @@ class CombatBattleCounter {
         if (this.newBattleHandler) {
             webSocketHook.off('new_battle', this.newBattleHandler);
             this.newBattleHandler = null;
+        }
+        if (this.labyrinthHandler) {
+            webSocketHook.off('labyrinth_updated', this.labyrinthHandler);
+            this.labyrinthHandler = null;
         }
         if (this._onActionsUpdated) {
             dataManager.off('actions_updated', this._onActionsUpdated);

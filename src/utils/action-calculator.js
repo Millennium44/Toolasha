@@ -192,9 +192,9 @@ export function calculateActionStats(actionDetails, options = {}) {
  * @returns {number} Skill level
  */
 function getSkillLevel(skills, skillType) {
-    // Combat actions don't map to a single skill — efficiency scaling doesn't apply
-    if (skillType === '/action_types/combat') {
-        return 1; // No skill level for combat, efficiency is not level-based
+    // Combat/labyrinth actions don't map to a single skill — efficiency scaling doesn't apply
+    if (skillType === '/action_types/combat' || skillType === '/action_types/labyrinth') {
+        return 1;
     }
     // Map action type to skill HRID
     const skillHrid = skillType.replace('/action_types/', '/skills/');
