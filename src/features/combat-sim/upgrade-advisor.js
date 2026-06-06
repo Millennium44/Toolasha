@@ -533,8 +533,12 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
             } else if (hasMagicStats === best.isMagic && level > best.itemLevel) {
                 best = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
             }
-        } else if (!best || level > best.itemLevel) {
-            best = { hrid: itemHrid, itemLevel: level };
+        } else {
+            const hasMagicStats = (stats.magicDamage || 0) > 0;
+            if (hasMagicStats) continue;
+            if (!best || level > best.itemLevel) {
+                best = { hrid: itemHrid, itemLevel: level };
+            }
         }
     }
 
