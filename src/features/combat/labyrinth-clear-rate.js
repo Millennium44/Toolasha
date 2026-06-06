@@ -827,8 +827,8 @@ class LabyrinthClearRate {
      * Inject recommend controls (button + target input) into the automation panel
      */
     injectRecommendControls() {
-        const defaultRate = config.getSetting('labyrinthRecommendTargetRate') || 70;
-        const defaultHours = config.getSetting('labyrinthRecommendSimHours') || 1;
+        const defaultRate = config.getSettingValue('labyrinthRecommendTargetRate', 70);
+        const defaultHours = config.getSettingValue('labyrinthRecommendSimHours', 1);
 
         if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) {
             const rateInput = document.getElementById('mwi-recommend-target-rate');
