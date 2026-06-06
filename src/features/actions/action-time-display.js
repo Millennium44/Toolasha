@@ -1499,9 +1499,10 @@ class ActionTimeDisplay {
             queuedActions = limitResult?.maxActions ?? Infinity;
         }
 
-        if (queuedActions === Infinity) return null;
-
-        const realisticActions = Math.min(queuedActions, predictions.expectedAttempts);
+        const realisticActions =
+            queuedActions === Infinity
+                ? predictions.expectedAttempts
+                : Math.min(queuedActions, predictions.expectedAttempts);
         const totalTime = realisticActions * perActionTime;
 
         return { count: realisticActions, totalTime };
