@@ -29,6 +29,7 @@ class GatheringStats {
         this.consumablesUpdatedDebounceTimer = null; // Debounce timer for consumables_updated events
         this.indicatorUpdateDebounceTimer = null; // Debounce timer for indicator rendering
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
+        this.resizeObserver = null;
     }
 
     /**
@@ -141,6 +142,7 @@ class GatheringStats {
             actionPanelSort.registerPanel(actionPanel, actionHrid);
             if (existingDisplay) {
                 this.scheduleStatsLayoutSync(actionPanel, existingDisplay);
+                this.getResizeObserver().observe(existingDisplay);
             }
             // Trigger sort
             actionPanelSort.triggerSort();
@@ -176,6 +178,7 @@ class GatheringStats {
         actionPanel.appendChild(display);
 
         this.scheduleStatsLayoutSync(actionPanel, display);
+        this.getResizeObserver().observe(display);
 
         // Store reference
         this.actionElements.set(actionPanel, {
@@ -558,6 +561,22 @@ class GatheringStats {
         });
     }
 
+    getResizeObserver() {
+        if (!this.resizeObserver) {
+            this.resizeObserver = new ResizeObserver((entries) => {
+                for (const entry of entries) {
+                    const displayElement = entry.target;
+                    const actionPanel = displayElement.parentElement;
+                    if (actionPanel) {
+                        this.syncStatsLayout(actionPanel, displayElement);
+                        this.scheduleStatsLayoutSync(actionPanel, displayElement);
+                    }
+                }
+            });
+        }
+        return this.resizeObserver;
+    }
+
     syncStatsLayout(actionPanel, displayElement) {
         if (!actionPanel || !displayElement) return;
         if (!document.body.contains(actionPanel) || !document.body.contains(displayElement)) return;
@@ -603,6 +622,12 @@ class GatheringStats {
     clearAllReferences() {
         clearTimeout(this.indicatorUpdateDebounceTimer);
         this.indicatorUpdateDebounceTimer = null;
+
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
+
         // CRITICAL: Remove injected DOM elements BEFORE clearing Maps
         // This prevents detached SVG elements from accumulating
         // Note: .remove() is safe to call even if element is already detached

@@ -64,6 +64,7 @@ class MaxProduceable {
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
         this.timerRegistry = createTimerRegistry();
+        this.resizeObserver = null;
     }
 
     /**
@@ -184,6 +185,7 @@ class MaxProduceable {
             this.updatePinIcon(existingPin, actionHrid);
             if (existingDisplay) {
                 this.scheduleStatsLayoutSync(actionPanel, existingDisplay);
+                this.getResizeObserver().observe(existingDisplay);
             }
             // Note: Profit update is deferred to updateAllCounts() in setupObserver()
             return;
@@ -221,6 +223,7 @@ class MaxProduceable {
             actionPanel.appendChild(display);
 
             this.scheduleStatsLayoutSync(actionPanel, display);
+            this.getResizeObserver().observe(display);
         }
 
         // Create pin icon (for ALL actions - gathering and production)
@@ -778,6 +781,22 @@ class MaxProduceable {
         });
     }
 
+    getResizeObserver() {
+        if (!this.resizeObserver) {
+            this.resizeObserver = new ResizeObserver((entries) => {
+                for (const entry of entries) {
+                    const displayElement = entry.target;
+                    const actionPanel = displayElement.parentElement;
+                    if (actionPanel) {
+                        this.syncStatsLayout(actionPanel, displayElement);
+                        this.scheduleStatsLayoutSync(actionPanel, displayElement);
+                    }
+                }
+            });
+        }
+        return this.resizeObserver;
+    }
+
     syncStatsLayout(actionPanel, displayElement) {
         if (!actionPanel || !displayElement) return;
         if (!document.body.contains(actionPanel) || !document.body.contains(displayElement)) return;
@@ -862,6 +881,11 @@ class MaxProduceable {
         }
 
         this.timerRegistry.clearAll();
+
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
 
         // CRITICAL: Remove injected DOM elements BEFORE clearing Maps
         // This prevents detached SVG elements from accumulating
