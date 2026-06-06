@@ -205,7 +205,7 @@ class MaxProduceable {
                 top: 100%;
                 left: 0;
                 right: 0;
-                font-size: 0.55em;
+                font-size: 11px;
                 padding: 4px 8px;
                 text-align: center;
                 background: rgba(0, 0, 0, 0.7);
