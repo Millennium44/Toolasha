@@ -926,7 +926,7 @@ class NetworthHistoryChart {
             const rangeChange = currentTotal - first.total;
             const rangePercent = first.total > 0 ? (rangeChange / first.total) * 100 : 0;
 
-            const ratePerHour = hoursElapsed > 0 ? (last.total - first.total) / hoursElapsed : 0;
+            const ratePerHour = hoursElapsed > 0 ? (currentTotal - first.total) / hoursElapsed : 0;
 
             parts.push(
                 `<span>Current: <strong style="color: ${config.COLOR_ACCENT};">${networthFormatter(Math.round(currentTotal))}</strong></span>`
@@ -958,8 +958,7 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showNonExcluded && hasNonExclStats) {
             const currentNE = this.networthFeature?.currentData?.totalNetworth ?? last.nonExcluded ?? last.total;
             const firstNE = first.nonExcluded ?? first.total;
-            const lastNE = last.nonExcluded ?? last.total;
-            const neRate = hoursElapsed > 0 ? (lastNE - firstNE) / hoursElapsed : 0;
+            const neRate = hoursElapsed > 0 ? (currentNE - firstNE) / hoursElapsed : 0;
 
             let neStatHtml = `<span style="color: #a78bfa;">Non-Excl</span>: <strong style="color: #a78bfa;">${networthFormatter(Math.round(currentNE))}</strong>`;
 
