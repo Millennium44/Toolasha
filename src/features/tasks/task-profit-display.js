@@ -1450,7 +1450,8 @@ class TaskProfitDisplay {
             profitContainer.appendChild(profitLine);
             profitContainer.appendChild(breakdownSection);
         } else if (completionSeconds !== null) {
-            const speedTimeHTML = this.buildSpeedTimeHTML(profitData);
+            const showSpeedBreakdown = config.getSetting('taskSpeedBreakdown');
+            const speedTimeHTML = showSpeedBreakdown ? this.buildSpeedTimeHTML(profitData) : '';
             const hasSpeedBreakdown = !!speedTimeHTML;
 
             const timeLine = document.createElement('div');
@@ -1888,16 +1889,18 @@ class TaskProfitDisplay {
         }
 
         // Action Speed & Time (expandable)
-        const speedTimeHTML = this.buildSpeedTimeHTML(profitData);
-        if (speedTimeHTML) {
-            lines.push(
-                `<div class="mwi-expandable-header" data-section="speedtime" style="margin-top: 6px; cursor: pointer; user-select: none; color: #aaa;">Action Speed & Time ▸</div>`
-            );
-            lines.push(
-                `<div class="mwi-expandable-section" data-section="speedtime" style="display: none; margin-left: 10px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
-            );
-            lines.push(speedTimeHTML);
-            lines.push('</div>');
+        if (config.getSetting('taskSpeedBreakdown')) {
+            const speedTimeHTML = this.buildSpeedTimeHTML(profitData);
+            if (speedTimeHTML) {
+                lines.push(
+                    `<div class="mwi-expandable-header" data-section="speedtime" style="margin-top: 6px; cursor: pointer; user-select: none; color: #aaa;">Action Speed & Time ▸</div>`
+                );
+                lines.push(
+                    `<div class="mwi-expandable-section" data-section="speedtime" style="display: none; margin-left: 10px; font-size: 0.65rem; color: #888; margin-top: 2px;">`
+                );
+                lines.push(speedTimeHTML);
+                lines.push('</div>');
+            }
         }
 
         // Total

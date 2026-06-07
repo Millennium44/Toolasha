@@ -1327,6 +1327,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            taskSpeedBreakdown: {
+                id: 'taskSpeedBreakdown',
+                label: 'Show expandable speed & time breakdown on tasks',
+                type: 'checkbox',
+                default: true,
+                help: 'Displays an expandable action speed, efficiency, and timing breakdown on task cards.',
+            },
             taskCombatEstimate: {
                 id: 'taskCombatEstimate',
                 label: 'Show combat estimate on combat tasks',
