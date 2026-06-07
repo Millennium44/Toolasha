@@ -323,6 +323,7 @@ const popup = new ScrollSimPopup();
 
 function injectButton(navButtons) {
     if (document.getElementById(BUTTON_ID)) return;
+    if (!config.getSetting('simulateScrollEffects')) return;
 
     const loadoutName = getLoadoutName(navButtons);
 
@@ -353,6 +354,13 @@ function initialize() {
         const panel = node.closest('[class*="LoadoutsPanel_selectedLoadout"]') || node.parentElement;
         const navButtons = panel?.querySelector('[class*="LoadoutsPanel_navButtons"]');
         if (navButtons) injectButton(navButtons);
+    });
+
+    config.onSettingChange('simulateScrollEffects', (enabled) => {
+        if (!enabled) {
+            document.getElementById(BUTTON_ID)?.remove();
+            popup.close();
+        }
     });
 }
 
