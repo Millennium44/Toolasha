@@ -1450,10 +1450,39 @@ class TaskProfitDisplay {
             profitContainer.appendChild(profitLine);
             profitContainer.appendChild(breakdownSection);
         } else if (completionSeconds !== null) {
+            const speedTimeHTML = this.buildSpeedTimeHTML(profitData);
+            const hasSpeedBreakdown = !!speedTimeHTML;
+
             const timeLine = document.createElement('div');
-            timeLine.style.cssText = `color: ${config.COLOR_ACCENT};`;
-            timeLine.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate}`;
-            profitContainer.appendChild(timeLine);
+            timeLine.style.cssText = `color: ${config.COLOR_ACCENT};${hasSpeedBreakdown ? ' cursor: pointer; user-select: none;' : ''}`;
+            timeLine.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate}${hasSpeedBreakdown ? ' ▸' : ''}`;
+
+            if (hasSpeedBreakdown) {
+                const speedSection = document.createElement('div');
+                speedSection.style.cssText = `
+                    display: none;
+                    margin-top: 6px;
+                    padding: 8px;
+                    background: rgba(0, 0, 0, 0.2);
+                    border-radius: 4px;
+                    font-size: 0.7rem;
+                    color: #ddd;
+                `;
+                speedSection.innerHTML = speedTimeHTML;
+
+                const timeLineListener = () => {
+                    const isHidden = speedSection.style.display === 'none';
+                    speedSection.style.display = isHidden ? 'block' : 'none';
+                    timeLine.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${timeEstimate} ${isHidden ? '▾' : '▸'}`;
+                };
+                timeLine.addEventListener('click', timeLineListener);
+                listeners.set(timeLine, timeLineListener);
+
+                profitContainer.appendChild(timeLine);
+                profitContainer.appendChild(speedSection);
+            } else {
+                profitContainer.appendChild(timeLine);
+            }
         }
 
         this.eventListeners.set(profitContainer, listeners);
