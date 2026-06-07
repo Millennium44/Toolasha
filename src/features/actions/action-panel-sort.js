@@ -22,6 +22,7 @@ class ActionPanelSort {
         this.timerRegistry = createTimerRegistry();
         this.handlers = {};
         this.pinChangeListeners = [];
+        this.sortModeListeners = [];
     }
 
     /**
@@ -52,6 +53,7 @@ class ActionPanelSort {
         this.pinnedActions = new Set(pinnedData);
         this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
         this.initialized = true;
+        this._notifySortModeListeners();
 
         // Listen for character switch to clear character-specific data
         if (!this.handlers.characterSwitch) {
@@ -86,6 +88,7 @@ class ActionPanelSort {
         this.pinnedActions = new Set(pinnedData);
         this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
         this.initialized = true;
+        this._notifySortModeListeners();
     }
 
     /**
@@ -153,6 +156,7 @@ class ActionPanelSort {
     setSortMode(mode) {
         this.sortMode = mode;
         storage.set(this._getSortStorageKey(), mode, 'settings');
+        this._notifySortModeListeners();
     }
 
     /**
@@ -161,6 +165,14 @@ class ActionPanelSort {
      */
     getSortMode() {
         return this.sortMode;
+    }
+
+    onSortModeChange(callback) {
+        this.sortModeListeners.push(callback);
+    }
+
+    _notifySortModeListeners() {
+        for (const cb of this.sortModeListeners) cb(this.sortMode);
     }
 
     /**
