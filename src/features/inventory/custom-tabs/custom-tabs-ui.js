@@ -2363,10 +2363,14 @@ export default class CustomTabsUI {
     }
 
     _renderAssignedItems(container, tabId) {
+        const scrollParent = container.closest('.toolasha-ct-modal-body');
+        const scrollPos = scrollParent?.scrollTop ?? 0;
+
         container.innerHTML = '';
         const tab = findTab(this._config, tabId)?.tab;
         if (!tab || tab.items.length === 0) {
             container.innerHTML = '<div style="color:#555;font-size:12px;padding:4px;">No items assigned</div>';
+            if (scrollParent) scrollParent.scrollTop = scrollPos;
             return;
         }
 
@@ -2474,6 +2478,8 @@ export default class CustomTabsUI {
             row.appendChild(removeBtn);
             container.appendChild(row);
         });
+
+        if (scrollParent) scrollParent.scrollTop = scrollPos;
     }
 
     // -----------------------------------------------------------------------
