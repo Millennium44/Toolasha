@@ -2461,6 +2461,21 @@ export default class CustomTabsUI {
                 row.appendChild(toTopBtn);
             }
 
+            if (index < tab.items.length - 1) {
+                const toBottomBtn = document.createElement('button');
+                toBottomBtn.className = 'toolasha-ct-node-btn';
+                toBottomBtn.textContent = '⇊';
+                toBottomBtn.title = 'Move to bottom';
+                if (index > 0) toBottomBtn.style.marginLeft = '0';
+                toBottomBtn.addEventListener('click', () => {
+                    this._config = reorderItem(this._config, tabId, index, tab.items.length - 1);
+                    this._save();
+                    this._renderAssignedItems(container, tabId);
+                    if (this._isActive) this._applyLayout();
+                });
+                row.appendChild(toBottomBtn);
+            }
+
             const removeBtn = document.createElement('button');
             removeBtn.className = 'toolasha-ct-node-btn';
             removeBtn.textContent = '×';
