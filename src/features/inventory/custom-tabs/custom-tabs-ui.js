@@ -534,6 +534,7 @@ export default class CustomTabsUI {
         this._actionBtnsEl = null; // +Tab/Export/Import appended to sort controls row on Toolasha tab
         this._tileObserver = null; // MutationObserver for instant tile visibility on React swaps
         this._observedContainer = null; // Container currently being observed by _tileObserver
+        this._dragBoundTiles = new WeakSet();
     }
 
     // -----------------------------------------------------------------------
@@ -858,7 +859,6 @@ export default class CustomTabsUI {
             tile.style.order = '';
             tile.draggable = false;
             delete tile.dataset.toolashaTabId;
-            delete tile.dataset.toolashaDragBound;
         }
 
         // Force full rebuild when tile count OR config item count changed — the lightweight path
@@ -1739,13 +1739,13 @@ export default class CustomTabsUI {
 
     /**
      * Make a tile draggable and attach drag/drop event handlers.
-     * Uses dataset.toolashaDragBound to prevent duplicate listeners.
+     * Uses a WeakSet to prevent duplicate listeners (immune to layout resets).
      * @param {HTMLElement} tile
      */
     _setupTileDrag(tile) {
         tile.draggable = true;
-        if (tile.dataset.toolashaDragBound) return;
-        tile.dataset.toolashaDragBound = '1';
+        if (this._dragBoundTiles.has(tile)) return;
+        this._dragBoundTiles.add(tile);
 
         tile.addEventListener('dragstart', (e) => {
             const hrid = this._getHridFromTile(tile);
