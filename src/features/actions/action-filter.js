@@ -329,6 +329,9 @@ class ActionFilter {
         // Apply current filter if one is active
         if (this.filterValue) {
             this.applyFilterToPanel(actionPanel);
+            if (actionPanel.dataset.mwiFilterHidden === 'true') {
+                actionPanel.style.display = 'none';
+            }
         }
     }
 
