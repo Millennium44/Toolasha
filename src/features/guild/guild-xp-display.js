@@ -9,7 +9,7 @@ import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
-import { formatWithSeparator } from '../../utils/formatters.js';
+import { formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 const CSS_PREFIX = 'mwi-guild-xp';
@@ -157,7 +157,7 @@ function buildChart(chart) {
         else if (i === hLegend.length - 1 && leftPct > 90) labelTransform = 'translate(-100%, 0)';
         legendHTML += `<div style="position: absolute; top: 0; left: ${leftPct}%; flex-direction: column;">
             <div style="width: 1px; height: 8px; background-color: var(--color-space-300);"></div>
-            <div style="font-size: 10px; width: 80px; transform: ${labelTransform};">${new Date(d.t).toLocaleString()}</div>
+            <div style="font-size: 10px; width: 80px; transform: ${labelTransform};">${formatDateTime(new Date(d.t), { includeSeconds: false })}</div>
         </div>`;
     }
 
@@ -551,7 +551,7 @@ class GuildXPDisplay {
             name: 'Joined',
             insertAfter: insertAfter + 1,
             data: allStats.map((s) => s.joinTime),
-            format: (v) => (v ? new Date(v).toLocaleDateString() : ''),
+            format: (v) => (v ? formatDateTime(new Date(v), { includeTime: false }) : ''),
             makeSortable: true,
             sortId: 'joinTime',
             sortData: allStats.map((s) => (s.joinTime ? +new Date(s.joinTime) : 0)),
@@ -819,7 +819,7 @@ class GuildXPDisplay {
             <div class="MuiTooltip-tooltip MuiTooltip-tooltipPlacementTop css-1spb1s5" style="opacity: 1;">
                 <div class="ItemTooltipText_itemTooltipText__zFq3A">
                     <div class="ItemTooltipText_name__2JAHA">
-                        <span>${new Date(t).toLocaleString()}</span>
+                        <span>${formatDateTime(new Date(t), { includeSeconds: false })}</span>
                     </div>
                     <div>
                         <span>${fNum(xpH)} XP/h${truncated ? ' (anomalous)' : ''}</span>

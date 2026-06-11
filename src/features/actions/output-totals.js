@@ -263,16 +263,16 @@ class OutputTotals {
             // Range output (e.g., "1.3 - 4")
             const minOutput = parseFloat(output[0].trim());
             const maxOutput = parseFloat(output[1].trim());
-            const expectedMin = (minOutput * amount * dropRate * successRate).toLocaleString('en-US', {
+            const expectedMin = (minOutput * amount * dropRate * successRate).toLocaleString(undefined, {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
-            const expectedMax = (maxOutput * amount * dropRate * successRate).toLocaleString('en-US', {
+            const expectedMax = (maxOutput * amount * dropRate * successRate).toLocaleString(undefined, {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
             const expectedAvg = (((minOutput + maxOutput) / 2) * amount * dropRate * successRate).toLocaleString(
-                'en-US',
+                undefined,
                 {
                     minimumFractionDigits: 1,
                     maximumFractionDigits: 1,
@@ -282,7 +282,7 @@ class OutputTotals {
         } else {
             // Single value output
             const value = parseFloat(output[0].trim());
-            const expectedValue = (value * amount * dropRate * successRate).toLocaleString('en-US', {
+            const expectedValue = (value * amount * dropRate * successRate).toLocaleString(undefined, {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });
@@ -356,7 +356,7 @@ class OutputTotals {
             const totalXP = modifiedXP * amount;
 
             // Set total XP text (formatted with 1 decimal place and thousand separators)
-            clone.childNodes[0].textContent = totalXP.toLocaleString('en-US', {
+            clone.childNodes[0].textContent = totalXP.toLocaleString(undefined, {
                 minimumFractionDigits: 1,
                 maximumFractionDigits: 1,
             });

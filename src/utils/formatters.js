@@ -426,3 +426,34 @@ export function formatLargeNumber(value, decimals = 1) {
     const useAbbreviations = config.getSetting('formatting_useKMBFormat') !== false;
     return useAbbreviations ? formatKMB(value, decimals) : formatWithSeparator(value);
 }
+
+/**
+ * Format a Date using the user's date/time format settings.
+ * @param {Date} date - The date to format
+ * @param {Object} [options]
+ * @param {boolean} [options.includeDate=true] - Include the date portion (MM-DD or DD-MM)
+ * @param {boolean} [options.includeTime=true] - Include the time portion
+ * @param {boolean} [options.includeSeconds=true] - Include seconds in time
+ * @returns {string}
+ */
+export function formatDateTime(date, options = {}) {
+    const { includeDate = true, includeTime = true, includeSeconds = true } = options;
+    const use24h = config.getSettingValue('market_listingTimeFormat', '24hour') === '24hour';
+    const dateFormat = config.getSettingValue('market_listingDateFormat', 'MM-DD');
+
+    const parts = [];
+
+    if (includeDate) {
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        parts.push(dateFormat === 'DD-MM' ? `${day}-${month}` : `${month}-${day}`);
+    }
+
+    if (includeTime) {
+        const timeOpts = { hour: 'numeric', minute: '2-digit', hour12: !use24h };
+        if (includeSeconds) timeOpts.second = '2-digit';
+        parts.push(date.toLocaleString('en-US', timeOpts).trim());
+    }
+
+    return parts.join(' ');
+}

@@ -10,7 +10,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateTaskProfit, calculateTaskTokenValue, calculateTaskRewardValue } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
-import { timeReadable, formatKMB } from '../../utils/formatters.js';
+import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
 class TaskStatistics {
@@ -498,7 +498,7 @@ class TaskStatistics {
             section.appendChild(this.createRow('Status', 'Tasks full!', config.COLOR_LOSS));
         } else {
             const overflowTimeStr = timeReadable(overflow.msUntilOverflow / 1000);
-            const overflowDateStr = overflow.overflowDate.toLocaleString();
+            const overflowDateStr = formatDateTime(overflow.overflowDate);
             section.appendChild(this.createRow('Full in', overflowTimeStr, config.COLOR_INFO));
             section.appendChild(this.createRow('Full at', overflowDateStr, config.COLOR_TEXT_SECONDARY));
         }

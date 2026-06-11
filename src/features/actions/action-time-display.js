@@ -19,7 +19,7 @@ import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
-import { timeReadable, formatWithSeparator } from '../../utils/formatters.js';
+import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -38,6 +38,16 @@ import {
 } from '../../utils/profit-helpers.js';
 import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.js';
 import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
+
+/**
+ * Format a completion Date as a clock string, respecting user's time/date format settings.
+ * @param {Date} completionTime
+ * @param {boolean} includeDate - Whether to include the date portion
+ * @returns {string}
+ */
+function formatCompletionTime(completionTime, includeDate) {
+    return formatDateTime(completionTime, { includeDate, includeTime: true, includeSeconds: true });
+}
 
 /**
  * ActionTimeDisplay class manages the time display panel and queue tooltips
@@ -318,10 +328,7 @@ class ActionTimeDisplay {
                 if (!hasInfinite && !result.isTrulyInfinite) {
                     const completionDate = new Date();
                     completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                    const hours = String(completionDate.getHours()).padStart(2, '0');
-                    const minutes = String(completionDate.getMinutes()).padStart(2, '0');
-                    const seconds = String(completionDate.getSeconds()).padStart(2, '0');
-                    timeText += ` Complete at ${hours}:${minutes}:${seconds}`;
+                    timeText += ` Complete at ${formatCompletionTime(completionDate, false)}`;
                 }
 
                 this.appendTimeToActionDiv(actionDiv, timeText);
@@ -1142,26 +1149,7 @@ class ActionTimeDisplay {
         // Format completion time
         const now = new Date();
         const isToday = completionTime.toDateString() === now.toDateString();
-        const use24h = config.getSettingValue('market_listingTimeFormat', '24hour') === '24hour';
-
-        let clockTime;
-        if (isToday) {
-            clockTime = completionTime.toLocaleString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: !use24h,
-            });
-        } else {
-            clockTime = completionTime.toLocaleString('en-US', {
-                month: 'numeric',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: !use24h,
-            });
-        }
+        const clockTime = formatCompletionTime(completionTime, !isToday);
 
         // Build display HTML
         // Line 1: Append stats to game's action name div
@@ -1218,20 +1206,7 @@ class ActionTimeDisplay {
                 recycleCompletion.setSeconds(recycleCompletion.getSeconds() + recycleTimeSeconds);
                 const recycleTimeStr = timeReadable(recycleTimeSeconds);
                 const recycleIsToday = recycleCompletion.toDateString() === new Date().toDateString();
-                const recycleUse24h = config.getSettingValue('market_listingTimeFormat', '24hour') === '24hour';
-                const recycleClockTime = recycleCompletion.toLocaleString(
-                    'en-US',
-                    recycleIsToday
-                        ? { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: !recycleUse24h }
-                        : {
-                              month: 'numeric',
-                              day: 'numeric',
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              second: '2-digit',
-                              hour12: !recycleUse24h,
-                          }
-                );
+                const recycleClockTime = formatCompletionTime(recycleCompletion, !recycleIsToday);
                 recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleTimeStr} → ${recycleClockTime}</span>`;
             }
             this.displayElement.innerHTML = `<span style="display: inline-block; margin-right: 0.25em;">⏱</span> ${matsLabel} ${timeStr} → ${clockTime}${recycleHtml}`;
@@ -1447,26 +1422,7 @@ class ActionTimeDisplay {
 
             const now = new Date();
             const isToday = completionTime.toDateString() === now.toDateString();
-            const use24h = config.getSettingValue('market_listingTimeFormat', '24hour') === '24hour';
-
-            let clockTime;
-            if (isToday) {
-                clockTime = completionTime.toLocaleString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: !use24h,
-                });
-            } else {
-                clockTime = completionTime.toLocaleString('en-US', {
-                    month: 'numeric',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: !use24h,
-                });
-            }
+            const clockTime = formatCompletionTime(completionTime, !isToday);
 
             const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : 'Mats:';
@@ -2392,11 +2348,7 @@ class ActionTimeDisplay {
                     const completionDate = new Date();
                     completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
 
-                    const hours = String(completionDate.getHours()).padStart(2, '0');
-                    const minutes = String(completionDate.getMinutes()).padStart(2, '0');
-                    const seconds = String(completionDate.getSeconds()).padStart(2, '0');
-
-                    completionText = ` Complete at ${hours}:${minutes}:${seconds}`;
+                    completionText = ` Complete at ${formatCompletionTime(completionDate, false)}`;
                 }
 
                 // Create time display element

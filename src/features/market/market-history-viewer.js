@@ -12,7 +12,7 @@
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import estimatedListingAge from './estimated-listing-age.js';
@@ -1053,10 +1053,10 @@ class MarketHistoryViewer {
         if (this.filters.dateFrom || this.filters.dateTo) {
             const dateText = [];
             if (this.filters.dateFrom) {
-                dateText.push(this.filters.dateFrom.toLocaleDateString());
+                dateText.push(formatDateTime(this.filters.dateFrom, { includeTime: false }));
             }
             if (this.filters.dateTo) {
-                dateText.push(this.filters.dateTo.toLocaleDateString());
+                dateText.push(formatDateTime(this.filters.dateTo, { includeTime: false }));
             }
             badges.push({
                 label: `Date: ${dateText.join(' - ')}`,
@@ -1399,7 +1399,7 @@ class MarketHistoryViewer {
                 const dateCell = document.createElement('td');
                 // Use createdTimestamp if available, otherwise fall back to numeric timestamp
                 const dateValue = listing.createdTimestamp || listing.timestamp;
-                dateCell.textContent = new Date(dateValue).toLocaleString();
+                dateCell.textContent = formatDateTime(new Date(dateValue));
                 dateCell.style.padding = '4px 10px';
                 row.appendChild(dateCell);
 
@@ -2280,7 +2280,7 @@ class MarketHistoryViewer {
                 background: #1a1a1a;
                 border-radius: 3px;
             `;
-            rangeInfo.textContent = `Available: ${minDate.toLocaleDateString()} - ${maxDate.toLocaleDateString()}`;
+            rangeInfo.textContent = `Available: ${formatDateTime(minDate, { includeTime: false })} - ${formatDateTime(maxDate, { includeTime: false })}`;
             popup.appendChild(rangeInfo);
         }
 

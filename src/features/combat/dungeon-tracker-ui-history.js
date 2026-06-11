@@ -5,6 +5,7 @@
 
 import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import storage from '../../core/storage.js';
+import { formatDateTime } from '../../utils/formatters.js';
 
 class DungeonTrackerUIHistory {
     constructor(state, formatTimeFunc) {
@@ -287,7 +288,7 @@ class DungeonTrackerUIHistory {
             const runNumber = runs.length - index;
             const timeStr = this.formatTime(run.duration);
             const dateObj = new Date(run.timestamp);
-            const dateTime = dateObj.toLocaleString();
+            const dateTime = formatDateTime(dateObj);
             const dungeonLabel = run.dungeonName || 'Unknown';
 
             html += `

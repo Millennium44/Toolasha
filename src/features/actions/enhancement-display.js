@@ -10,7 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateEnhancement, BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
-import { timeReadable } from '../../utils/formatters.js';
+import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
@@ -342,7 +342,7 @@ function generateCostsByLevelTable(
             `<div style="color: #fff; font-size: 0.85em; margin-top: 4px;">• Use mirrors starting at <strong>+${mirrorStartLevel}</strong></div>`
         );
         lines.push(
-            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +20: <strong>${Math.round(totalSavings).toLocaleString()}</strong> coins</div>`
+            `<div style="color: #88ff88; font-size: 0.85em;">• Total savings to +20: <strong>${formatLargeNumber(Math.round(totalSavings))}</strong> coins</div>`
         );
         lines.push(
             `<div style="color: #aaa; font-size: 0.75em; margin-top: 4px; font-style: italic;">Rows highlighted in gold show where mirror is cheaper</div>`
@@ -428,10 +428,10 @@ function generateCostsByLevelTable(
 
         lines.push(`<td style="padding: 6px 4px; text-align: right; color: #ccc;">${timeReadable(data.time)}</td>`);
         lines.push(
-            `<td style="padding: 6px 4px; text-align: right; color: ${config.COLOR_XP_RATE};">${data.xpPerHour > 0 ? data.xpPerHour.toLocaleString() : '-'}</td>`
+            `<td style="padding: 6px 4px; text-align: right; color: ${config.COLOR_XP_RATE};">${data.xpPerHour > 0 ? formatLargeNumber(data.xpPerHour) : '-'}</td>`
         );
         lines.push(
-            `<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${Math.round(data.cost).toLocaleString()}</td>`
+            `<td style="padding: 6px 4px; text-align: right; color: #ffa500;">${formatLargeNumber(Math.round(data.cost))}</td>`
         );
 
         // Add Mirror Cost column if Philosopher's Mirror is equipped

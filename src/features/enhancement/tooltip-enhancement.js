@@ -1026,10 +1026,10 @@ export function buildEnhancementTooltipHTML(enhancementData) {
     }
 
     if (xpPerHour !== null && xpPerHour > 0) {
-        html += '<div style="margin-top: 4px;">XP/hr: ' + xpPerHour.toLocaleString() + '</div>';
+        html += '<div style="margin-top: 4px;">XP/hr: ' + formatLargeNumber(xpPerHour) + '</div>';
     }
     if (totalExpectedXP !== null && totalExpectedXP > 0) {
-        html += '<div>Total XP: ~' + totalExpectedXP.toLocaleString() + '</div>';
+        html += '<div>Total XP: ~' + formatLargeNumber(totalExpectedXP) + '</div>';
     }
 
     html += '</div>'; // Close margin-left div

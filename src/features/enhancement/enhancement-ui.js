@@ -9,7 +9,7 @@ import { SessionState, getSessionDuration } from './enhancement-session.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import { formatPercentage } from '../../utils/formatters.js';
+import { formatPercentage, formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 
@@ -1085,7 +1085,7 @@ class EnhancementUI {
      * Format number with commas
      */
     formatNumber(num) {
-        return Math.floor(num).toLocaleString();
+        return formatLargeNumber(Math.floor(num));
     }
 
     /**

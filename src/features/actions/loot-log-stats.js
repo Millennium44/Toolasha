@@ -9,7 +9,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { formatKMB, numberFormatter } from '../../utils/formatters.js';
+import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
@@ -723,7 +723,7 @@ class LootLogStats {
         timeDiv.style.cssText = 'margin-bottom: 2px;';
 
         const startDate = new Date(entry.startTime);
-        timeDiv.textContent = `Start Time: ${startDate.toLocaleString()}`;
+        timeDiv.textContent = `Start Time: ${formatDateTime(startDate)}`;
         entryEl.appendChild(timeDiv);
 
         this.injectTotalValue(timeDiv, entry);

@@ -5,6 +5,7 @@
 
 import config from '../../core/config.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { formatDateTime } from '../../utils/formatters.js';
 
 class MentionPopup {
     constructor() {
@@ -29,26 +30,7 @@ class MentionPopup {
      */
     formatTimestamp(isoString) {
         if (!isoString) return '';
-
-        const timeFormat = config.getSettingValue('market_listingTimeFormat', '24hour');
-        const dateFormat = config.getSettingValue('market_listingDateFormat', 'MM-DD');
-        const use12Hour = timeFormat === '12hour';
-
-        const date = new Date(isoString);
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const datePart = dateFormat === 'DD-MM' ? `${day}-${month}` : `${month}-${day}`;
-
-        const timePart = date
-            .toLocaleString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: use12Hour,
-            })
-            .trim();
-
-        return `${datePart} ${timePart}`;
+        return formatDateTime(new Date(isoString));
     }
 
     /**

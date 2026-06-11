@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -505,7 +505,7 @@ class TransmuteHistoryViewer {
 
                 // Session Start
                 const dateCell = document.createElement('td');
-                dateCell.textContent = new Date(session.startTime).toLocaleString();
+                dateCell.textContent = formatDateTime(new Date(session.startTime));
                 dateCell.style.padding = '6px 10px';
                 row.appendChild(dateCell);
 
@@ -681,8 +681,8 @@ class TransmuteHistoryViewer {
 
         if (this.filters.dateFrom || this.filters.dateTo) {
             const parts = [];
-            if (this.filters.dateFrom) parts.push(this.filters.dateFrom.toLocaleDateString());
-            if (this.filters.dateTo) parts.push(this.filters.dateTo.toLocaleDateString());
+            if (this.filters.dateFrom) parts.push(formatDateTime(this.filters.dateFrom, { includeTime: false }));
+            if (this.filters.dateTo) parts.push(formatDateTime(this.filters.dateTo, { includeTime: false }));
             badges.push({
                 label: `Date: ${parts.join(' - ')}`,
                 onRemove: () => {
@@ -954,7 +954,7 @@ class TransmuteHistoryViewer {
                 color: #aaa; font-size: 11px; margin-bottom: 10px;
                 padding: 6px; background: #1a1a1a; border-radius: 3px;
             `;
-            rangeInfo.textContent = `Available: ${minDate.toLocaleDateString()} - ${maxDate.toLocaleDateString()}`;
+            rangeInfo.textContent = `Available: ${formatDateTime(minDate, { includeTime: false })} - ${formatDateTime(maxDate, { includeTime: false })}`;
             popup.appendChild(rangeInfo);
         }
 
@@ -1304,7 +1304,7 @@ class TransmuteHistoryViewer {
         const headers = ['Session Start', 'Input Item', 'Attempts', 'Successes', 'Failures', 'Results'];
 
         const rows = this.sessions.map((session) => {
-            const start = new Date(session.startTime).toLocaleString();
+            const start = formatDateTime(new Date(session.startTime));
             const inputName = this.getItemName(session.inputItemHrid);
             const failures = session.totalAttempts - session.totalSuccesses;
 
