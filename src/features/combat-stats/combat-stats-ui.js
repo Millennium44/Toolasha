@@ -7,7 +7,13 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculateAllPlayerStats } from './combat-stats-calculator.js';
-import { formatWithSeparator, coinFormatter, formatKMB, formatPercentage } from '../../utils/formatters.js';
+import {
+    formatWithSeparator,
+    coinFormatter,
+    formatKMB,
+    formatPercentage,
+    isAbbreviationEnabled,
+} from '../../utils/formatters.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 class CombatStatsUI {
@@ -140,7 +146,7 @@ class CombatStatsUI {
         let message = '';
         if (Array.isArray(messageTemplate)) {
             // Format numbers
-            const useKMB = config.getSetting('formatting_useKMBFormat');
+            const useKMB = isAbbreviationEnabled();
             const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
 
             // Build message from array
@@ -176,7 +182,7 @@ class CombatStatsUI {
                 .join('');
         } else {
             // Legacy string format (shouldn't happen, but handle it)
-            const useKMB = config.getSetting('formatting_useKMBFormat');
+            const useKMB = isAbbreviationEnabled();
             const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
 
             message = (messageTemplate || 'Combat Stats: {income} income | {dailyProfit} profit/d | {exp} exp/h')
@@ -524,7 +530,7 @@ class CombatStatsUI {
 
         // Statistics rows
         // Use K/M/B formatting if enabled, otherwise use separators
-        const useKMB = config.getSetting('formatting_useKMBFormat');
+        const useKMB = isAbbreviationEnabled();
         const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
         const formatNumDecimals = (num) =>
             useKMB

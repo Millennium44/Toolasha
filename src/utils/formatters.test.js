@@ -22,9 +22,11 @@ import {
 // Mock config module for formatLargeNumber tests
 vi.mock('../core/config.js', () => ({
     default: {
-        getSetting: vi.fn((key) => {
-            if (key === 'formatting_useKMBFormat') return true;
-            return undefined;
+        getSetting: vi.fn(() => undefined),
+        getSettingValue: vi.fn((key, defaultValue) => {
+            if (key === 'formatting_useKMBFormat') return 'compact';
+            if (key === 'formatting_precision') return '1';
+            return defaultValue;
         }),
     },
 }));

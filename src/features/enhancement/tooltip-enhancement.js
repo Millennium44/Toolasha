@@ -13,7 +13,7 @@ import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
-import { formatLargeNumber, numberFormatter, formatKMB } from '../../utils/formatters.js';
+import { formatLargeNumber, numberFormatter, formatKMB, isAbbreviationEnabled } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import marketAPI from '../../api/marketplace.js';
@@ -1055,7 +1055,7 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
     if (!itemDetails?.enhancementCosts?.length) return '';
 
     const showPrices = config.getSetting('itemTooltip_prices');
-    const useKMB = config.getSetting('formatting_useKMBFormat');
+    const useKMB = isAbbreviationEnabled();
     const fmt = (n) => (n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 0) : numberFormatter(Math.round(n))) : '—');
     const fmtCost = (n) =>
         n != null && n > 0 ? (useKMB ? formatLargeNumber(n, 1) : numberFormatter(Math.round(n))) : '—';

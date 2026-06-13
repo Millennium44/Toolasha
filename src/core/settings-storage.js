@@ -106,6 +106,12 @@ class SettingsStorage {
                     }
                 }
             }
+
+            // Migrate: formatting_useKMBFormat changed from checkbox to select
+            const fmtSaved = saved['formatting_useKMBFormat'];
+            if (fmtSaved && fmtSaved.hasOwnProperty('isTrue') && !fmtSaved.hasOwnProperty('value')) {
+                settings['formatting_useKMBFormat'].value = fmtSaved.isTrue ? 'compact' : 'full';
+            }
         }
 
         return settings;

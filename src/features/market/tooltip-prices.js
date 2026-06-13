@@ -18,7 +18,13 @@ import {
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
-import { numberFormatter, formatKMB, networthFormatter, formatPercentage } from '../../utils/formatters.js';
+import {
+    numberFormatter,
+    formatKMB,
+    networthFormatter,
+    formatPercentage,
+    isAbbreviationEnabled,
+} from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -48,7 +54,7 @@ function getItemsSpriteUrl() {
  * @returns {string} Formatted number
  */
 function formatTooltipPrice(num) {
-    const useKMB = config.getSetting('formatting_useKMBFormat');
+    const useKMB = isAbbreviationEnabled();
     return useKMB ? networthFormatter(num) : numberFormatter(num);
 }
 

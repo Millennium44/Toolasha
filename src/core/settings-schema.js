@@ -1490,10 +1490,28 @@ export const settingsGroups = {
         settings: {
             formatting_useKMBFormat: {
                 id: 'formatting_useKMBFormat',
-                label: 'Use K/M/B number formatting (e.g., 1.5M instead of 1,500,000)',
-                type: 'checkbox',
-                default: true,
-                help: 'Applies to tooltips, action panels, profit displays, and all number formatting throughout the UI',
+                label: 'Number format mode',
+                type: 'select',
+                default: 'compact',
+                options: [
+                    { value: 'full', label: 'Full (1,250,000)' },
+                    { value: 'threshold', label: 'Abbreviate after 4 digits (1,250K)' },
+                    { value: 'compact', label: 'Always abbreviate (1.25M)' },
+                ],
+                help: 'Controls how large numbers are displayed throughout the UI',
+            },
+            formatting_precision: {
+                id: 'formatting_precision',
+                label: 'Abbreviation precision (decimal digits)',
+                type: 'select',
+                default: '2',
+                options: [
+                    { value: '1', label: '1 digit (1.2M)' },
+                    { value: '2', label: '2 digits (1.25M)' },
+                    { value: '3', label: '3 digits (1.250M)' },
+                    { value: '4', label: '4 digits (1.2500M)' },
+                ],
+                help: 'Number of decimal places shown when numbers are abbreviated with K/M/B suffixes',
             },
             ui_externalLinks: {
                 id: 'ui_externalLinks',
