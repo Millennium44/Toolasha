@@ -393,33 +393,12 @@ class ActionTimeDisplay {
      * @returns {Object|null} { totalTime, hasInfinite, actionId } or null
      */
     calculateCurrentActionTime(currentActions, inventoryLookup) {
-        // Detect current action from DOM
         const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
         if (!actionNameElement || !actionNameElement.textContent) return null;
 
         const actionNameText = this.getCleanActionName(actionNameElement);
-        const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
-        const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
-
-        let actionNameFromDom, itemNameFromDom;
-        if (fullNameFromDom.includes(':')) {
-            const parts = fullNameFromDom.split(':');
-            actionNameFromDom = parts[0].trim();
-            itemNameFromDom = parts.slice(1).join(':').trim();
-        } else {
-            actionNameFromDom = fullNameFromDom;
-            itemNameFromDom = null;
-        }
-
-        const currentAction = currentActions.find((a) => {
-            const actionDetails = dataManager.getActionDetails(a.actionHrid);
-            if (!actionDetails || actionDetails.name !== actionNameFromDom) return false;
-            if (itemNameFromDom && a.primaryItemHash) {
-                const itemHrid = '/items/' + itemNameFromDom.toLowerCase().replace(/\s+/g, '_');
-                return a.primaryItemHash.includes(itemHrid);
-            }
-            return true;
-        });
+        const sorted = [...currentActions].sort((a, b) => a.ordinal - b.ordinal);
+        const currentAction = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
 
         if (!currentAction) return null;
 
@@ -2068,43 +2047,9 @@ class ActionTimeDisplay {
             let currentAction = null;
             const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
             if (actionNameElement && actionNameElement.textContent) {
-                // Use getCleanActionName to strip any stats we previously appended
                 const actionNameText = this.getCleanActionName(actionNameElement);
-
-                // Parse action name (same logic as main display)
-                // Also handles formatted numbers like "Farmland (276K)" or "Zone (1.2M)"
-                const actionNameMatch = actionNameText.match(/^(.+?)(?:\s*\([^)]+\))?$/);
-                const fullNameFromDom = actionNameMatch ? actionNameMatch[1].trim() : actionNameText;
-
-                let actionNameFromDom, itemNameFromDom;
-                if (fullNameFromDom.includes(':')) {
-                    const parts = fullNameFromDom.split(':');
-                    actionNameFromDom = parts[0].trim();
-                    itemNameFromDom = parts.slice(1).join(':').trim();
-                } else {
-                    actionNameFromDom = fullNameFromDom;
-                    itemNameFromDom = null;
-                }
-
-                // Match current action from cache
-                currentAction = currentActions.find((a) => {
-                    const actionDetails = dataManager.getActionDetails(a.actionHrid);
-                    if (!actionDetails || actionDetails.name !== actionNameFromDom) {
-                        return false;
-                    }
-
-                    if (itemNameFromDom && a.primaryItemHash) {
-                        const itemHrid = '/items/' + itemNameFromDom.toLowerCase().replace(/\s+/g, '_');
-                        const matches = a.primaryItemHash.includes(itemHrid);
-                        return matches;
-                    }
-
-                    return true;
-                });
-
-                if (currentAction) {
-                    // Current action matched
-                }
+                const sorted = [...currentActions].sort((a, b) => a.ordinal - b.ordinal);
+                currentAction = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
             }
 
             // Calculate time for current action to include in total
