@@ -22,6 +22,7 @@ const CHANNELS = [
     { hrid: '/chat_channel_types/trade', name: 'Trade' },
     { hrid: '/chat_channel_types/global', name: 'Global' },
     { hrid: '/chat_channel_types/local', name: 'Local' },
+    { hrid: '/chat_channel_types/help', name: 'Help' },
     { hrid: '/chat_channel_types/party', name: 'Party' },
     { hrid: '/chat_channel_types/guild', name: 'Guild' },
     { hrid: '/chat_channel_types/whisper', name: 'Whisper' },
