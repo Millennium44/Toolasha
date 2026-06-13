@@ -191,6 +191,7 @@ class LabyrinthClearRate {
             charData.communityActionTypeBuffsMap?.[actionTypeHrid],
             charData.houseActionTypeBuffsMap?.[actionTypeHrid],
             charData.achievementActionTypeBuffsMap?.[actionTypeHrid],
+            charData.mooPassActionTypeBuffsMap?.[actionTypeHrid],
         ];
 
         for (const buffs of buffSources) {
@@ -458,12 +459,56 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Get base combat level for a monster
+     * Get the player's effective combat level (used as base for skip threshold calculations).
+     * The game computes room level as: playerEffectiveCombatLevel + skipThreshold - 1.
      */
-    getBaseCombatLevel(monsterHrid) {
-        const gameData = dataManager.getInitClientData();
-        const monster = gameData?.combatMonsterDetailMap?.[monsterHrid];
-        return monster?.combatDetails?.combatLevel || 100;
+    getPlayerEffectiveCombatLevel() {
+        const combatLevel = dataManager.characterData?.combatUnit?.combatDetails?.combatLevel;
+        if (!combatLevel) return 100;
+
+        const baseCombatLevel = Math.floor(combatLevel);
+        const crateLevelBonus = this._getCrateCombatLevelBonus();
+        return baseCombatLevel + crateLevelBonus;
+    }
+
+    /**
+     * Sum combat level bonuses from equipped labyrinth crates.
+     * Looks for /buff_types/combat_level, /buff_types/action_level, and individual
+     * skill level types (averaged).
+     */
+    _getCrateCombatLevelBonus() {
+        const crateBuffs = this.getCrateBuffs();
+        if (crateBuffs.length === 0) return 0;
+
+        const skillLevelTypes = new Set([
+            '/buff_types/stamina_level',
+            '/buff_types/intelligence_level',
+            '/buff_types/attack_level',
+            '/buff_types/defense_level',
+            '/buff_types/melee_level',
+            '/buff_types/ranged_level',
+            '/buff_types/magic_level',
+        ]);
+
+        let directLevelBonus = 0;
+        let skillLevelSum = 0;
+        let skillLevelCount = 0;
+
+        for (const buff of crateBuffs) {
+            if (!buff?.typeHrid) continue;
+            const amount = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+            if (!Number.isFinite(amount) || amount === 0) continue;
+
+            if (buff.typeHrid === '/buff_types/combat_level' || buff.typeHrid === '/buff_types/action_level') {
+                directLevelBonus += amount;
+            } else if (skillLevelTypes.has(buff.typeHrid)) {
+                skillLevelSum += amount;
+                skillLevelCount += 1;
+            }
+        }
+
+        const averagedSkillLevelBonus = skillLevelCount > 0 ? skillLevelSum / skillLevelCount : 0;
+        return Math.max(0, directLevelBonus + averagedSkillLevelBonus);
     }
 
     /**
@@ -496,7 +541,7 @@ class LabyrinthClearRate {
 
     /**
      * Compute target room level for a combat room.
-     * Combat rooms use the monster's base combat level as the effective level base.
+     * Uses the player's effective combat level as the base (same as the game).
      */
     getCombatRoomLevel(monsterHrid) {
         if (this.roomData) {
@@ -509,8 +554,8 @@ class LabyrinthClearRate {
         const skipThreshold = this.getCombatSkipThreshold(monsterHrid);
         if (skipThreshold <= 0) return 0;
 
-        const baseCombatLevel = this.getBaseCombatLevel(monsterHrid);
-        return Math.floor(baseCombatLevel + skipThreshold - 1);
+        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
+        return Math.floor(effectiveCombatLevel + skipThreshold - 1);
     }
 
     /**
@@ -711,14 +756,14 @@ class LabyrinthClearRate {
      * Async binary search for combat room recommended threshold
      */
     async findRecommendedThresholdCombat(monsterHrid, targetRate) {
-        const baseCombatLevel = this.getBaseCombatLevel(monsterHrid);
+        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
         let low = 0;
         let high = 300;
         let bestThreshold = 0;
 
         while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            const roomLevel = Math.floor(baseCombatLevel + mid - 1);
+            const roomLevel = Math.floor(effectiveCombatLevel + mid - 1);
             if (roomLevel <= 0) {
                 low = mid + 1;
                 continue;
