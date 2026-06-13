@@ -84,13 +84,36 @@ function calculateTaskCompletionSeconds(profitData) {
 }
 
 /**
+ * Calculate total task time in seconds (full quantity, ignoring progress)
+ * Used for rate calculations (gold/hr) where we need the overall rate, not time remaining.
+ * @param {Object} profitData - Profit calculation result
+ * @returns {number|null} Total task time in seconds or null if unavailable
+ */
+function calculateTaskTotalSeconds(profitData) {
+    const actionsPerHour = profitData?.action?.details?.actionsPerHour;
+    const totalQuantity = profitData?.taskInfo?.quantity;
+
+    if (!actionsPerHour || !totalQuantity) {
+        return null;
+    }
+
+    const efficiencyMultiplier = profitData.action?.details?.efficiencyMultiplier || 1;
+    const baseActionsNeeded = Math.ceil(totalQuantity / (efficiencyMultiplier > 0 ? efficiencyMultiplier : 1));
+
+    const taskSpeedBonus = dataManager.getTaskSpeedBonus();
+    const adjustedActionsPerHour = actionsPerHour * (1 + taskSpeedBonus / 100);
+
+    return calculateSecondsForActions(baseActionsNeeded, adjustedActionsPerHour);
+}
+
+/**
  * Calculate task efficiency rating data
  * @param {Object} profitData - Profit calculation result
  * @param {string} ratingMode - Rating mode (tokens or gold)
  * @returns {Object|null} Rating data or null if unavailable
  */
 function calculateTaskEfficiencyRating(profitData, ratingMode) {
-    const completionSeconds = calculateTaskCompletionSeconds(profitData);
+    const completionSeconds = calculateTaskTotalSeconds(profitData);
     if (!completionSeconds || completionSeconds <= 0) {
         return null;
     }
@@ -1273,17 +1296,23 @@ class TaskProfitDisplay {
         container.appendChild(mainLine);
 
         // Efficiency rating (tokens/hr or gold/hr) — matching skilling task format
-        if (config.getSetting('taskEfficiencyRating') && completionSeconds > 0) {
+        // Use total task time (not remaining) so rate doesn't inflate as task progresses
+        const totalKills = taskData.quantity ?? 0;
+        const totalTaskSeconds = killsPerHour > 0 ? Math.round((totalKills / killsPerHour) * 3600) : 0;
+        if (config.getSetting('taskEfficiencyRating') && totalTaskSeconds > 0) {
             const ratingMode = config.getSettingValue('taskEfficiencyRatingMode', RATING_MODE_TOKENS);
-            const hours = completionSeconds / 3600;
+            const totalHours = totalTaskSeconds / 3600;
+            const totalDropValueFull = dropEntries.reduce((s, d) => s + d.totalValue * totalHours, 0);
+            const totalConsumableCostFull = consumableEntries.reduce((s, c) => s + c.totalCost * totalHours, 0);
+            const totalProfitFull = Math.round(totalDropValueFull - totalConsumableCostFull + rewardValue.total);
             let ratingValue, unitLabel;
 
             if (ratingMode === RATING_MODE_GOLD) {
-                ratingValue = totalProfit / hours;
+                ratingValue = totalProfitFull / totalHours;
                 unitLabel = 'gold/hr';
             } else {
                 const tokensReceived = rewardValue.breakdown?.tokensReceived ?? 0;
-                ratingValue = tokensReceived / hours;
+                ratingValue = tokensReceived / totalHours;
                 unitLabel = 'tokens/hr';
             }
 
