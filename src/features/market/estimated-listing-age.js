@@ -52,10 +52,6 @@ class EstimatedListingAge {
             return;
         }
 
-        if (!config.getSetting('market_showEstimatedListingAge')) {
-            return;
-        }
-
         this.isInitialized = true;
 
         // Load historical data from storage
@@ -70,11 +66,14 @@ class EstimatedListingAge {
         // Setup WebSocket listeners to collect your listing IDs
         this.setupWebSocketListeners();
 
-        // Setup DOM observer for order book table
-        this.setupObserver();
+        // Display-only features: DOM observers for age columns
+        if (config.getSetting('market_showEstimatedListingAge')) {
+            // Setup DOM observer for order book table
+            this.setupObserver();
 
-        // Setup DOM observer for My Listings table (expired detection)
-        this.setupMyListingsObserver();
+            // Setup DOM observer for My Listings table (expired detection)
+            this.setupMyListingsObserver();
+        }
     }
 
     /**
@@ -314,23 +313,28 @@ class EstimatedListingAge {
                 // Save to storage (debounced)
                 this.saveOrderBooksCache();
 
-                // Clear processed flags to re-render with new data
-                const containers = document.querySelectorAll('.mwi-estimated-age-set');
-                containers.forEach((container) => {
-                    container.classList.remove('mwi-estimated-age-set');
-                });
+                // Re-render display elements only if the listing age display is enabled
+                if (config.getSetting('market_showEstimatedListingAge')) {
+                    // Clear processed flags to re-render with new data
+                    const containers = document.querySelectorAll('.mwi-estimated-age-set');
+                    containers.forEach((container) => {
+                        container.classList.remove('mwi-estimated-age-set');
+                    });
 
-                // Also clear listing price display flags so Top Order Age updates
-                document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
-                    table.classList.remove('mwi-listing-prices-set');
-                });
+                    // Also clear listing price display flags so Top Order Age updates
+                    document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
+                        table.classList.remove('mwi-listing-prices-set');
+                    });
 
-                // Manually re-process any existing containers (handles race condition where
-                // container appeared before WebSocket data arrived)
-                const existingContainers = document.querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]');
-                existingContainers.forEach((container) => {
-                    this.processOrderBook(container);
-                });
+                    // Manually re-process any existing containers (handles race condition where
+                    // container appeared before WebSocket data arrived)
+                    const existingContainers = document.querySelectorAll(
+                        '[class*="MarketplacePanel_orderBooksContainer"]'
+                    );
+                    existingContainers.forEach((container) => {
+                        this.processOrderBook(container);
+                    });
+                }
             }
         };
 
