@@ -93,12 +93,19 @@ class MaxProduceable {
                 this.updateAllCounts();
             }, this.DEBOUNCE_DELAY);
         };
+        this.consumablesUpdatedHandler = () => {
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                this.updateAllCounts();
+            }, this.DEBOUNCE_DELAY);
+        };
         this.characterSwitchingHandler = () => {
             this.clearAllReferences();
         };
 
         // Event-driven updates (no polling needed)
         dataManager.on('items_updated', this.itemsUpdatedHandler);
+        dataManager.on('consumables_updated', this.consumablesUpdatedHandler);
         dataManager.on('character_switching', this.characterSwitchingHandler);
 
         this.pricingModeHandler = () => {
@@ -933,6 +940,11 @@ class MaxProduceable {
         if (this.itemsUpdatedHandler) {
             dataManager.off('items_updated', this.itemsUpdatedHandler);
             this.itemsUpdatedHandler = null;
+        }
+
+        if (this.consumablesUpdatedHandler) {
+            dataManager.off('consumables_updated', this.consumablesUpdatedHandler);
+            this.consumablesUpdatedHandler = null;
         }
 
         if (this.characterSwitchingHandler) {

@@ -154,7 +154,7 @@ function setupMutationObserver() {
 
 /**
  * Set up listeners for equipment and consumable changes
- * Refreshes enhancement calculator when gear or teas change
+ * Refreshes enhancement calculator and production/gathering profit panels when gear or teas change
  */
 function setupEnhancementRefreshListeners() {
     // Listen for equipment changes (equipping/unequipping items) with debouncing
@@ -163,6 +163,7 @@ function setupEnhancementRefreshListeners() {
             clearTimeout(itemsUpdatedDebounceTimer);
             itemsUpdatedDebounceTimer = setTimeout(() => {
                 refreshEnhancementCalculator();
+                refreshProfitPanel();
             }, DEBOUNCE_DELAY);
         };
         dataManager.on('items_updated', itemsUpdatedHandler);
@@ -174,6 +175,7 @@ function setupEnhancementRefreshListeners() {
             clearTimeout(consumablesUpdatedDebounceTimer);
             consumablesUpdatedDebounceTimer = setTimeout(() => {
                 refreshEnhancementCalculator();
+                refreshProfitPanel();
             }, DEBOUNCE_DELAY);
         };
         dataManager.on('consumables_updated', consumablesUpdatedHandler);
@@ -192,6 +194,19 @@ function refreshEnhancementCalculator() {
 
     // Trigger debounced update
     triggerEnhancementUpdate(panel, itemHrid);
+}
+
+/**
+ * Refresh production/gathering profit panel if currently visible in a modal
+ */
+function refreshProfitPanel() {
+    const modal = document.querySelector(SELECTORS.MODAL_CONTAINER);
+    if (!modal) return;
+
+    const panel = modal.querySelector(SELECTORS.REGULAR_PANEL);
+    if (!panel) return;
+
+    handleActionPanel(panel);
 }
 
 /**
