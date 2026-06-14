@@ -351,29 +351,31 @@ class MaxProduceable {
         const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
         // Calculate max crafts per input (using O(1) Map lookup instead of O(n) array find)
+        let upgradeAccountedFor = false;
         const maxCraftsPerInput = actionDetails.inputItems.map((input) => {
             const invItem = inventoryIndex.get(input.itemHrid);
-            let invCount = invItem?.count || 0;
-
-            // If this input item is also the upgrade item, 1 unit per craft is reserved
-            // for the upgrade slot and is not available for the input requirement.
-            if (actionDetails.upgradeItemHrid === input.itemHrid) {
-                invCount = Math.max(0, invCount - 1);
-            }
+            const invCount = invItem?.count || 0;
 
             // Apply Artisan reduction (10% base, scaled by Drink Concentration)
             // Materials consumed per action = base requirement × (1 - artisan bonus)
-            const materialsPerAction = input.count * (1 - artisanBonus);
-            const maxCrafts = Math.floor(invCount / materialsPerAction);
+            let materialsPerAction = input.count * (1 - artisanBonus);
 
-            return maxCrafts;
+            // If this input item is also the upgrade item, each craft consumes 1 additional
+            // unit for the upgrade slot (not affected by Artisan Tea).
+            if (actionDetails.upgradeItemHrid === input.itemHrid) {
+                materialsPerAction += 1;
+                upgradeAccountedFor = true;
+            }
+
+            return Math.floor(invCount / materialsPerAction);
         });
 
         let minCrafts = Math.min(...maxCraftsPerInput);
 
         // Check upgrade item (e.g., Enhancement Stones)
         // NOTE: Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
-        if (actionDetails.upgradeItemHrid) {
+        // Skip if the upgrade item was already counted as part of an input's per-craft cost.
+        if (actionDetails.upgradeItemHrid && !upgradeAccountedFor) {
             const upgradeItem = inventoryIndex.get(actionDetails.upgradeItemHrid);
             const upgradeCount = upgradeItem?.count || 0;
             minCrafts = Math.min(minCrafts, upgradeCount);
