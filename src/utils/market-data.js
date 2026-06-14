@@ -197,6 +197,9 @@ export function getPricingMode(context, side = 'sell') {
             }
             return selectedPriceType;
         }
+        case 'networth': {
+            return config.getSettingValue('networth_pricingMode') || 'ask';
+        }
         default: {
             const warningKey = `context:${context}`;
             if (!loggedWarnings.has(warningKey)) {

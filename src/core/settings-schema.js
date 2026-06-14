@@ -916,6 +916,17 @@ export const settingsGroups = {
                 ],
                 help: 'Choose how missing materials accounts for Artisan Tea reductions when suggesting what to buy.',
             },
+            networth_pricingMode: {
+                id: 'networth_pricingMode',
+                label: 'Net worth pricing mode',
+                type: 'select',
+                default: 'ask',
+                options: [
+                    { value: 'ask', label: 'Ask price (patient sell value)' },
+                    { value: 'bid', label: 'Bid price (instant liquidation value)' },
+                ],
+                help: 'Ask shows what you could get by listing patiently. Bid shows what you could get by selling instantly.',
+            },
             networth_highEnhancementUseCost: {
                 id: 'networth_highEnhancementUseCost',
                 label: 'Use enhancement cost for highly enhanced items',

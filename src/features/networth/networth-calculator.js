@@ -106,7 +106,7 @@ export async function calculateItemValue(item, priceCache = null) {
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
  * @param {Map} priceCache - Optional price cache from getPricesBatch()
- * @returns {number} Price per item (always uses ask price)
+ * @returns {number} Price per item (uses networth pricing mode setting)
  */
 function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
     // Special handling for currencies
@@ -114,6 +114,9 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
     if (currencyValue !== null) {
         return currencyValue;
     }
+
+    // Determine which price field to use based on networth pricing mode
+    const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
 
     let prices;
 
@@ -125,13 +128,13 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
         prices = getItemPrices(itemHrid, enhancementLevel);
     }
 
-    // Try ask price first
-    const ask = prices?.ask;
-    if (ask && ask > 0) {
-        return ask;
+    // Try selected pricing mode first
+    const price = prices?.[pricingMode];
+    if (price && price > 0) {
+        return price;
     }
 
-    // No valid ask price - try fallbacks (only for base items)
+    // No valid price - try fallbacks (only for base items)
     // Enhanced items should calculate via enhancement path, not crafting cost
     if (enhancementLevel === 0) {
         // Check if it's an openable container (crates, caches, chests)
@@ -189,7 +192,8 @@ function calculateCurrencyValue(itemHrid) {
             return null; // Don't include cowbells in net worth
         }
 
-        const bagPrice = getItemPrice('/items/bag_of_10_cowbells', { mode: 'ask' }) || 0;
+        const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
+        const bagPrice = getItemPrice('/items/bag_of_10_cowbells', { mode: pricingMode }) || 0;
         if (bagPrice > 0) {
             return bagPrice / 10;
         }
@@ -454,8 +458,10 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                               // Store ask and bid WITHOUT coalescing null to 0 (preserve null for "no data" vs "0 price")
                               priceMap[key + '_ask'] = prices.ask;
                               priceMap[key + '_bid'] = prices.bid;
-                              // Also store ask at the base key for backward compatibility
-                              priceMap[key] = prices.ask;
+                              // Store selected pricing mode at the base key for worker item valuation
+                              const networthMode = config.getSettingValue('networth_pricingMode') || 'ask';
+                              const modePrice = prices[networthMode];
+                              priceMap[key] = modePrice && modePrice > 0 ? modePrice : prices.ask;
                           } else {
                               priceMap[key] = 0;
                           }

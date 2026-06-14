@@ -24,6 +24,7 @@ class NetworthFeature {
         this.timerRegistry = createTimerRegistry();
         this.pauseRegistry = null;
         this.priceUpdateHandler = null;
+        this.pricingModeHandler = null;
         this.itemsUpdateHandler = null;
         this.priceUpdateDebounceTimer = null;
         this.itemsUpdateDebounceTimer = null;
@@ -94,6 +95,15 @@ class NetworthFeature {
         };
 
         marketAPI.on(this.priceUpdateHandler);
+
+        // Listen for pricing mode changes
+        this.pricingModeHandler = () => {
+            if (this.isActive && connectionState.isConnected()) {
+                networthCache.clear();
+                this.recalculate();
+            }
+        };
+        config.onSettingChange('networth_pricingMode', this.pricingModeHandler);
 
         // Listen for inventory changes
         this.itemsUpdateHandler = () => {
@@ -187,6 +197,11 @@ class NetworthFeature {
         if (this.priceUpdateHandler) {
             marketAPI.off(this.priceUpdateHandler);
             this.priceUpdateHandler = null;
+        }
+
+        if (this.pricingModeHandler) {
+            config.offSettingChange('networth_pricingMode', this.pricingModeHandler);
+            this.pricingModeHandler = null;
         }
 
         if (this.itemsUpdateHandler) {
