@@ -193,6 +193,22 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Get crate buffs for tea crate only (used for room-assignment effective level)
+     */
+    getTeaCrateBuffs() {
+        const labyrinth = dataManager.characterData?.characterLabyrinth;
+        const setting = dataManager.characterData?.characterSetting;
+        const gameData = dataManager.getInitClientData();
+        if (!gameData?.labyrinthCrateDetailMap) return [];
+
+        const teaHrid = labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '';
+        if (!teaHrid) return [];
+
+        const buffs = gameData.labyrinthCrateDetailMap[teaHrid];
+        return Array.isArray(buffs) ? buffs : [];
+    }
+
+    /**
      * Aggregate all buff sources into skilling metrics for a given skill
      * @param {string} skillId - e.g. "woodcutting"
      * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
@@ -470,17 +486,27 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Get effective level for a skill (base + buff bonuses)
+     * Get effective level for room assignment (base + tea crate only).
+     * The game uses this to determine what room level a skip threshold maps to.
      */
     getEffectiveLevel(skillHrid) {
         const skillId = skillHrid.replace('/skills/', '');
-        const actionTypeHrid = `/action_types/${skillId}`;
-        const metrics = this.getSkillingMetrics(skillId, actionTypeHrid);
 
         const skills = dataManager.getSkills();
         const skill = skills?.find((s) => s.skillHrid === skillHrid);
         const baseLevel = skill?.level || 1;
-        return baseLevel + metrics.skillLevelBonus;
+
+        const teaCrateBuffs = this.getTeaCrateBuffs();
+        const skillLevelType = `/buff_types/${skillId}_level`;
+        let teaLevelBonus = 0;
+        for (const buff of teaCrateBuffs) {
+            if (!buff?.typeHrid) continue;
+            if (buff.typeHrid === skillLevelType) {
+                teaLevelBonus += (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+            }
+        }
+
+        return baseLevel + teaLevelBonus;
     }
 
     /**
