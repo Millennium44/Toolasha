@@ -3041,25 +3041,37 @@ export default class CustomTabsUI {
         }
 
         let open = false;
+        let outsideBound = false;
+        const outsideClick = (e) => {
+            if (!wrapper.contains(e.target)) {
+                closePanel();
+            }
+        };
         const closePanel = () => {
             open = false;
             panel.style.display = 'none';
             chevron.style.transform = '';
+            if (outsideBound) {
+                document.removeEventListener('click', outsideClick);
+                outsideBound = false;
+            }
         };
-        const outsideClick = () => closePanel();
-        document.addEventListener('click', outsideClick);
 
         toggle.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
-            open = !open;
-            panel.style.display = open ? 'flex' : 'none';
-            chevron.style.transform = open ? 'rotate(180deg)' : '';
             if (open) {
-                // Defer adding the outside-click listener so this click doesn't immediately close it
-                setTimeout(() => document.addEventListener('click', outsideClick), 0);
-            } else {
-                document.removeEventListener('click', outsideClick);
+                closePanel();
+                return;
+            }
+            open = true;
+            panel.style.display = 'flex';
+            chevron.style.transform = 'rotate(180deg)';
+            if (!outsideBound) {
+                setTimeout(() => {
+                    document.addEventListener('click', outsideClick);
+                    outsideBound = true;
+                }, 0);
             }
         });
 
