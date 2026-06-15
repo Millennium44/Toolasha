@@ -871,12 +871,12 @@ function createReturnTab(referenceTab) {
  */
 async function handleReturnToAction() {
     const game = getGameObject();
-    if (!game?.handleGoToAction) return;
+    if (!game) return;
 
     if (storedActionHrid) {
         game.handleGoToAction(storedActionHrid);
     } else if (storedEnhancementContext) {
-        game.handleGoToAction('/actions/enhancing');
+        game.handleChangeNavTarget('enhancing');
     } else {
         return;
     }
