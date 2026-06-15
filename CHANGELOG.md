@@ -2,10 +2,9 @@
 
 ## [2.64.4](https://github.com/Celasha/Toolasha/compare/v2.64.3...v2.64.4) (2026-06-15)
 
-
 ### Bug Fixes
 
-* resolve enhancement levels from all owned items in combat loadout ([e9d52ad](https://github.com/Celasha/Toolasha/commit/e9d52ad0308ef026338857974215a34379684ecd))
+- resolve enhancement levels from all owned items in combat loadout ([e9d52ad](https://github.com/Celasha/Toolasha/commit/e9d52ad0308ef026338857974215a34379684ecd))
 
 ## [2.64.3](https://github.com/Celasha/Toolasha/compare/v2.64.2...v2.64.3) (2026-06-15)
 
