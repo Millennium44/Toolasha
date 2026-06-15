@@ -2226,13 +2226,11 @@ class CombatSimUI {
             });
         });
 
-        // History row click handler — set comparison baseline
+        // History row click handler — show detail view for that scenario
         container.querySelectorAll('[data-history-idx]').forEach((row) => {
             const idx = parseInt(row.dataset.historyIdx, 10);
-            // Don't allow clicking the current result as comparison
-            if (idx === this._simHistory.length - 1) return;
             row.addEventListener('click', () => {
-                this._comparisonIndex = idx;
+                this._activeDetailIndex = idx;
                 this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
             });
         });
@@ -2515,7 +2513,7 @@ class CombatSimUI {
 
         // Baseline row
         const baseProfitColor = baseM?.profitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
-        html += '<tr style="background:rgba(232,168,124,0.08);">';
+        html += '<tr style="background:rgba(232,168,124,0.08); cursor:pointer;" data-history-idx="' + baseIdx + '">';
         html +=
             '<td style="padding:2px 4px; color:#e8a87c; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
             baseEntry.label +
@@ -2563,7 +2561,7 @@ class CombatSimUI {
             const profitDelta = baseM && m ? this._formatDelta(m.profitPerHr, baseM.profitPerHr, true, true) : '';
             const xpDelta = baseM && m ? this._formatDelta(m.totalXpPerHr, baseM.totalXpPerHr, true) : '';
 
-            html += '<tr>';
+            html += '<tr style="cursor:pointer;" data-history-idx="' + idx + '">';
             html +=
                 '<td style="padding:2px 4px; color:#ccc; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
                 entry.label +
