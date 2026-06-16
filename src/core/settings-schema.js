@@ -1279,6 +1279,15 @@ export const settingsGroups = {
                 default: false,
                 help: 'Automatically run combat estimates using the default loadout when task cards appear',
             },
+            combatSim_maxThreads: {
+                id: 'combatSim_maxThreads',
+                label: 'Combat Simulator: Max threads',
+                type: 'number',
+                default: 0,
+                min: 0,
+                max: 32,
+                help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
+            },
             combatStats: {
                 id: 'combatStats',
                 label: 'Combat Statistics: Show Statistics tab in Combat panel',

@@ -9,6 +9,7 @@
 
 // The ?worker suffix is handled by rollup's workerBundlePlugin at build time
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
+import config from '../../core/config.js';
 
 let workerBlobURL = null;
 let activeWorkers = [];
@@ -17,6 +18,15 @@ let pendingRejects = []; // Track reject functions to abort on cancel
 
 const MIN_HOURS_PER_WORKER = 20;
 const MAX_WORKERS = 4;
+
+/**
+ * @returns {number} Max worker count from setting, or hardware concurrency if 0/unset
+ */
+function getMaxWorkers() {
+    const setting = config.getSetting('combatSim_maxThreads') || 0;
+    const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+    return setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
+}
 
 /**
  * Get or create the worker Blob URL (created once, reused).
@@ -260,8 +270,7 @@ export async function runSimulation(params, onProgress) {
     cancelSimulation();
 
     // Determine worker count
-    const availableCores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
-    const maxWorkers = Math.min(MAX_WORKERS, availableCores);
+    const maxWorkers = getMaxWorkers();
     const workerCount =
         hours >= MIN_HOURS_PER_WORKER * 2 ? Math.min(maxWorkers, Math.floor(hours / MIN_HOURS_PER_WORKER)) : 1;
 

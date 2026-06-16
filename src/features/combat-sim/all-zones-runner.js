@@ -11,6 +11,7 @@ import { buildExtraBuffs } from './combat-sim-runner.js';
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import MULTI_WORKER_SCRIPT from './multi-worker-entry.js?worker';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
+import config from '../../core/config.js';
 
 let multiWorker = null;
 let activeReject = null;
@@ -40,7 +41,8 @@ export async function runAllZonesSimulation(params, onProgress) {
     const simulationTimeLimit = hours * ONE_HOUR_NS;
 
     const availableCores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    const maxWorkers = availableCores;
+    const maxThreadsSetting = config.getSetting('combatSim_maxThreads') || 0;
+    const maxWorkers = maxThreadsSetting > 0 ? Math.min(maxThreadsSetting, availableCores) : availableCores;
 
     return new Promise((resolve, reject) => {
         // Store reject so cancelAllZonesSimulation can unblock the promise
