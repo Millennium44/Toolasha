@@ -3,9 +3,9 @@
  * Intercepts guild activity WebSocket messages to track session stats,
  * budget usage, and calculate projections for guild skilling/combat activities.
  *
- * SR Formula: SR = 0.84 + (effectiveLevel - difficulty) * 0.004
- * where effectiveLevel = skillLevel + floor(drinkLevelBonus * (1 + drinkConcentration))
- * and difficulty = 100 + tier * 10
+ * SR: changes by 0.008 per difficulty level.
+ * When observed data exists, SR is anchored from the game's actual value and
+ * extrapolated to other tiers. Otherwise: SR = 0.84 + (skillLevel - difficulty) * 0.008
  *
  * Data sources:
  * - guild_activity_progress — live session stats (successRate, progressPerAction, etc.)
@@ -18,16 +18,17 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
 
 const STORE_NAME = 'guildHistory';
 const SESSION_DURATION_MS = 600_000;
 const TARGET_WORK_PER_TIER = 300;
-const BASE_TARGET_WORK = 2700;
+const BASE_TARGET_WORK = 3000;
 const GUILD_BASE_TIME_MS = 10_000;
 
 const SR_BASE = 0.84;
-const SR_PER_LEVEL = 0.004;
+const SR_PER_LEVEL = 0.008;
 
 const ACTIVITY_TO_SKILL = {
     '/guild_skilling/milking': '/skills/milking',
@@ -302,69 +303,106 @@ class GuildActivityTracker {
         return 0.5 * (1.0 + sign * y);
     }
 
-    calculateStarsPerSession(stats) {
-        if (!stats || !stats.progressPerAction || !stats.targetWorkValue) return 0;
-
-        const actionsPerSession = SESSION_DURATION_MS / stats.actionTimeMs;
-        const successfulActions = actionsPerSession * stats.successRate;
-        const baseProgress = successfulActions * stats.progressPerAction;
-        const totalProgress = baseProgress * (1 + stats.doubleProgressChance);
-        return totalProgress / stats.targetWorkValue;
-    }
-
     /**
-     * Calculate projected stars per 10-minute session for enhancing activity.
-     * @param {object} stats - Session stats
-     * @returns {number} Expected stars per session
+     * Calculate expected time (ms) to complete one tier.
+     * @param {object} stats - Tier stats
+     * @returns {number} Milliseconds to complete the tier
      */
-    calculateEnhancingStarsPerSession(stats) {
-        if (!stats || !stats.targetLevel || !stats.successRate) return 0;
+    calculateTimeToComplete(stats) {
+        if (!stats || !stats.successRate || !stats.actionTimeMs) return Infinity;
 
-        const expectedAttemptsPerStar = stats.targetLevel / stats.successRate;
-        const msPerStar = expectedAttemptsPerStar * stats.actionTimeMs;
-        return SESSION_DURATION_MS / msPerStar;
+        const isEnhancing = stats.targetLevel != null;
+
+        if (isEnhancing) {
+            if (!stats.targetLevel) return Infinity;
+            return (stats.targetLevel / stats.successRate) * stats.actionTimeMs;
+        }
+
+        if (!stats.progressPerAction || !stats.targetWorkValue) return Infinity;
+        const progressPerAttempt = stats.progressPerAction * stats.successRate * (1 + (stats.doubleProgressChance || 0));
+        return (stats.targetWorkValue / progressPerAttempt) * stats.actionTimeMs;
     }
 
     // ─── SR Formula ─────────────────────────────────────────────────────────────
 
     /**
-     * Compute exact SR for an activity at a given difficulty using the derived formula.
+     * Compute SR for an activity at a given difficulty.
+     * Anchors from observed data when available (exact), otherwise estimates from skill level.
      * @param {string} activityHrid - Activity hrid
      * @param {number} difficulty - Difficulty level (100 + tier * 10)
      * @returns {number} Success rate (clamped to [0.01, 1.0])
      */
     _computeSR(activityHrid, difficulty) {
+        const observed = this._findObservedTier(activityHrid);
+        if (observed) {
+            const observedDifficulty = 100 + observed.tier * 10;
+            const sr = observed.successRate + (observedDifficulty - difficulty) * SR_PER_LEVEL;
+            return Math.max(0.01, Math.min(1.0, sr));
+        }
+
         const skillLevel = this._getSkillLevel(activityHrid);
         if (!skillLevel) return 0.5;
 
-        const drinkLevelBonus = this._getDrinkLevelBonus(activityHrid);
-        const drinkConcentration = dataManager.characterData?.noncombatStats?.drinkConcentration || 0;
-        const effectiveLevel = skillLevel + Math.floor(drinkLevelBonus * (1 + drinkConcentration));
-
-        const sr = SR_BASE + (effectiveLevel - difficulty) * SR_PER_LEVEL;
+        const sr = SR_BASE + (skillLevel - difficulty) * SR_PER_LEVEL;
         return Math.max(0.01, Math.min(1.0, sr));
+    }
+
+    /**
+     * Find any observed tier data for an activity to use as SR anchor.
+     * @param {string} activityHrid - Activity hrid
+     * @returns {Object|null} Observed tier data or null
+     */
+    _findObservedTier(activityHrid) {
+        for (const data of Object.values(this.observedTiers)) {
+            if (data.activityHrid === activityHrid && data.successRate > 0) {
+                return data;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolve equipment and drinks for an activity, preferring loadout snapshots.
+     * @param {string} activityHrid - Activity hrid
+     * @returns {{ equipment: Map|null, drinks: Array|null, loadoutName: string|null }}
+     */
+    _resolveLoadout(activityHrid) {
+        const skillHrid = ACTIVITY_TO_SKILL[activityHrid];
+        const actionTypeHrid = skillHrid?.replace('/skills/', '/action_types/');
+        if (!actionTypeHrid) return { equipment: null, drinks: null, loadoutName: null };
+
+        const snapshotEquip = loadoutSnapshot.getSnapshotForSkill(actionTypeHrid);
+        const snapshotDrinks = loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid);
+        const snapshotInfo = loadoutSnapshot.getSnapshotInfoForSkill(actionTypeHrid);
+
+        return {
+            equipment: snapshotEquip || dataManager.getEquipment(),
+            drinks: snapshotDrinks || dataManager.getActionDrinkSlots(actionTypeHrid),
+            loadoutName: snapshotInfo?.name || null,
+        };
     }
 
     /**
      * Sum all applicable level buffs from active drinks for a guild activity.
      * Looks for buff_types/action_level (generic) and buff_types/{skill}_level (specific).
      * @param {string} activityHrid - Activity hrid
+     * @param {Array} [drinks] - Drink slots to use (defaults to live slots)
      * @returns {number} Total drink level bonus (before concentration amplification)
      */
-    _getDrinkLevelBonus(activityHrid) {
+    _getDrinkLevelBonus(activityHrid, drinks) {
         const skillHrid = ACTIVITY_TO_SKILL[activityHrid];
         if (!skillHrid) return 0;
 
         const actionTypeHrid = skillHrid.replace('/skills/', '/action_types/');
-        const drinks = dataManager.getActionDrinkSlots(actionTypeHrid);
+        const resolvedDrinks = drinks || dataManager.getActionDrinkSlots(actionTypeHrid);
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
-        if (!drinks || !itemDetailMap) return 0;
+        if (!resolvedDrinks || !itemDetailMap) return 0;
 
         const skillName = skillHrid.replace('/skills/', '');
         const skillLevelType = `/buff_types/${skillName}_level`;
 
         let total = 0;
-        for (const drink of drinks) {
+        for (const drink of resolvedDrinks) {
             if (!drink) continue;
             const itemHrid = drink.itemHrid || drink;
             const detail = itemDetailMap[itemHrid];
@@ -384,19 +422,20 @@ class GuildActivityTracker {
      * Sum a specific buff type from active drinks for a guild activity.
      * @param {string} activityHrid - Activity hrid
      * @param {string} buffTypeHrid - Buff type to sum (e.g., '/buff_types/efficiency')
+     * @param {Array} [drinks] - Drink slots to use (defaults to live slots)
      * @returns {number} Total buff value (before concentration amplification)
      */
-    _getDrinkBuffBonus(activityHrid, buffTypeHrid) {
+    _getDrinkBuffBonus(activityHrid, buffTypeHrid, drinks) {
         const skillHrid = ACTIVITY_TO_SKILL[activityHrid];
         if (!skillHrid) return 0;
 
         const actionTypeHrid = skillHrid.replace('/skills/', '/action_types/');
-        const drinks = dataManager.getActionDrinkSlots(actionTypeHrid);
+        const resolvedDrinks = drinks || dataManager.getActionDrinkSlots(actionTypeHrid);
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
-        if (!drinks || !itemDetailMap) return 0;
+        if (!resolvedDrinks || !itemDetailMap) return 0;
 
         let total = 0;
-        for (const drink of drinks) {
+        for (const drink of resolvedDrinks) {
             if (!drink) continue;
             const itemHrid = drink.itemHrid || drink;
             const detail = itemDetailMap[itemHrid];
@@ -487,23 +526,25 @@ class GuildActivityTracker {
      * Compute total efficiency for a guild activity from all sources.
      * efficiency = equipEff + drinkEff*(1+DC) + houseEff + communityEff
      * @param {string} activityHrid - Activity hrid
+     * @param {Map} [equipment] - Equipment map (defaults to live equipment)
+     * @param {Array} [drinks] - Drink slots (defaults to live slots)
      * @returns {number} Total efficiency
      */
-    _computeEfficiency(activityHrid) {
+    _computeEfficiency(activityHrid, equipment, drinks) {
         const skillHrid = ACTIVITY_TO_SKILL[activityHrid];
         const actionTypeHrid = skillHrid?.replace('/skills/', '/action_types/');
         if (!actionTypeHrid) return 0;
 
-        const equipment = dataManager.getEquipment();
+        const resolvedEquipment = equipment || dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
         const drinkConcentration = dataManager.characterData?.noncombatStats?.drinkConcentration || 0;
 
         const equipEfficiency =
-            equipment && itemDetailMap
-                ? parseEquipmentEfficiencyBonuses(equipment, actionTypeHrid, itemDetailMap) / 100
+            resolvedEquipment && itemDetailMap
+                ? parseEquipmentEfficiencyBonuses(resolvedEquipment, actionTypeHrid, itemDetailMap) / 100
                 : 0;
 
-        const drinkEfficiency = this._getDrinkBuffBonus(activityHrid, '/buff_types/efficiency');
+        const drinkEfficiency = this._getDrinkBuffBonus(activityHrid, '/buff_types/efficiency', drinks);
         const houseEfficiency = this._getHouseRoomEfficiency(actionTypeHrid);
 
         const isProcessing = !GATHERING_SKILLS.has(skillHrid) && skillHrid !== '/skills/enhancing';
@@ -520,9 +561,10 @@ class GuildActivityTracker {
      * - Cooking/Brewing: drinkGourmet*(1+DC)
      * - Others: 0
      * @param {string} activityHrid - Activity hrid
+     * @param {Array} [drinks] - Drink slots (defaults to live slots)
      * @returns {number} Double progress chance
      */
-    _computeDoubleProgressChance(activityHrid) {
+    _computeDoubleProgressChance(activityHrid, drinks) {
         const skillHrid = ACTIVITY_TO_SKILL[activityHrid];
         if (!skillHrid) return 0;
 
@@ -530,13 +572,13 @@ class GuildActivityTracker {
 
         if (GATHERING_SKILLS.has(skillHrid)) {
             const equipGathering = dataManager.characterData?.noncombatStats?.gatheringQuantity || 0;
-            const drinkGathering = this._getDrinkBuffBonus(activityHrid, '/buff_types/gathering');
+            const drinkGathering = this._getDrinkBuffBonus(activityHrid, '/buff_types/gathering', drinks);
             const communityGathering = this._getCommunityBuffValue('/community_buff_types/gathering_quantity');
             return equipGathering + drinkGathering * (1 + drinkConcentration) + communityGathering;
         }
 
         if (GOURMET_SKILLS.has(skillHrid)) {
-            const drinkGourmet = this._getDrinkBuffBonus(activityHrid, '/buff_types/gourmet');
+            const drinkGourmet = this._getDrinkBuffBonus(activityHrid, '/buff_types/gourmet', drinks);
             return drinkGourmet * (1 + drinkConcentration);
         }
 
@@ -554,7 +596,7 @@ class GuildActivityTracker {
         const actionTypeHrid = skillHrid?.replace('/skills/', '/action_types/');
         const isEnhancing = activityHrid.includes('enhancing');
 
-        const equipment = dataManager.getEquipment();
+        const { equipment, drinks, loadoutName } = this._resolveLoadout(activityHrid);
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
         const drinkConcentration = dataManager.characterData?.noncombatStats?.drinkConcentration || 0;
 
@@ -571,11 +613,11 @@ class GuildActivityTracker {
         }
         const actionTimeMs = Math.round(GUILD_BASE_TIME_MS / (1 + speedBonus));
 
-        const totalEfficiency = this._computeEfficiency(activityHrid);
-        const doubleProgressChance = this._computeDoubleProgressChance(activityHrid);
+        const totalEfficiency = this._computeEfficiency(activityHrid, equipment, drinks);
+        const doubleProgressChance = this._computeDoubleProgressChance(activityHrid, drinks);
 
         const skillLevel = this._getSkillLevel(activityHrid);
-        const drinkLevelBonus = this._getDrinkLevelBonus(activityHrid);
+        const drinkLevelBonus = this._getDrinkLevelBonus(activityHrid, drinks);
         const effectiveLevel = (skillLevel || 1) + Math.floor(drinkLevelBonus * (1 + drinkConcentration));
 
         const progressPerAction = effectiveLevel * (1 + totalEfficiency);
@@ -590,6 +632,7 @@ class GuildActivityTracker {
             targetWorkValue: BASE_TARGET_WORK,
             targetLevel: isEnhancing ? 5 : null,
             actionTimeMs,
+            loadoutName,
         };
     }
 
@@ -600,15 +643,15 @@ class GuildActivityTracker {
      * Uses exact SR formula and observed data for tier-independent stats.
      * Falls back to computed estimates when no observation exists.
      * @param {string} activityHrid - Activity hrid
-     * @returns {Array} Array of tier data with stars/hr calculations
+     * @returns {Array} Array of tier data with time and token calculations
      */
     getTierComparison(activityHrid) {
         const isEnhancing = activityHrid.includes('enhancing');
         const baseStats = this._computeBaseStats(activityHrid);
 
-        if (!baseStats.actionTimeMs) return [];
+        if (!baseStats.actionTimeMs) return { tiers: [], loadoutName: baseStats.loadoutName };
 
-        const results = [];
+        const tiers = [];
 
         for (let tier = 0; tier <= 20; tier++) {
             const difficulty = 100 + tier * 10;
@@ -627,27 +670,24 @@ class GuildActivityTracker {
                 targetWorkValue,
             };
 
-            const starsPerSession = isEnhancing
-                ? this.calculateEnhancingStarsPerSession(stats)
-                : this.calculateStarsPerSession(stats);
+            const timeToCompleteMs = this.calculateTimeToComplete(stats);
+            const tokenReward = activityHrid.includes('combat') ? 200 : 100;
+            const tokensPerHour = timeToCompleteMs > 0 && isFinite(timeToCompleteMs)
+                ? (3600_000 / timeToCompleteMs) * tokenReward
+                : 0;
 
-            const sessionsPerHour = 3600_000 / SESSION_DURATION_MS;
-            const starsPerHour = starsPerSession * sessionsPerHour;
-            const tokensPerHour = starsPerHour * (activityHrid.includes('combat') ? 200 : 100);
-
-            results.push({
+            tiers.push({
                 tier,
                 difficultyLevel: difficulty,
                 successRate: sr,
                 targetWorkValue,
                 completionChance: this.calculateSessionCompletionChance(stats),
-                starsPerSession,
-                starsPerHour,
+                timeToCompleteMs,
                 tokensPerHour,
             });
         }
 
-        return results;
+        return { tiers, loadoutName: baseStats.loadoutName };
     }
 
     _getSkillLevel(activityHrid) {

@@ -298,12 +298,11 @@ class GuildActivityDisplay {
 
         const name = ACTIVITY_NAMES[session.activityHrid] || session.activityHrid;
         const isEnhancing = session.targetLevel != null;
-        const starsPerSession = isEnhancing
-            ? guildActivityTracker.calculateEnhancingStarsPerSession(session)
-            : guildActivityTracker.calculateStarsPerSession(session);
-        const starsPerHour = starsPerSession * 6;
+        const timeToCompleteMs = guildActivityTracker.calculateTimeToComplete(session);
         const tokenReward = session.activityHrid.includes('combat') ? 200 : 100;
-        const tokensPerHour = starsPerHour * tokenReward;
+        const tokensPerHour = timeToCompleteMs > 0 && isFinite(timeToCompleteMs)
+            ? (3600_000 / timeToCompleteMs) * tokenReward
+            : 0;
 
         let statsHTML = '';
         if (isEnhancing) {
@@ -354,12 +353,8 @@ class GuildActivityDisplay {
             ${statsHTML}
             <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="${CSS_PREFIX}__stat-row">
-                    <span style="color: ${config.COLOR_ACCENT};">Stars/session</span>
-                    <span style="color: ${config.COLOR_ACCENT};">${starsPerSession.toFixed(2)}</span>
-                </div>
-                <div class="${CSS_PREFIX}__stat-row">
-                    <span style="color: ${config.COLOR_ACCENT};">Stars/hr</span>
-                    <span style="color: ${config.COLOR_ACCENT};">${starsPerHour.toFixed(1)}</span>
+                    <span style="color: ${config.COLOR_ACCENT};">Time to complete</span>
+                    <span style="color: ${config.COLOR_ACCENT};">${this._formatDuration(timeToCompleteMs)}</span>
                 </div>
                 <div class="${CSS_PREFIX}__stat-row">
                     <span style="color: ${config.COLOR_ACCENT};">Tokens/hr</span>
@@ -394,8 +389,8 @@ class GuildActivityDisplay {
                 <thead>
                     <tr style="color: ${config.COLOR_TEXT_SECONDARY}; border-bottom: 1px solid rgba(255,255,255,0.1);">
                         <th style="padding: 3px 8px; text-align: left;">Activity</th>
-                        <th style="padding: 3px 8px; text-align: right;">My Stars</th>
-                        <th style="padding: 3px 8px; text-align: right;">Guild Stars</th>
+                        <th style="padding: 3px 8px; text-align: right;">Mine</th>
+                        <th style="padding: 3px 8px; text-align: right;">Guild</th>
                     </tr>
                 </thead>
                 <tbody>${rows}</tbody>
@@ -404,7 +399,7 @@ class GuildActivityDisplay {
     }
 
     _renderTierComparison(session) {
-        const comparison = guildActivityTracker.getTierComparison(session.activityHrid);
+        const { tiers: comparison } = guildActivityTracker.getTierComparison(session.activityHrid);
         if (comparison.length === 0) return '';
 
         const isEnhancing = session.targetLevel != null;
@@ -420,8 +415,7 @@ class GuildActivityDisplay {
                 <td style="padding: 3px 6px; text-align: right;">${Math.min(100, tier.successRate * 100).toFixed(0)}%</td>
                 <td style="padding: 3px 6px; text-align: right;">${(tier.completionChance * 100).toFixed(0)}%</td>
                 ${goalCell}
-                <td style="padding: 3px 6px; text-align: right;">${tier.starsPerSession.toFixed(2)}</td>
-                <td style="padding: 3px 6px; text-align: right;">${tier.starsPerHour.toFixed(1)}</td>
+                <td style="padding: 3px 6px; text-align: right;">${this._formatDuration(tier.timeToCompleteMs)}</td>
                 <td style="padding: 3px 6px; text-align: right;">${formatWithSeparator(Math.round(tier.tokensPerHour))}</td>
             </tr>`;
         }
@@ -439,8 +433,7 @@ class GuildActivityDisplay {
                             <th style="padding: 3px 6px; text-align: right;">Hit %</th>
                             <th style="padding: 3px 6px; text-align: right;">Session %</th>
                             ${goalHeader}
-                            <th style="padding: 3px 6px; text-align: right;">★/sess</th>
-                            <th style="padding: 3px 6px; text-align: right;">★/hr</th>
+                            <th style="padding: 3px 6px; text-align: right;">Time</th>
                             <th style="padding: 3px 6px; text-align: right;">Tok/hr</th>
                         </tr>
                     </thead>
@@ -456,7 +449,7 @@ class GuildActivityDisplay {
         const allActivities = Object.keys(ACTIVITY_NAMES);
         const selected = this._simActivity || allActivities[0];
 
-        const comparison = guildActivityTracker.getTierComparison(selected);
+        const { tiers: comparison, loadoutName } = guildActivityTracker.getTierComparison(selected);
         const name = ACTIVITY_NAMES[selected] || selected;
         const isEnhancing = selected.includes('enhancing');
 
@@ -466,6 +459,10 @@ class GuildActivityDisplay {
             const sel = hrid === selected ? ' selected' : '';
             optionsHTML += `<option value="${hrid}"${sel}>${label}</option>`;
         }
+
+        const loadoutLabel = loadoutName
+            ? `<span style="color: ${config.COLOR_TEXT_SECONDARY}; font-size: 12px; margin-top: 4px; display: block;">Loadout: ${loadoutName}</span>`
+            : `<span style="color: ${config.COLOR_TEXT_SECONDARY}; font-size: 12px; margin-top: 4px; display: block;">Using current gear</span>`;
 
         let html = `<style>
             .${CSS_PREFIX}__section { margin-bottom: 16px; }
@@ -484,6 +481,7 @@ class GuildActivityDisplay {
                     font-size: 13px;
                     width: 100%;
                 ">${optionsHTML}</select>
+                ${loadoutLabel}
             </div>
         </div>`;
 
@@ -504,8 +502,7 @@ class GuildActivityDisplay {
                     <td style="padding: 3px 6px; text-align: right;">${Math.min(100, tier.successRate * 100).toFixed(0)}%</td>
                     <td style="padding: 3px 6px; text-align: right;">${(tier.completionChance * 100).toFixed(0)}%</td>
                     ${goalCell}
-                    <td style="padding: 3px 6px; text-align: right;">${tier.starsPerSession.toFixed(2)}</td>
-                    <td style="padding: 3px 6px; text-align: right;">${tier.starsPerHour.toFixed(1)}</td>
+                    <td style="padding: 3px 6px; text-align: right;">${this._formatDuration(tier.timeToCompleteMs)}</td>
                     <td style="padding: 3px 6px; text-align: right;">${formatWithSeparator(Math.round(tier.tokensPerHour))}</td>
                 </tr>`;
             }
@@ -520,8 +517,7 @@ class GuildActivityDisplay {
                                 <th style="padding: 3px 6px; text-align: right;">Hit %</th>
                                 <th style="padding: 3px 6px; text-align: right;">Session %</th>
                                 ${goalHeader}
-                                <th style="padding: 3px 6px; text-align: right;">★/sess</th>
-                                <th style="padding: 3px 6px; text-align: right;">★/hr</th>
+                                <th style="padding: 3px 6px; text-align: right;">Time</th>
                                 <th style="padding: 3px 6px; text-align: right;">Tok/hr</th>
                             </tr>
                         </thead>
@@ -540,6 +536,19 @@ class GuildActivityDisplay {
                 this._renderSimulator();
             });
         }
+    }
+
+    _formatDuration(ms) {
+        if (!isFinite(ms) || ms <= 0) return '-';
+        const totalSeconds = Math.round(ms / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes >= 60) {
+            const hours = Math.floor(minutes / 60);
+            const remainMin = minutes % 60;
+            return `${hours}h ${remainMin}m`;
+        }
+        return `${minutes}m ${seconds}s`;
     }
 }
 
