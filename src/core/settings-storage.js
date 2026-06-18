@@ -304,20 +304,27 @@ class SettingsStorage {
             let imported = 0;
             let skipped = 0;
 
+            const knownCharacters = new Set(await this.getKnownCharacters());
+            if (data[this.knownCharactersKey]) {
+                for (const id of data[this.knownCharactersKey]) {
+                    knownCharacters.add(String(id));
+                }
+            }
+
             for (const [key, value] of Object.entries(data)) {
-                // Check if this is a character-specific key (contains a character ID pattern)
-                const charIdMatch = key.match(/_([0-9a-f]{24})$/i) || key.match(/_(\d{10,})$/);
+                const charIdMatch =
+                    key.match(/_([0-9a-f]{24})$/i) ||
+                    key.match(/_(\d{10,})$/) ||
+                    this._matchKnownCharacterSuffix(key, knownCharacters);
 
                 if (charIdMatch) {
                     const keyCharId = charIdMatch[1];
-                    if (currentCharId && keyCharId !== currentCharId) {
-                        // Key belongs to a different character — skip
+                    if (currentCharId && keyCharId !== String(currentCharId)) {
                         skipped++;
                         continue;
                     }
                 }
 
-                // Import global keys and current character's keys
                 await storage.setJSON(key, value, this.storageArea, true);
                 imported++;
             }
@@ -327,6 +334,23 @@ class SettingsStorage {
             console.error('[Settings Storage] Import failed:', error);
             return null;
         }
+    }
+
+    /**
+     * Check if a key ends with a known character ID suffix
+     * @param {string} key - Storage key
+     * @param {Set<string>} knownIds - Set of known character ID strings
+     * @returns {Array|null} Match array with captured ID at index 1, or null
+     * @private
+     */
+    _matchKnownCharacterSuffix(key, knownIds) {
+        const lastUnderscore = key.lastIndexOf('_');
+        if (lastUnderscore === -1) return null;
+        const suffix = key.substring(lastUnderscore + 1);
+        if (knownIds.has(suffix)) {
+            return [key, suffix];
+        }
+        return null;
     }
 }
 
