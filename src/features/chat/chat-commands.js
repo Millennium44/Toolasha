@@ -6,6 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 class ChatCommands {
@@ -16,6 +17,7 @@ class ChatCommands {
         this.boundKeydownHandler = null;
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
+        this.unregisterObserver = null;
     }
 
     /**
@@ -29,17 +31,37 @@ class ChatCommands {
 
         this.loadItemData();
         this.setupGameCore();
-        await this.waitForChatInput();
+        this.initialized = true;
 
-        if (this.chatInput) {
-            this.attachChatListener();
-            this.initialized = true;
+        this.unregisterObserver = domObserver.onClass('ChatCommands', 'Chat_chatInputContainer', (container) => {
+            const input = container.querySelector('input');
+            if (!input || input === this.chatInput) return;
+            this.attachToInput(input);
+        });
+
+        // Attach to any already-present input
+        const existing = document.querySelector('[class*="Chat_chatInputContainer"] input');
+        if (existing) {
+            this.attachToInput(existing);
         }
 
         // Listen for character switch to cleanup
         dataManager.on('character_switching', () => {
             this.cleanup();
         });
+    }
+
+    /**
+     * Attach the keydown listener to a chat input element.
+     * @param {HTMLInputElement} input
+     */
+    attachToInput(input) {
+        if (this.chatInput && this.boundKeydownHandler) {
+            this.chatInput.removeEventListener('keydown', this.boundKeydownHandler, true);
+        }
+        this.chatInput = input;
+        this.boundKeydownHandler = (event) => this.handleKeydown(event);
+        this.chatInput.addEventListener('keydown', this.boundKeydownHandler, true);
     }
 
     /**
@@ -50,6 +72,10 @@ class ChatCommands {
             this.chatInput.removeEventListener('keydown', this.boundKeydownHandler, true);
             this.chatInput = null;
             this.boundKeydownHandler = null;
+        }
+        if (this.unregisterObserver) {
+            this.unregisterObserver();
+            this.unregisterObserver = null;
         }
         this.initialized = false;
     }
@@ -106,34 +132,6 @@ class ChatCommands {
         } catch (error) {
             console.error('[Chat Commands] Error accessing game core:', error);
         }
-    }
-
-    /**
-     * Wait for chat input to be available
-     */
-    async waitForChatInput() {
-        for (let i = 0; i < 50; i++) {
-            const input = document.querySelector('[class*="Chat_chatInputContainer"] input');
-            if (input) {
-                this.chatInput = input;
-                return;
-            }
-            await new Promise((resolve) => {
-                const timeout = setTimeout(resolve, 200);
-                this.timerRegistry.registerTimeout(timeout);
-            });
-        }
-        console.warn('[Chat Commands] Chat input not found after 10 seconds');
-    }
-
-    /**
-     * Attach keydown listener to chat input
-     */
-    attachChatListener() {
-        if (!this.chatInput) return;
-
-        this.boundKeydownHandler = (event) => this.handleKeydown(event);
-        this.chatInput.addEventListener('keydown', this.boundKeydownHandler, true);
     }
 
     /**
