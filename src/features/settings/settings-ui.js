@@ -432,8 +432,8 @@ class SettingsUI {
             for (const [settingId, settingDef] of Object.entries(group.settings)) {
                 if (!settingDef.disabledBy) continue;
 
-                const parentSetting = this.currentSettings[settingDef.disabledBy];
-                const parentValue = parentSetting?.isTrue ?? false;
+                const parentEntry = this.config.settingsMap[settingDef.disabledBy];
+                const parentValue = parentEntry?.isTrue ?? false;
                 const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
                 if (!settingEl) continue;
 
@@ -1410,7 +1410,8 @@ class SettingsUI {
         const snapshot = {};
         for (const group of Object.values(settingsGroups)) {
             for (const [id, def] of Object.entries(group.settings)) {
-                if ((def.type || 'checkbox') !== 'checkbox') continue;
+                const type = def.type || 'checkbox';
+                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
                 if (id === 'ironCow_enabled') continue;
                 const entry = this.config.settingsMap[id];
                 if (!entry) continue;
@@ -1422,6 +1423,9 @@ class SettingsUI {
 
         for (const id of Object.keys(snapshot)) {
             this.config.setSetting(id, false);
+            if (this.currentSettings[id]) {
+                this.currentSettings[id].isTrue = false;
+            }
         }
 
         this._syncAllCheckboxInputs();
@@ -1442,6 +1446,9 @@ class SettingsUI {
             const entry = this.config.settingsMap[id];
             if (!entry) continue;
             this.config.setSetting(id, value);
+            if (this.currentSettings[id]) {
+                this.currentSettings[id].isTrue = value;
+            }
         }
         await storage.delete(key, 'settings');
 
@@ -1457,7 +1464,8 @@ class SettingsUI {
     _syncAllCheckboxInputs() {
         for (const group of Object.values(settingsGroups)) {
             for (const [id, def] of Object.entries(group.settings)) {
-                if ((def.type || 'checkbox') !== 'checkbox') continue;
+                const type = def.type || 'checkbox';
+                if (type !== 'checkbox' && type !== 'checkboxWithButton') continue;
                 const entry = this.config.settingsMap[id];
                 if (!entry) continue;
                 const input = document.querySelector(
