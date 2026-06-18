@@ -235,6 +235,7 @@ class ChatHistoryExtender {
         this.timerRegistry = createTimerRegistry();
         this.interactionCache = new Map();
         this.tabHandlers = new WeakMap();
+        this.activeHandlers = new Set();
     }
 
     initialize() {
@@ -253,6 +254,7 @@ class ChatHistoryExtender {
             if (this.tabHandlers.has(containerEl)) return;
             const handler = new ChatTabHandler(containerEl, this.interactionCache, getMaxHistory);
             this.tabHandlers.set(containerEl, handler);
+            this.activeHandlers.add(handler);
             containerEl.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
                 handler.hydrateMessage(msg);
             });
@@ -275,6 +277,11 @@ class ChatHistoryExtender {
     }
 
     disable() {
+        for (const handler of this.activeHandlers) {
+            handler.destroy();
+        }
+        this.activeHandlers.clear();
+        this.tabHandlers = new WeakMap();
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.timerRegistry.clearAll();
