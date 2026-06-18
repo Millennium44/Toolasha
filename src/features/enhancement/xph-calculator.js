@@ -64,14 +64,18 @@ function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) 
 
     const xph = Math.round((totalXP / calc.totalTime) * 3600);
 
-    // Material cost calculation (coins excluded — auto-deducted by game)
+    // Material cost calculation
     let materialCost = 0;
     let costPartial = false;
     let allMissing = true;
 
     if (itemDetails.enhancementCosts?.length) {
         for (const cost of itemDetails.enhancementCosts) {
-            if (cost.itemHrid === '/items/coin') continue;
+            if (cost.itemHrid === '/items/coin') {
+                materialCost += cost.count * calc.attempts;
+                allMissing = false;
+                continue;
+            }
             const price = marketAPI.getPrice(cost.itemHrid);
             if (price?.ask > 0) {
                 materialCost += cost.count * price.ask * calc.attempts;
