@@ -18,6 +18,7 @@ import tooltipObserver from '../../core/tooltip-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import profitCalculator from '../market/profit-calculator.js';
+import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
@@ -1216,7 +1217,7 @@ class ActionTimeDisplay {
         }
 
         // Line 3: Profit display (async, non-blocking)
-        this.updateActionBarProfit(action.actionHrid, remainingQueuedActions);
+        this.updateActionBarProfit(action, remainingQueuedActions);
 
         // Reconnect observer to watch for game's updates
         this.reconnectActionNameObserver(actionNameElement);
@@ -2161,6 +2162,7 @@ class ActionTimeDisplay {
                     if (actionTimeSeconds > 0 && !isEnhancing) {
                         actionsToCalculate.push({
                             actionHrid: currentAction.actionHrid,
+                            primaryItemHash: currentAction.primaryItemHash || null,
                             timeSeconds: actionTimeSeconds,
                             count: count,
                             baseActionsNeeded: baseActionsNeeded,
@@ -2305,6 +2307,7 @@ class ActionTimeDisplay {
                 if (actionTimeSeconds > 0 && !isTrulyInfinite && !isEnhancing) {
                     actionsToCalculate.push({
                         actionHrid: actionObj.actionHrid,
+                        primaryItemHash: actionObj.primaryItemHash || null,
                         timeSeconds: actionTimeSeconds,
                         count: count,
                         baseActionsNeeded: baseActionsNeeded,
@@ -2537,11 +2540,20 @@ class ActionTimeDisplay {
 
         // Get profit data (already has profitPerAction calculated)
         let profitData = null;
-        const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
-        if (gatheringProfit) {
-            profitData = gatheringProfit;
-        } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-            profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+        let isAlchemy = false;
+
+        if (actionDetails.type === '/action_types/alchemy' && action.primaryItemHash) {
+            profitData = this.calculateAlchemyProfitForAction(action);
+            isAlchemy = !!profitData;
+        }
+
+        if (!profitData) {
+            const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
+            if (gatheringProfit) {
+                profitData = gatheringProfit;
+            } else if (actionDetails.outputItems?.[0]?.itemHrid) {
+                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+            }
         }
 
         if (!profitData) {
@@ -2557,7 +2569,17 @@ class ActionTimeDisplay {
             return null;
         }
 
-        if (gatheringProfit) {
+        if (isAlchemy) {
+            const profitPerAction = profitData.profitPerHour / profitData.actionsPerHour;
+            const totalProfit = profitPerAction * actionsCount;
+            if (valueMode === 'estimated_value') {
+                const revenuePerAction = (profitData.revenuePerHour || 0) / profitData.actionsPerHour;
+                return revenuePerAction * actionsCount;
+            }
+            return totalProfit;
+        }
+
+        if (profitData.baseOutputs) {
             const totals = calculateGatheringActionTotalsFromBase({
                 actionsCount,
                 actionsPerHour: profitData.actionsPerHour,
@@ -2587,11 +2609,33 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Calculate alchemy profit for a queued action using the alchemy profit calculator.
+     * @param {Object} action - Action object with {actionHrid, primaryItemHash}
+     * @returns {Object|null} Profit data with profitPerHour and actionsPerHour, or null
+     */
+    calculateAlchemyProfitForAction(action) {
+        const { itemHrid, level: enhancementLevel } = this.parseItemHash(action.primaryItemHash);
+        if (!itemHrid) return null;
+
+        const actionHrid = action.actionHrid;
+
+        if (actionHrid === '/actions/alchemy/coinify') {
+            return alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel || 0, true);
+        } else if (actionHrid === '/actions/alchemy/transmute') {
+            return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true);
+        } else if (actionHrid === '/actions/alchemy/decompose') {
+            return alchemyProfitCalculator.calculateDecomposeProfit(itemHrid, enhancementLevel || 0, true);
+        }
+
+        return null;
+    }
+
+    /**
      * Calculate and display profit in the action bar for the current action.
-     * @param {string} actionHrid - Current action HRID
+     * @param {Object} action - Current action object from dataManager
      * @param {number} remainingActions - Remaining queued actions (Infinity if unlimited)
      */
-    async updateActionBarProfit(actionHrid, remainingActions) {
+    async updateActionBarProfit(action, remainingActions) {
         if (!this.profitElement) return;
         if (!config.getSetting('actionBar_showProfit')) {
             this.profitElement.innerHTML = '';
@@ -2602,6 +2646,7 @@ class ActionTimeDisplay {
         this.activeBarProfitId = calcId;
 
         try {
+            const actionHrid = action.actionHrid;
             const actionDetails = dataManager.getActionDetails(actionHrid);
             if (!actionDetails) {
                 this.profitElement.innerHTML = '';
@@ -2609,11 +2654,18 @@ class ActionTimeDisplay {
             }
 
             let profitData = null;
-            const gatheringProfit = await calculateGatheringProfit(actionHrid);
-            if (gatheringProfit) {
-                profitData = gatheringProfit;
-            } else if (actionDetails.outputItems?.[0]?.itemHrid) {
-                profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+
+            if (actionDetails.type === '/action_types/alchemy' && action.primaryItemHash) {
+                profitData = this.calculateAlchemyProfitForAction(action);
+            }
+
+            if (!profitData) {
+                const gatheringProfit = await calculateGatheringProfit(actionHrid);
+                if (gatheringProfit) {
+                    profitData = gatheringProfit;
+                } else if (actionDetails.outputItems?.[0]?.itemHrid) {
+                    profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid);
+                }
             }
 
             if (this.activeBarProfitId !== calcId) return;
