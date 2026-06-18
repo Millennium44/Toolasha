@@ -29,6 +29,14 @@ const CHANNELS = [
     { hrid: '/chat_channel_types/beginner', name: 'Beginner' },
     { hrid: '/chat_channel_types/recruit', name: 'Recruit' },
     { hrid: '/chat_channel_types/ironcow', name: 'Ironcow' },
+    { hrid: '/chat_channel_types/russian', name: 'Русский' },
+    { hrid: '/chat_channel_types/chinese', name: '中文' },
+    { hrid: '/chat_channel_types/korean', name: '한국어' },
+    { hrid: '/chat_channel_types/japanese', name: '日本語' },
+    { hrid: '/chat_channel_types/portuguese', name: 'Português' },
+    { hrid: '/chat_channel_types/spanish', name: 'Español' },
+    { hrid: '/chat_channel_types/french', name: 'Français' },
+    { hrid: '/chat_channel_types/german', name: 'Deutsch' },
 ];
 
 const CHANNEL_NAME_MAP = Object.fromEntries(CHANNELS.map((c) => [c.hrid, c.name]));
@@ -325,14 +333,24 @@ class PopOutChat {
                 .map((btn) => {
                     const hrid = btn.getAttribute('data-mention-channel');
                     const name = btn.textContent?.trim().replace(/\d+$/, '').trim();
-                    return hrid && name ? { hrid, name } : null;
+                    if (!name) return null;
+                    if (hrid) return { hrid, name };
+                    // Tab without data-mention-channel: resolve HRID from known lists
+                    const known = CHANNELS.find((c) => c.name === name);
+                    if (known) return { hrid: known.hrid, name };
+                    const discovered = Array.from(this.discoveredChannels.values()).find((c) => c.name === name);
+                    if (discovered) return { hrid: discovered.hrid, name };
+                    return { hrid: `__label__/${name}`, name };
                 })
                 .filter(Boolean);
         }
 
-        // Merge in any channels discovered via incoming messages (e.g. language channels without data-mention-channel)
-        const knownHrids = new Set(domChannels.map((c) => c.hrid));
-        const extra = Array.from(this.discoveredChannels.values()).filter((c) => !knownHrids.has(c.hrid));
+        // Merge in discovered channels only if they correspond to a visible tab name
+        const visibleHrids = new Set(domChannels.map((c) => c.hrid));
+        const visibleNames = new Set(domChannels.map((c) => c.name));
+        const extra = Array.from(this.discoveredChannels.values()).filter(
+            (c) => !visibleHrids.has(c.hrid) && visibleNames.has(c.name)
+        );
 
         return [...domChannels, ...extra];
     }
@@ -391,7 +409,13 @@ class PopOutChat {
         const chatPanel = document.querySelector('[class*="GamePage_chatPanel"]');
         if (!chatPanel) return;
 
-        const channelName = CHANNEL_NAME_MAP[channelHrid];
+        // Resolve channel name from HRID
+        let channelName;
+        if (channelHrid.startsWith('__label__/')) {
+            channelName = channelHrid.slice('__label__/'.length);
+        } else {
+            channelName = CHANNEL_NAME_MAP[channelHrid] || this.discoveredChannels.get(channelHrid)?.name;
+        }
         if (!channelName) return;
 
         const tabButtons = Array.from(chatPanel.querySelectorAll('button[role="tab"]'));
