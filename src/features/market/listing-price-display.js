@@ -59,6 +59,10 @@ class ListingPriceDisplay {
         this.cleanupRegistry = createCleanupRegistry();
         this.activeRefreshes = new WeakSet(); // Track tables being refreshed (debouncing)
         this.tbodyObservers = new WeakMap(); // Track MutationObservers per tbody
+
+        // Sort state for "Progress" column header (sort by item name)
+        this.sortState = 'none'; // 'none' | 'asc' | 'desc'
+        this.originalRowOrder = []; // Stores original row order for reset
     }
 
     /**
@@ -403,6 +407,20 @@ class ListingPriceDisplay {
         thead.insertBefore(totalPriceHeader, thead.children[insertIndex++]);
         if (listedHeader) {
             thead.insertBefore(listedHeader, thead.children[insertIndex++]);
+        }
+
+        // Make "Progress" header (index 2) clickable for sort-by-item-name
+        const progressHeader = thead.children[2];
+        if (progressHeader && !progressHeader.dataset.mwiSortable) {
+            progressHeader.dataset.mwiSortable = 'true';
+            progressHeader.style.cursor = 'pointer';
+            progressHeader.style.userSelect = 'none';
+            progressHeader.title = 'Click to sort by item name';
+            this.updateSortIndicator(progressHeader);
+            progressHeader.addEventListener('click', () => {
+                this.cycleSortState(tableNode);
+                this.updateSortIndicator(progressHeader);
+            });
         }
     }
 
@@ -892,6 +910,118 @@ class ListingPriceDisplay {
     }
 
     /**
+     * Update the sort indicator arrow on the Progress header
+     * @param {HTMLElement} header - The Progress <th> element
+     */
+    updateSortIndicator(header) {
+        const labels = { none: 'Progress', asc: 'Progress \u25B2', desc: 'Progress \u25BC', sortIndex: 'Progress #' };
+        header.textContent = labels[this.sortState];
+    }
+
+    /**
+     * Cycle sort state and reorder table rows
+     * @param {HTMLElement} tableNode - The listings table element
+     */
+    cycleSortState(tableNode) {
+        const tbody = tableNode.querySelector('tbody');
+        if (!tbody) return;
+
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length === 0) return;
+
+        // Store original order on first sort interaction
+        if (this.originalRowOrder.length === 0) {
+            this.originalRowOrder = rows.slice();
+        }
+
+        // Cycle: none → asc → desc → sortIndex → none
+        if (this.sortState === 'none') {
+            this.sortState = 'asc';
+        } else if (this.sortState === 'asc') {
+            this.sortState = 'desc';
+        } else if (this.sortState === 'desc') {
+            this.sortState = 'sortIndex';
+        } else {
+            this.sortState = 'none';
+        }
+
+        if (this.sortState === 'none') {
+            for (const row of this.originalRowOrder) {
+                tbody.appendChild(row);
+            }
+            return;
+        }
+
+        const sortedRows = rows.slice().sort((a, b) => {
+            if (this.sortState === 'sortIndex') {
+                return this.getItemSortIndex(a) - this.getItemSortIndex(b);
+            }
+            // Category + name sort
+            const catA = this.getItemCategory(a);
+            const catB = this.getItemCategory(b);
+            const catCmp = catA.localeCompare(catB);
+            if (catCmp !== 0) return this.sortState === 'asc' ? catCmp : -catCmp;
+            const nameA = this.getItemNameForRow(a);
+            const nameB = this.getItemNameForRow(b);
+            const nameCmp = nameA.localeCompare(nameB);
+            return this.sortState === 'asc' ? nameCmp : -nameCmp;
+        });
+
+        for (const row of sortedRows) {
+            tbody.appendChild(row);
+        }
+    }
+
+    /**
+     * Get item category for a row (for sorting)
+     * @param {HTMLElement} row - Table row element
+     * @returns {string} Category HRID
+     */
+    getItemCategory(row) {
+        const itemHrid = row.dataset.itemHrid;
+        if (itemHrid) {
+            const details = dataManager.getItemDetails(itemHrid);
+            if (details?.categoryHrid) return details.categoryHrid;
+        }
+        return '';
+    }
+
+    /**
+     * Get item sortIndex for a row
+     * @param {HTMLElement} row - Table row element
+     * @returns {number} Sort index (defaults to Infinity for unknowns)
+     */
+    getItemSortIndex(row) {
+        const itemHrid = row.dataset.itemHrid;
+        if (itemHrid) {
+            const details = dataManager.getItemDetails(itemHrid);
+            if (details?.sortIndex !== undefined) return details.sortIndex;
+        }
+        return Infinity;
+    }
+
+    /**
+     * Get display name for a row's item (for sorting)
+     * @param {HTMLElement} row - Table row element
+     * @returns {string} Item name (lowercase for consistent sorting)
+     */
+    getItemNameForRow(row) {
+        const itemHrid = row.dataset.itemHrid;
+        if (itemHrid) {
+            const details = dataManager.getItemDetails(itemHrid);
+            if (details?.name) return details.name.toLowerCase();
+        }
+        // Fallback: extract from SVG href
+        const use = row.querySelector('use');
+        if (use) {
+            const href = use.href?.baseVal || '';
+            const id = href.split('#')[1] || '';
+            return id.replace(/_/g, ' ');
+        }
+        return '';
+    }
+
+    /**
      * Clear all injected displays
      */
     clearDisplays() {
@@ -900,6 +1030,8 @@ class ListingPriceDisplay {
         });
         document.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
+        this.sortState = 'none';
+        this.originalRowOrder = [];
     }
 
     /**
