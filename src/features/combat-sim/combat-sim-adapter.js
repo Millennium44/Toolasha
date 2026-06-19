@@ -904,13 +904,21 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
             const rewardDropTable = actionDetail?.combatZoneInfo?.dungeonInfo?.rewardDropTable;
 
             if (rewardDropTable) {
+                const baseChestCount = 5;
+                const chestsPerCompletion = (baseChestCount / numberOfPlayers) * (1 + combatDropQuantity);
+
                 for (const drop of rewardDropTable) {
                     const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
                     const adjustedRate = Math.min(1.0, Math.max(0, baseRate));
                     if (adjustedRate <= 0) continue;
 
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
-                    const expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
+                    let expected;
+                    if (adjustedRate >= 1.0) {
+                        expected = simResult.dungeonsCompleted * chestsPerCompletion * avgCount;
+                    } else {
+                        expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
+                    }
 
                     totalDropMap.set(drop.itemHrid, (totalDropMap.get(drop.itemHrid) || 0) + expected);
                 }
