@@ -50,6 +50,8 @@ class NetworthHistoryChart {
         this.currentCustomTo = null;
         this._deletePopup = null;
         this._deletePopupOutsideHandler = null;
+        this._deletePopupOutsideTimer = null;
+        this._outsideClickTimer = null;
     }
 
     /**
@@ -545,7 +547,12 @@ class NetworthHistoryChart {
                 this.closeModal();
             }
         };
-        setTimeout(() => document.addEventListener('mousedown', this.outsideClickHandler), 0);
+        const queuedHandler = this.outsideClickHandler;
+        this._outsideClickTimer = setTimeout(() => {
+            this._outsideClickTimer = null;
+            if (this.outsideClickHandler !== queuedHandler) return;
+            document.addEventListener('mousedown', this.outsideClickHandler);
+        }, 0);
 
         // Render default view
         this.renderChart(this.activeRange);
@@ -1058,8 +1065,12 @@ class NetworthHistoryChart {
                 document.removeEventListener('mousedown', closeHandler);
             }
         };
-        // Delay so the current click doesn't immediately close it
-        setTimeout(() => document.addEventListener('mousedown', closeHandler), 0);
+        // Delay so the current click doesn't immediately close it.
+        // Guard against race: if the popout is removed before the timer fires, skip attaching.
+        setTimeout(() => {
+            if (!document.body.contains(container)) return;
+            document.addEventListener('mousedown', closeHandler);
+        }, 0);
     }
 
     /**
@@ -1570,7 +1581,9 @@ class NetworthHistoryChart {
         });
 
         // Dismiss on outside click (defer to avoid catching the current click)
-        setTimeout(() => {
+        this._deletePopupOutsideTimer = setTimeout(() => {
+            this._deletePopupOutsideTimer = null;
+            if (!this._deletePopup) return;
             this._deletePopupOutsideHandler = (e) => {
                 if (!popup.contains(e.target)) {
                     this._dismissDeletePopup();
@@ -1587,6 +1600,10 @@ class NetworthHistoryChart {
         if (this._deletePopup) {
             this._deletePopup.remove();
             this._deletePopup = null;
+        }
+        if (this._deletePopupOutsideTimer !== null) {
+            clearTimeout(this._deletePopupOutsideTimer);
+            this._deletePopupOutsideTimer = null;
         }
         if (this._deletePopupOutsideHandler) {
             document.removeEventListener('click', this._deletePopupOutsideHandler);
@@ -1621,6 +1638,11 @@ class NetworthHistoryChart {
         if (this.outsideClickHandler) {
             document.removeEventListener('mousedown', this.outsideClickHandler);
             this.outsideClickHandler = null;
+        }
+
+        if (this._outsideClickTimer !== null) {
+            clearTimeout(this._outsideClickTimer);
+            this._outsideClickTimer = null;
         }
     }
 }

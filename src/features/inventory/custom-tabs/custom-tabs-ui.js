@@ -3059,6 +3059,7 @@ export default class CustomTabsUI {
 
         let open = false;
         let outsideBound = false;
+        let outsideTimer = null;
         const outsideClick = (e) => {
             if (!wrapper.contains(e.target)) {
                 closePanel();
@@ -3068,6 +3069,10 @@ export default class CustomTabsUI {
             open = false;
             panel.style.display = 'none';
             chevron.style.transform = '';
+            if (outsideTimer !== null) {
+                clearTimeout(outsideTimer);
+                outsideTimer = null;
+            }
             if (outsideBound) {
                 document.removeEventListener('click', outsideClick);
                 outsideBound = false;
@@ -3084,8 +3089,10 @@ export default class CustomTabsUI {
             open = true;
             panel.style.display = 'flex';
             chevron.style.transform = 'rotate(180deg)';
-            if (!outsideBound) {
-                setTimeout(() => {
+            if (!outsideBound && outsideTimer === null) {
+                outsideTimer = setTimeout(() => {
+                    outsideTimer = null;
+                    if (!open || outsideBound) return;
                     document.addEventListener('click', outsideClick);
                     outsideBound = true;
                 }, 0);
