@@ -1932,9 +1932,11 @@ export default class CustomTabsUI {
             newConfig = moveItem(this._config, sourceTabId, targetTabId, hrid);
         }
         this._config = newConfig;
-        await this._save();
         this._removeInjectedEls();
         this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist tile drop on tab:', error);
+        });
     }
 
     /**
@@ -1946,9 +1948,11 @@ export default class CustomTabsUI {
         if (!sourceTabId) return;
         const newConfig = removeItem(this._config, sourceTabId, hrid);
         this._config = newConfig;
-        await this._save();
         this._removeInjectedEls();
         this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist tile drop on unorganized:', error);
+        });
     }
 
     /**
@@ -1974,9 +1978,11 @@ export default class CustomTabsUI {
         if (fromIndex < toIndex) toIndex--;
         const newConfig = reorderItem(this._config, tabId, fromIndex, toIndex);
         this._config = newConfig;
-        await this._save();
         this._removeInjectedEls();
         this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist tile reorder:', error);
+        });
     }
 
     // -----------------------------------------------------------------------
