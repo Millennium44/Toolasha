@@ -94,6 +94,7 @@ class ActionTimeDisplay {
             'actionBar_showActionDuration',
             'actionBar_showActionsPerHour',
             'actionBar_showTimeRemaining',
+            'profitCalc_pricingMode',
         ];
         for (const key of actionBarSettings) {
             config.onSettingChange(key, (newValue) => {
