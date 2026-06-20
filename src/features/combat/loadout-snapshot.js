@@ -213,6 +213,8 @@ class LoadoutSnapshot {
     updateEnhancementLevel(itemHrid, newLevel) {
         let changed = false;
         for (const snapshot of Object.values(this.snapshots)) {
+            // Exact-mode snapshots intentionally hold a frozen level — never auto-update them.
+            if (snapshot.useExactEnhancement) continue;
             for (const eq of snapshot.equipment || []) {
                 if (eq.itemHrid === itemHrid && eq.enhancementLevel !== newLevel) {
                     eq.enhancementLevel = newLevel;

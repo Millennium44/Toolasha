@@ -2624,7 +2624,6 @@ export default class CustomTabsUI {
         }
         if (relevantBases.size === 0) return;
 
-        // For each relevant base HRID, find the highest enhancement currently owned
         const inventory = dataManager.characterItems || [];
         let anyChanged = false;
         const loadoutSnapshot = getLoadoutSnapshot();
@@ -2633,19 +2632,10 @@ export default class CustomTabsUI {
         for (const baseHrid of relevantBases) {
             // Cache may have been invalidated by a prior iteration's snapshot update
             if (!this._boundBaseHrids) break;
+            const loadoutLevels = this._boundBaseHrids.get(baseHrid);
+            if (!loadoutLevels) continue;
 
-            // Only auto-upgrade if all source loadouts use "highest enhancement" mode
-            // (useExactEnhancement: false means the game auto-equips highest owned)
-            const loadoutNames = this._boundBaseLoadouts?.get(baseHrid);
-            if (loadoutNames) {
-                const allUseHighest = [...loadoutNames].every((name) => {
-                    const snap = Object.values(snapshots).find((s) => s.name === name);
-                    return snap && !snap.useExactEnhancement;
-                });
-                if (!allUseHighest) continue;
-            }
-
-            // Find highest enhancement level of this item in current inventory
+            // Find highest enhancement level of this item in current inventory (computed once per base)
             let highestOwned = -1;
             for (const item of inventory) {
                 if (item.itemHrid === baseHrid && item.count > 0) {
@@ -2657,21 +2647,29 @@ export default class CustomTabsUI {
             // If player owns none, skip (don't remove — they might just be mid-trade)
             if (highestOwned < 0) continue;
 
-            const currentLevel = this._boundBaseHrids.get(baseHrid);
-            if (highestOwned === currentLevel) continue;
+            // Process each loadout binding independently — exact-mode loadouts stay
+            // frozen, highest-mode loadouts update to the highest owned level.
+            for (const [loadoutName, currentLevel] of loadoutLevels) {
+                const snap = Object.values(snapshots).find((s) => s.name === loadoutName);
+                if (!snap || snap.useExactEnhancement) continue;
+                if (highestOwned === currentLevel) continue;
 
-            // Level changed (up or down) — swap in bindings
-            const oldHrid = currentLevel > 0 ? `${baseHrid}+${currentLevel}` : baseHrid;
-            const newHrid = highestOwned > 0 ? `${baseHrid}+${highestOwned}` : baseHrid;
+                const oldHrid = currentLevel > 0 ? `${baseHrid}+${currentLevel}` : baseHrid;
+                const newHrid = highestOwned > 0 ? `${baseHrid}+${highestOwned}` : baseHrid;
 
-            this._walkAndSwapBinding(oldHrid, newHrid);
-            anyChanged = true;
+                this._walkAndSwapBinding(oldHrid, newHrid, loadoutName);
+                anyChanged = true;
 
-            // Also update the loadout snapshot
+                // Update cached level for this specific loadout (cache may have been
+                // nulled by the snapshot update listener below).
+                if (this._boundBaseHrids) {
+                    this._boundBaseHrids.get(baseHrid)?.set(loadoutName, highestOwned);
+                }
+            }
+
+            // Sync snapshot equipment levels — updateEnhancementLevel skips exact-mode
+            // snapshots internally, so it only touches highest-mode ones.
             loadoutSnapshot.updateEnhancementLevel(baseHrid, highestOwned);
-
-            // Update the cached level (may have been nulled by the snapshot update listener)
-            if (this._boundBaseHrids) this._boundBaseHrids.set(baseHrid, highestOwned);
         }
 
         if (anyChanged) {
@@ -2681,12 +2679,13 @@ export default class CustomTabsUI {
     }
 
     /**
-     * Build a Map of baseHrid → highest enhancement level across all bindings.
-     * Cached and invalidated when bindings change.
+     * Build a Map of baseHrid → Map<loadoutName, currentLevel> across all bindings.
+     * Per-loadout granularity lets us update each binding independently based on
+     * its own snapshot's useExactEnhancement flag. Cached and invalidated when
+     * bindings change.
      */
     _rebuildBoundBaseHrids() {
-        this._boundBaseHrids = new Map();
-        this._boundBaseLoadouts = new Map(); // baseHrid → Set<loadoutName>
+        this._boundBaseHrids = new Map(); // baseHrid → Map<loadoutName, currentLevel>
         const walk = (tabs) => {
             for (const tab of tabs) {
                 if (tab.loadoutBindings) {
@@ -2698,12 +2697,12 @@ export default class CustomTabsUI {
                                 plusIdx !== -1 && /^\d+$/.test(hrid.substring(plusIdx + 1))
                                     ? parseInt(hrid.substring(plusIdx + 1), 10)
                                     : 0;
-                            const existing = this._boundBaseHrids.get(base) ?? -1;
-                            if (level > existing) this._boundBaseHrids.set(base, level);
-                            if (!this._boundBaseLoadouts.has(base)) {
-                                this._boundBaseLoadouts.set(base, new Set());
+                            if (!this._boundBaseHrids.has(base)) {
+                                this._boundBaseHrids.set(base, new Map());
                             }
-                            this._boundBaseLoadouts.get(base).add(loadoutName);
+                            const loadoutLevels = this._boundBaseHrids.get(base);
+                            const existing = loadoutLevels.get(loadoutName) ?? -1;
+                            if (level > existing) loadoutLevels.set(loadoutName, level);
                         }
                     }
                 }
@@ -2718,18 +2717,35 @@ export default class CustomTabsUI {
      * @param {string} oldHrid
      * @param {string} newHrid
      */
-    _walkAndSwapBinding(oldHrid, newHrid) {
+    /**
+     * Swap an old HRID for a new one in loadout bindings across all tabs.
+     * @param {string} oldHrid
+     * @param {string} newHrid
+     * @param {string|null} restrictToLoadoutName - When set, only swap inside
+     *   bindings for this loadout. tab.items is swapped only if no other
+     *   loadout on the same tab still references oldHrid.
+     */
+    _walkAndSwapBinding(oldHrid, newHrid, restrictToLoadoutName = null) {
         const walk = (tabs) => {
             for (const tab of tabs) {
                 if (tab.loadoutBindings) {
-                    for (const [_name, items] of Object.entries(tab.loadoutBindings)) {
+                    let swappedInLoadout = false;
+                    let oldHridStillReferenced = false;
+                    for (const [name, items] of Object.entries(tab.loadoutBindings)) {
+                        if (restrictToLoadoutName && name !== restrictToLoadoutName) {
+                            if (items.includes(oldHrid)) oldHridStillReferenced = true;
+                            continue;
+                        }
                         const idx = items.indexOf(oldHrid);
                         if (idx !== -1) {
                             items[idx] = newHrid;
-                            // Also swap in tab.items
-                            const itemIdx = tab.items.indexOf(oldHrid);
-                            if (itemIdx !== -1) tab.items[itemIdx] = newHrid;
+                            swappedInLoadout = true;
                         }
+                    }
+                    if (swappedInLoadout && !oldHridStillReferenced) {
+                        // Also swap in tab.items
+                        const itemIdx = tab.items.indexOf(oldHrid);
+                        if (itemIdx !== -1) tab.items[itemIdx] = newHrid;
                     }
                 }
                 if (tab.children.length > 0) walk(tab.children);
