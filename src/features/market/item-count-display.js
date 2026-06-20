@@ -99,9 +99,9 @@ class ItemCountDisplay {
             return itemCountMap;
         }
 
-        // Count inventory items (sum across all enhancement levels)
+        // Count inventory items only (sum across all enhancement levels)
         for (const item of inventory) {
-            if (!item.itemHrid) continue;
+            if (!item.itemHrid || item.itemLocationHrid !== '/item_locations/inventory') continue;
             itemCountMap[item.itemHrid] = (itemCountMap[item.itemHrid] || 0) + (item.count || 0);
         }
 
@@ -109,7 +109,7 @@ class ItemCountDisplay {
         if (includeEquipped) {
             const equipment = dataManager.getEquipment();
             if (equipment) {
-                for (const slot of Object.values(equipment)) {
+                for (const slot of equipment.values()) {
                     if (slot && slot.itemHrid) {
                         itemCountMap[slot.itemHrid] = (itemCountMap[slot.itemHrid] || 0) + 1;
                     }
