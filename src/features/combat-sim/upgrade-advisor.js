@@ -652,21 +652,23 @@ export function generateCandidates(
                 // Offensive items: keep existing role-based tier progression
                 const slotKey = `${slot}|${role}`;
                 const slotItems = tierProgression[slotKey];
+                const offensiveCurrentName = itemDetails?.name || currentHrid.split('/').pop();
+                const offensiveCandidateHrids = new Set();
                 if (slotItems) {
                     const currentIdx = slotItems.findIndex((item) => item.hrid === currentHrid);
                     if (currentIdx >= 0 && currentIdx < slotItems.length - 1) {
                         const nextTier = slotItems[currentIdx + 1];
                         const nextName = nextTier.name || nextTier.hrid.split('/').pop();
-                        const currentName = gameData.itemDetailMap[currentHrid]?.name || currentHrid.split('/').pop();
                         candidates.push({
                             slot,
                             currentHrid,
                             currentLevel,
                             upgradeHrid: nextTier.hrid,
                             upgradeLevel: currentLevel,
-                            description: `${currentName} → ${nextName} (+${currentLevel})`,
+                            description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
                             type: 'tier',
                         });
+                        offensiveCandidateHrids.add(nextTier.hrid);
 
                         // Also suggest the highest non-refined item in the same slot|role
                         // when the player is already wearing high-tier gear (T60+). This
@@ -695,11 +697,42 @@ export function generateCandidates(
                                     currentLevel,
                                     upgradeHrid: highestNonRefined.hrid,
                                     upgradeLevel: currentLevel,
-                                    description: `${currentName} → ${highestName} (+${currentLevel})`,
+                                    description: `${offensiveCurrentName} → ${highestName} (+${currentLevel})`,
                                     type: 'tier',
                                 });
+                                offensiveCandidateHrids.add(highestNonRefined.hrid);
                             }
                         }
+                    }
+                }
+
+                // Also walk the crafting-chain upgradeMap for offensive items so that
+                // direct upgrade-action targets — most importantly the refined version
+                // of the current weapon (e.g. Furious Spear → Furious Spear ★) — surface
+                // even when the role-grouped progression would step sideways to a
+                // different damage style first.
+                const offensiveUpgrades = upgradeMap.get(currentHrid);
+                if (offensiveUpgrades) {
+                    for (const upgradeHrid of offensiveUpgrades) {
+                        if (offensiveCandidateHrids.has(upgradeHrid)) continue;
+                        if (upgradeHrid === currentHrid) continue;
+                        const upgradeItem = gameData.itemDetailMap[upgradeHrid];
+                        if (!upgradeItem?.equipmentDetail) continue;
+                        if (upgradeItem.equipmentDetail.type !== slot) continue;
+                        const upgradeRole = getItemRole(upgradeItem.equipmentDetail?.combatStats);
+                        if (upgradeRole !== role) continue;
+
+                        const upgradeName = upgradeItem.name || upgradeHrid.split('/').pop();
+                        candidates.push({
+                            slot,
+                            currentHrid,
+                            currentLevel,
+                            upgradeHrid,
+                            upgradeLevel: currentLevel,
+                            description: `${offensiveCurrentName} → ${upgradeName} (+${currentLevel})`,
+                            type: 'tier',
+                        });
+                        offensiveCandidateHrids.add(upgradeHrid);
                     }
                 }
             }
