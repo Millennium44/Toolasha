@@ -223,6 +223,13 @@ class Config {
                     'Real-time dungeon progress tracking in top bar with wave times, statistics, and party chat completion messages',
                 settingKey: 'dungeonTracker',
             },
+            combatStats: {
+                enabled: true,
+                name: 'Combat Statistics',
+                category: 'Combat',
+                description: 'Tracks combat data and consumable usage; shows Statistics tab in Combat panel',
+                settingKey: 'combatStats',
+            },
             combatSimIntegration: {
                 enabled: true,
                 name: 'Combat Simulator Integration',
