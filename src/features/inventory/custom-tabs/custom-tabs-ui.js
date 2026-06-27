@@ -38,6 +38,7 @@ import {
     removeItemAtIndex,
     reorderItem,
     setTabOpen,
+    setAllTabsOpen,
     findTab,
     getAssignedItemSet,
     addLoadoutBinding,
@@ -1187,6 +1188,19 @@ export default class CustomTabsUI {
         actionsDiv.appendChild(addBtn);
         actionsDiv.appendChild(exportBtn);
         actionsDiv.appendChild(importBtn);
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'toolasha-ct-add-btn';
+        expandBtn.textContent = 'Expand All';
+        expandBtn.addEventListener('click', () => this._onSetAllTabsOpen(true));
+        actionsDiv.appendChild(expandBtn);
+
+        const collapseBtn = document.createElement('button');
+        collapseBtn.className = 'toolasha-ct-add-btn';
+        collapseBtn.textContent = 'Collapse All';
+        collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
+        actionsDiv.appendChild(collapseBtn);
+
         this._actionBtnsEl = actionsDiv;
 
         const sortControls = document.querySelector('.mwi-inventory-sort-controls');
@@ -2931,6 +2945,15 @@ export default class CustomTabsUI {
         this._save();
         this._removeInjectedEls();
         this._applyLayout();
+    }
+
+    _onSetAllTabsOpen(open) {
+        this._config = setAllTabsOpen(this._config, open);
+        this._removeInjectedEls();
+        this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist expand/collapse all:', error);
+        });
     }
 
     _onReorderTab(draggedId, targetId) {

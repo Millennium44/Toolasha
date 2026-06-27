@@ -322,6 +322,24 @@ export function setTabOpen(config, tabId, open) {
     return c;
 }
 
+/**
+ * Set the open state on every tab in the tree (including nested children).
+ * @param {Object} config
+ * @param {boolean} open
+ * @returns {Object} new config
+ */
+export function setAllTabsOpen(config, open) {
+    const c = clone(config);
+    const walk = (tabs) => {
+        for (const tab of tabs) {
+            tab.open = open;
+            if (tab.children?.length) walk(tab.children);
+        }
+    };
+    walk(c.tabs);
+    return c;
+}
+
 // ---------------------------------------------------------------------------
 // Read helpers
 // ---------------------------------------------------------------------------
