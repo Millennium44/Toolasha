@@ -4,7 +4,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import { resolveActionContext } from './action-context.js';
 import {
     parseEquipmentSpeedBonuses,
     parseEquipmentEfficiencyBonuses,
@@ -132,13 +132,10 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     const { isProduction = false, gameData = null, communityEfficiency = 0 } = options;
 
     const skills = dataManager.getSkills();
-    const equipment = loadoutSnapshot.getSnapshotForSkill(actionDetails.type) ?? dataManager.getEquipment();
+    const { equipment, drinks: drinkSlots } = resolveActionContext(actionDetails.type);
     const itemDetailMap = gameData?.itemDetailMap ?? dataManager.getInitClientData()?.itemDetailMap ?? {};
 
-    // Drink slots and concentration
-    const drinkSlots =
-        loadoutSnapshot.getSnapshotDrinksForSkill(actionDetails.type) ??
-        dataManager.getActionDrinkSlots(actionDetails.type);
+    // Drink concentration
     const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
 
     // Action time (nanoseconds → seconds)

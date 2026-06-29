@@ -10,6 +10,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
+import { resolveActionContext } from './action-context.js';
 
 /**
  * Parse equipment wisdom bonus (skillingExperience stat)
@@ -198,15 +199,12 @@ export function parseConsumableWisdom(drinkSlots, itemDetailMap, drinkConcentrat
  * @returns {Object} Experience data with breakdown
  */
 export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
-    const equipment = dataManager.getEquipment();
+    const { equipment, drinks: activeDrinks } = resolveActionContext(actionTypeHrid);
     const gameData = dataManager.getInitClientData();
     const itemDetailMap = gameData?.itemDetailMap || {};
 
     // Get drink concentration
     const drinkConcentration = equipment ? calculateDrinkConcentration(equipment, itemDetailMap) : 0;
-
-    // Get active drinks for this action type
-    const activeDrinks = dataManager.getActionDrinkSlots(actionTypeHrid);
 
     // Parse wisdom from all sources
     const equipmentWisdomData = parseEquipmentWisdom(equipment, itemDetailMap);

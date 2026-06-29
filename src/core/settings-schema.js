@@ -1597,7 +1597,7 @@ export const settingsGroups = {
                 label: 'Loadout panel: Use saved loadout snapshots in profit calculations',
                 type: 'checkbox',
                 default: true,
-                help: 'Saves your loadout equipment when you view loadouts, so profit/hr calculations use the correct tool bonuses even when that loadout is not equipped. Disable to always use currently-equipped gear.',
+                help: "When you queue an action, Toolasha predicts its XP, time, and profit using the saved loadout for that skill (skill-default → all-skills-default → any saved loadout → currently-equipped). Save your loadouts in-game so they're captured. Disable to always predict using currently-equipped gear.",
             },
             showsKeyInfoInIcon: {
                 id: 'showsKeyInfoInIcon',

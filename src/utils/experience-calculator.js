@@ -14,6 +14,7 @@ import { calculateActionStats } from './action-calculator.js';
 import { calculateExperienceMultiplier } from './experience-parser.js';
 import { calculateEfficiencyMultiplier } from './efficiency.js';
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour } from './profit-helpers.js';
+import { resolveActionContext } from './action-context.js';
 
 /**
  * Calculate experience per hour for an action
@@ -39,7 +40,7 @@ export function calculateExpPerHour(actionHrid) {
 
     // Get character data
     const skills = dataManager.getSkills();
-    const equipment = dataManager.getEquipment();
+    const { equipment } = resolveActionContext(actionDetails.type);
     const gameData = dataManager.getInitClientData();
 
     if (!gameData || !skills || !equipment) {

@@ -17,6 +17,7 @@ import {
 import { calculateHouseEfficiency } from './house-efficiency.js';
 import { stackAdditive } from './efficiency.js';
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
+import { resolveActionContext } from './action-context.js';
 
 /**
  * Calculate complete action statistics (time + efficiency)
@@ -69,8 +70,8 @@ export function calculateActionStats(actionDetails, options = {}) {
         // Get drink concentration
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
 
-        // Get active drinks for this action type
-        const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
+        // Get active drinks for this action type (loadout-snapshot aware)
+        const activeDrinks = resolveActionContext(actionDetails.type).drinks;
 
         // Calculate Action Level bonus from teas
         const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration);
