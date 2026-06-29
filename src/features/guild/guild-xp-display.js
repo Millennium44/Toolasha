@@ -551,7 +551,10 @@ class GuildXPDisplay {
             name: 'Joined',
             insertAfter: insertAfter + 1,
             data: allStats.map((s) => s.joinTime),
-            format: (v) => (v ? formatDateTime(new Date(v), { includeTime: false, includeYear: true }) : ''),
+            format: (v) =>
+                v
+                    ? `<span style="white-space: nowrap;">${formatDateTime(new Date(v), { includeTime: false, includeYear: true })}</span>`
+                    : '',
             makeSortable: true,
             sortId: 'joinTime',
             sortData: allStats.map((s) => (s.joinTime ? +new Date(s.joinTime) : 0)),
