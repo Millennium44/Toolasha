@@ -137,7 +137,9 @@ describe('attachSkillingWhatIfs', () => {
         expect(result.nextLevelClearChance).toBeLessThanOrEqual(1);
         expect(result.speedTierClearChance).toBeGreaterThanOrEqual(result.clearChance - 1e-9);
         expect(result.speedDelta).toBeGreaterThanOrEqual(0);
-        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / 91, 6);
+        // Reference formula: divisor includes the 1s room entry amortized over
+        // expected runs per clear (1 / clearChance)
+        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / (90 + 1 / 0.6), 6);
     });
 
     test('efficiency tier reflects one fewer required progress unit', () => {

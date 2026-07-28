@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth tiles: reference-style previews with correct EXP and rich combat tooltips
+
+- **Skilling preview matches the reference script**: separate Actions in 2m and Action Duration rows; "Efficiency for −1 Progress" and "Speed for +1 Action" requirement rows; Next Level / Efficiency Tier / Speed Tier Clear % rows; Token Expected and Skilling Box Expected labels.
+- **EXP / Room and EXP / Hour are now correct**: room XP applies your experience multiplier (Wisdom buffs from gear/house/achievements/crates plus the labyrinth Experience upgrade) instead of showing base `roomLevel × 50`, and XP/hour amortizes the 1s room entry over expected runs per clear (reference formula).
+- **Combat tiles get the full monster tooltip**: combat style, damage type, attack interval, cast speed, style accuracy/damage, max HP, evasion vs your style, armor/resistance vs your damage type — all at labyrinth-scaled values computed by the same engine that runs the sims — plus the monster's ability list at scaled levels, expected token/combat box, loadout, win rate, and a sim-derived Failure Reason (Insufficient Defense when deaths dominate, Insufficient Damage when fights time out).
+- **Right-click a combat tile opens the Lab Sim panel** (hinted in the tooltip when Lab Sim is enabled).
+
 ### Labyrinth tiles: attempt counter and whole-tile hover previews
 
 - The live header display appends the current attempt number: `[Clear 78.7% | 8 left | #12]`.
