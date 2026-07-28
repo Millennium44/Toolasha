@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { coinifyHistoryTracker } from './coinify-history-tracker.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -54,6 +55,10 @@ class CoinifyHistoryViewer {
         this.activeFilterPopup = null;
         this.activeFilterButton = null;
         this.popupCloseHandler = null;
+
+        // Computed profit per session id — kept out of the session objects so
+        // it is never persisted back to storage
+        this.profitCache = new Map();
 
         // Tab injection
         this.alchemyTab = null;
@@ -184,6 +189,7 @@ class CoinifyHistoryViewer {
      */
     async openModal() {
         this.sessions = await coinifyHistoryTracker.loadSessions();
+        this.profitCache.clear();
         this.cachedDateRange = null;
         this.applyFilters();
 
@@ -346,6 +352,12 @@ class CoinifyHistoryViewer {
             return true;
         });
 
+        for (const session of this.sessions) {
+            if (!this.profitCache.has(session.id)) {
+                this.profitCache.set(session.id, this.computeSessionProfit(session));
+            }
+        }
+
         // Sort
         filtered.sort((a, b) => {
             let aVal = a[this.sortColumn] ?? 0;
@@ -354,6 +366,9 @@ class CoinifyHistoryViewer {
             if (this.sortColumn === 'inputItemHrid') {
                 aVal = this.getItemName(String(aVal));
                 bVal = this.getItemName(String(bVal));
+            } else if (this.sortColumn === '_profit') {
+                aVal = this.profitCache.get(a.id)?.profit ?? 0;
+                bVal = this.profitCache.get(b.id)?.profit ?? 0;
             }
             const cmp = typeof aVal === 'string' ? aVal.localeCompare(String(bVal)) : aVal - bVal;
             return this.sortDirection === 'asc' ? cmp : -cmp;
@@ -397,6 +412,47 @@ class CoinifyHistoryViewer {
         this.renderTable();
     }
 
+    /**
+     * Compute session profit: coins earned minus consumed inputs (at current
+     * buy price for the session's enhancement level — historical input prices
+     * were not recorded), catalysts consumed, and the alchemy coin fee.
+     * @param {Object} session
+     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number, netConsumed: number}}
+     */
+    computeSessionProfit(session) {
+        const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
+        const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        const attempts = session.totalAttempts || 0;
+
+        const revenue = session.totalCoinsEarned || 0;
+
+        const netConsumed = attempts * bulkMultiplier;
+        const inputPrices = getItemPrices(session.inputItemHrid, session.enhancementLevel || 0);
+        const inputPrice = inputPrices?.ask > 0 ? inputPrices.ask : inputPrices?.bid > 0 ? inputPrices.bid : 0;
+        const inputCost = netConsumed * inputPrice;
+
+        const catalystPrice = (hrid) => {
+            const prices = getItemPrices(hrid, 0);
+            return prices?.ask > 0 ? prices.ask : prices?.bid > 0 ? prices.bid : 0;
+        };
+        const catalystCost =
+            (session.catalystOfCoinificationUsed || 0) * catalystPrice(CATALYST_OF_COINIFICATION_HRID) +
+            (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
+
+        // Alchemy coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
+        const sellPrice = itemDetails?.sellPrice || 0;
+        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+
+        return {
+            profit: revenue - inputCost - catalystCost - coinCost,
+            revenue,
+            inputCost,
+            catalystCost,
+            coinCost,
+            netConsumed,
+        };
+    }
+
     // ─── Rendering ───────────────────────────────────────────────────────────
 
     /**
@@ -427,6 +483,7 @@ class CoinifyHistoryViewer {
             { key: 'totalCoinsEarned', label: 'Coins Earned', filterable: false },
             { key: '_catalystOfCoinification', label: 'Catalyst of Coinification', filterable: false },
             { key: '_primeCatalyst', label: 'Prime Catalyst', filterable: false },
+            { key: '_profit', label: 'Profit', filterable: false },
             { key: '_delete', label: '', filterable: false },
         ];
 
@@ -594,6 +651,22 @@ class CoinifyHistoryViewer {
                 pcCell.style.cssText = 'padding: 6px 10px;';
                 this.renderCatalystCell(pcCell, PRIME_CATALYST_HRID, session.primeCatalystUsed || 0);
                 row.appendChild(pcCell);
+
+                // Profit
+                const profitCell = document.createElement('td');
+                const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+                profitCell.textContent = formatKMB(profitDetail.profit, 1);
+                profitCell.style.cssText = `
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
+                `;
+                profitCell.title =
+                    `Coins earned: ${formatKMB(profitDetail.revenue, 1)}\n` +
+                    `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
+                    `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}\n` +
+                    `Alchemy coins: −${formatKMB(profitDetail.coinCost, 1)}`;
+                row.appendChild(profitCell);
 
                 // Delete
                 const deleteCell = document.createElement('td');
@@ -1312,6 +1385,7 @@ class CoinifyHistoryViewer {
             'Coins Earned',
             'Catalyst of Coinification Used',
             'Prime Catalyst Used',
+            'Profit',
         ];
 
         const rows = this.sessions.map((session) => {
@@ -1334,6 +1408,7 @@ class CoinifyHistoryViewer {
                 session.totalCoinsEarned || 0,
                 session.catalystOfCoinificationUsed || 0,
                 session.primeCatalystUsed || 0,
+                Math.round((this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit),
             ]
                 .map(escape)
                 .join(',');
