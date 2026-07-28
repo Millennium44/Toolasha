@@ -59,15 +59,19 @@ export function calculateAbilityCost(abilityHrid, targetLevel) {
 
     if (!prices) return 0;
 
-    // Match MCS behavior: if one price is positive and other is negative, use positive for both
+    // Match MCS behavior: if only one side of the order book exists, use it for both
+    // (getPrice normalizes missing sides to null)
     let ask = prices.ask;
     let bid = prices.bid;
 
-    if (ask > 0 && bid < 0) {
+    if (ask != null && bid == null) {
         bid = ask;
     }
-    if (bid > 0 && ask < 0) {
+    if (bid != null && ask == null) {
         ask = bid;
+    }
+    if (ask == null && bid == null) {
+        return 0;
     }
 
     // Use weighted average
@@ -112,15 +116,19 @@ export function calculateAbilityLevelUpCost(abilityHrid, currentLevel, currentXp
 
     if (!prices) return 0;
 
-    // Match MCS behavior: if one price is positive and other is negative, use positive for both
+    // Match MCS behavior: if only one side of the order book exists, use it for both
+    // (getPrice normalizes missing sides to null)
     let ask = prices.ask;
     let bid = prices.bid;
 
-    if (ask > 0 && bid < 0) {
+    if (ask != null && bid == null) {
         bid = ask;
     }
-    if (bid > 0 && ask < 0) {
+    if (bid != null && ask == null) {
         ask = bid;
+    }
+    if (ask == null && bid == null) {
+        return 0;
     }
 
     // Weighted average

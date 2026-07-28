@@ -196,7 +196,7 @@ class CombatSimulator {
             this.simResult.dungeonsFailed = this.zone.dungeonsFailed;
             if (this.simResult.dungeonsCompleted < 1) {
                 this.simResult.maxWaveReached = 0;
-                for (let i = 0; i <= this.zone.dungeonSpawnInfo.maxWaves; i++) {
+                for (let i = 1; i <= this.zone.dungeonSpawnInfo.maxWaves; i++) {
                     const waveName = '#' + i.toString();
                     const idx = this.simResult.timeSpentAlive.findIndex((e) => e.name === waveName);
                     if (idx === -1 || this.simResult.timeSpentAlive[idx].count === 0) {
@@ -491,7 +491,7 @@ class CombatSimulator {
                     startTime: '0001-01-01T00:00:00Z',
                     duration: curseExpireTime,
                 };
-                target.addBuff(curseBuff);
+                target.addBuff(curseBuff, this.simulationTime);
                 this.eventQueue.addEvent(curseExpirationEvent);
             }
 
@@ -520,7 +520,7 @@ class CombatSimulator {
                     startTime: '0001-01-01T00:00:00Z',
                     duration: weakenExpireTime,
                 };
-                source.addBuff(weakenBuff);
+                source.addBuff(weakenBuff, this.simulationTime);
                 this.eventQueue.addEvent(weakenExpirationEvent);
             }
 
@@ -592,7 +592,8 @@ class CombatSimulator {
             }
         }
 
-        if (!this.checkEncounterEnd()) {
+        // checkEncounterEnd must run first (side effects); a source dead from thorns/parry must not re-queue
+        if (!this.checkEncounterEnd() && event.source.combatDetails.currentHitpoints > 0) {
             this.addNextAttackEvent(event.source);
         }
     }
@@ -723,6 +724,9 @@ class CombatSimulator {
     }
 
     addNextAttackEvent(source) {
+        if (source.combatDetails.currentHitpoints <= 0) {
+            return;
+        }
         // Check both event types via indexed lookups instead of O(n) getMatching
         if (
             this.eventQueue.getByTypeAndSource(AbilityCastEndEvent.type, source) ||
@@ -989,8 +993,8 @@ class CombatSimulator {
                     startTime: '0001-01-01T00:00:00Z',
                     duration: ENRAGE_TICK_INTERVAL,
                 };
-                enemy.addBuff(enrageDamageBuff);
-                enemy.addBuff(enrageAccuracyBuff);
+                enemy.addBuff(enrageDamageBuff, this.simulationTime);
+                enemy.addBuff(enrageAccuracyBuff, this.simulationTime);
 
                 this.simResult.maxEnrageStack = Math.max(this.simResult.maxEnrageStack, nowStack);
             });
@@ -1187,11 +1191,20 @@ class CombatSimulator {
                     case '/ability_effect_types/revive':
                         this.processAbilityReviveEffect(source, todoAbility, abilityEffect);
                         break;
-                    case '/ability_effect_types/promote':
+                    case '/ability_effect_types/promote': {
                         this.eventQueue.clearEventsForUnit(source);
-                        source = this.processAbilityPromoteEffect(source, todoAbility, abilityEffect);
+                        const promotedMonster = this.processAbilityPromoteEffect(source, todoAbility, abilityEffect);
+                        promotedMonster.reset(this.simulationTime);
+                        const enemyIndex = this.enemies.indexOf(source);
+                        if (enemyIndex !== -1) {
+                            this.enemies[enemyIndex] = promotedMonster;
+                            this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);
+                            this.simResult.updateTimeSpentAlive(promotedMonster.hrid, true, this.simulationTime);
+                        }
+                        source = promotedMonster;
                         this.addNextAttackEvent(source);
                         break;
+                    }
                     default:
                         throw new Error(
                             'Unsupported effect type for ability: ' +
@@ -1483,13 +1496,12 @@ class CombatSimulator {
                         startTime: '0001-01-01T00:00:00Z',
                         duration: curseExpireTime,
                     };
-                    target.addBuff(curseBuff);
+                    target.addBuff(curseBuff, this.simulationTime);
                     this.eventQueue.addEvent(curseExpirationEvent);
                 }
 
                 if (target.combatDetails.combatStats.weaken > 0) {
                     const weakenExpireTime = 15000000000;
-                    source.weakenExpireTime = this.simulationTime + weakenExpireTime;
                     const currentWeakenEvent = this.eventQueue.getByTypeAndSource(WeakenExpirationEvent.type, source);
                     let weakenAmount = 0;
                     if (currentWeakenEvent) weakenAmount = currentWeakenEvent.weakenAmount;
@@ -1509,7 +1521,7 @@ class CombatSimulator {
                         startTime: '0001-01-01T00:00:00Z',
                         duration: weakenExpireTime,
                     };
-                    source.addBuff(weakenBuff);
+                    source.addBuff(weakenBuff, this.simulationTime);
                     this.eventQueue.addEvent(weakenExpirationEvent);
                 }
 

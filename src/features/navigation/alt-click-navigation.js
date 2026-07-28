@@ -61,12 +61,7 @@ class AltClickNavigation {
                 itemHrid = dataItemElement.getAttribute('data-item-hrid');
             }
 
-            // Strategy 2: If clicking while tooltip is visible, use tracked item
-            if (!itemHrid && this.currentItemHrid) {
-                itemHrid = this.currentItemHrid;
-            }
-
-            // Strategy 3: Check parent chain for item link hrefs
+            // Strategy 2: Check parent chain for item link hrefs
             if (!itemHrid) {
                 const linkElement = event.target.closest('a[href*="/items/"]');
                 if (linkElement) {
@@ -76,6 +71,12 @@ class AltClickNavigation {
                         itemHrid = `/items/${match[1]}`;
                     }
                 }
+            }
+
+            // Strategy 3: Use tracked item only while an item tooltip is actually visible
+            // (currentItemHrid can be stale — nothing clears it when a tooltip closes)
+            if (!itemHrid && this.currentItemHrid && this.isItemTooltipVisible()) {
+                itemHrid = this.currentItemHrid;
             }
 
             if (!itemHrid) {
@@ -92,6 +93,22 @@ class AltClickNavigation {
         document.addEventListener('click', this.clickHandler, true);
 
         this.isActive = true;
+    }
+
+    /**
+     * Check whether an item tooltip popper is currently in the DOM
+     * @returns {boolean} True if a visible tooltip contains item markup
+     */
+    isItemTooltipVisible() {
+        const poppers = document.querySelectorAll('.MuiTooltip-popper');
+        for (const popper of poppers) {
+            if (
+                popper.querySelector('a[href*="/items/"], use[href*="items_sprite"], [class*="ItemTooltipText_name"]')
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

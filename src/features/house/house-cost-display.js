@@ -29,6 +29,7 @@ class HouseCostDisplay {
         this._houseRoomsUpdatedHandler = null; // House room level change listener
         this._cumulativeState = null; // State for refreshing cumulative display
         this._costContext = null; // { houseRoomHrid, currentLevel, targetLevel } for recalculating missing mats
+        this._refreshGen = 0; // Generation counter to discard stale async refreshes
     }
 
     /**
@@ -368,9 +369,15 @@ class HouseCostDisplay {
      * @param {number} targetLevel - Target level
      */
     async updateCompactCumulativeDisplay(container, houseRoomHrid, currentLevel, targetLevel) {
-        container.innerHTML = '';
+        // Concurrent calls (items_updated + house_rooms_updated fire in the same turn)
+        // must not interleave clear/append — only the latest call may write to the DOM
+        const gen = ++this._refreshGen;
 
         const costData = await houseCostCalculator.calculateCumulativeCost(houseRoomHrid, currentLevel, targetLevel);
+        if (gen !== this._refreshGen) return;
+
+        // Build into a detached fragment, then clear+append in one synchronous swap
+        const fragment = document.createDocumentFragment();
 
         // Materials list as vertical stack of single-line rows
         const materialsList = document.createElement('div');
@@ -394,7 +401,7 @@ class HouseCostDisplay {
             this.appendMaterialRow(materialsList, material);
         }
 
-        container.appendChild(materialsList);
+        fragment.appendChild(materialsList);
 
         // Total
         const totalDiv = document.createElement('div');
@@ -408,14 +415,17 @@ class HouseCostDisplay {
             text-align: center;
         `;
         totalDiv.textContent = `Total Market Value: ${coinFormatter(costData.totalValue)}`;
-        container.appendChild(totalDiv);
+        fragment.appendChild(totalDiv);
 
         // Add Missing Mats Marketplace button if any materials are missing
         const missingMaterials = this.getMissingMaterials(costData);
         if (missingMaterials.length > 0) {
             const button = this.createMissingMaterialsButton(missingMaterials);
-            container.appendChild(button);
+            fragment.appendChild(button);
         }
+
+        container.innerHTML = '';
+        container.appendChild(fragment);
     }
 
     /**

@@ -63,6 +63,8 @@ class LabSimUI {
         this._skillLoadouts = {};
         this._skillLoadoutsLoaded = false;
         this._loadoutsCollapsed = true;
+        this._upgradeSortHandler = null;
+        this._skillingSortHandler = null;
     }
 
     buildPanel() {
@@ -769,11 +771,19 @@ class LabSimUI {
         } else if (tab === 'skilling') {
             skillingContent.style.display = 'flex';
             tabSkilling.style.cssText = activeStyle;
+            void this._showSkillingTab();
+        }
+    }
+
+    /** @private */
+    async _showSkillingTab() {
+        try {
             if (!this._skillingEditor.isInitialized()) {
-                this._skillingEditor.initEditor().then(() => this._renderSkillLoadoutTable());
-            } else {
-                this._renderSkillLoadoutTable();
+                await this._skillingEditor.initEditor();
             }
+            await this._renderSkillLoadoutTable();
+        } catch (error) {
+            console.error('[LabSimUI] Failed to show skilling tab:', error);
         }
     }
 
@@ -812,21 +822,22 @@ class LabSimUI {
         const crates = this.getSelectedCrates();
         const labyrinthCombatBuffs = labyrinthClearRate.getLabyrinthCombatBuffs();
 
-        let playerDTOs;
+        let selfDTO;
         const editedDTOs = this._editor?.getEditedDTOs();
         if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
+            const selfHrid = this._editor.getSelfHrid();
+            selfDTO = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
         } else {
             const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
+            selfDTO = result.players.find((p) => p.hrid === result.selfHrid) || result.players[0];
         }
 
-        if (!playerDTOs.length) {
+        if (!selfDTO) {
             this._setStatus('No character data available.');
             return;
         }
 
-        playerDTOs = [playerDTOs[0]];
+        const playerDTOs = [selfDTO];
 
         const communityBuffs = getCommunityBuffs();
         const zones = getCombatZones();
@@ -897,7 +908,7 @@ class LabSimUI {
                     }
                 );
 
-                this._displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime);
+                this._displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime, playerDTOs[0].hrid);
             }
         } catch (error) {
             if (error.message !== 'Cancelled') {
@@ -916,14 +927,14 @@ class LabSimUI {
     }
 
     /** @private */
-    _displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime) {
+    _displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime, playerHrid) {
         const container = this.panel?.querySelector('#mwi-labsim-results');
         if (!container) return;
 
         const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
         const attempts = simResult.labyAttemptCount || 0;
         const encounters = simResult.encounters || 0;
-        const deaths = simResult.deaths?.player1 || 0;
+        const deaths = simResult.deaths?.[playerHrid || 'player1'] || 0;
         const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
         const winRate = attempts > 0 ? ((encounters / attempts) * 100).toFixed(2) : '0.00';
 
@@ -1248,7 +1259,12 @@ class LabSimUI {
 
         renderAll();
 
-        container.addEventListener('click', (e) => {
+        // The container persists across Analyze runs — replace the previous
+        // sort handler instead of stacking a new one each analysis
+        if (this._upgradeSortHandler) {
+            container.removeEventListener('click', this._upgradeSortHandler);
+        }
+        this._upgradeSortHandler = (e) => {
             const th = e.target.closest('th[data-sort-key]');
             if (!th) return;
             const table = th.dataset.table;
@@ -1261,7 +1277,8 @@ class LabSimUI {
                 state.dir = key === 'desc' ? 'asc' : 'desc';
             }
             renderAll();
-        });
+        };
+        container.addEventListener('click', this._upgradeSortHandler);
 
         this._setStatus(`${results.length} upgrade candidates analyzed.`);
     }
@@ -1584,7 +1601,7 @@ class LabSimUI {
         this._skillingAborted = false;
 
         try {
-            const analysisResult = runSkillingUpgradeAnalysis(
+            const analysisResult = await runSkillingUpgradeAnalysis(
                 { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill },
                 ({ current, total, description }) => {
                     if (this._skillingAborted) return;
@@ -1756,7 +1773,12 @@ class LabSimUI {
 
         renderAll();
 
-        container.addEventListener('click', (e) => {
+        // The container persists across Analyze runs — replace the previous
+        // sort handler instead of stacking a new one each analysis
+        if (this._skillingSortHandler) {
+            container.removeEventListener('click', this._skillingSortHandler);
+        }
+        this._skillingSortHandler = (e) => {
             const th = e.target.closest('th[data-sort-key]');
             if (!th) return;
             const table = th.dataset.table;
@@ -1769,7 +1791,8 @@ class LabSimUI {
                 state.dir = key === 'desc' ? 'asc' : 'desc';
             }
             renderAll();
-        });
+        };
+        container.addEventListener('click', this._skillingSortHandler);
 
         this._setStatus(`${results.length} skilling upgrade candidates analyzed.`);
     }

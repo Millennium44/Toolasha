@@ -8,7 +8,7 @@ import WorkerPool from './worker-pool.js';
 // Worker pool instance
 let workerPool = null;
 
-// Worker script as inline string (bundled from enhancement-calculator.worker.js)
+// Worker script as inline string — this is the sole source of the worker code
 const WORKER_SCRIPT = `
 // Import math.js library from CDN
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');

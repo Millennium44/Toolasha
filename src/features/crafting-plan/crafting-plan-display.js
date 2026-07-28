@@ -618,6 +618,7 @@ class CraftingPlanDisplay {
         this.unregisterHandlers = [];
         this.processedPanels = new WeakSet();
         this.panelObservers = new WeakMap();
+        this.activeObservers = new Set();
     }
 
     initialize() {
@@ -666,6 +667,7 @@ class CraftingPlanDisplay {
         if (!ui) return;
 
         const position = () => {
+            if (!this.isInitialized) return;
             const existing = panel.querySelector(`#${UI_ID}`);
             // Insert before Profitability section
             const profitSection = panel.querySelector('[data-mwi-profit-display]');
@@ -699,18 +701,22 @@ class CraftingPlanDisplay {
         });
         obs.observe(observeTarget, { childList: true, subtree: true });
         this.panelObservers.set(panel, obs);
+        this.activeObservers.add(obs);
     }
 
     disable() {
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
 
+        // Disconnect panel observers BEFORE removing UI, so removal doesn't retrigger position()
+        this.activeObservers.forEach((obs) => obs.disconnect());
+        this.activeObservers.clear();
+        this.isInitialized = false;
+
         document.querySelectorAll(`#${UI_ID}`).forEach((el) => el.remove());
 
-        // Disconnect panel observers
         this.panelObservers = new WeakMap();
         this.processedPanels = new WeakSet();
-        this.isInitialized = false;
     }
 }
 

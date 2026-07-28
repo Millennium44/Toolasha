@@ -133,6 +133,7 @@ function inLastInterval(arr, interval) {
 function calcXPH(prev, cur) {
     const xpDelta = cur.xp - prev.xp;
     const tDeltaMs = cur.t - prev.t;
+    if (tDeltaMs <= 0) return 0;
     return (xpDelta / tDeltaMs) * 3600000;
 }
 

@@ -14,7 +14,6 @@ import {
     addCoinCost,
     addProtectionCost,
     finalizeSession,
-    sessionMatches,
     canExtendSession,
     extendSession,
     validateSession,
@@ -109,47 +108,6 @@ class EnhancementTracker {
         await saveCurrentSessionId(session.id);
 
         return session.id;
-    }
-
-    /**
-     * Find a matching previous session that can be resumed
-     * @param {string} itemHrid - Item HRID
-     * @param {number} currentLevel - Current enhancement level
-     * @param {number} targetLevel - Target level
-     * @param {number} protectFrom - Protection level
-     * @returns {string|null} Session ID if found, null otherwise
-     */
-    findMatchingSession(itemHrid, currentLevel, targetLevel, protectFrom = 0) {
-        for (const [sessionId, session] of Object.entries(this.sessions)) {
-            if (sessionMatches(session, itemHrid, currentLevel, targetLevel, protectFrom)) {
-                return sessionId;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Resume an existing session
-     * @param {string} sessionId - Session ID to resume
-     * @returns {Promise<boolean>} True if resumed successfully
-     */
-    async resumeSession(sessionId) {
-        if (!this.sessions[sessionId]) {
-            return false;
-        }
-
-        const session = this.sessions[sessionId];
-
-        // Can only resume tracking sessions
-        if (session.state !== SessionState.TRACKING) {
-            return false;
-        }
-
-        this.currentSessionId = sessionId;
-        await saveCurrentSessionId(sessionId);
-
-        return true;
     }
 
     /**

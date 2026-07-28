@@ -288,23 +288,8 @@ export function buildSegmentsFromCharacterData(characterData, clientData, consum
     };
 
     const slotMapping = {
-        // For characterItems (own character data)
-        '/equipment_types/back': 'back',
-        '/equipment_types/head': 'head',
-        '/equipment_types/trinket': 'trinket',
-        '/equipment_types/main_hand': 'main_hand',
-        '/equipment_types/two_hand': 'main_hand',
-        '/equipment_types/body': 'body',
-        '/equipment_types/off_hand': 'off_hand',
-        '/equipment_types/hands': 'hands',
-        '/equipment_types/legs': 'legs',
-        '/equipment_types/pouch': 'pouch',
-        '/equipment_types/feet': 'shoes',
-        '/equipment_types/neck': 'necklace',
-        '/equipment_types/earrings': 'earrings',
-        '/equipment_types/ring': 'ring',
-        '/equipment_types/charm': 'charm',
-        // For wearableItemMap (profile_shared data)
+        // Both characterItems (own character data) and wearableItemMap (profile_shared
+        // data) carry '/item_locations/...' hrids
         '/item_locations/back': 'back',
         '/item_locations/head': 'head',
         '/item_locations/trinket': 'trinket',
@@ -324,7 +309,7 @@ export function buildSegmentsFromCharacterData(characterData, clientData, consum
 
     if (characterData.characterItems) {
         for (const item of characterData.characterItems) {
-            if (item.itemLocationHrid && item.itemLocationHrid.startsWith('/equipment_types/')) {
+            if (item.itemLocationHrid && item.itemLocationHrid.startsWith('/item_locations/')) {
                 const slot = slotMapping[item.itemLocationHrid];
                 if (slot) {
                     const itemId = item.itemHrid.replace('/items/', '');

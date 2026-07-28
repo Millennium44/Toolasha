@@ -1,6 +1,7 @@
 /**
  * Token Valuation Utility
- * Shared logic for calculating dungeon token and task token values
+ * Shared logic for calculating dungeon token values
+ * (Task token valuation lives in features/tasks/task-profit-calculator.js)
  */
 
 import config from '../core/config.js';
@@ -97,33 +98,4 @@ export function calculateDungeonTokenValue(
     }
 
     return bestValuePerToken > 0 ? bestValuePerToken : null;
-}
-
-/**
- * Calculate task token value based on best chest expected value
- * @returns {number} Value per token, or 0 if no data
- */
-export function calculateTaskTokenValue() {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
-
-    // Get all chest items (Large Artisan's Crate, Large Meteorite Cache, Large Treasure Chest)
-    const chestHrids = ['/items/large_artisans_crate', '/items/large_meteorite_cache', '/items/large_treasure_chest'];
-
-    const bestChestValue = 0;
-
-    for (const chestHrid of chestHrids) {
-        const itemDetails = dataManager.getItemDetails(chestHrid);
-        if (!itemDetails || !itemDetails.isOpenable) continue;
-
-        // Calculate expected value for this chest
-        // Note: This would require expectedValueCalculator, but to avoid circular dependency,
-        // we'll let the caller handle this or import it locally where needed
-        // For now, return 0 as placeholder
-    }
-
-    // Task Token cost for chests is 30
-    const tokenCost = 30;
-
-    return bestChestValue / tokenCost;
 }

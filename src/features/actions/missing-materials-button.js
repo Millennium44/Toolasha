@@ -37,6 +37,7 @@ let domObserverUnregister = null;
 let enhancementDomObserverUnregister = null;
 let processedPanels = new WeakSet();
 let processedEnhancingPanels = new WeakSet();
+let enhancingPanelWatchers = [];
 let inventoryUpdateHandler = null;
 let storedActionHrid = null;
 let storedNumActions = 0;
@@ -110,6 +111,10 @@ export function cleanup() {
 
     // Remove any existing custom tabs
     handleMarketplaceCleanup();
+
+    // Disconnect enhancing panel mutation watchers
+    enhancingPanelWatchers.forEach((unwatch) => unwatch());
+    enhancingPanelWatchers = [];
 
     // Clear processed panels
     processedPanels = new WeakSet();
@@ -271,7 +276,7 @@ function processEnhancingPanel(panel) {
     processedEnhancingPanels.add(panel);
 
     // Watch for changes (item swap, level change, protection change) with debounce
-    createMutationWatcher(
+    const unwatch = createMutationWatcher(
         panel,
         (mutations) => {
             // Ignore mutations caused by our own button insertion/removal
@@ -291,6 +296,7 @@ function processEnhancingPanel(panel) {
         },
         { childList: true, subtree: true, attributes: true }
     );
+    enhancingPanelWatchers.push(unwatch);
 
     // Initial button creation (delay to let panel-observer set mwiItemHrid first)
     setTimeout(() => updateEnhancementButton(panel), 600);

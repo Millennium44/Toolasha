@@ -150,40 +150,42 @@ class InventoryBadgeManager {
         }
         this.isRendering = true;
 
-        // Calculate prices for all items
-        await this.calculatePricesForAllItems();
+        try {
+            // Calculate prices for all items
+            await this.calculatePricesForAllItems();
 
-        const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
+            const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
 
-        // Sort providers by priority
-        const sortedProviders = Array.from(this.providers.entries()).sort((a, b) => a[1].priority - b[1].priority);
+            // Sort providers by priority
+            const sortedProviders = Array.from(this.providers.entries()).sort((a, b) => a[1].priority - b[1].priority);
 
-        for (const itemElem of itemElems) {
-            // Check if already processed AND badges still exist
-            // React can destroy inner content while keeping container reference
-            const wasProcessed = this.processedItems.has(itemElem);
-            const hasBadges = this.itemHasBadges(itemElem);
+            for (const itemElem of itemElems) {
+                // Check if already processed AND badges still exist
+                // React can destroy inner content while keeping container reference
+                const wasProcessed = this.processedItems.has(itemElem);
+                const hasBadges = this.itemHasBadges(itemElem);
 
-            // Skip only if processed AND badges still exist
-            if (wasProcessed && hasBadges) {
-                continue;
-            }
-
-            // Call each provider's render function for this item
-            for (const [name, { renderFn }] of sortedProviders) {
-                try {
-                    renderFn(itemElem);
-                } catch (error) {
-                    console.error(`[InventoryBadgeManager] Error in provider "${name}":`, error);
+                // Skip only if processed AND badges still exist
+                if (wasProcessed && hasBadges) {
+                    continue;
                 }
+
+                // Call each provider's render function for this item
+                for (const [name, { renderFn }] of sortedProviders) {
+                    try {
+                        renderFn(itemElem);
+                    } catch (error) {
+                        console.error(`[InventoryBadgeManager] Error in provider "${name}":`, error);
+                    }
+                }
+
+                // Mark as processed
+                this.processedItems.add(itemElem);
             }
-
-            // Mark as processed
-            this.processedItems.add(itemElem);
+        } finally {
+            // Clear rendering guard even on error so later renders are not blocked forever
+            this.isRendering = false;
         }
-
-        // Clear rendering guard
-        this.isRendering = false;
     }
 
     /**
@@ -207,41 +209,44 @@ class InventoryBadgeManager {
 
         this.isCalculating = true;
 
-        const inventoryElem = this.currentInventoryElem;
+        try {
+            const inventoryElem = this.currentInventoryElem;
 
-        // Build inventory cache once if expired or missing (500ms TTL)
-        let inventory = null;
-        let inventoryLookup = null;
+            // Build inventory cache once if expired or missing (500ms TTL)
+            let inventory = null;
+            let inventoryLookup = null;
 
-        const cacheAge = now - this.inventoryLookupCacheTime;
-        if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
-            // Use cached data
-            inventory = this.inventoryLookupCache.inventory;
-            inventoryLookup = this.inventoryLookupCache.lookup;
-        } else {
-            // Rebuild cache
-            inventory = dataManager.getInventory();
-            if (inventory) {
-                inventoryLookup = new Map();
-                for (const item of inventory) {
-                    if (item.itemLocationHrid === '/item_locations/inventory') {
-                        const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
-                        inventoryLookup.set(key, item);
+            const cacheAge = now - this.inventoryLookupCacheTime;
+            if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
+                // Use cached data
+                inventory = this.inventoryLookupCache.inventory;
+                inventoryLookup = this.inventoryLookupCache.lookup;
+            } else {
+                // Rebuild cache
+                inventory = dataManager.getInventory();
+                if (inventory) {
+                    inventoryLookup = new Map();
+                    for (const item of inventory) {
+                        if (item.itemLocationHrid === '/item_locations/inventory') {
+                            const key = `${item.itemHrid}|${item.count}|${item.enhancementLevel || 0}`;
+                            inventoryLookup.set(key, item);
+                        }
                     }
+                    // Store in cache
+                    this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
+                    this.inventoryLookupCacheTime = now;
                 }
-                // Store in cache
-                this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
-                this.inventoryLookupCacheTime = now;
             }
-        }
 
-        // Process each category
-        for (const categoryDiv of inventoryElem.children) {
-            const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-            await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
+            // Process each category
+            for (const categoryDiv of inventoryElem.children) {
+                const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+                await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
+            }
+        } finally {
+            // Clear guard even on error so later calculations are not blocked forever
+            this.isCalculating = false;
         }
-
-        this.isCalculating = false;
     }
 
     /**

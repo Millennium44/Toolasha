@@ -793,16 +793,23 @@ class NetworthHistoryChart {
         if (this.movingAvgWindow > 0) {
             const realPoints = chartData.filter((p) => !isNaN(p.y));
             const maData = [];
-            const half = Math.floor(this.movingAvgWindow / 2);
+            // Window by timestamp, not index — snapshots are only ~hourly while
+            // online, so an index-based window silently spans days across offline
+            // gaps while being labeled in hours. Two-pointer sweep keeps it O(n).
+            const halfWindowMs = (this.movingAvgWindow * 3600e3) / 2;
+            let lo = 0;
+            let hi = 0;
+            let sum = 0;
             for (let i = 0; i < realPoints.length; i++) {
-                const reach = Math.min(half, i, realPoints.length - 1 - i);
-                let sum = 0;
-                let count = 0;
-                for (let j = i - reach; j <= i + reach; j++) {
-                    sum += realPoints[j].y;
-                    count++;
+                while (hi < realPoints.length && realPoints[hi].x <= realPoints[i].x + halfWindowMs) {
+                    sum += realPoints[hi].y;
+                    hi++;
                 }
-                maData.push({ x: realPoints[i].x, y: sum / count });
+                while (realPoints[lo].x < realPoints[i].x - halfWindowMs) {
+                    sum -= realPoints[lo].y;
+                    lo++;
+                }
+                maData.push({ x: realPoints[i].x, y: sum / (hi - lo) });
             }
             datasets.push({
                 type: 'line',

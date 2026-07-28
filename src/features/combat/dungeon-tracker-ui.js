@@ -54,7 +54,7 @@ class DungeonTrackerUI {
         this.interactions = new DungeonTrackerUIInteractions(this.state, this.chart, this.history);
 
         // Set up history delete callback
-        this.history.onDelete(() => this.updateRunHistory());
+        this.history.onDelete(() => this.refreshHistoryAndStats());
 
         // Create UI elements
         this.createUI();
@@ -390,7 +390,7 @@ class DungeonTrackerUI {
                 if (currentRun) this.update(currentRun);
             },
             onUpdateChart: () => this.updateChart(),
-            onUpdateHistory: () => this.updateRunHistory(),
+            onUpdateHistory: () => this.refreshHistoryAndStats(),
         });
 
         // Apply initial states
@@ -400,8 +400,9 @@ class DungeonTrackerUI {
     /**
      * Update UI with current run data
      * @param {Object} run - Current run state
+     * @param {boolean} refreshHistory - Also refresh stored-history stats and the run list (skip on 1 Hz tick)
      */
-    async update(run) {
+    async update(run, refreshHistory = true) {
         if (!run || !this.container) {
             return;
         }
@@ -449,6 +450,43 @@ class DungeonTrackerUI {
             progressText.textContent = `${percent}%`;
         }
 
+        // Get character name from dataManager
+        let characterName = dataManager.characterData?.character?.name;
+
+        if (!characterName && run.keyCountsMap) {
+            // Fallback: use first player name from key counts
+            const playerNames = Object.keys(run.keyCountsMap);
+            if (playerNames.length > 0) {
+                characterName = playerNames[0];
+            }
+        }
+
+        if (!characterName) {
+            characterName = 'You'; // Final fallback
+        }
+
+        // Update character name in Keys section
+        const characterNameElement = this.container.querySelector('#mwi-dt-character-name');
+        if (characterNameElement) {
+            characterNameElement.textContent = characterName;
+        }
+
+        // Update header keys (always visible) - show current key count from current run
+        const headerKeys = this.container.querySelector('#mwi-dt-header-keys');
+        if (headerKeys) {
+            const currentKeys = (run.keyCountsMap && run.keyCountsMap[characterName]) || 0;
+            headerKeys.textContent = currentKeys.toLocaleString();
+        }
+
+        // Update Keys section with party member key counts
+        this.updateKeysDisplay(run.keyCountsMap || {}, characterName);
+
+        // Stored history only changes on completion/backfill/delete/filter change, so skip
+        // the IndexedDB read and run-list DOM rebuild on the 1 Hz tick
+        if (!refreshHistory) {
+            return;
+        }
+
         // Fetch run statistics - respect ALL filters to match chart exactly
         let stats, runHistory, lastRunTime;
 
@@ -488,27 +526,6 @@ class DungeonTrackerUI {
             lastRunTime = 0;
         }
 
-        // Get character name from dataManager
-        let characterName = dataManager.characterData?.character?.name;
-
-        if (!characterName && run.keyCountsMap) {
-            // Fallback: use first player name from key counts
-            const playerNames = Object.keys(run.keyCountsMap);
-            if (playerNames.length > 0) {
-                characterName = playerNames[0];
-            }
-        }
-
-        if (!characterName) {
-            characterName = 'You'; // Final fallback
-        }
-
-        // Update character name in Keys section
-        const characterNameElement = this.container.querySelector('#mwi-dt-character-name');
-        if (characterNameElement) {
-            characterNameElement.textContent = characterName;
-        }
-
         // Update header stats (always visible)
         const headerLast = this.container.querySelector('#mwi-dt-header-last');
         if (headerLast) {
@@ -523,13 +540,6 @@ class DungeonTrackerUI {
         const headerRuns = this.container.querySelector('#mwi-dt-header-runs');
         if (headerRuns) {
             headerRuns.textContent = stats.totalRuns.toString();
-        }
-
-        // Update header keys (always visible) - show current key count from current run
-        const headerKeys = this.container.querySelector('#mwi-dt-header-keys');
-        if (headerKeys) {
-            const currentKeys = (run.keyCountsMap && run.keyCountsMap[characterName]) || 0;
-            headerKeys.textContent = currentKeys.toLocaleString();
         }
 
         // Update run-level stats in content area (2x2 grid)
@@ -552,9 +562,6 @@ class DungeonTrackerUI {
         if (slowestTime) {
             slowestTime.textContent = stats.slowestTime > 0 ? this.formatTime(stats.slowestTime) : '--:--';
         }
-
-        // Update Keys section with party member key counts
-        this.updateKeysDisplay(run.keyCountsMap || {}, characterName);
 
         // Update run history list
         await this.updateRunHistory();
@@ -629,6 +636,18 @@ class DungeonTrackerUI {
     }
 
     /**
+     * Refresh the run list plus filter-dependent stats (full update when a run is active)
+     */
+    async refreshHistoryAndStats() {
+        const currentRun = dungeonTracker.getCurrentRun();
+        if (currentRun) {
+            await this.update(currentRun);
+        } else {
+            await this.updateRunHistory();
+        }
+    }
+
+    /**
      * Update chart display
      */
     async updateChart() {
@@ -664,11 +683,11 @@ class DungeonTrackerUI {
             clearInterval(this.updateInterval);
         }
 
-        // Update every second
+        // Update every second (light tick only — history/stats refresh on tracker events)
         this.updateInterval = setInterval(() => {
             const currentRun = dungeonTracker.getCurrentRun();
             if (currentRun) {
-                this.update(currentRun);
+                this.update(currentRun, false);
             }
         }, 1000);
 

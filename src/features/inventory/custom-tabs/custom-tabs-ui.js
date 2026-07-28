@@ -960,7 +960,13 @@ export default class CustomTabsUI {
             if (!inventoryBadgeManager.currentInventoryElem) {
                 inventoryBadgeManager.currentInventoryElem = invContainer;
             }
-            while (inventoryBadgeManager.isRendering || inventoryBadgeManager.isCalculating) {
+            // Deadline-capped wait — if the badge manager's guard flags ever stick
+            // (e.g. an uncaught throw), give up instead of spinning forever.
+            const waitDeadline = Date.now() + 5000;
+            while (
+                (inventoryBadgeManager.isRendering || inventoryBadgeManager.isCalculating) &&
+                Date.now() < waitDeadline
+            ) {
                 await new Promise((resolve) => setTimeout(resolve, 20));
             }
             inventoryBadgeManager.lastRenderTime = 0;
@@ -2757,9 +2763,17 @@ export default class CustomTabsUI {
                         }
                     }
                     if (swappedInLoadout && !oldHridStillReferenced) {
-                        // Also swap in tab.items
+                        // Also swap in tab.items — mirror syncLoadoutBinding: if the tab
+                        // already contains newHrid, remove the old entry instead of
+                        // overwriting it, which would create a duplicate.
                         const itemIdx = tab.items.indexOf(oldHrid);
-                        if (itemIdx !== -1) tab.items[itemIdx] = newHrid;
+                        if (itemIdx !== -1) {
+                            if (tab.items.includes(newHrid)) {
+                                tab.items.splice(itemIdx, 1);
+                            } else {
+                                tab.items[itemIdx] = newHrid;
+                            }
+                        }
                     }
                 }
                 if (tab.children.length > 0) walk(tab.children);

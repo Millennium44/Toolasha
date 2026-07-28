@@ -145,10 +145,6 @@ class CombatUtilities {
             sourceAccuracyRating *= 1 + abilityEffect.bonusAccuracyRatio;
         }
 
-        if (source.isWeakened) {
-            sourceAccuracyRating = sourceAccuracyRating - source.weakenPercentage * sourceAccuracyRating;
-        }
-
         hitChance =
             Math.pow(sourceAccuracyRating, 1.4) /
             (Math.pow(sourceAccuracyRating, 1.4) + Math.pow(targetEvasionRating, 1.4));

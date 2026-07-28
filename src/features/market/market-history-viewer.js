@@ -285,106 +285,10 @@ class MarketHistoryViewer {
             }
         }
 
-        // Save updated statuses
-        await storage.setJSON(this.storageKey, this.listings, 'marketListings', true);
-    }
-
-    /**
-     * Detect expired listings by scraping the My Listings DOM table
-     */
-    async detectExpiredListings() {
-        // Find the My Listings table
-        const myListingsTable = document.querySelector('.MarketplacePanel_myListingsTableContainer__2s6pm table tbody');
-
-        if (!myListingsTable) {
-            return;
-        }
-
-        // Scrape each row
-        const rows = myListingsTable.querySelectorAll('tr');
-
-        for (const row of rows) {
-            try {
-                // Get status cell (first td)
-                const statusCell = row.querySelector('td:nth-child(1)');
-                if (!statusCell) continue;
-
-                const statusText = statusCell.textContent.trim();
-
-                if (statusText !== 'Expired') continue;
-
-                // This row is expired - now match it to our stored listings
-                // Extract identifying information from the row
-                const allCells = row.querySelectorAll('td');
-
-                const typeCell = allCells[1]; // Buy/Sell
-                const progressCell = allCells[2]; // Progress
-                const priceCell = allCells[3]; // Price
-
-                if (!typeCell || !priceCell || !progressCell) {
-                    continue;
-                }
-
-                const isSell = typeCell.textContent.trim() === 'Sell';
-                const priceText = priceCell.textContent.trim();
-                const price = this.parsePrice(priceText);
-                const progressText = progressCell.textContent.trim();
-                const progressMatch = progressText.match(/(\d+)\s*\/\s*(\d+)/);
-
-                if (!progressMatch || price === null) {
-                    continue;
-                }
-
-                const filledQuantity = parseInt(progressMatch[1], 10);
-                const orderQuantity = parseInt(progressMatch[2], 10);
-
-                // Find matching listing in our stored data
-                const matchingListing = this.listings.find(
-                    (listing) =>
-                        listing.isSell === isSell &&
-                        listing.price === price &&
-                        listing.orderQuantity === orderQuantity &&
-                        listing.filledQuantity === filledQuantity &&
-                        (listing.status === 'active' || listing.status === 'unknown')
-                );
-
-                if (matchingListing) {
-                    matchingListing.status = 'expired';
-                }
-            } catch {
-                // Silent failure for individual rows
-            }
-        }
-    }
-
-    /**
-     * Parse price string to number (handles K/M/B suffixes)
-     * @param {string} priceText - Price text (e.g., "12M", "1.5K", "100")
-     * @returns {number|null} Parsed price or null if invalid
-     */
-    parsePrice(priceText) {
-        if (!priceText) return null;
-
-        const normalized = priceText.trim().toUpperCase();
-        const match = normalized.match(/^([\d.]+)([KMB])?$/);
-
-        if (!match) return null;
-
-        const value = parseFloat(match[1]);
-        const suffix = match[2];
-
-        if (isNaN(value)) return null;
-
-        switch (suffix) {
-            case 'K':
-                return Math.round(value * 1000);
-            case 'M':
-                return Math.round(value * 1000000);
-            case 'B':
-                return Math.round(value * 1000000000);
-            default:
-                return Math.round(value);
-        }
+        // Persist via estimatedListingAge — the single writer for the shared storage key.
+        // Writing this.listings directly would drop its seed entries and let its stale
+        // in-memory copy resurrect deleted/updated rows on the next WebSocket event.
+        await estimatedListingAge.markActiveListings(activeListingIds);
     }
 
     /**
@@ -1702,6 +1606,7 @@ class MarketHistoryViewer {
      * Import listings from CSV
      */
     async importCSV(csvText) {
+        let progressMsg = null;
         try {
             // Parse CSV
             const lines = csvText.trim().split('\n');
@@ -1709,22 +1614,13 @@ class MarketHistoryViewer {
                 throw new Error('CSV file is empty or invalid');
             }
 
-            // Parse header
-            const _headerLine = lines[0];
-            const _expectedHeaders = [
-                'Date',
-                'Item',
-                'Enhancement',
-                'Type',
-                'Price',
-                'Quantity',
-                'Filled',
-                'Total',
-                'ID',
-            ];
+            // Parse header to detect the optional Status column
+            // (current exports have 10 columns including Status; old exports have 9 without it)
+            const headerFields = lines[0].split(',').map((field) => field.replace(/"/g, '').trim());
+            const hasStatusColumn = headerFields.includes('Status');
 
             // Show progress message
-            const progressMsg = document.createElement('div');
+            progressMsg = document.createElement('div');
             progressMsg.style.cssText = `
                 position: fixed;
                 top: 50%;
@@ -1781,12 +1677,19 @@ class MarketHistoryViewer {
                 }
                 fields.push(currentField); // Add last field
 
-                if (fields.length < 9) {
+                if (fields.length < (hasStatusColumn ? 10 : 9)) {
                     console.warn(`[MarketHistoryViewer] Skipping invalid CSV row ${i}: ${line}`);
                     continue;
                 }
 
-                const [dateStr, itemName, enhStr, typeStr, priceStr, qtyStr, filledStr, _totalStr, idStr] = fields;
+                // Columns: Date, Item, Enhancement, Type, [Status,] Price, Quantity, Filled, Total, ID
+                const statusOffset = hasStatusColumn ? 1 : 0;
+                const [dateStr, itemName, enhStr, typeStr] = fields;
+                const statusStr = hasStatusColumn ? fields[4] : 'unknown';
+                const priceStr = fields[4 + statusOffset];
+                const qtyStr = fields[5 + statusOffset];
+                const filledStr = fields[6 + statusOffset];
+                const idStr = fields[8 + statusOffset];
 
                 // Parse ID
                 const id = parseInt(idStr);
@@ -1809,6 +1712,16 @@ class MarketHistoryViewer {
                     continue;
                 }
 
+                // Reject rows with non-numeric price/quantity/filled instead of storing NaN
+                const price = parseFloat(priceStr);
+                const orderQuantity = parseFloat(qtyStr);
+                const filledQuantity = parseFloat(filledStr);
+                if (isNaN(price) || isNaN(orderQuantity) || isNaN(filledQuantity)) {
+                    console.warn(`[MarketHistoryViewer] Skipping row with invalid numbers: ${line}`);
+                    skipped++;
+                    continue;
+                }
+
                 // Create listing object
                 const listing = {
                     id: id,
@@ -1816,10 +1729,11 @@ class MarketHistoryViewer {
                     createdTimestamp: dateStr,
                     itemHrid: itemHrid,
                     enhancementLevel: parseInt(enhStr) || 0,
-                    price: parseFloat(priceStr),
-                    orderQuantity: parseFloat(qtyStr),
-                    filledQuantity: parseFloat(filledStr),
+                    price: price,
+                    orderQuantity: orderQuantity,
+                    filledQuantity: filledQuantity,
                     isSell: typeStr.toLowerCase() === 'sell',
+                    status: statusStr || 'unknown',
                 };
 
                 existingListings.push(listing);
@@ -1841,6 +1755,8 @@ class MarketHistoryViewer {
             await this.loadListings();
             this.renderTable();
         } catch (error) {
+            // Remove the progress overlay so a partial failure doesn't leave it stuck on screen
+            progressMsg?.remove();
             console.error('[MarketHistoryViewer] CSV import error:', error);
             throw error;
         }
@@ -1888,6 +1804,7 @@ class MarketHistoryViewer {
      * - Direct array: [{listing1}, {listing2}, ...]
      */
     async importEdibleToolsData(jsonText) {
+        let progressMsg = null;
         try {
             // Check for truncated file (only if it looks like an object)
             const trimmed = jsonText.trim();
@@ -1935,7 +1852,7 @@ class MarketHistoryViewer {
             }
 
             // Show progress message
-            const progressMsg = document.createElement('div');
+            progressMsg = document.createElement('div');
             progressMsg.style.cssText = `
                 position: fixed;
                 top: 50%;
@@ -1997,6 +1914,8 @@ class MarketHistoryViewer {
             await this.loadListings();
             this.renderTable();
         } catch (error) {
+            // Remove the progress overlay so a partial failure doesn't leave it stuck on screen
+            progressMsg?.remove();
             console.error('[MarketHistoryViewer] Import error:', error);
             throw error;
         }
@@ -2008,7 +1927,9 @@ class MarketHistoryViewer {
      */
     async deleteListing(listingId) {
         this.listings = this.listings.filter((l) => l.id !== listingId);
-        await storage.setJSON(this.storageKey, this.listings, 'marketListings', true);
+        // Persist via estimatedListingAge (single writer for the shared storage key);
+        // it also drops the entry from its in-memory copy so the deletion sticks
+        await estimatedListingAge.deleteListing(listingId);
         this.applyFilters();
         this.renderTable();
     }
@@ -2226,6 +2147,30 @@ class MarketHistoryViewer {
     }
 
     /**
+     * Parse a YYYY-MM-DD date input value as a local date
+     * (new Date('YYYY-MM-DD') parses as UTC midnight, shifting the day for users west of UTC)
+     * @param {string} dateStr - Date string in YYYY-MM-DD format
+     * @returns {Date} Local date at midnight
+     */
+    parseLocalDate(dateStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return new Date(year, month - 1, day);
+    }
+
+    /**
+     * Format a Date as a YYYY-MM-DD value for date inputs, using local time
+     * (toISOString would shift the day for users at non-zero UTC offsets)
+     * @param {Date} date - Date to format
+     * @returns {string} YYYY-MM-DD string in local time
+     */
+    formatDateInputValue(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    /**
      * Create date filter popup
      * @returns {HTMLElement} Popup element
      */
@@ -2296,9 +2241,9 @@ class MarketHistoryViewer {
 
         const fromInput = document.createElement('input');
         fromInput.type = 'date';
-        fromInput.value = this.filters.dateFrom ? this.filters.dateFrom.toISOString().split('T')[0] : '';
-        if (minDate) fromInput.min = minDate.toISOString().split('T')[0];
-        if (maxDate) fromInput.max = maxDate.toISOString().split('T')[0];
+        fromInput.value = this.filters.dateFrom ? this.formatDateInputValue(this.filters.dateFrom) : '';
+        if (minDate) fromInput.min = this.formatDateInputValue(minDate);
+        if (maxDate) fromInput.max = this.formatDateInputValue(maxDate);
         fromInput.style.cssText = `
             width: 100%;
             padding: 6px;
@@ -2321,9 +2266,9 @@ class MarketHistoryViewer {
 
         const toInput = document.createElement('input');
         toInput.type = 'date';
-        toInput.value = this.filters.dateTo ? this.filters.dateTo.toISOString().split('T')[0] : '';
-        if (minDate) toInput.min = minDate.toISOString().split('T')[0];
-        if (maxDate) toInput.max = maxDate.toISOString().split('T')[0];
+        toInput.value = this.filters.dateTo ? this.formatDateInputValue(this.filters.dateTo) : '';
+        if (minDate) toInput.min = this.formatDateInputValue(minDate);
+        if (maxDate) toInput.max = this.formatDateInputValue(maxDate);
         toInput.style.cssText = `
             width: 100%;
             padding: 6px;
@@ -2354,8 +2299,9 @@ class MarketHistoryViewer {
             cursor: pointer;
         `;
         applyBtn.addEventListener('click', () => {
-            this.filters.dateFrom = fromInput.value ? new Date(fromInput.value) : null;
-            this.filters.dateTo = toInput.value ? new Date(toInput.value) : null;
+            // Parse as local dates so setHours(23,59,59,999) covers the selected local day
+            this.filters.dateFrom = fromInput.value ? this.parseLocalDate(fromInput.value) : null;
+            this.filters.dateTo = toInput.value ? this.parseLocalDate(toInput.value) : null;
             this.saveFilters();
             this.applyFilters();
             this.renderTable();
@@ -2864,7 +2810,16 @@ class MarketHistoryViewer {
      * Disable the feature
      */
     disable() {
-        // Note: We don't need to disconnect observer since we're using the shared settings UI observer
+        // Disconnect the marketplace-tab watcher and remove the injected tab
+        // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
+        if (this.tabCleanupObserver) {
+            this.tabCleanupObserver();
+            this.tabCleanupObserver = null;
+        }
+        if (this.marketplaceTab) {
+            this.marketplaceTab.remove();
+            this.marketplaceTab = null;
+        }
 
         // Clean up any active filter popup and its event listener
         if (this.activeFilterPopup) {

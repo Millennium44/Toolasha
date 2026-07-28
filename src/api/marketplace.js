@@ -415,10 +415,11 @@ class MarketAPI {
     }
 
     /**
-     * Save price patches to storage
+     * Save price patches to storage (debounced by the storage module; pending
+     * writes are flushed on unload via storage.flushAll())
      */
     savePatches() {
-        storage.setJSON(this.CACHE_KEY_PATCHES, this.pricePatchs, 'settings', true);
+        storage.setJSON(this.CACHE_KEY_PATCHES, this.pricePatchs, 'settings');
     }
 
     /**

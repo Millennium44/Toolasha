@@ -6,8 +6,6 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 
-const TIERS = [0, 1, 2];
-
 // Hardcoded max waves for each dungeon (fallback if maxCount is 0)
 const DUNGEON_MAX_WAVES = {
     '/actions/combat/chimerical_den': 50,
@@ -64,63 +62,6 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Get run history for a dungeon+tier
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @param {number} limit - Max runs to return (0 = all)
-     * @returns {Promise<Array>} Run history
-     */
-    async getRunHistory(dungeonHrid, tier, limit = 0) {
-        // Get all runs from unified storage
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
-
-        // Filter by dungeon HRID and tier
-        const runs = allRuns.filter((r) => r.dungeonHrid === dungeonHrid && r.tier === tier);
-
-        if (limit > 0 && runs.length > limit) {
-            return runs.slice(0, limit);
-        }
-
-        return runs;
-    }
-
-    /**
-     * Get statistics for a dungeon+tier
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @returns {Promise<Object>} Statistics
-     */
-    async getStats(dungeonHrid, tier) {
-        const runs = await this.getRunHistory(dungeonHrid, tier);
-
-        if (runs.length === 0) {
-            return {
-                totalRuns: 0,
-                avgTime: 0,
-                fastestTime: 0,
-                slowestTime: 0,
-                avgWaveTime: 0,
-            };
-        }
-
-        const totalTime = runs.reduce((sum, run) => sum + run.totalTime, 0);
-        const avgTime = totalTime / runs.length;
-        const fastestTime = Math.min(...runs.map((r) => r.totalTime));
-        const slowestTime = Math.max(...runs.map((r) => r.totalTime));
-
-        const totalAvgWaveTime = runs.reduce((sum, run) => sum + run.avgWaveTime, 0);
-        const avgWaveTime = totalAvgWaveTime / runs.length;
-
-        return {
-            totalRuns: runs.length,
-            avgTime,
-            fastestTime,
-            slowestTime,
-            avgWaveTime,
-        };
-    }
-
-    /**
      * Get statistics for a dungeon by name (for chat-based runs)
      * @param {string} dungeonName - Dungeon display name
      * @returns {Promise<Object>} Statistics
@@ -155,133 +96,6 @@ class DungeonTrackerStorage {
             slowestTime,
             avgWaveTime,
         };
-    }
-
-    /**
-     * Get last N runs for a dungeon+tier
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @param {number} count - Number of runs to return
-     * @returns {Promise<Array>} Last N runs
-     */
-    async getLastRuns(dungeonHrid, tier, count = 10) {
-        return this.getRunHistory(dungeonHrid, tier, count);
-    }
-
-    /**
-     * Get personal best for a dungeon+tier
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @returns {Promise<Object|null>} Personal best run or null
-     */
-    async getPersonalBest(dungeonHrid, tier) {
-        const runs = await this.getRunHistory(dungeonHrid, tier);
-
-        if (runs.length === 0) {
-            return null;
-        }
-
-        // Find fastest run
-        return runs.reduce((best, run) => {
-            if (!best || run.totalTime < best.totalTime) {
-                return run;
-            }
-            return best;
-        }, null);
-    }
-
-    /**
-     * Delete a specific run from history
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @param {number} runIndex - Index of run to delete (0 = most recent)
-     * @returns {Promise<boolean>} Success status
-     */
-    async deleteRun(dungeonHrid, tier, runIndex) {
-        // Get all runs from unified storage
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
-
-        // Filter to this dungeon+tier
-        const dungeonRuns = allRuns.filter((r) => r.dungeonHrid === dungeonHrid && r.tier === tier);
-
-        if (runIndex < 0 || runIndex >= dungeonRuns.length) {
-            console.warn('[Dungeon Tracker Storage] Invalid run index:', runIndex);
-            return false;
-        }
-
-        // Find the run to delete in the full array
-        const runToDelete = dungeonRuns[runIndex];
-        const indexInAllRuns = allRuns.findIndex(
-            (r) =>
-                r.timestamp === runToDelete.timestamp &&
-                r.dungeonHrid === runToDelete.dungeonHrid &&
-                r.tier === runToDelete.tier
-        );
-
-        if (indexInAllRuns === -1) {
-            console.warn('[Dungeon Tracker Storage] Run not found in unified storage');
-            return false;
-        }
-
-        // Remove the run
-        allRuns.splice(indexInAllRuns, 1);
-
-        // Save updated list
-        return storage.setJSON('allRuns', allRuns, this.unifiedStoreName, true);
-    }
-
-    /**
-     * Delete all run history for a dungeon+tier
-     * @param {string} dungeonHrid - Dungeon action HRID
-     * @param {number} tier - Difficulty tier
-     * @returns {Promise<boolean>} Success status
-     */
-    async clearHistory(dungeonHrid, tier) {
-        // Get all runs from unified storage
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
-
-        // Filter OUT the runs we want to delete
-        const filteredRuns = allRuns.filter((r) => !(r.dungeonHrid === dungeonHrid && r.tier === tier));
-
-        // Save back the filtered list
-        return storage.setJSON('allRuns', filteredRuns, this.unifiedStoreName, true);
-    }
-
-    /**
-     * Get all dungeon+tier combinations with stored data
-     * @returns {Promise<Array>} Array of {dungeonHrid, tier, runCount}
-     */
-    async getAllDungeonStats() {
-        const results = [];
-
-        // Get all dungeon actions from game data
-        const initData = dataManager.getInitClientData();
-        if (!initData?.actionDetailMap) {
-            return results;
-        }
-
-        // Find all dungeon actions (combat actions with maxCount field)
-        const dungeonHrids = Object.entries(initData.actionDetailMap)
-            .filter(([hrid, details]) => hrid.startsWith('/actions/combat/') && details.maxCount !== undefined)
-            .map(([hrid]) => hrid);
-
-        // Check each dungeon+tier combination
-        for (const dungeonHrid of dungeonHrids) {
-            for (const tier of TIERS) {
-                const runs = await this.getRunHistory(dungeonHrid, tier);
-                if (runs.length > 0) {
-                    const dungeonInfo = this.getDungeonInfo(dungeonHrid);
-                    results.push({
-                        dungeonHrid,
-                        tier,
-                        dungeonName: dungeonInfo?.name || 'Unknown',
-                        runCount: runs.length,
-                    });
-                }
-            }
-        }
-
-        return results;
     }
 
     /**

@@ -995,7 +995,7 @@ class CombatScore {
             const exportData = await constructExportObject(currentProfileId, true);
             if (!exportData) {
                 button.textContent = '✗ No Data';
-                button.style.background = '${config.COLOR_LOSS}';
+                button.style.background = config.COLOR_LOSS;
                 const resetTimeout = setTimeout(() => {
                     button.textContent = originalText;
                     button.style.background = originalBg;
@@ -1008,7 +1008,7 @@ class CombatScore {
             await navigator.clipboard.writeText(exportString);
 
             button.textContent = '✓ Copied';
-            button.style.background = '${config.COLOR_PROFIT}';
+            button.style.background = config.COLOR_PROFIT;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
@@ -1017,7 +1017,7 @@ class CombatScore {
         } catch (error) {
             console.error('[Combat Score] Combat Sim export failed:', error);
             button.textContent = '✗ Failed';
-            button.style.background = '${config.COLOR_LOSS}';
+            button.style.background = config.COLOR_LOSS;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
@@ -1046,7 +1046,7 @@ class CombatScore {
             const exportData = await constructExportObject(null, true);
             if (!exportData) {
                 button.textContent = '✗ No Data';
-                button.style.background = '${config.COLOR_LOSS}';
+                button.style.background = config.COLOR_LOSS;
                 const resetTimeout = setTimeout(() => {
                     button.textContent = originalText;
                     button.style.background = originalBg;
@@ -1130,7 +1130,7 @@ class CombatScore {
             await navigator.clipboard.writeText(exportString);
 
             button.textContent = '✓ Copied';
-            button.style.background = '${config.COLOR_PROFIT}';
+            button.style.background = config.COLOR_PROFIT;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
@@ -1139,7 +1139,7 @@ class CombatScore {
         } catch (error) {
             console.error('[Combat Score] Combat Sim snapshot export failed:', error);
             button.textContent = '✗ Failed';
-            button.style.background = '${config.COLOR_LOSS}';
+            button.style.background = config.COLOR_LOSS;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
@@ -1164,7 +1164,7 @@ class CombatScore {
             const exportData = await constructMilkonomyExport(currentProfileId);
             if (!exportData) {
                 button.textContent = '✗ No Data';
-                button.style.background = '${config.COLOR_LOSS}';
+                button.style.background = config.COLOR_LOSS;
                 const resetTimeout = setTimeout(() => {
                     button.textContent = originalText;
                     button.style.background = originalBg;
@@ -1177,7 +1177,7 @@ class CombatScore {
             await navigator.clipboard.writeText(exportString);
 
             button.textContent = '✓ Copied';
-            button.style.background = '${config.COLOR_PROFIT}';
+            button.style.background = config.COLOR_PROFIT;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
@@ -1186,7 +1186,7 @@ class CombatScore {
         } catch (error) {
             console.error('[Combat Score] Milkonomy export failed:', error);
             button.textContent = '✗ Failed';
-            button.style.background = '${config.COLOR_LOSS}';
+            button.style.background = config.COLOR_LOSS;
             const resetTimeout = setTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;

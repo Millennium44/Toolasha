@@ -79,9 +79,6 @@ class ActionTimeDisplay {
             return;
         }
 
-        // Migrate old display mode setting to new granular toggles
-        await this.migrateDisplayMode();
-
         // Set up setting change listeners for all action bar toggles (registered once,
         // before the enabled check, so toggling the feature back on works without a reload)
         if (!this.settingListenersRegistered) {
@@ -207,25 +204,6 @@ class ActionTimeDisplay {
         this.initializeQueueTooltipObserver();
 
         this.isInitialized = true;
-    }
-
-    /**
-     * Migrate old totalActionTime display mode to granular toggle settings
-     */
-    async migrateDisplayMode() {
-        const oldMode = config.getSettingValue('totalActionTime', null);
-        const alreadyMigrated = config.getSettingValue('actionBar_enabled', null);
-        if (oldMode === null || alreadyMigrated !== null) return;
-
-        if (oldMode === 'off') {
-            config.setSetting('actionBar_enabled', false);
-        } else if (oldMode === 'minimal') {
-            config.setSetting('actionBar_showActionDuration', false);
-            config.setSetting('actionBar_showActionsPerHour', false);
-        } else if (oldMode === 'compact') {
-            config.setSetting('actionBar_compactWidth', true);
-        }
-        // 'full' maps to all defaults (all on, compact off)
     }
 
     /**

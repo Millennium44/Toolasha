@@ -4,7 +4,10 @@
  *
  * Total remaining time per drink =
  *   currentActivationNs (from slot.duration) +
- *   inventoryCount × buffDurationNs × (1 + concentration)
+ *   inventoryCount × buffDurationNs ÷ (1 + concentration)
+ *
+ * Drink Concentration strengthens buffs but consumes drinks faster, so each
+ * drink covers less wall-clock time (buff duration is divided by 1 + DC).
  *
  * slot.duration is the remaining nanoseconds on the current activation as reported
  * by the server at last action completion. It is frozen while the skill is inactive
@@ -50,7 +53,7 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
         if (!itemDetails) continue;
 
         const buffDurationNs = itemDetails.consumableDetail?.buffs?.[0]?.duration ?? FALLBACK_BUFF_DURATION_NS;
-        const effectiveDurationNs = buffDurationNs * (1 + concentration);
+        const effectiveDurationNs = buffDurationNs / (1 + concentration);
 
         const inventoryCount = inventory
             .filter((i) => i.itemHrid === slot.itemHrid)

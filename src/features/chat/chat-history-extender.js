@@ -269,8 +269,26 @@ class ChatHistoryExtender {
 
         // Periodic cache cleanup to prevent unbounded memory growth
         const cleanupInterval = setInterval(() => {
+            // Destroy handlers whose container left the DOM (also drops their cached uids)
+            for (const handler of this.activeHandlers) {
+                if (!document.contains(handler.container)) {
+                    handler.destroy();
+                    this.activeHandlers.delete(handler);
+                    this.tabHandlers.delete(handler.container);
+                }
+            }
+            // Evict only entries no longer referenced by any live/buffered node — a global
+            // clear() would permanently break handlers still wired to rendered clones
             if (this.interactionCache.size > 8000) {
-                this.interactionCache.clear();
+                const liveUids = new Set();
+                document.querySelectorAll('[data-mwi-uid]').forEach((el) => {
+                    liveUids.add(el.getAttribute('data-mwi-uid'));
+                });
+                for (const uid of this.interactionCache.keys()) {
+                    if (!liveUids.has(uid)) {
+                        this.interactionCache.delete(uid);
+                    }
+                }
             }
         }, 600000);
         this.timerRegistry.registerInterval(cleanupInterval);

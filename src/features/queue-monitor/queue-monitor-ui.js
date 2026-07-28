@@ -250,16 +250,20 @@ class QueueMonitorUI {
             // Expanded action details
             if (isExpanded && snap.actions.length > 0) {
                 html += `<div style="margin-left:14px; margin-top:4px; font-size:11px; color:#999;">`;
+                // Actions run sequentially — consume elapsed time through the queue in order
+                let remainingElapsed = Math.max(0, elapsed);
                 for (const action of snap.actions) {
-                    const actionElapsed = elapsed;
                     let actionTimeStr;
                     if (action.isInfinite) {
                         actionTimeStr = '∞';
+                        remainingElapsed = 0; // nothing after an infinite action has started
                     } else if (action.estimatedSeconds !== null) {
-                        const actionRemaining = Math.max(0, action.estimatedSeconds - Math.max(0, actionElapsed));
+                        const actionRemaining = Math.max(0, action.estimatedSeconds - remainingElapsed);
+                        remainingElapsed = Math.max(0, remainingElapsed - action.estimatedSeconds);
                         actionTimeStr = actionRemaining <= 0 ? 'Done' : timeReadable(actionRemaining);
                     } else {
                         actionTimeStr = '?';
+                        remainingElapsed = 0; // unknown duration — nothing after it has started
                     }
 
                     const countStr = action.hasMaxCount ? `${action.currentCount}/${action.maxCount}` : '';

@@ -169,15 +169,12 @@ class EventQueue {
      * @returns {boolean} true if any events were cleared
      */
     clearByTypeAndSource(type, source) {
-        let cleared = false;
-        const data = this.minHeap.data;
-        for (let i = data.length - 1; i >= 0; i--) {
-            if (data[i].type === type && data[i].source === source) {
-                this.minHeap.remove(data[i]);
-                cleared = true;
-            }
+        // Snapshot matches first: removing during index iteration can skip events displaced by heap sifts
+        const matches = this.minHeap.data.filter((event) => event.type === type && event.source === source);
+        for (const event of matches) {
+            this.minHeap.remove(event);
         }
-        return cleared;
+        return matches.length > 0;
     }
 
     /**
@@ -187,15 +184,11 @@ class EventQueue {
      * @returns {boolean}
      */
     clearByTypeAndHrid(type, hrid) {
-        let cleared = false;
-        const data = this.minHeap.data;
-        for (let i = data.length - 1; i >= 0; i--) {
-            if (data[i].type === type && data[i].hrid === hrid) {
-                this.minHeap.remove(data[i]);
-                cleared = true;
-            }
+        const matches = this.minHeap.data.filter((event) => event.type === type && event.hrid === hrid);
+        for (const event of matches) {
+            this.minHeap.remove(event);
         }
-        return cleared;
+        return matches.length > 0;
     }
 
     /**
@@ -203,11 +196,9 @@ class EventQueue {
      * @param {Object} unit
      */
     clearEventsForUnit(unit) {
-        const data = this.minHeap.data;
-        for (let i = data.length - 1; i >= 0; i--) {
-            if (data[i].source === unit || data[i].target === unit) {
-                this.minHeap.remove(data[i]);
-            }
+        const matches = this.minHeap.data.filter((event) => event.source === unit || event.target === unit);
+        for (const event of matches) {
+            this.minHeap.remove(event);
         }
     }
 
@@ -216,11 +207,9 @@ class EventQueue {
      * @param {string} type
      */
     clearEventsOfType(type) {
-        const data = this.minHeap.data;
-        for (let i = data.length - 1; i >= 0; i--) {
-            if (data[i].type === type) {
-                this.minHeap.remove(data[i]);
-            }
+        const matches = this.minHeap.data.filter((event) => event.type === type);
+        for (const event of matches) {
+            this.minHeap.remove(event);
         }
     }
 
@@ -237,15 +226,11 @@ class EventQueue {
      * @returns {boolean}
      */
     clearMatching(fn) {
-        let cleared = false;
-        const data = this.minHeap.data;
-        for (let i = data.length - 1; i >= 0; i--) {
-            if (fn(data[i])) {
-                this.minHeap.remove(data[i]);
-                cleared = true;
-            }
+        const matches = this.minHeap.data.filter(fn);
+        for (const event of matches) {
+            this.minHeap.remove(event);
         }
-        return cleared;
+        return matches.length > 0;
     }
 
     /**

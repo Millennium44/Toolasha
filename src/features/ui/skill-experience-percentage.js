@@ -24,8 +24,8 @@ class SkillExperiencePercentage {
      * Setup setting change listener (always active, even when feature is disabled)
      */
     setupSettingListener() {
-        // Listen for main toggle changes
-        config.onSettingChange('skillExperiencePercentage', (enabled) => {
+        // Listen for main toggle changes (schema key for this feature is 'expPercentage')
+        config.onSettingChange('expPercentage', (enabled) => {
             if (enabled) {
                 this.initialize();
             } else {

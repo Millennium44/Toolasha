@@ -241,8 +241,6 @@ class TransmuteHistoryTracker {
             results: {},
         };
         this.lastCurrentCount = null;
-
-        await this.saveActiveSession();
     }
 
     /**
@@ -258,10 +256,11 @@ class TransmuteHistoryTracker {
     }
 
     /**
-     * Save the active session to storage (upsert by id)
+     * Save the active session to storage (upsert by id).
+     * Skips persist if no attempts recorded yet (avoids empty sessions from queue changes).
      */
     async saveActiveSession() {
-        if (!this.activeSession) {
+        if (!this.activeSession || this.activeSession.totalAttempts === 0) {
             return;
         }
 

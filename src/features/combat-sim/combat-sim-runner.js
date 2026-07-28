@@ -226,10 +226,13 @@ function mergeSimResults(results) {
                     }
                     for (const [abilityName, stats] of Object.entries(abilities)) {
                         if (!merged.attacks[sourceHrid][targetHrid][abilityName]) {
-                            merged.attacks[sourceHrid][targetHrid][abilityName] = { hit: 0, miss: 0 };
+                            merged.attacks[sourceHrid][targetHrid][abilityName] = {};
                         }
-                        merged.attacks[sourceHrid][targetHrid][abilityName].hit += stats.hit || 0;
-                        merged.attacks[sourceHrid][targetHrid][abilityName].miss += stats.miss || 0;
+                        const mergedStats = merged.attacks[sourceHrid][targetHrid][abilityName];
+                        // Keys are damage values or 'miss' (see SimResult.addAttack), not 'hit'
+                        for (const [hitKey, count] of Object.entries(stats)) {
+                            mergedStats[hitKey] = (mergedStats[hitKey] || 0) + count;
+                        }
                     }
                 }
             }

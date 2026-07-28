@@ -60,6 +60,14 @@ class OutputTotals {
      * @param {HTMLElement} detailPanel - The action detail panel element
      */
     attachToActionPanel(detailPanel) {
+        // Prune entries whose inputs were unmounted so detached panels can be garbage collected
+        for (const [input, cleanup] of this.observedInputs) {
+            if (!input.isConnected) {
+                cleanup();
+                this.observedInputs.delete(input);
+            }
+        }
+
         // Find the input box using utility
         const inputBox = findActionInput(detailPanel);
         if (!inputBox) {

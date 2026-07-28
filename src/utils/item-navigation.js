@@ -94,27 +94,3 @@ export function navigateToItem(itemHrid) {
 
     return false;
 }
-
-/**
- * Setup Alt+click handler on an element
- * @param {HTMLElement} element - Element to attach handler to
- * @param {string} itemHrid - Item HRID to navigate to when Alt+clicked
- */
-export function setupAltClickNavigation(element, itemHrid) {
-    if (!element || !itemHrid) {
-        return;
-    }
-
-    element.addEventListener('click', (event) => {
-        // Check for Alt/Option key (same key, different labels on Mac/Windows)
-        if (event.altKey) {
-            event.preventDefault();
-            event.stopPropagation();
-            navigateToItem(itemHrid);
-        }
-    });
-
-    // Add visual hint that Alt+click is available
-    element.style.cursor = 'pointer';
-    element.setAttribute('title', element.getAttribute('title') + ' (Alt+click to navigate)');
-}

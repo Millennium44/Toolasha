@@ -3,7 +3,7 @@
  * Binary search to find the highest beatable roomLevel at a given win-rate threshold.
  */
 
-import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
+import { runLabyrinthSimulation } from './combat-sim-runner.js';
 
 const DEFAULT_MIN_LEVEL = 20;
 const DEFAULT_MAX_LEVEL = 300;
@@ -88,79 +88,3 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
         steps: step,
     };
 }
-
-/**
- * Run labyrinth sim for all monsters at a range of room levels.
- * Used for the "All Labyrinths" table view.
- *
- * @param {Object} params
- * @param {Object} params.gameData - Game data payload
- * @param {Array<Object>} params.playerDTOs - Player DTOs
- * @param {string} params.zoneHrid - Zone HRID for SimResult context
- * @param {string[]} params.crates - Crate item HRIDs
- * @param {Object} params.communityBuffs - Community buff config
- * @param {number} [params.simHours=1] - Hours to simulate per level
- * @param {number} [params.startLevel=40] - Starting room level
- * @param {number} [params.endLevel=220] - Ending room level
- * @param {number} [params.stepSize=20] - Room level step size
- * @param {Function} [onProgress] - Progress callback ({ monsterHrid, roomLevel, winRate, done, total })
- * @returns {Promise<Array<Object>>} Array of { monsterHrid, roomLevel, winRate, encounters, attempts }
- */
-export async function runAllLabyrinths(params, onProgress) {
-    const {
-        gameData,
-        playerDTOs,
-        zoneHrid,
-        crates,
-        communityBuffs,
-        simHours = 1,
-        startLevel = 40,
-        endLevel = 220,
-        stepSize = 20,
-    } = params;
-
-    // Get all labyrinth monsters
-    const combatMonsterDetailMap = gameData.combatMonsterDetailMap;
-    const labyrinthMonsters = Object.values(combatMonsterDetailMap)
-        .filter((m) => m.isLabyrinthMonster === true)
-        .map((m) => m.hrid);
-
-    const levels = [];
-    for (let level = startLevel; level <= endLevel; level += stepSize) {
-        levels.push(level);
-    }
-
-    const total = labyrinthMonsters.length * levels.length;
-    let done = 0;
-    const results = [];
-
-    for (const monsterHrid of labyrinthMonsters) {
-        for (const roomLevel of levels) {
-            const simResult = await runLabyrinthSimulation({
-                gameData,
-                playerDTOs,
-                zoneHrid,
-                monsterHrid,
-                roomLevel,
-                crates,
-                hours: simHours,
-                communityBuffs,
-            });
-
-            const attempts = simResult.labyAttemptCount || 1;
-            const encounters = simResult.encounters || 0;
-            const winRate = encounters / attempts;
-
-            results.push({ monsterHrid, roomLevel, winRate, encounters, attempts });
-            done++;
-
-            if (onProgress) {
-                onProgress({ monsterHrid, roomLevel, winRate, done, total });
-            }
-        }
-    }
-
-    return results;
-}
-
-export { cancelSimulation };

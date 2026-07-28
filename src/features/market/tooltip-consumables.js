@@ -113,18 +113,27 @@ class TooltipConsumables {
      * @param {Element} tooltipElement - The tooltip popper element
      */
     async handleTooltip(tooltipElement) {
-        // Guard against duplicate processing
-        if (tooltipElement.dataset.consumablesProcessed) {
-            return;
-        }
-        tooltipElement.dataset.consumablesProcessed = 'true';
-
         // Check if it's an item tooltip
         const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
 
         if (!nameElement) {
             return; // Not an item tooltip
         }
+
+        const itemName = nameElement.textContent.trim();
+
+        // Guard against duplicate processing, keyed on the item name so a reused
+        // MUI popper showing a different item is re-processed (mirrors tooltip-prices)
+        if (tooltipElement.dataset.consumablesProcessedItem === itemName) {
+            return;
+        }
+
+        // Item changed (or first visit) — remove stale injected content from the previous item
+        if (tooltipElement.dataset.consumablesProcessedItem) {
+            tooltipElement.querySelector('.consumable-stats-injected')?.remove();
+        }
+
+        tooltipElement.dataset.consumablesProcessedItem = itemName;
 
         // Get the item HRID from the tooltip
         const itemHrid = this.extractItemHrid(tooltipElement);

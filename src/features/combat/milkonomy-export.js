@@ -556,11 +556,15 @@ export async function constructMilkonomyExport(externalProfileId = null) {
             return {
                 name,
                 color,
-                seals: getActiveSeals(),
+                // Profile does not expose the other player's active seal buffs — do not substitute our own
+                seals: [],
                 actionConfigMap,
                 specialEquimentMap: specialEquipmentMap,
                 communityBuffMap,
-                achievementBuffMap: getAchievementBuffMap(characterData, gameData),
+                achievementBuffMap: getAchievementBuffMap(
+                    { characterAchievements: profile.profile?.characterAchievements },
+                    gameData
+                ),
             };
         }
 

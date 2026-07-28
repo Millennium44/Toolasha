@@ -116,19 +116,34 @@ class AlchemyItemDimming {
      * @returns {Element|null} Alchemy panel element or null
      */
     findAlchemyPanel() {
-        // The alchemy item selector is a MuiTooltip dropdown with ItemSelector_menu class
-        // It appears when clicking in the "Alchemize Item" box
+        // The alchemy item selector menu appears when clicking in the "Alchemize Item" box
         const itemSelectorMenus = document.querySelectorAll('div.ItemSelector_menu__12sEM');
 
-        // Check each menu to find the one with "Alchemize Item" label
         for (const menu of itemSelectorMenus) {
-            // Look for the ItemSelector_label element in the document
-            // (It's not a direct sibling, it's part of the button that opens this menu)
-            const alchemyLabels = document.querySelectorAll('div.ItemSelector_label__22ds9');
+            // Scope to the selector that owns this menu: the nearest ancestor containing an
+            // ItemSelector_label identifies the owner (catalyst/guild selectors have their
+            // own labels and must not be dimmed by alchemy level)
+            let owned = false;
+            let ancestor = menu.parentElement;
+            while (ancestor && ancestor !== document.body) {
+                const label = ancestor.querySelector('div.ItemSelector_label__22ds9');
+                if (label) {
+                    owned = true;
+                    if (label.textContent.trim() === 'Alchemize Item') {
+                        return menu;
+                    }
+                    break;
+                }
+                ancestor = ancestor.parentElement;
+            }
+            if (owned) continue;
 
+            // Portalled menu (no owning selector in its ancestry): accept only while a
+            // visible "Alchemize Item" label exists — labels left mounted in hidden tab
+            // panels must not claim unrelated menus
+            const alchemyLabels = document.querySelectorAll('div.ItemSelector_label__22ds9');
             for (const label of alchemyLabels) {
-                if (label.textContent.trim() === 'Alchemize Item') {
-                    // Found the alchemy label, this menu is likely the alchemy selector
+                if (label.textContent.trim() === 'Alchemize Item' && !label.closest('[class*="TabPanel_hidden"]')) {
                     return menu;
                 }
             }

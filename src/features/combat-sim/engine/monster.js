@@ -1,6 +1,5 @@
 import Ability from './ability.js';
 import CombatUnit from './combat-unit.js';
-import Drops from './drops.js';
 import { getGameData } from './game-data.js';
 
 const LABYRINTH_BASE_ROOM_LEVEL = 100;
@@ -35,29 +34,6 @@ class Monster extends CombatUnit {
             const baseLevel = gameMonster.abilities[i].level;
             const scaledLevel = this.roomLevel > 0 ? Math.floor(baseLevel * labyrinthScaleFactor) : baseLevel;
             this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, scaledLevel);
-        }
-        if (gameMonster.dropTable) {
-            for (let i = 0; i < gameMonster.dropTable.length; i++) {
-                this.dropTable[i] = new Drops(
-                    gameMonster.dropTable[i].itemHrid,
-                    gameMonster.dropTable[i].dropRate,
-                    gameMonster.dropTable[i].minCount,
-                    gameMonster.dropTable[i].maxCount,
-                    gameMonster.dropTable[i].difficultyTier
-                );
-            }
-        }
-        for (let i = 0; i < gameMonster.rareDropTable.length; i++) {
-            const dropTableItem =
-                gameMonster.dropTable && i < gameMonster.dropTable.length ? gameMonster.dropTable[i] : null;
-            const difficultyTier = dropTableItem?.difficultyTier ?? gameMonster.rareDropTable[i].minDifficultyTier;
-
-            this.rareDropTable[i] = new Drops(
-                gameMonster.rareDropTable[i].itemHrid,
-                gameMonster.rareDropTable[i].dropRate,
-                gameMonster.rareDropTable[i].minCount,
-                difficultyTier
-            );
         }
     }
 
@@ -172,13 +148,19 @@ class Monster extends CombatUnit {
 
         super.updateCombatDetails();
 
-        // Labyrinth: scale armor and resistances after combat details are calculated
+        // Labyrinth: armor/resistances scale linearly from base values. defenseLevel already includes
+        // the room scale, so recompute from unscaled defense instead of multiplying the totals again
+        // (which would compound the room-level factor on the defense-derived component).
         if (this.roomLevel > 0) {
             const scaleFactor = this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL;
-            this.combatDetails.totalArmor *= scaleFactor;
-            this.combatDetails.totalWaterResistance *= scaleFactor;
-            this.combatDetails.totalNatureResistance *= scaleFactor;
-            this.combatDetails.totalFireResistance *= scaleFactor;
+            const unscaledDefense = this.defenseLevel / scaleFactor;
+            const combatStats = this.combatDetails.combatStats;
+            this.combatDetails.totalArmor = (0.2 * unscaledDefense + combatStats.armor) * scaleFactor;
+            this.combatDetails.totalWaterResistance =
+                (0.2 * unscaledDefense + combatStats.waterResistance) * scaleFactor;
+            this.combatDetails.totalNatureResistance =
+                (0.2 * unscaledDefense + combatStats.natureResistance) * scaleFactor;
+            this.combatDetails.totalFireResistance = (0.2 * unscaledDefense + combatStats.fireResistance) * scaleFactor;
         }
     }
 }

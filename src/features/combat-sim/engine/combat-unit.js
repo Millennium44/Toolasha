@@ -26,8 +26,6 @@ class CombatUnit {
     food = [null, null, null];
     drinks = [null, null, null];
     houseRooms = [];
-    dropTable = [];
-    rareDropTable = [];
     abilityManaCosts = new Map();
 
     // Calculated combat stats including temporary buffs
@@ -424,7 +422,8 @@ class CombatUnit {
             this.permanentBuffs[buff.typeHrid].flatBoost += buff.flatBoost;
             this.permanentBuffs[buff.typeHrid].ratioBoost += buff.ratioBoost;
         } else {
-            this.permanentBuffs[buff.typeHrid] = buff;
+            // Clone: buff objects can be shared across party members (extraBuffs/zoneBuffs), so never mutate them
+            this.permanentBuffs[buff.typeHrid] = structuredClone(buff);
         }
     }
 

@@ -757,13 +757,12 @@ function registerFeatures() {
             key: feature.key,
             name: feature.name,
             category: feature.category,
-            initialize: feature.async
-                ? async () => {
-                      instance = await feature.module.initialize();
-                  }
-                : () => {
-                      instance = feature.module.initialize();
-                  },
+            // Always await: modules whose initialize() is async but were
+            // registered without the async flag would otherwise store a
+            // pending Promise as the instance and escape error handling
+            initialize: async () => {
+                instance = await feature.module.initialize();
+            },
             disable: teardown
                 ? () => {
                       const current = instance;

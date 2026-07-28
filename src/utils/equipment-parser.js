@@ -13,6 +13,8 @@
  * Formula: actionTime = baseTime / (1 + totalEfficiency + totalSpeed)
  */
 
+import { ENHANCEMENT_BONUSES } from './enhancement-multipliers.js';
+
 /**
  * Map action type HRID to equipment field name
  * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/cheesesmithing")
@@ -35,34 +37,6 @@ function getFieldForActionType(actionTypeHrid, suffix, validFields) {
 
     return validFields.includes(fieldName) ? fieldName : null;
 }
-
-/**
- * Enhancement percentage table (based on game mechanics)
- * Each enhancement level provides a percentage boost to base stats
- */
-const ENHANCEMENT_PERCENTAGES = {
-    0: 0.0,
-    1: 0.02, // 2.0%
-    2: 0.042, // 4.2%
-    3: 0.066, // 6.6%
-    4: 0.092, // 9.2%
-    5: 0.12, // 12.0%
-    6: 0.15, // 15.0%
-    7: 0.182, // 18.2%
-    8: 0.216, // 21.6%
-    9: 0.252, // 25.2%
-    10: 0.29, // 29.0%
-    11: 0.334, // 33.4%
-    12: 0.384, // 38.4%
-    13: 0.44, // 44.0%
-    14: 0.502, // 50.2%
-    15: 0.57, // 57.0%
-    16: 0.644, // 64.4%
-    17: 0.724, // 72.4%
-    18: 0.81, // 81.0%
-    19: 0.902, // 90.2%
-    20: 1.0, // 100.0%
-};
 
 /**
  * Slot multipliers for enhancement bonuses
@@ -112,8 +86,8 @@ function calculateEnhancementScaling(baseValue, enhancementLevel, slotHrid) {
         return baseValue;
     }
 
-    // Get enhancement percentage from table
-    const enhancementPercentage = ENHANCEMENT_PERCENTAGES[enhancementLevel] || 0;
+    // Get enhancement percentage from shared table (no level-0 entry; early return above covers it)
+    const enhancementPercentage = ENHANCEMENT_BONUSES[enhancementLevel] || 0;
 
     // Get slot multiplier (default to 1× if slot not found)
     const slotMultiplier = SLOT_MULTIPLIERS[slotHrid] || 1;

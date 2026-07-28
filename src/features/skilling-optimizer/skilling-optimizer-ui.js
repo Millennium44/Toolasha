@@ -29,6 +29,24 @@ function getLoadoutSnapshot() {
     return window.Toolasha?.Combat?.loadoutSnapshot || loadoutSnapshotLocal;
 }
 
+/**
+ * Check whether any mutation added nodes that are, contain, or sit under a tablist.
+ * Keeps the body-wide watcher from re-scanning every tablist on unrelated DOM churn.
+ * @param {MutationRecord[]} mutations
+ * @returns {boolean}
+ */
+function mutationsTouchTablist(mutations) {
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            if (node.closest?.('[role="tablist"]') || node.querySelector?.('[role="tablist"]')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 const TAB_CLASS = 'toolasha-skilling-opt-tab';
 const PANEL_CLASS = 'toolasha-skilling-opt-panel';
 const HIDE_CLASS = 'toolasha-opt-hide-content';
@@ -70,10 +88,14 @@ class SkillingSimulatorUI {
         if (this.isInitialized) return;
         this.isInitialized = true;
         this.currentLevel = getPlayerSkillLevel(this.currentSkill);
-        this.watcher = createMutationWatcher(document.body, () => this._tryInjectTabButton(), {
-            childList: true,
-            subtree: true,
-        });
+        this.watcher = createMutationWatcher(
+            document.body,
+            (mutations) => {
+                if (!mutationsTouchTablist(mutations)) return;
+                this._tryInjectTabButton();
+            },
+            { childList: true, subtree: true }
+        );
         this._tryInjectTabButton();
     }
 

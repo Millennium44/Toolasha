@@ -44,11 +44,6 @@ class ChatCommands {
         if (existing) {
             this.attachToInput(existing);
         }
-
-        // Listen for character switch to cleanup
-        dataManager.on('character_switching', () => {
-            this.cleanup();
-        });
     }
 
     /**
@@ -409,17 +404,36 @@ class ChatCommands {
     }
 }
 
+// Module-level register-once switching listener (see queue-snapshot.js): initialize()
+// creates a new instance per call, so a per-instance listener would accumulate one
+// entry (pinning its dead instance) on every character switch.
+let activeInstance = null;
+let switchListenerRegistered = false;
+
 // Export as feature module
 export default {
     name: 'Chat Commands',
     initialize: async () => {
         const chatCommands = new ChatCommands();
         await chatCommands.initialize();
+        activeInstance = chatCommands;
+        if (!switchListenerRegistered) {
+            switchListenerRegistered = true;
+            dataManager.on('character_switching', () => {
+                if (activeInstance) {
+                    activeInstance.cleanup();
+                    activeInstance = null;
+                }
+            });
+        }
         return chatCommands;
     },
     cleanup: (instance) => {
         if (instance) {
             instance.cleanup();
+            if (activeInstance === instance) {
+                activeInstance = null;
+            }
         }
     },
 };

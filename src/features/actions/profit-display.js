@@ -59,6 +59,27 @@ const formatRareFindBonusSummary = (bonusRevenue) => {
     return `${rareFindBonus.toFixed(2)}% rare find`;
 };
 
+// Cleanup functions for input listeners attached per panel, invoked before re-attaching on refresh
+// so listeners don't accumulate on the game's persistent panel/input elements
+const panelInputListenerCleanups = new WeakMap();
+
+function clearPanelInputListeners(panel) {
+    const cleanups = panelInputListenerCleanups.get(panel);
+    if (cleanups) {
+        cleanups.forEach((cleanup) => cleanup());
+        panelInputListenerCleanups.delete(panel);
+    }
+}
+
+function trackPanelInputListener(panel, cleanup) {
+    const cleanups = panelInputListenerCleanups.get(panel);
+    if (cleanups) {
+        cleanups.push(cleanup);
+    } else {
+        panelInputListenerCleanups.set(panel, [cleanup]);
+    }
+}
+
 /**
  * Display gathering profit calculation in panel
  * @param {HTMLElement} panel - Action panel element
@@ -78,10 +99,19 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         scrollSimulator.getScrollSetForActionType(gatheringActionType)
     );
 
+    // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
+    // so phantom scroll buffs never leak into later calculations
+    try {
+        await renderGatheringProfit(panel, actionHrid, dropTableSelector, gatheringActionType);
+    } finally {
+        dataManager.clearScrollSimulation(gatheringActionType);
+    }
+}
+
+async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gatheringActionType) {
     // Calculate profit
     const profitData = await calculateGatheringProfit(actionHrid);
     if (!profitData) {
-        dataManager.clearScrollSimulation(gatheringActionType);
         console.error('❌ Gathering profit calculation failed for:', actionHrid);
         return;
     }
@@ -507,6 +537,8 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
     topLevelContent.appendChild(perActionBreakdown);
 
     // Add X actions breakdown section (updates dynamically with input)
+    // Remove listeners from previous renders first so they don't accumulate on the panel
+    clearPanelInputListeners(panel);
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;
@@ -518,7 +550,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         }
 
         // Set up input listener to update X actions breakdown dynamically
-        attachInputListeners(panel, inputField, (newValue) => {
+        const breakdownCleanup = attachInputListeners(panel, inputField, (newValue) => {
             // Remove existing X actions breakdown
             const existingBreakdown = topLevelContent.querySelector('.mwi-actions-breakdown');
             if (existingBreakdown) {
@@ -531,6 +563,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
                 topLevelContent.appendChild(actionsBreakdown);
             }
         });
+        trackPanelInputListener(panel, breakdownCleanup);
     }
 
     // Create main profit section
@@ -582,7 +615,7 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
         updateSummary(initialValue);
 
         // Attach listener for future changes
-        attachInputListeners(panel, inputField, updateSummary);
+        trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
     }
 
     // Find insertion point - look for existing collapsible sections or drop table
@@ -616,7 +649,6 @@ export async function displayGatheringProfit(panel, actionHrid, dropTableSelecto
             }
         });
     }
-    dataManager.clearScrollSimulation(gatheringActionType);
 }
 
 /**
@@ -638,6 +670,16 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         scrollSimulator.getScrollSetForActionType(productionActionType)
     );
 
+    // finally guarantees the simulation is cleared on every exit path (early returns, exceptions),
+    // so phantom scroll buffs never leak into later calculations
+    try {
+        await renderProductionProfit(panel, actionHrid, dropTableSelector, productionActionType);
+    } finally {
+        dataManager.clearScrollSimulation(productionActionType);
+    }
+}
+
+async function renderProductionProfit(panel, actionHrid, dropTableSelector, productionActionType) {
     // Calculate profit
     const profitData = await calculateProductionProfit(actionHrid);
     if (!profitData) {
@@ -1136,6 +1178,8 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
     topLevelContent.appendChild(perActionBreakdown);
 
     // Add X actions breakdown section (updates dynamically with input)
+    // Remove listeners from previous renders first so they don't accumulate on the panel
+    clearPanelInputListeners(panel);
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;
@@ -1147,7 +1191,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         }
 
         // Set up input listener to update X actions breakdown dynamically
-        attachInputListeners(panel, inputField, (newValue) => {
+        const breakdownCleanup = attachInputListeners(panel, inputField, (newValue) => {
             // Remove existing X actions breakdown
             const existingBreakdown = topLevelContent.querySelector('.mwi-actions-breakdown');
             if (existingBreakdown) {
@@ -1160,6 +1204,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
                 topLevelContent.appendChild(actionsBreakdown);
             }
         });
+        trackPanelInputListener(panel, breakdownCleanup);
     }
 
     // Create main profit section
@@ -1210,7 +1255,7 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
         updateSummary(initialValue);
 
         // Attach listener for future changes
-        attachInputListeners(panel, inputField, updateSummary);
+        trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
     }
 
     // Find insertion point - look for existing collapsible sections or drop table
@@ -1243,7 +1288,6 @@ export async function displayProductionProfit(panel, actionHrid, dropTableSelect
             }
         });
     }
-    dataManager.clearScrollSimulation(productionActionType);
 }
 
 /**

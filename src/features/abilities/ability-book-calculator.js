@@ -267,7 +267,7 @@ class AbilityBookCalculator {
                 `;
             } else {
                 currentBooks = 0;
-                display.innerHTML = '<span style="color: ${config.COLOR_LOSS};">Invalid target level</span>';
+                display.innerHTML = `<span style="color: ${config.COLOR_LOSS};">Invalid target level</span>`;
             }
         };
 
