@@ -39,7 +39,8 @@ function getNextAbilityBreakpoint(currentLevel) {
 /**
  * Get the next enhancement breakpoint above the current level.
  * Uses slot-specific breakpoints: jewelry gets +5, back gets +3/+5,
- * refined items always start at +10 minimum.
+ * refined items start at +10 minimum — except capes (back slot), the one
+ * item type reasonably refined below +10, which keep the back breakpoints.
  * @param {number} currentLevel - Current enhancement level
  * @param {string} slot - Equipment slot HRID
  * @param {string} itemHrid - Item HRID (used to detect refined items)
@@ -47,12 +48,12 @@ function getNextAbilityBreakpoint(currentLevel) {
  */
 function getNextBreakpoint(currentLevel, slot, itemHrid) {
     let breakpoints;
-    if (itemHrid.includes('_refined')) {
+    if (slot === '/equipment_types/back') {
+        breakpoints = BREAKPOINTS_BACK;
+    } else if (itemHrid.includes('_refined')) {
         breakpoints = BREAKPOINTS_REFINED;
     } else if (JEWELRY_SLOTS.has(slot)) {
         breakpoints = BREAKPOINTS_JEWELRY;
-    } else if (slot === '/equipment_types/back') {
-        breakpoints = BREAKPOINTS_BACK;
     } else {
         breakpoints = BREAKPOINTS_DEFAULT;
     }
@@ -910,18 +911,21 @@ export function generateCandidates(
 
 /**
  * Clamp candidates that acquire a refined item to at least +10.
- * Refined equipment cannot exist below +10, so a refined suggestion carrying a
- * lower current enhancement level would be an impossible acquisition — instead
- * of dropping it, suggest the refined item at +10 (cost and sim both use the
- * clamped level). Enhancement candidates on an already-equipped refined item
- * are unaffected — their breakpoint table (BREAKPOINTS_REFINED) starts at +10.
+ * Refined equipment is not normally worth holding below +10, so a refined
+ * suggestion carrying a lower current enhancement level would be a poor
+ * acquisition — instead of dropping it, suggest the refined item at +10
+ * (cost and sim both use the clamped level). Capes (back slot) are exempt:
+ * they are the one item type reasonably refined below +10. Enhancement
+ * candidates on an already-equipped refined item are unaffected.
  * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
  */
 function clampRefinedCandidateToMinLevel(candidate) {
     const MIN_REFINED_LEVEL = 10;
+    const BACK_SLOT = '/equipment_types/back';
     let clamped = false;
 
     if (
+        candidate.slot !== BACK_SLOT &&
         candidate.upgradeHrid !== candidate.currentHrid &&
         candidate.upgradeHrid?.endsWith('_refined') &&
         candidate.upgradeLevel < MIN_REFINED_LEVEL
@@ -931,8 +935,12 @@ function clampRefinedCandidateToMinLevel(candidate) {
     }
 
     if (candidate.addedSlots) {
-        for (const added of Object.values(candidate.addedSlots)) {
-            if (added?.hrid?.endsWith('_refined') && (added.enhancementLevel || 0) < MIN_REFINED_LEVEL) {
+        for (const [slot, added] of Object.entries(candidate.addedSlots)) {
+            if (
+                slot !== BACK_SLOT &&
+                added?.hrid?.endsWith('_refined') &&
+                (added.enhancementLevel || 0) < MIN_REFINED_LEVEL
+            ) {
                 added.enhancementLevel = MIN_REFINED_LEVEL;
                 clamped = true;
             }
