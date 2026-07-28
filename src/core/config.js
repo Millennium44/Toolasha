@@ -472,31 +472,40 @@ class Config {
 
     /**
      * Save settings to storage (immediately)
+     * @returns {Promise<void>} Resolves when the write completes
      */
     saveSettings() {
-        settingsStorage.saveSettings(this.settingsMap);
+        return settingsStorage.saveSettings(this.settingsMap);
     }
 
     /**
-     * Get a setting value
+     * Get a setting value.
+     * Checkbox settings return their boolean; select/number/color settings return their stored value.
      * @param {string} key - Setting key
-     * @returns {boolean} Setting value
+     * @param {*} [defaultValue=false] - Value returned when the setting is unknown
+     * @returns {*} Setting value
      */
-    getSetting(key) {
+    getSetting(key, defaultValue = false) {
         // Check loaded settings first
-        if (this.settingsMap[key]) {
-            return this.settingsMap[key].isTrue ?? false;
+        const setting = this.settingsMap[key];
+        if (setting) {
+            if (Object.hasOwn(setting, 'isTrue')) {
+                return setting.isTrue ?? defaultValue;
+            }
+            if (Object.hasOwn(setting, 'value')) {
+                return setting.value ?? defaultValue;
+            }
         }
 
         // Fallback: Check settings-schema for default (fixes race condition on load)
         for (const group of Object.values(settingsGroups)) {
             if (group.settings[key]) {
-                return group.settings[key].default ?? false;
+                return group.settings[key].default ?? defaultValue;
             }
         }
 
         // Ultimate fallback
-        return false;
+        return defaultValue;
     }
 
     /**
@@ -556,12 +565,22 @@ class Config {
 
     /**
      * Set a setting value (auto-saves)
+     * Writes to the field the setting actually uses: isTrue for checkboxes, value otherwise.
      * @param {string} key - Setting key
-     * @param {boolean} value - Setting value
+     * @param {*} value - Setting value
      */
     setSetting(key, value) {
-        if (this.settingsMap[key]) {
-            this.settingsMap[key].isTrue = value;
+        const setting = this.settingsMap[key];
+        if (setting) {
+            if (Object.hasOwn(setting, 'isTrue')) {
+                setting.isTrue = value;
+            } else if (Object.hasOwn(setting, 'value')) {
+                setting.value = value;
+            } else if (typeof value === 'boolean') {
+                setting.isTrue = value;
+            } else {
+                setting.value = value;
+            }
             this.saveSettings();
 
             // Re-apply colors if color setting changed
