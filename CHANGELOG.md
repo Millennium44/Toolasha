@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Lab Sim Skilling tab cleanup and per-skill analysis
+
+- **Tidier layout**: the Skill filter moved inline next to Use Skip Levels (it used to wrap to its own line), the Calculate/Analyze buttons are right-aligned, and the player setup editor (skill levels, house rooms, token upgrades, community buffs) is now a collapsed "Player Setup" section — expand it only when overriding live values.
+- **Selecting a skill scopes everything to it**: Calculate shows just that skill's row, and Analyze Upgrades only sims equipment actually worn for that skill's room (its loadout, or base gear) instead of all 49 candidates across every loadout. Token-upgrade candidates still apply to any skill.
+
+### Labyrinth recommendations survive lab runs too
+
+- The loadout snapshot fingerprint excluded: snapshots are rebuilt with a fresh `savedAt` timestamp every time the game re-broadcasts loadouts — which happens when the lab equips the next room's loadout — so recommendations were still being wiped mid-run. The timestamp is now excluded from change detection; only genuine gear/enhancement changes invalidate.
+
 ### Right-click a labyrinth tile → Lab Sim opens preconfigured
 
 - **Combat tiles**: right-clicking now opens the Lab Sim with that monster selected, its assigned labyrinth loadout applied to the editor, and the tile's room level filled in — no more re-picking everything after opening.

@@ -424,7 +424,29 @@ class LabSimUI {
                 <input type="checkbox" id="mwi-labsim-skilling-useskip" checked style="margin:0; cursor:pointer;">
                 Use Skip Levels
             </label>
+            <label style="color:#888; font-size:12px;">Skill</label>
+            <select id="mwi-labsim-skilling-filter" title="Restrict calculations, upgrade analysis, and the loadout table to one skill" style="
+                background:#1a1a2e;
+                color:#e0e0e0;
+                border:1px solid #444;
+                border-radius:4px;
+                padding:4px 6px;
+                font-size:11px;
+                font-family:inherit;">
+                <option value="">All Skills</option>
+                <option value="/skills/woodcutting">Woodcutting</option>
+                <option value="/skills/foraging">Foraging</option>
+                <option value="/skills/milking">Milking</option>
+                <option value="/skills/cooking">Cooking</option>
+                <option value="/skills/brewing">Brewing</option>
+                <option value="/skills/cheesesmithing">Cheesesmithing</option>
+                <option value="/skills/crafting">Crafting</option>
+                <option value="/skills/tailoring">Tailoring</option>
+                <option value="/skills/alchemy">Alchemy</option>
+                <option value="/skills/enhancing">Enhancing</option>
+            </select>
             <button id="mwi-labsim-skilling-calc" style="
+                margin-left: auto;
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
                 border: 1px solid ${ACCENT_BTN_BORDER};
@@ -454,27 +476,6 @@ class LabSimUI {
                 font-weight:600;
                 cursor:pointer;
                 font-family:inherit;">Stop</button>
-            <select id="mwi-labsim-skilling-filter" style="
-                background:#1a1a2e;
-                color:#e0e0e0;
-                border:1px solid #444;
-                border-radius:4px;
-                padding:4px 6px;
-                font-size:11px;
-                font-family:inherit;
-                margin-left:auto;">
-                <option value="">All Skills</option>
-                <option value="/skills/woodcutting">Woodcutting</option>
-                <option value="/skills/foraging">Foraging</option>
-                <option value="/skills/milking">Milking</option>
-                <option value="/skills/cooking">Cooking</option>
-                <option value="/skills/brewing">Brewing</option>
-                <option value="/skills/cheesesmithing">Cheesesmithing</option>
-                <option value="/skills/crafting">Crafting</option>
-                <option value="/skills/tailoring">Tailoring</option>
-                <option value="/skills/alchemy">Alchemy</option>
-                <option value="/skills/enhancing">Enhancing</option>
-            </select>
         `;
 
         const skillingCrateRow = document.createElement('div');
@@ -511,11 +512,33 @@ class LabSimUI {
         skillingLoadoutArea.style.cssText =
             'padding:8px 14px; border-bottom:1px solid #222; flex-shrink:0; overflow-y:auto; max-height:160px;';
 
+        // Player setup (skill levels, house rooms, token upgrades, community
+        // buffs) is collapsed by default to keep the tab compact — it's only
+        // needed when overriding the live character's values
+        const skillingEditorSection = document.createElement('div');
+        skillingEditorSection.style.cssText = 'border-bottom:1px solid #222; flex-shrink:0;';
+        const skillingEditorHeader = document.createElement('div');
+        skillingEditorHeader.style.cssText =
+            'display:flex; align-items:center; justify-content:space-between; padding:6px 14px; cursor:pointer; color:#888; font-size:12px;';
+        skillingEditorHeader.innerHTML = `
+            <span>Player Setup</span>
+            <span id="mwi-labsim-skilling-editor-toggle" style="font-size:10px;">▶</span>
+        `;
+
         const skillingEditorArea = document.createElement('div');
         skillingEditorArea.id = 'mwi-labsim-skilling-editor';
-        skillingEditorArea.style.cssText = 'overflow-y:auto; padding:10px 14px; max-height:200px; flex-shrink:0;';
+        skillingEditorArea.style.cssText =
+            'display:none; overflow-y:auto; padding:10px 14px; max-height:200px; flex-shrink:0;';
         skillingEditorArea.innerHTML =
             '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
+
+        skillingEditorHeader.addEventListener('click', () => {
+            const isOpen = skillingEditorArea.style.display !== 'none';
+            skillingEditorArea.style.display = isOpen ? 'none' : 'block';
+            skillingEditorHeader.querySelector('#mwi-labsim-skilling-editor-toggle').textContent = isOpen ? '▶' : '▼';
+        });
+        skillingEditorSection.appendChild(skillingEditorHeader);
+        skillingEditorSection.appendChild(skillingEditorArea);
 
         this._skillingEditor = new SimEditor({ editorEl: skillingEditorArea, labMode: true, skillingMode: true });
 
@@ -538,7 +561,7 @@ class LabSimUI {
         skillingContent.appendChild(skillingControls);
         skillingContent.appendChild(skillingCrateRow);
         skillingContent.appendChild(skillingLoadoutArea);
-        skillingContent.appendChild(skillingEditorArea);
+        skillingContent.appendChild(skillingEditorSection);
         skillingContent.appendChild(skillingProgress);
         skillingContent.appendChild(skillingResults);
 
@@ -1755,7 +1778,9 @@ class LabSimUI {
         const crateHrids = this._getSkillingCrates();
         const skillEquipmentMap = this._buildSkillEquipmentMap(gameData);
         const results = computeSkillingClearRatesFromEditor(roomLevel, dto, crateHrids, gameData, skillEquipmentMap);
-        this._renderSkillingClearResults(results, roomLevel);
+        const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || null;
+        const filtered = targetSkill ? results.filter((r) => r.skillHrid === targetSkill) : results;
+        this._renderSkillingClearResults(filtered, roomLevel);
     }
 
     /** @private */

@@ -1291,12 +1291,17 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Fingerprint of loadout snapshot contents (gear + enhancement levels)
+     * Fingerprint of loadout snapshot contents (gear + enhancement levels).
+     * savedAt is excluded — snapshots are rebuilt with a fresh timestamp every
+     * time the game re-broadcasts loadouts (e.g. when the lab equips the next
+     * room's loadout), which is not a content change.
      * @private
      */
     _snapshotContentFingerprint() {
         try {
-            return this._hashString(JSON.stringify(loadoutSnapshot.snapshots || {}));
+            return this._hashString(
+                JSON.stringify(loadoutSnapshot.snapshots || {}, (key, value) => (key === 'savedAt' ? undefined : value))
+            );
         } catch {
             // Unhashable → treat as changed so stale sims never survive
             return `err-${Date.now()}`;

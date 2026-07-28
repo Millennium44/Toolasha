@@ -2275,20 +2275,28 @@ function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
 
 /**
  * Generate skilling equipment enhancement candidates from editor equipment.
- * Considers per-skill equipment overrides to find all unique items that need upgrading.
+ * Considers per-skill equipment overrides to find all unique items that need
+ * upgrading. When targetSkill is set, only the gear actually worn for that
+ * skill's room (its loadout override, or the base equipment) is considered.
  * @param {Object} editorDTO - Player DTO from editor
  * @param {Object} gameData - From buildGameDataPayload()
  * @param {Object} [skillEquipmentMap] - Per-skill equipment overrides
+ * @param {string|null} [targetSkill] - Skill HRID to restrict candidates to
  * @returns {Array} Enhancement candidates with gold cost
  */
-export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap = {}) {
+export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap = {}, targetSkill = null) {
     const itemDetailMap = gameData.itemDetailMap || {};
     const candidates = [];
     const seen = new Set();
 
-    const equipmentSets = [editorDTO.equipment || {}];
-    for (const skillEquip of Object.values(skillEquipmentMap)) {
-        if (skillEquip) equipmentSets.push(skillEquip);
+    let equipmentSets;
+    if (targetSkill) {
+        equipmentSets = [skillEquipmentMap[targetSkill] || editorDTO.equipment || {}];
+    } else {
+        equipmentSets = [editorDTO.equipment || {}];
+        for (const skillEquip of Object.values(skillEquipmentMap)) {
+            if (skillEquip) equipmentSets.push(skillEquip);
+        }
     }
 
     for (const equipment of equipmentSets) {
@@ -2346,7 +2354,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
-    const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap);
+    const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill);
     const clearRateOpts = { skillEquipmentMap, targetSkill };
 
     // Yield so Stop clicks and progress paints can land between the heavy sync chunks
