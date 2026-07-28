@@ -1085,12 +1085,25 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Normalize a chance value that may arrive as a ratio (0-1) or percent (0-100)
+     * @param {*} value - Raw chance value from the WS message
+     * @returns {number} Chance clamped to 0-1
+     */
+    normalizeChance(value) {
+        const n = Number(value) || 0;
+        if (n > 1 && n <= 100) {
+            return Math.min(1, n / 100);
+        }
+        return Math.min(1, Math.max(0, n));
+    }
+
+    /**
      * Compute live clear estimate from room progress data
      */
     computeLiveEstimate(progress) {
         const isEnhancing = progress.targetLevel != null;
-        const successChance = Math.min(1, Math.max(0, Number(progress.successRate) || 0));
-        const doubleChance = Math.min(1, Math.max(0, Number(progress.doubleProgressChance) || 0));
+        const successChance = this.normalizeChance(progress.successRate);
+        const doubleChance = this.normalizeChance(progress.doubleProgressChance);
         const fallbackMs = (isEnhancing ? BASE_ENHANCING_TIME : BASE_SKILLING_TIME) * 1000;
         const actionTimeMs = Math.max(1, Number(progress.actionTimeMs) || fallbackMs);
         const totalAttempts = Math.max(0, Math.floor((ROOM_DURATION * 1000) / actionTimeMs));
@@ -1160,7 +1173,11 @@ class LabyrinthClearRate {
         if (this.liveProgressTimeout) {
             clearTimeout(this.liveProgressTimeout);
         }
-        this.liveProgressTimeout = setTimeout(() => this.clearLiveProgress(), LIVE_PROGRESS_STALE_MS);
+        // Progress messages arrive once per action (~8-10s base) — the stale timeout
+        // must outlive the action interval or the display flickers away between actions
+        const actionTimeMs = Math.max(1, Number(progress?.actionTimeMs) || BASE_SKILLING_TIME * 1000);
+        const staleMs = Math.max(LIVE_PROGRESS_STALE_MS, actionTimeMs * 2 + 2000);
+        this.liveProgressTimeout = setTimeout(() => this.clearLiveProgress(), staleMs);
 
         const estimate = this.computeLiveEstimate(progress);
         if (!estimate) return;
