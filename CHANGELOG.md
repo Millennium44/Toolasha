@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Philo calculator: craft-cost pricing for untradable refined capes
+
+- Refined capes are untradable, so market pricing can never resolve them. When no market price exists at any enhancement level, refined items are now priced at the market cost of the **refinement materials** (lab refinement stones) consumed by their upgrade action — the base cape you already own is excluded. Rows priced this way are marked with ⚒ next to the name.
+
 ### `4242286` — Philo calculator refined-cape pricing + transmute history profit
 
 - **Philo Gamba calculator**: rows are no longer dropped when an item has no +0 ask listing — cost falls back to the bid price, and refined items additionally scan enhancement levels +1 to +5 for a listed price, so refined skilling capes with philosopher's stone drops appear despite thin markets.

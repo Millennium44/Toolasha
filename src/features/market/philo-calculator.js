@@ -38,6 +38,8 @@ class PhiloCalculator {
 
         // Cached row data
         this.rows = [];
+        // Lazy map of refined-item hrid → producing action (for craft-cost pricing)
+        this._refineActionByOutput = null;
     }
 
     /**
@@ -260,6 +262,46 @@ class PhiloCalculator {
     }
 
     /**
+     * Resolve the crafting cost of an untradable refined item from the market
+     * cost of the refinement materials its upgrade action consumes. The base
+     * item (upgradeItemHrid) is excluded — refined capes are made from a cape
+     * the player already owns.
+     * @param {string} itemHrid - Refined item HRID
+     * @returns {number|null} Material cost, or null when not resolvable
+     */
+    getRefinementMaterialCost(itemHrid) {
+        if (!this._refineActionByOutput) {
+            this._refineActionByOutput = new Map();
+            const actions = dataManager.getInitClientData()?.actionDetailMap || {};
+            for (const action of Object.values(actions)) {
+                for (const output of action.outputItems || []) {
+                    if (output.itemHrid?.endsWith('_refined') && !this._refineActionByOutput.has(output.itemHrid)) {
+                        this._refineActionByOutput.set(output.itemHrid, action);
+                    }
+                }
+            }
+        }
+
+        const action = this._refineActionByOutput.get(itemHrid);
+        if (!action) return null;
+
+        let cost = 0;
+        for (const input of action.inputItems || []) {
+            const count = input.count || 0;
+            if (input.itemHrid === '/items/coin') {
+                cost += count;
+                continue;
+            }
+            const priceData = marketAPI.getPrice(input.itemHrid, 0);
+            const price = priceData?.ask > 0 ? priceData.ask : priceData?.bid > 0 ? priceData.bid : null;
+            if (price === null) return null;
+            cost += price * count;
+        }
+
+        return cost > 0 ? cost : null;
+    }
+
+    /**
      * Scan itemDetailMap for all items that can transmute into Philosopher's Stone
      * @returns {Array} Array of { itemHrid, itemDetails } objects
      */
@@ -326,9 +368,16 @@ class PhiloCalculator {
             return ask ?? bid;
         };
         let itemCost = resolveCost(0);
+        let costIsCraftEstimate = false;
         if (itemCost === null && itemHrid.endsWith('_refined')) {
             for (let level = 1; level <= 5 && itemCost === null; level++) {
                 itemCost = resolveCost(level);
+            }
+            // Untradable refined items (capes): price at the refinement
+            // materials consumed by their upgrade action
+            if (itemCost === null) {
+                itemCost = this.getRefinementMaterialCost(itemHrid);
+                costIsCraftEstimate = itemCost !== null;
             }
         }
         if (itemCost === null || itemCost === undefined) return null;
@@ -394,7 +443,7 @@ class PhiloCalculator {
 
         return {
             itemHrid,
-            name: this.getItemName(itemHrid),
+            name: this.getItemName(itemHrid) + (costIsCraftEstimate ? ' ⚒' : ''),
             cost: itemCost,
             philoChance,
             returnChance,
