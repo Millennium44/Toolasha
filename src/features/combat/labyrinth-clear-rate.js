@@ -9,6 +9,8 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
+import Monster from '../combat-sim/engine/monster.js';
+import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 
@@ -193,13 +195,14 @@ class LabyrinthClearRate {
      */
     getLabyrinthUpgrades() {
         const info = dataManager.characterData?.characterInfo;
-        if (!info) return { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 };
+        if (!info) return { speed: 0, efficiency: 0, success: 0, doubleProgress: 0, experience: 0 };
 
         return {
             speed: Math.max(0, Math.floor(Number(info.labyrinthSkillActionSpeedLevel) || 0)),
             efficiency: Math.max(0, Math.floor(Number(info.labyrinthSkillingEfficiencyLevel) || 0)),
             success: Math.max(0, Math.floor(Number(info.labyrinthSkillingSuccessLevel) || 0)),
             doubleProgress: Math.max(0, Math.floor(Number(info.labyrinthSkillingDoubleProgressLevel) || 0)),
+            experience: Math.max(0, Math.floor(Number(info.labyrinthExperienceLevel) || 0)),
         };
     }
 
@@ -355,6 +358,7 @@ class LabyrinthClearRate {
             successBonus: 0,
             doubleProgressBonus: 0,
             gatheringBonus: 0,
+            experienceBonus: 0,
         };
         const charData = dataManager.characterData;
         if (!charData) return metrics;
@@ -398,6 +402,7 @@ class LabyrinthClearRate {
         metrics.efficiencyBonus += upgrades.efficiency * UPGRADE_STEP;
         metrics.successBonus += upgrades.success * UPGRADE_SUCCESS_STEP;
         metrics.doubleProgressBonus += upgrades.doubleProgress * UPGRADE_STEP;
+        metrics.experienceBonus += upgrades.experience * UPGRADE_STEP;
 
         return metrics;
     }
@@ -416,6 +421,8 @@ class LabyrinthClearRate {
             metrics.doubleProgressBonus += amount;
         } else if (typeHrid === '/buff_types/success_rate' || typeHrid === skillSuccessType) {
             metrics.successBonus += amount;
+        } else if (typeHrid === '/buff_types/wisdom') {
+            metrics.experienceBonus += amount;
         } else if (
             (typeHrid === '/buff_types/gathering' &&
                 (skillId === 'milking' || skillId === 'foraging' || skillId === 'woodcutting')) ||
@@ -469,7 +476,7 @@ class LabyrinthClearRate {
         result.progressPerSuccess = progressPerSuccess;
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
-        result.xpPerRoom = roomLevel * 50;
+        result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
         this.attachSkillingWhatIfs(result, metrics, {
             attempts,
             successChance,
@@ -567,8 +574,8 @@ class LabyrinthClearRate {
                 : null;
 
         result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
                 : 0;
     }
 
@@ -605,7 +612,7 @@ class LabyrinthClearRate {
         result.actionSeconds = actionSeconds;
         result.targetLevel = targetLevel;
         result.roomLevel = roomLevel;
-        result.xpPerRoom = roomLevel * 50;
+        result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
         this.attachEnhancingWhatIfs(result, metrics, {
             attempts,
             successChance,
@@ -666,8 +673,8 @@ class LabyrinthClearRate {
                 : null;
 
         result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
                 : 0;
     }
 
@@ -1043,7 +1050,8 @@ class LabyrinthClearRate {
             });
 
             const attempts = simResult.labyAttemptCount || 1;
-            const winRate = (simResult.encounters || 0) / attempts;
+            const wins = simResult.encounters || 0;
+            const winRate = wins / attempts;
             const totalTime = simResult.simulatedTime / 1e9;
             const avgTime = totalTime / attempts;
 
@@ -1054,6 +1062,19 @@ class LabyrinthClearRate {
             const snapshot = loadoutSnapshot.snapshots[loadoutId];
             const loadoutName = snapshot?.name || `Loadout #${loadoutId}`;
 
+            // Failure reason: deaths mean defense is the problem, otherwise the
+            // fights are timing out on the 2-minute limit (insufficient damage)
+            const failures = Math.max(0, attempts - wins);
+            const deaths = Math.max(0, Number(simResult.deaths?.[dto.hrid || 'player1'] || 0));
+            const failedByDeath = Math.min(failures, deaths);
+            const failedByTimeout = failures - failedByDeath;
+            const failureReason =
+                failures > 0 && winRate < 1
+                    ? failedByDeath > failedByTimeout
+                        ? 'Insufficient Defense'
+                        : 'Insufficient Damage'
+                    : '';
+
             const result = {
                 clearChance: winRate,
                 expectedSeconds: winRate > 0 ? avgTime / winRate : Infinity,
@@ -1061,8 +1082,10 @@ class LabyrinthClearRate {
                 winRate,
                 avgFightSeconds: avgTime,
                 monsterName,
+                monsterHrid,
                 loadoutName,
                 roomLevel,
+                failureReason,
             };
 
             // Don't cache 0% results: right after page load the loadout
@@ -2075,6 +2098,18 @@ class LabyrinthClearRate {
         badge.addEventListener('mouseenter', show);
         badge.addEventListener('mousemove', show);
         badge.addEventListener('mouseleave', () => this.hidePreview());
+        badge.addEventListener('contextmenu', (e) => {
+            const res = badge.__mwiPreviewResult;
+            if (!res || res.type !== 'combat') return;
+            const simButton = document.querySelector('.toolasha-lab-sim-btn');
+            if (!simButton) return;
+            e.preventDefault();
+            const panel = document.getElementById('mwi-lab-sim-panel');
+            if (!panel || panel.style.display === 'none') {
+                simButton.click();
+            }
+            this.hidePreview();
+        });
     }
 
     /**
@@ -2137,8 +2172,8 @@ class LabyrinthClearRate {
 
         const titleText =
             result.type === 'combat'
-                ? `${result.monsterName} · Lv.${result.roomLevel}`
-                : `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room · Lv.${result.roomLevel}`;
+                ? `${result.monsterName}`
+                : `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room Preview`;
         const title = document.createElement('div');
         title.style.cssText = 'margin-bottom:4px; font-weight:700; color:#9ec4ff;';
         title.textContent = titleText;
@@ -2159,46 +2194,52 @@ class LabyrinthClearRate {
         };
 
         if (result.type === 'combat') {
-            addRow('Win Rate', pct(result.winRate));
-            addRow('Avg Fight', `${Math.round(result.avgFightSeconds)}s`);
-            if (result.loadoutName) {
-                addRow('Loadout', `"${result.loadoutName}"`);
-            }
-            this.appendExpectedRows(addRow);
+            this.renderCombatPreviewRows(addRow, result);
             return;
         }
 
         if (result.type === 'enhancing') {
             addRow('Target Enhancement', `+${result.targetLevel}`);
         } else {
-            addRow('Work Power', `${result.workPower.toFixed(2)} \u2192 ${result.progressPerSuccess}`);
+            const raw = result.workPower;
+            const floored = result.progressPerSuccess;
+            addRow(
+                'Work Power',
+                Math.abs(raw - floored) < 1e-9 ? raw.toFixed(2) : `${raw.toFixed(2)} \u2192 ${floored}`
+            );
         }
         addRow('Success Rate', pct(result.successChance));
         addRow('Double Progress', pct(result.doubleChance));
-        addRow('Actions in 2m', `${result.attempts} @ ${result.actionSeconds.toFixed(2)}s`);
+        addRow('Actions in 2m', `${result.attempts}`);
+        addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
         if (result.xpPerRoom) {
-            addRow('XP / Room', `${Math.round(result.xpPerRoom)}`);
+            addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
         }
         if (result.xpPerHour > 0) {
-            addRow('XP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
-        }
-        const maxFloor = Math.floor((result.roomLevel || 0) / 20);
-        if (maxFloor >= 1) {
-            addRow('Max Floor', `${maxFloor}`);
-        }
-
-        if (Number.isFinite(result.nextLevelClearChance)) {
-            addRow('+1 Level Clear', pct(result.nextLevelClearChance));
+            addRow('EXP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
         }
         if (result.type !== 'enhancing') {
-            if (result.efficiencyDelta === null) {
-                addRow('Efficiency Tier', 'Already optimal');
-            } else if (Number.isFinite(result.efficiencyTierClearChance)) {
-                addRow(`Efficiency ${deltaPct(result.efficiencyDelta)} Clear`, pct(result.efficiencyTierClearChance));
-            }
+            addRow(
+                'Efficiency for -1 Progress',
+                result.efficiencyDelta === null ? 'Already optimal' : deltaPct(result.efficiencyDelta)
+            );
+        }
+        if (Number.isFinite(result.speedDelta)) {
+            addRow('Speed for +1 Action', deltaPct(result.speedDelta));
+        }
+        if (Number.isFinite(result.nextLevelClearChance)) {
+            addRow('Next Level Clear %', pct(result.nextLevelClearChance));
+        }
+        if (result.type !== 'enhancing') {
+            addRow(
+                'Efficiency Tier Clear %',
+                Number.isFinite(result.efficiencyTierClearChance)
+                    ? pct(result.efficiencyTierClearChance)
+                    : 'Already optimal'
+            );
         }
         if (Number.isFinite(result.speedTierClearChance)) {
-            addRow(`Speed ${deltaPct(result.speedDelta)} Clear`, pct(result.speedTierClearChance));
+            addRow('Speed Tier Clear %', pct(result.speedTierClearChance));
         }
         if (Number.isFinite(result.nextSuccessUpgradeClearChance)) {
             addRow('Next Success Upgrade', pct(result.nextSuccessUpgradeClearChance));
@@ -2207,18 +2248,134 @@ class LabyrinthClearRate {
             addRow('Next Double Upgrade', pct(result.nextDoubleUpgradeClearChance));
         }
 
-        this.appendExpectedRows(addRow);
+        this.appendExpectedRows(addRow, result.type);
+    }
+
+    /**
+     * Render the rich combat tile preview: scaled monster stats, abilities,
+     * rewards, loadout, and the sim-derived failure reason.
+     * @param {Function} addRow - Row builder from renderPreviewContent
+     * @param {Object} result - Combat clear result
+     */
+    renderCombatPreviewRows(addRow, result) {
+        const styleName = (hrid) => {
+            const tail =
+                String(hrid || '')
+                    .split('/')
+                    .pop() || '';
+            return tail.charAt(0).toUpperCase() + tail.slice(1);
+        };
+
+        const monster = this.buildScaledMonster(result.monsterHrid, result.roomLevel);
+        const gameData = dataManager.getInitClientData();
+        const monsterDetail = gameData?.combatMonsterDetailMap?.[result.monsterHrid];
+
+        if (monster) {
+            const stats = monster.combatDetails.combatStats;
+            const styleHrid = stats.combatStyleHrid || stats.combatStyleHrids?.[0] || '';
+            const styleKey = String(styleHrid).split('/').pop() || 'stab';
+            const damageTypeHrid = stats.damageType || '/damage_types/physical';
+
+            addRow('Combat Style', styleName(styleHrid));
+            addRow('Damage Type', styleName(damageTypeHrid));
+            addRow('Attack Interval', `${(stats.attackInterval / 1e9).toFixed(2)}s`);
+            addRow('Cast Speed', `${Math.round((stats.castSpeed || 0) * 100)}%`);
+            addRow(
+                `${styleName(styleHrid)} Accuracy`,
+                `${Math.round(monster.combatDetails[`${styleKey}AccuracyRating`] || 0)}`
+            );
+            addRow(
+                `${styleName(styleHrid)} Damage`,
+                `${Math.round(monster.combatDetails[`${styleKey}MaxDamage`] || 0)}`
+            );
+            addRow('Max HP', `${Math.round(monster.combatDetails.maxHitpoints || 0)}`);
+
+            // Evasion vs the player's own combat style, mitigation vs their damage type
+            const playerStats = dataManager.characterData?.combatUnit?.combatDetails?.combatStats;
+            const playerStyleHrid = playerStats?.combatStyleHrids?.[0] || '/combat_styles/stab';
+            const playerStyleKey = String(playerStyleHrid).split('/').pop();
+            const playerDamageType = playerStats?.damageType || '/damage_types/physical';
+            addRow(
+                `${styleName(playerStyleHrid)} Evasion`,
+                `${Math.round(monster.combatDetails[`${playerStyleKey}EvasionRating`] || 0)}`
+            );
+            if (playerDamageType === '/damage_types/physical') {
+                addRow('Armor', `${Math.round(monster.combatDetails.totalArmor || 0)}`);
+            } else {
+                const resistKey = `total${styleName(playerDamageType)}Resistance`;
+                addRow(
+                    `${styleName(playerDamageType)} Resistance`,
+                    `${Math.round(monster.combatDetails[resistKey] || 0)}`
+                );
+            }
+        }
+
+        // Ability list at labyrinth-scaled levels (same floor-scaling as the sim engine)
+        if (Array.isArray(monsterDetail?.abilities)) {
+            const scale = result.roomLevel > 0 ? result.roomLevel / 100 : 1;
+            const abilityMap = gameData?.abilityDetailMap || {};
+            for (const ability of monsterDetail.abilities) {
+                if (!ability?.abilityHrid) continue;
+                const level = Math.max(1, Math.floor((ability.level || 1) * scale));
+                const name =
+                    abilityMap[ability.abilityHrid]?.name || ability.abilityHrid.split('/').pop().replace(/_/g, ' ');
+                addRow(`Lv.${level}`, name);
+            }
+        }
+
+        this.appendExpectedRows(addRow, 'combat');
+        if (result.loadoutName) {
+            addRow('Loadout', `"${result.loadoutName}"`);
+        }
+        addRow('Win Rate', `${(Math.min(1, Math.max(0, result.winRate)) * 100).toFixed(1)}%`);
+        if (document.querySelector('.toolasha-lab-sim-btn')) {
+            addRow('Action', 'Right-click to open simulator');
+        }
+        if (result.failureReason) {
+            addRow('Failure Reason', result.failureReason);
+        }
+    }
+
+    /**
+     * Build a labyrinth-scaled engine Monster for tooltip stats. Uses the same
+     * scaling as the simulation so displayed numbers match simmed numbers.
+     * @param {string} monsterHrid
+     * @param {number} roomLevel
+     * @returns {Monster|null}
+     */
+    buildScaledMonster(monsterHrid, roomLevel) {
+        if (!monsterHrid) return null;
+        const cacheKey = `${monsterHrid}|${roomLevel}`;
+        if (!this._scaledMonsterCache) this._scaledMonsterCache = new Map();
+        if (this._scaledMonsterCache.has(cacheKey)) return this._scaledMonsterCache.get(cacheKey);
+
+        let monster = null;
+        try {
+            const payload = buildGameDataPayload();
+            if (payload) {
+                setGameData(payload);
+                monster = new Monster(monsterHrid, 0, roomLevel);
+                monster.updateCombatDetails();
+            }
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Failed to build scaled monster for preview:', error);
+            monster = null;
+        }
+        this._scaledMonsterCache.set(cacheKey, monster);
+        return monster;
     }
 
     /**
      * Append the expected token/box reward rows for the current floor
      * @param {Function} addRow - Row builder from renderPreviewContent
+     * @param {string} [type] - Result type; picks the box label (combat vs skilling)
      */
-    appendExpectedRows(addRow) {
+    appendExpectedRows(addRow, type) {
         const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
         if (floor >= 1) {
+            const boxLabel = type === 'combat' ? 'Combat Box Expected' : 'Skilling Box Expected';
             addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
-            addRow('Box Expected', `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
+            addRow(boxLabel, `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
         }
     }
 
@@ -2283,6 +2440,7 @@ class LabyrinthClearRate {
             successBonus: 0,
             doubleProgressBonus: 0,
             gatheringBonus: 0,
+            experienceBonus: 0,
         };
 
         const skillLevelType = `/buff_types/${skillId}_level`;
@@ -2318,6 +2476,7 @@ class LabyrinthClearRate {
         metrics.efficiencyBonus += upgrades.efficiency * UPGRADE_STEP;
         metrics.successBonus += upgrades.success * UPGRADE_SUCCESS_STEP;
         metrics.doubleProgressBonus += upgrades.doubleProgress * UPGRADE_STEP;
+        metrics.experienceBonus += upgrades.experience * UPGRADE_STEP;
 
         return metrics;
     }
@@ -2362,7 +2521,7 @@ class LabyrinthClearRate {
         result.progressPerSuccess = progressPerSuccess;
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
-        result.xpPerRoom = roomLevel * 50;
+        result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
         return result;
     }
 
