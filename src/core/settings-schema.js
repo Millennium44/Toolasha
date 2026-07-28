@@ -1558,15 +1558,15 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Default target clear rate for labyrinth skip threshold recommendations',
             },
-            labyrinthCombatTrials: {
-                id: 'labyrinthCombatTrials',
-                label: 'Labyrinth: Combat sim trials',
+            labyrinthRecommendSimHours: {
+                id: 'labyrinthRecommendSimHours',
+                label: 'Labyrinth: Combat sim hours',
                 type: 'number',
-                default: 100,
+                default: 3,
                 min: 1,
-                max: 2000,
+                max: 100,
                 step: 1,
-                help: 'Number of simulated 120s room attempts per combat tile calculation (higher = more accurate, slower)',
+                help: 'Hours of combat simulation per labyrinth tile and recommendation calculation (higher = more accurate, slower)',
             },
             labyrinthLiveProgress: {
                 id: 'labyrinthLiveProgress',

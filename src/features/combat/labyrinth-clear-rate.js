@@ -972,15 +972,15 @@ class LabyrinthClearRate {
     buildCombatCacheKey(monsterHrid, roomLevel) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getCombatTrials()}:${crateHrids.join(',')}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimHours()}h:${crateHrids.join(',')}`;
     }
 
     /**
-     * Combat sim trials for labyrinth calculations (1 trial = one 120s room)
+     * Combat sim hours for labyrinth tile and recommendation calculations
      */
-    getCombatTrials() {
-        const raw = Number(config.getSettingValue('labyrinthCombatTrials', 100));
-        return Math.min(2000, Math.max(1, Math.floor(raw) || 100));
+    getSimHours() {
+        const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
+        return Math.min(100, Math.max(1, Math.floor(raw) || 3));
     }
 
     getCachedCombatResult(monsterHrid, roomLevel) {
@@ -1010,7 +1010,7 @@ class LabyrinthClearRate {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                hours: this.getCombatTrials() / 30,
+                hours: this.getSimHours(),
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -1470,27 +1470,27 @@ class LabyrinthClearRate {
         button.addEventListener('click', () => this.runTileCalculation());
         container.appendChild(button);
 
-        const trialsLabel = document.createElement('span');
-        trialsLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
-        trialsLabel.textContent = 'Combat Trials';
-        container.appendChild(trialsLabel);
+        const hoursLabel = document.createElement('span');
+        hoursLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        hoursLabel.textContent = 'Sim Hours';
+        container.appendChild(hoursLabel);
 
-        const trialsInput = document.createElement('input');
-        trialsInput.type = 'number';
-        trialsInput.min = '1';
-        trialsInput.max = '2000';
-        trialsInput.step = '1';
-        trialsInput.value = String(this.getCombatTrials());
-        trialsInput.style.cssText =
+        const hoursInput = document.createElement('input');
+        hoursInput.type = 'number';
+        hoursInput.min = '1';
+        hoursInput.max = '100';
+        hoursInput.step = '1';
+        hoursInput.value = String(this.getSimHours());
+        hoursInput.style.cssText =
             'width:52px; height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
             'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; text-align:center; outline:none;';
-        trialsInput.addEventListener('change', () => {
-            const n = Math.min(2000, Math.max(1, Math.floor(Number(trialsInput.value) || 100)));
-            trialsInput.value = String(n);
-            config.setSettingValue('labyrinthCombatTrials', n);
+        hoursInput.addEventListener('change', () => {
+            const n = Math.min(100, Math.max(1, Math.floor(Number(hoursInput.value) || 3)));
+            hoursInput.value = String(n);
+            config.setSettingValue('labyrinthRecommendSimHours', n);
             this.combatCache.clear();
         });
-        container.appendChild(trialsInput);
+        container.appendChild(hoursInput);
 
         if (config.getSetting('labyrinthRoomLogs')) {
             const logsButton = document.createElement('button');
