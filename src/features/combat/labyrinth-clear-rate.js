@@ -1791,7 +1791,7 @@ class LabyrinthClearRate {
                         ? this.computeEnhancingClear(target.roomLevel)
                         : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
                 if (result) {
-                    this.appendTileBadge(target.cell, result, target.roomLevel);
+                    this.appendTileBadge(target.cell, result);
                     this.calculatedTileKeys.add(target.tileKey);
                 }
                 completed++;
@@ -1812,7 +1812,7 @@ class LabyrinthClearRate {
                 }
                 if (!target.cell.isConnected) continue;
 
-                this.appendTileBadge(target.cell, result, target.roomLevel);
+                this.appendTileBadge(target.cell, result);
                 if (result.clearChance > 0 || !auto) {
                     this.calculatedTileKeys.add(target.tileKey);
                 } else {
@@ -1857,7 +1857,7 @@ class LabyrinthClearRate {
         badge.remove();
     }
 
-    appendTileBadge(cell, result, roomLevel) {
+    appendTileBadge(cell, result) {
         cell.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
 
         const chance = Math.min(1, Math.max(0, result.clearChance ?? 0));
