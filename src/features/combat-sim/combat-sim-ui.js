@@ -421,6 +421,7 @@ class CombatSimUI {
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
+                <option value="combat_level">Combat Levels</option>
             </select>
             <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-csim-upgrade-level-type" style="
@@ -535,10 +536,21 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-mode').addEventListener('change', (e) => {
             const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
+            const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
+            const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
             const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-            levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
+            const isCombatLevelMode = e.target.value === 'combat_level';
+            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+            // Combat Levels mode reuses the number input as the charm size (+N
+            // levels per skill); the increment/target selector doesn't apply
+            levelType.style.display = isCombatLevelMode ? 'none' : '';
+            levelInput.title = isCombatLevelMode
+                ? 'Levels added to each combat skill (simulated charm)'
+                : 'Number of levels to add to each ability';
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
+            } else if (isCombatLevelMode) {
+                levelInput.value = 5;
             }
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
@@ -3225,7 +3237,7 @@ class CombatSimUI {
         }
 
         sortedResults.forEach((r, i) => {
-            const costStr = r.cost == null ? '?' : formatKMB(r.cost);
+            const costStr = r.cost == null ? (r.candidate?.type === 'combat_level' ? '—' : '?') : formatKMB(r.cost);
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
 
             const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));

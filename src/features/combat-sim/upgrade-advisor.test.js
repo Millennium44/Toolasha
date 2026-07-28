@@ -155,6 +155,38 @@ describe('generateCandidates refined-equipment gating', () => {
     });
 });
 
+describe('generateCandidates combat_level mode', () => {
+    test('generates one +N candidate per combat skill', () => {
+        const player = {
+            equipment: {},
+            staminaLevel: 90,
+            intelligenceLevel: 95,
+            attackLevel: 100,
+            meleeLevel: 100,
+            defenseLevel: 88,
+            rangedLevel: 110,
+            magicLevel: 70,
+        };
+        const candidates = generateCandidates(player, buildGameData(), 'combat_level', 5);
+
+        expect(candidates).toHaveLength(7);
+        const ranged = candidates.find((c) => c.skillKey === 'rangedLevel');
+        expect(ranged.currentLevel).toBe(110);
+        expect(ranged.upgradeLevel).toBe(115);
+        expect(ranged.description).toBe('Ranged 110 → 115');
+        expect(candidates.every((c) => c.type === 'combat_level')).toBe(true);
+    });
+
+    test('defaults the boost to 5 and combat level costs are null', () => {
+        const player = { equipment: {}, staminaLevel: 50 };
+        const candidates = generateCandidates(player, buildGameData(), 'combat_level', 0);
+
+        const stamina = candidates.find((c) => c.skillKey === 'staminaLevel');
+        expect(stamina.upgradeLevel).toBe(55);
+        expect(calculateUpgradeCost(stamina, buildGameData())).toBeNull();
+    });
+});
+
 describe('calculateUpgradeCost for items without high-level listings', () => {
     test('uses the market ask when the target enhancement level has a listing', () => {
         getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
