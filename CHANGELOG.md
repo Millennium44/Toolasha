@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Combat Levels mode: levels-first controls, charm tier dropdown, main-skill time
+
+- **+Levels is the primary control**: the number input is always visible in Combat Levels mode and drives the simulated boost (and the Targets prefill) — it's no longer hidden behind a "Custom" charm option.
+- **The Charm dropdown lists real charm tiers** found in game data (plus "Auto (equipped)" and "No charm") and picks which charm family gets swapped in per skill for the Level Time estimate: Auto matches the equipped charm's tier, a named tier forces that family (leveling Defense with "Expert" selected assumes an Expert Defense Charm), None estimates charm-less rates.
+- **Main time option**: a checkbox adds a Main Time column showing how long the weapon's main training skill(s) — its primary training skill plus the combat style's XP skills, so a melee-only weapon tracks Melee while a spear tracks Attack and Melee — would take to reach their own targets while each other skill is being focused. Computed from the same charm-swapped XP-rate sim, so it costs no extra sim time; rows for a main skill itself show —.
+
 ### Combat Levels mode: per-skill charm swapping and target levels
 
 - **Level Time now assumes the right charm**: for each skill, the XP-rate estimate runs a sim with the equivalent charm for that skill equipped (matched by tier from your current charm, e.g. Expert Melee Charm → Expert Defense Charm, keeping its enhancement level; highest available charm or none as fallback) — so leveling Defense no longer shows — just because your equipped melee charm redirects all XP. The tooltip names the charm each estimate assumes.

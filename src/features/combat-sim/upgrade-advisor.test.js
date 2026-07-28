@@ -28,7 +28,8 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 vi.mock('../../utils/ability-cost-calculator.js', () => ({ calculateAbilityLevelUpCost: vi.fn() }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { generateCandidates, calculateUpgradeCost } = await import('./upgrade-advisor.js');
+const { generateCandidates, calculateUpgradeCost, findMatchingCharmForSkill, getMainTrainingSkills } =
+    await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 
@@ -197,6 +198,76 @@ describe('generateCandidates combat_level mode', () => {
         expect(candidates.find((c) => c.skillKey === 'defenseLevel').upgradeLevel).toBe(85);
         // skills without a target entry are skipped too
         expect(candidates.find((c) => c.skillKey === 'magicLevel')).toBeUndefined();
+    });
+});
+
+describe('findMatchingCharmForSkill', () => {
+    const CHARM = '/equipment_types/charm';
+    function charmGameData() {
+        const charm = (name, itemLevel, skill) => ({
+            name,
+            itemLevel,
+            equipmentDetail: { type: CHARM, combatStats: { focusTraining: `/skills/${skill}` } },
+        });
+        return {
+            itemDetailMap: {
+                '/items/basic_melee_charm': charm('Basic Melee Charm', 10, 'melee'),
+                '/items/expert_melee_charm': charm('Expert Melee Charm', 60, 'melee'),
+                '/items/basic_defense_charm': charm('Basic Defense Charm', 10, 'defense'),
+                '/items/expert_defense_charm': charm('Expert Defense Charm', 60, 'defense'),
+            },
+        };
+    }
+    const equipped = { hrid: '/items/expert_melee_charm', enhancementLevel: 5 };
+
+    test('matches the equipped charm tier for another skill, keeping enhancement', () => {
+        const result = findMatchingCharmForSkill(equipped, 'defenseLevel', charmGameData());
+        expect(result).toEqual({ hrid: '/items/expert_defense_charm', enhancementLevel: 5 });
+    });
+
+    test('keeps the equipped charm when it already focuses the skill', () => {
+        const result = findMatchingCharmForSkill(equipped, 'meleeLevel', charmGameData());
+        expect(result).toEqual({ hrid: '/items/expert_melee_charm', enhancementLevel: 5 });
+    });
+
+    test('an explicit tier overrides the equipped charm tier', () => {
+        const result = findMatchingCharmForSkill(equipped, 'defenseLevel', charmGameData(), 'Basic');
+        expect(result).toEqual({ hrid: '/items/basic_defense_charm', enhancementLevel: 5 });
+    });
+
+    test('tier "none" simulates without a charm', () => {
+        expect(findMatchingCharmForSkill(equipped, 'defenseLevel', charmGameData(), 'none')).toBeNull();
+    });
+
+    test('falls back to the highest-level charm when nothing is equipped', () => {
+        const result = findMatchingCharmForSkill(null, 'defenseLevel', charmGameData());
+        expect(result).toEqual({ hrid: '/items/expert_defense_charm', enhancementLevel: 0 });
+    });
+});
+
+describe('getMainTrainingSkills', () => {
+    test('unions the weapon primary training skill with its style XP skills', () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/spear': {
+                    equipmentDetail: {
+                        type: MAIN_HAND,
+                        combatStats: { primaryTraining: '/skills/attack', combatStyleHrids: ['/combat_styles/stab'] },
+                    },
+                },
+            },
+            combatStyleDetailMap: {
+                '/combat_styles/stab': { skillExpMap: { '/skills/attack': 0.5, '/skills/melee': 0.5 } },
+            },
+        };
+        const player = { equipment: { [MAIN_HAND]: { hrid: '/items/spear', enhancementLevel: 0 } } };
+        expect(getMainTrainingSkills(player, gameData).sort()).toEqual(['attack', 'melee']);
+    });
+
+    test('defaults to melee with no weapon equipped', () => {
+        expect(getMainTrainingSkills({ equipment: {} }, { itemDetailMap: {}, combatStyleDetailMap: {} })).toEqual([
+            'melee',
+        ]);
     });
 });
 
