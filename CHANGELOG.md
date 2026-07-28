@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth sims stop killing each other — recommendations finally survive lab runs
+
+- The real interruption: every labyrinth simulation started by **terminating all in-flight sim workers**. During a lab run, each room switch queues tile-badge sims, and each one killed the skip-recommendation search's sim mid-flight (the killed sim read as a 0% result, corrupting or aborting the binary search). Labyrinth sims no longer preempt each other — each runs in its own worker, so tile badges, recommendation searches, and Lab Sim runs coexist; Stop buttons still cancel everything.
+- An explicit Stop now cleanly aborts an in-progress recommendation search instead of recording the killed sim as a genuine 0%.
+
 ### Lab Sim Skilling tab cleanup and per-skill analysis
 
 - **Tidier layout**: the Skill filter moved inline next to Use Skip Levels (it used to wrap to its own line), the Calculate/Analyze buttons are right-aligned, and the player setup editor (skill levels, house rooms, token upgrades, community buffs) is now a collapsed "Player Setup" section — expand it only when overriding live values.

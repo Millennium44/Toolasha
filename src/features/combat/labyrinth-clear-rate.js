@@ -1181,6 +1181,11 @@ class LabyrinthClearRate {
             }
             return result;
         } catch (error) {
+            if (error?.message === 'Cancelled') {
+                // Explicit user Stop — flag it so searches abort instead of
+                // treating the kill as a genuine 0% result
+                return { clearChance: 0, expectedSeconds: Infinity, failed: true, cancelled: true };
+            }
             console.error('[LabyrinthClearRate] Combat sim failed:', error);
             return { clearChance: 0, expectedSeconds: Infinity, failed: true };
         }
@@ -1249,6 +1254,7 @@ class LabyrinthClearRate {
                 continue;
             }
             const result = await this.computeCombatClear(monsterHrid, roomLevel);
+            if (result.cancelled) break;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
                 low = mid + 1;
