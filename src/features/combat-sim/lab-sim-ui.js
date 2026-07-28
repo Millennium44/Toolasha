@@ -21,6 +21,7 @@ import {
     runLabyrinthAllFightsAnalysis,
     computeSkillingClearRatesFromEditor,
     runSkillingUpgradeAnalysis,
+    getStyleExcludedSkills,
 } from './upgrade-advisor.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
@@ -324,6 +325,9 @@ class LabSimUI {
                     border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
                     title="Number of levels to add to each ability">
             </span>
+            <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
+                display:none; background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
+                padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto;
                 background: ${ACCENT_BTN_BG};
@@ -348,6 +352,33 @@ class LabSimUI {
                 font-family:inherit;">Stop</button>
         `;
 
+        // Per-skill target levels for the Combat Levels modes (hidden until toggled)
+        const labCombatTargets = document.createElement('div');
+        labCombatTargets.id = 'mwi-labsim-combat-targets';
+        labCombatTargets.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+        labCombatTargets.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
+            [
+                ['staminaLevel', 'Stamina'],
+                ['intelligenceLevel', 'Int'],
+                ['attackLevel', 'Attack'],
+                ['meleeLevel', 'Melee'],
+                ['defenseLevel', 'Defense'],
+                ['rangedLevel', 'Ranged'],
+                ['magicLevel', 'Magic'],
+            ]
+                .map(
+                    ([key, label]) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${label}</label>
+                    <input type="number" min="1" max="200" data-lab-combat-target="${key}" style="
+                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-labsim-upgrade-progress';
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
@@ -365,6 +396,7 @@ class LabSimUI {
         upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
 
         upgradeContent.appendChild(upgradeControls);
+        upgradeContent.appendChild(labCombatTargets);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -589,6 +621,19 @@ class LabSimUI {
             // skill; the increment/target selector doesn't apply
             if (levelType) levelType.style.display = isCombatLevelMode ? 'none' : '';
             if (levelInput && isCombatLevelMode) levelInput.value = 5;
+            const targetsToggle = this.panel.querySelector('#mwi-labsim-combat-targets-toggle');
+            if (targetsToggle) targetsToggle.style.display = isCombatLevelMode ? '' : 'none';
+            if (!isCombatLevelMode) {
+                this.panel.querySelector('#mwi-labsim-combat-targets').style.display = 'none';
+            }
+        });
+        this.panel.querySelector('#mwi-labsim-combat-targets-toggle').addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-labsim-combat-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) {
+                this._prefillLabCombatTargets();
+            }
         });
         this.panel.querySelector('#mwi-labsim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
@@ -1067,6 +1112,8 @@ class LabSimUI {
             200,
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
         );
+        const isCombatLevelMode = upgradeMode === 'combat_level' || upgradeMode === 'combat_level_all';
+        const combatLevelTargets = isCombatLevelMode ? this._getLabCombatLevelTargets() : null;
 
         if (isAllFights) {
             try {
@@ -1085,6 +1132,7 @@ class LabSimUI {
                         communityBuffs,
                         labyrinthCombatBuffs,
                         abilityTargetLevel,
+                        combatLevelTargets,
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
@@ -1124,6 +1172,7 @@ class LabSimUI {
                     upgradeMode,
                     abilityLevelType,
                     abilityTargetLevel,
+                    combatLevelTargets,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -1146,6 +1195,54 @@ class LabSimUI {
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
         }
+    }
+
+    /**
+     * Prefill the per-skill target inputs from the selected player's current
+     * levels plus the +Levels boost. In the single-monster Combat Levels mode
+     * skills the weapon style can't train are hidden; the All Fights mode
+     * keeps every skill visible since assigned loadouts can differ in style.
+     * @private
+     */
+    _prefillLabCombatTargets() {
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const boost = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value) || 5;
+        const isAllFights = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value === 'combat_level_all';
+
+        const gameData = buildGameDataPayload();
+        const excluded = !isAllFights && dto && gameData ? getStyleExcludedSkills(dto, gameData) : new Set();
+
+        this.panel.querySelectorAll('[data-lab-combat-target]').forEach((input) => {
+            const isExcluded = excluded.has(input.dataset.labCombatTarget);
+            const wrapper = input.closest('span');
+            if (wrapper) wrapper.style.display = isExcluded ? 'none' : 'inline-flex';
+            if (isExcluded) {
+                input.value = '';
+                return;
+            }
+            const current = Math.max(1, Math.floor(dto?.[input.dataset.labCombatTarget] || 1));
+            input.value = Math.min(200, current + boost);
+        });
+    }
+
+    /**
+     * Read the per-skill target map when the targets grid is open.
+     * @private
+     * @returns {Object|null} {skillKey: targetLevel} or null when not in use
+     */
+    _getLabCombatLevelTargets() {
+        const grid = this.panel.querySelector('#mwi-labsim-combat-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-lab-combat-target]').forEach((input) => {
+            const value = parseInt(input.value);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.labCombatTarget] = Math.min(200, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
     }
 
     /**
@@ -1173,8 +1270,8 @@ class LabSimUI {
 
     /**
      * Render the all-fights combat level analysis: candidates ranked by how
-     * much they improve the chance of clearing every fight in the run, with a
-     * per-fight breakdown on click.
+     * many expected combat attempts they save across the whole run (retrying
+     * failed rooms), with a per-fight breakdown on click.
      * @private
      */
     _renderAllFightsResults(analysisResult, container) {
@@ -1190,32 +1287,37 @@ class LabSimUI {
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
         const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
+        // Fewer expected attempts = better, so the good direction is negative
+        const attemptsDeltaColor = (v) => (v < -0.05 ? '#4caf50' : v > 0.05 ? '#f44336' : '#888');
+        const fmtAttempts = (v) => v.toFixed(1);
+        const fmtAttemptsDelta = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
+        const expectedTries = (winRate) => 1 / Math.max(winRate, 0.001);
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
-        const bestDelta = Math.max(...results.map((r) => r.runClearDelta));
+        const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
 
         let html = `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
-                Baseline run clear (all ${baseline.fights.length} fights):
-                <span style="color:#e0e0e0; font-weight:700;">${pct(baseline.runClearChance)}</span>
-                <span style="color:#555; font-size:10px; margin-left:6px;">product of every fight's win rate at its skip level with its assigned loadout</span>
+                Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
+                expected combat attempts to clear all ${baseline.fights.length} fights
+                <span style="color:#555; font-size:10px; margin-left:6px;">Σ 1/win rate per fight, at its skip level with its assigned loadout — retries included</span>
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}">Skill</th>
-                <th style="${thStyle}" title="Chance to win every combat room in one run">Run Clear</th>
-                <th style="${thStyle}" title="Change in whole-run clear chance vs baseline">ΔRun Clear</th>
+                <th style="${thStyle}" title="Expected combat attempts to clear every fight once (retrying failed rooms)">Attempts</th>
+                <th style="${thStyle}" title="Change in expected attempts vs baseline — negative is better">ΔAttempts</th>
                 <th style="${thStyle}" title="Average per-fight win rate change">Avg ΔWin</th>
             </tr></thead><tbody>`;
 
         results.forEach((r, i) => {
-            const isBest = r.runClearDelta === bestDelta && bestDelta > 0.0001;
-            const runStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
+            const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+            const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
                 <td style="${tdStyle}">${r.candidate.description}</td>
-                <td style="${tdStyle} ${runStyle}">${pct(r.runClearChance)}</td>
-                <td style="${tdStyle} color:${deltaColor(r.runClearDelta)}; ${isBest ? 'font-weight:700;' : ''}">${deltaPct(r.runClearDelta)}</td>
+                <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
+                <td style="${tdStyle} color:${attemptsDeltaColor(r.attemptsDelta)}; ${isBest ? 'font-weight:700;' : ''}">${fmtAttemptsDelta(r.attemptsDelta)}</td>
                 <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
             </tr>`;
 
@@ -1224,10 +1326,13 @@ class LabSimUI {
             for (let f = 0; f < r.fights.length; f++) {
                 const fight = r.fights[f];
                 const base = baseline.fights[f];
+                const triesBase = expectedTries(base.winRate);
+                const triesNew = expectedTries(fight.winRate);
                 fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${pct(base.winRate)} → ${pct(fight.winRate)}
-                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span></span>
+                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
+                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries</span></span>
                 </div>`;
             }
             html += `<tr data-allfights-detail="${i}" style="display:none;">
