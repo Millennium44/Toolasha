@@ -18,7 +18,7 @@ class LabSim {
 
     initialize() {
         if (this.isInitialized) return;
-        if (!config.getSetting('combatSim')) return;
+        if (!config.getSetting('labSim')) return;
 
         this.isInitialized = true;
 
