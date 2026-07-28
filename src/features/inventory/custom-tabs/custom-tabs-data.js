@@ -442,8 +442,24 @@ export function removeItemFromBindings(config, tabId, itemHrid) {
 }
 
 /**
+ * Check whether any other loadout binding on the tab still references an item
+ * @param {Object} tab
+ * @param {string} excludeLoadoutName - Binding to skip (the one being synced)
+ * @param {string} itemHrid
+ * @returns {boolean}
+ */
+function isBoundElsewhere(tab, excludeLoadoutName, itemHrid) {
+    for (const [name, items] of Object.entries(tab.loadoutBindings || {})) {
+        if (name === excludeLoadoutName) continue;
+        if (items.includes(itemHrid)) return true;
+    }
+    return false;
+}
+
+/**
  * Sync a tab's loadout binding against a new snapshot.
  * Matches items by base HRID to detect enhancement level changes.
+ * Items still referenced by another binding on the same tab are preserved.
  * @param {Object} config
  * @param {string} tabId
  * @param {string} loadoutName
@@ -468,17 +484,32 @@ export function syncLoadoutBinding(config, tabId, loadoutName, newSnapshotItems)
         const oldHrid = oldByBase.get(base);
         if (oldHrid && oldHrid !== newHrid) {
             const idx = tab.items.indexOf(oldHrid);
-            if (idx !== -1) {
+            if (idx === -1) continue;
+            if (isBoundElsewhere(tab, loadoutName, oldHrid)) {
+                // Another loadout on this tab still uses the old item — keep it
+                // and add the new one alongside
+                if (!tab.items.includes(newHrid)) {
+                    tab.items.push(newHrid);
+                    changed = true;
+                }
+            } else if (tab.items.includes(newHrid)) {
+                tab.items.splice(idx, 1);
+                changed = true;
+            } else {
                 tab.items[idx] = newHrid;
                 changed = true;
             }
         }
     }
 
-    // Items removed from loadout → remove from items[]
+    // Items removed from loadout → remove from items[] unless another binding
+    // on this tab still references them
     for (const [base, oldHrid] of oldByBase) {
-        if (!newByBase.has(base)) {
-            tab.items = tab.items.filter((h) => h !== oldHrid);
+        if (newByBase.has(base)) continue;
+        if (isBoundElsewhere(tab, loadoutName, oldHrid)) continue;
+        const filtered = tab.items.filter((h) => h !== oldHrid);
+        if (filtered.length !== tab.items.length) {
+            tab.items = filtered;
             changed = true;
         }
     }

@@ -1657,18 +1657,24 @@ class LabyrinthClearRate {
             gridParent.parentElement;
         if (!panelRoot) return null;
 
+        // Match the element that directly holds the "Max Path" text. The text may
+        // share its element with child elements (e.g. the Upgrade button), so
+        // check each element's own text nodes rather than only pure leaf nodes.
         let marker = null;
         for (const node of panelRoot.querySelectorAll('div, span')) {
-            if (node.childElementCount > 0) continue;
-            const text = String(node.textContent || '').trim();
-            if (text && text.length < 40 && /max path/i.test(text)) {
+            let ownText = '';
+            for (const child of node.childNodes) {
+                if (child.nodeType === 3) ownText += child.textContent;
+            }
+            ownText = ownText.trim();
+            if (ownText && ownText.length < 40 && /max path/i.test(ownText)) {
                 marker = node;
                 break;
             }
         }
         if (!marker) return null;
 
-        let current = marker.parentElement;
+        let current = marker;
         for (let depth = 0; depth < 3 && current; depth++) {
             if (window.getComputedStyle(current).display.includes('flex')) {
                 return current;
