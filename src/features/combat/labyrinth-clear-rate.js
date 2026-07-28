@@ -1453,16 +1453,73 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Seed labyrinth state from the initial character data so the control bar
-     * and auto-calc work right after a page refresh, before any
-     * labyrinth_updated message arrives
+     * Seed labyrinth state right after a page refresh, before any
+     * labyrinth_updated message arrives. Tries the init character data first,
+     * then falls back to reading the client's React state (the init payload
+     * does not always carry the room grid, but the client state does).
      */
     seedFromCharacterData() {
         if (this.roomData) return;
-        const labyrinth = dataManager.characterData?.characterLabyrinth;
-        if (!labyrinth || !Array.isArray(labyrinth.roomData) || !labyrinth.roomData.length) return;
-        this.roomData = labyrinth.roomData;
+
+        let labyrinth = dataManager.characterData?.characterLabyrinth;
+        let roomData = this.parseRoomData(labyrinth?.roomData);
+        if (!roomData) {
+            labyrinth = this.getLabyrinthFromReactState();
+            roomData = this.parseRoomData(labyrinth?.roomData);
+        }
+        if (!roomData) return;
+
+        this.roomData = roomData;
         this.currentFloor = Math.max(0, Math.floor(Number(labyrinth.currentFloor) || 0));
+    }
+
+    /**
+     * Normalize roomData that may arrive as an array or a JSON string
+     */
+    parseRoomData(raw) {
+        if (Array.isArray(raw) && raw.length) return raw;
+        if (typeof raw === 'string' && raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) && parsed.length ? parsed : null;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Read characterLabyrinth from the game's React component state
+     * (same approach as the reference script - the client always holds the
+     * current labyrinth grid even when no WS update has arrived yet)
+     */
+    getLabyrinthFromReactState() {
+        try {
+            const rootEl = document.getElementById('root');
+            const rootFiber =
+                rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+            if (!rootFiber) return null;
+
+            const queue = [rootFiber];
+            let steps = 0;
+            while (queue.length && steps < 20000) {
+                const fiber = queue.shift();
+                if (!fiber || typeof fiber !== 'object') continue;
+                steps++;
+
+                const state = fiber.stateNode?.state;
+                if (state && typeof state === 'object' && state.characterLabyrinth) {
+                    return state.characterLabyrinth;
+                }
+
+                if (fiber.child) queue.push(fiber.child);
+                if (fiber.sibling) queue.push(fiber.sibling);
+            }
+        } catch {
+            return null;
+        }
+        return null;
     }
 
     /**
