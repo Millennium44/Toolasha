@@ -1575,6 +1575,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows live clear chance during active labyrinth skilling/enhancing rooms',
             },
+            labyrinthRoomLogs: {
+                id: 'labyrinthRoomLogs',
+                label: 'Labyrinth: Room action logs',
+                type: 'checkbox',
+                default: true,
+                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms (Logs button in the labyrinth panel)',
+            },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
                 label: 'Show battle/wave counter in current action panel during combat',

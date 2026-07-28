@@ -4,9 +4,13 @@
 
 import { describe, test, expect, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true) } }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: vi.fn(() => true), Z_NOTIFICATION: 10500, Z_FLOATING_PANEL: 10100 },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(), register: vi.fn() } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { on: vi.fn(), off: vi.fn(), getSkills: vi.fn(() => []), characterData: null },
+}));
 vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildPlayerDTO: vi.fn(),
@@ -104,5 +108,56 @@ describe('computeLiveEstimate', () => {
         expect(estimate.currentLevel).toBe(2);
         expect(estimate.targetLevel).toBe(5);
         expect(estimate.totalAttempts).toBe(15);
+    });
+});
+
+describe('attachSkillingWhatIfs', () => {
+    const buildBase = () => ({
+        clearChance: 0.6,
+        expectedSeconds: 90,
+        xpPerRoom: 5000,
+    });
+    const metrics = { successBonus: 0, efficiencyBonus: 0.1, actionSpeedBonus: 0.05 };
+    const params = {
+        attempts: 12,
+        successChance: 0.8,
+        doubleChance: 0.05,
+        levelBonus: 0,
+        effectiveLevel: 110,
+        progressPerSuccess: 121,
+        targetProgress: 1000,
+        roomLevel: 100,
+    };
+
+    test('adds what-if clear chances and XP/hour', () => {
+        const result = buildBase();
+        labyrinthClearRate.attachSkillingWhatIfs(result, metrics, params);
+
+        expect(result.nextLevelClearChance).toBeGreaterThanOrEqual(0);
+        expect(result.nextLevelClearChance).toBeLessThanOrEqual(1);
+        expect(result.speedTierClearChance).toBeGreaterThanOrEqual(result.clearChance - 1e-9);
+        expect(result.speedDelta).toBeGreaterThanOrEqual(0);
+        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / 91, 6);
+    });
+
+    test('efficiency tier reflects one fewer required progress unit', () => {
+        const result = buildBase();
+        labyrinthClearRate.attachSkillingWhatIfs(result, metrics, params);
+
+        // 1000 target / 121 per success = 9 units needed; tier requires ceil(1000/8) = 125 per success
+        expect(result.efficiencyDelta).toBeGreaterThan(0);
+        expect(result.efficiencyTierClearChance).toBeGreaterThanOrEqual(0);
+        expect(result.efficiencyTierClearChance).toBeLessThanOrEqual(1);
+    });
+
+    test('marks efficiency as optimal when one success clears the room', () => {
+        const result = buildBase();
+        labyrinthClearRate.attachSkillingWhatIfs(result, metrics, {
+            ...params,
+            progressPerSuccess: 1000,
+            targetProgress: 1000,
+        });
+        expect(result.efficiencyDelta).toBeNull();
+        expect(result.efficiencyTierClearChance).toBeNull();
     });
 });

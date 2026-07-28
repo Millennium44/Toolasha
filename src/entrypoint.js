@@ -430,6 +430,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthRoomLogs',
+            name: 'Labyrinth Room Logs',
+            category: 'Combat',
+            module: Combat.labyrinthRoomLogs,
+            async: true,
+        },
+        {
             key: 'loadoutSnapshot',
             name: 'Loadout Snapshots',
             category: 'Combat',
