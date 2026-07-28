@@ -11,6 +11,7 @@ import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
 
@@ -232,6 +233,98 @@ class LootLogStats {
     }
 
     /**
+     * Calculate the market cost of inputs consumed by a logged action run.
+     * @param {string} actionHrid - Action HRID
+     * @param {number} actionCount - Number of completed actions
+     * @returns {Object|null} { askCost, bidCost, inputs: [{hrid, name, count, askTotal, bidTotal}] },
+     *   or null when the action's inputs cannot be resolved (unknown action, alchemy)
+     */
+    calculateInputCost(actionHrid, actionCount) {
+        if (!actionHrid || !actionCount) return null;
+
+        // Alchemy consumes item-specific inputs not present in actionDetailMap
+        if (actionHrid.startsWith('/actions/alchemy/')) return null;
+
+        const actionDetails = dataManager.getActionDetails(actionHrid);
+        if (!actionDetails) return null;
+
+        const consumed = (actionDetails.inputItems || []).map((input) => ({
+            hrid: input.itemHrid,
+            count: (input.count || 0) * actionCount,
+        }));
+        const upgradeHrid = actionDetails.upgradeItemHrid;
+        if (upgradeHrid && !consumed.some((c) => c.hrid === upgradeHrid)) {
+            consumed.push({ hrid: upgradeHrid, count: actionCount });
+        }
+
+        let askCost = 0;
+        let bidCost = 0;
+        const inputs = [];
+        for (const { hrid, count } of consumed) {
+            let askPerItem = 1;
+            let bidPerItem = 1;
+            let name = 'Coins';
+            if (hrid !== '/items/coin') {
+                const prices = getItemPrices(hrid, 0);
+                askPerItem = prices?.ask || 0;
+                bidPerItem = prices?.bid || 0;
+                name = dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop().replace(/_/g, ' ');
+            }
+            askCost += askPerItem * count;
+            bidCost += bidPerItem * count;
+            inputs.push({ hrid, name, count, askTotal: askPerItem * count, bidTotal: bidPerItem * count });
+        }
+
+        return { askCost, bidCost, inputs };
+    }
+
+    /**
+     * Calculate profit for a logged action run: drop revenue after market tax
+     * minus the cost of consumed inputs.
+     * @param {Object} logData - Log entry ({actionHrid, actionCount, drops})
+     * @returns {Object|null} { askProfit, bidProfit, inputs } or null when not computable
+     */
+    calculateProfit(logData) {
+        if (!logData?.drops) return null;
+
+        const inputCost = this.calculateInputCost(logData.actionHrid, logData.actionCount);
+        if (!inputCost) return null;
+
+        // Revenue after the 2% marketplace tax (coins are untaxed face value)
+        let askRevenue = 0;
+        let bidRevenue = 0;
+        for (const [hrid, count] of Object.entries(logData.drops)) {
+            const baseHrid = hrid.replace(/::\d+$/, '');
+            if (baseHrid === '/items/coin') {
+                askRevenue += count;
+                bidRevenue += count;
+                continue;
+            }
+            const { askTotal, bidTotal } = this.calculateTotalValue({ [hrid]: count });
+            askRevenue += askTotal * (1 - MARKET_TAX);
+            bidRevenue += bidTotal * (1 - MARKET_TAX);
+        }
+
+        return {
+            askProfit: askRevenue - inputCost.askCost,
+            bidProfit: bidRevenue - inputCost.bidCost,
+            inputs: inputCost.inputs,
+        };
+    }
+
+    /**
+     * Pick a display color for an ask/bid profit pair.
+     * @param {number} askProfit
+     * @param {number} bidProfit
+     * @returns {string} CSS color
+     */
+    getProfitColor(askProfit, bidProfit) {
+        if (bidProfit >= 0) return config.COLOR_PROFIT;
+        if (askProfit < 0) return config.COLOR_LOSS;
+        return config.COLOR_GOLD;
+    }
+
+    /**
      * Calculate average time per action
      * @param {string} startTime - ISO start time
      * @param {string} endTime - ISO end time
@@ -319,8 +412,17 @@ class LootLogStats {
         header.style.cursor = 'pointer';
         wrapper.appendChild(header);
 
+        // Profit line (revenue after tax minus consumed inputs)
+        const profit = this.calculateProfit(logData);
+        if (profit) {
+            const profitLine = document.createElement('div');
+            profitLine.style.cssText = `text-align: right; font-weight: bold; color: ${this.getProfitColor(profit.askProfit, profit.bidProfit)};`;
+            profitLine.textContent = `Profit: ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`;
+            wrapper.appendChild(profitLine);
+        }
+
         // Create details container (hidden by default)
-        const details = this.buildItemBreakdown(logData.drops);
+        const details = this.buildItemBreakdown(logData.drops, profit?.inputs);
         details.style.display = 'none';
         wrapper.appendChild(details);
 
@@ -339,9 +441,10 @@ class LootLogStats {
     /**
      * Build item breakdown table for the expandable details
      * @param {Object} drops - Drops object { [itemHrid]: count, ... }
+     * @param {Array<Object>} [inputs] - Consumed inputs [{hrid, name, count, askTotal, bidTotal}]
      * @returns {HTMLElement} Details container element
      */
-    buildItemBreakdown(drops) {
+    buildItemBreakdown(drops, inputs) {
         const container = document.createElement('div');
         container.style.cssText = `
             clear: both;
@@ -456,6 +559,65 @@ class LootLogStats {
             container.appendChild(row);
         }
 
+        // Consumed input rows (shown as negative costs)
+        if (inputs?.length) {
+            const divider = document.createElement('div');
+            divider.style.cssText = `
+                margin-top: 4px;
+                padding: 2px 0;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                color: #888;
+                font-size: 0.9em;
+            `;
+            divider.textContent = 'Inputs consumed';
+            container.appendChild(divider);
+
+            for (const input of inputs) {
+                const row = document.createElement('div');
+                row.style.cssText = `
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 2px 0;
+                    white-space: nowrap;
+                `;
+
+                const icon = this.createItemIcon(input.hrid, 16);
+                if (icon) row.appendChild(icon);
+
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = input.name;
+                nameSpan.style.cssText = `
+                    color: #fff;
+                    min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    flex-shrink: 1;
+                `;
+                row.appendChild(nameSpan);
+
+                const qtySpan = document.createElement('span');
+                qtySpan.textContent = `×${numberFormatter(input.count)}`;
+                qtySpan.style.cssText = 'color: #aaa; flex-shrink: 0;';
+                row.appendChild(qtySpan);
+
+                const spacer = document.createElement('span');
+                spacer.style.cssText = 'flex: 1;';
+                row.appendChild(spacer);
+
+                const costSpan = document.createElement('span');
+                costSpan.style.cssText = `color: ${config.COLOR_LOSS}; flex-shrink: 0; text-align: right;`;
+                if (input.askTotal > 0 || input.bidTotal > 0) {
+                    costSpan.textContent = `−${formatKMB(input.askTotal)}/−${formatKMB(input.bidTotal)}`;
+                } else {
+                    costSpan.textContent = '—';
+                }
+                row.appendChild(costSpan);
+
+                container.appendChild(row);
+            }
+        }
+
         return container;
     }
 
@@ -508,6 +670,8 @@ class LootLogStats {
         if (oldAvgTime) oldAvgTime.remove();
         const oldDayValue = thirdDiv.querySelector('.mwi-loot-log-day-value');
         if (oldDayValue) oldDayValue.remove();
+        const oldDayProfit = thirdDiv.querySelector('.mwi-loot-log-day-profit');
+        if (oldDayProfit) oldDayProfit.remove();
 
         if (!logData) return;
 
@@ -550,6 +714,22 @@ class LootLogStats {
         dayValueSpan.style.fontWeight = 'bold';
         dayValueSpan.style.marginLeft = '8px';
         thirdDiv.appendChild(dayValueSpan);
+
+        // Daily profit (after tax and input costs), extrapolated to 24h
+        // Appended after dayValueSpan so the float places it to its left
+        const profit = this.calculateProfit(logData);
+        if (profit && duration > 0) {
+            const dayProfitSpan = document.createElement('span');
+            dayProfitSpan.className = 'mwi-loot-log-day-profit';
+            const dayProfitAsk = (profit.askProfit * 86400) / duration;
+            const dayProfitBid = (profit.bidProfit * 86400) / duration;
+            dayProfitSpan.textContent = `Daily Profit: ${formatKMB(dayProfitAsk)}/${formatKMB(dayProfitBid)}`;
+            dayProfitSpan.style.float = 'right';
+            dayProfitSpan.style.color = this.getProfitColor(dayProfitAsk, dayProfitBid);
+            dayProfitSpan.style.fontWeight = 'bold';
+            dayProfitSpan.style.marginLeft = '8px';
+            thirdDiv.appendChild(dayProfitSpan);
+        }
     }
 
     /**
@@ -871,6 +1051,9 @@ class LootLogStats {
 
         const dayValueSpans = document.querySelectorAll('.mwi-loot-log-day-value');
         dayValueSpans.forEach((span) => span.remove());
+
+        const dayProfitSpans = document.querySelectorAll('.mwi-loot-log-day-profit');
+        dayProfitSpans.forEach((span) => span.remove());
 
         // Remove historical entries section
         const historySection = document.querySelectorAll('.mwi-loot-log-history');
