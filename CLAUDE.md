@@ -7,6 +7,7 @@ This file contains general workflow and behavioral guidelines for AI assistants 
 ### Git & Version Control
 
 - **Always rebase, never merge**: When pulling changes, always use `git pull --rebase`
+- **Keep the fork changelog current**: Every pushed change must be recorded in the "Fork Changelog" section at the top of `CHANGELOG.md`, in the same commit that makes the change. Add an entry under the current branch's Unreleased heading with the commit's subject and user-facing bullet points (what changed, why it matters). Do not touch the upstream changelog section below it.
 
 ### Code Changes
 

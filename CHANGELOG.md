@@ -1,5 +1,222 @@
 # Changelog
 
+## Fork Changelog (MHipp/Toolasha)
+
+All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
+
+## Unreleased — branch `claude/code-review-improvements-q6i4d5`
+
+### `4242286` — Philo calculator refined-cape pricing + transmute history profit
+
+- **Philo Gamba calculator**: rows are no longer dropped when an item has no +0 ask listing — cost falls back to the bid price, and refined items additionally scan enhancement levels +1 to +5 for a listed price, so refined skilling capes with philosopher's stone drops appear despite thin markets.
+- **Transmute history**: new sortable, color-coded Profit column (recorded output value − consumed inputs at current buy price − transmute coin fee) with a per-session breakdown tooltip; included in CSV export. Catalysts/teas are not tracked and are excluded.
+
+### `0a8cebe` — Profit in loot log stats
+
+- Loot log entries show a **Profit** line (drop revenue after 2% market tax minus consumed input costs, ask/bid) under Total Value and a **Daily Profit** extrapolation next to Daily Output.
+- The expandable breakdown lists consumed inputs as negative rows.
+- Gathering/combat entries (no inputs) show after-tax revenue; alchemy entries skip profit (inputs not resolvable from the action definition). Works for live and historical entries.
+
+### `7b268d0` — Capes exempt from the refined +10 minimum
+
+- The upgrade advisor no longer clamps refined **back-slot** acquisitions to +10 (capes are the one item type reasonably refined below +10).
+- Equipped refined capes below +10 use the back-slot enhancement breakpoints (+3/+5/+7…) instead of the refined table that starts at +10.
+
+### `096ea52` — Strongest-source buff stacking in the sim engine
+
+- Models the game's updated rule: the **strongest source** of a buff applies regardless of cast order; when it expires, the next strongest still-active source takes over (its own strength and remaining duration).
+- Same-strength reapplication refreshes in place; debuffs compare by magnitude; buff definitions are cloned on application so shared aura objects can't be cross-contaminated. Fury keeps its self-managed stacks. 8 new tests.
+
+### `7dd493e` — Deep-dive fixes across all subsystems (104 verified findings)
+
+Full audit of the codebase; every finding adversarially verified before fixing.
+
+**Core framework & settings**
+
+- `checkboxWithButton` settings (Simulate Scroll Effects) persist as booleans with a one-time migration — the panel showed the toggle off while the feature ran, and All Off/Restore could discard the saved state.
+- Scroll simulator resets and reloads on character switch (previously served character A's scroll sets to character B and could overwrite B's saves).
+- Feature registry always awaits initializers so async features without the `async` flag can't escape error handling or store a pending Promise as their teardown instance.
+- XP-percentage feature listened on the wrong settings key — live toggle now works.
+- Added `no-dupe-class-members` ESLint rule; it caught two shipped bugs: a duplicate `disable()` in quick-input-buttons that made teardown a no-op, and a duplicate `parsePrice()` in estimated-listing-age that lost K/M/B parsing.
+- Deleted unreachable `src/main.js` bootstrap, the dead enhancement worker file, and the doubly-unreachable `migrateDisplayMode()` (the only writer of `actionBar_compactWidth`).
+
+**Combat sim engine (accuracy)**
+
+- Curse/weaken/enrage debuffs now expire (`addBuff` was called without a timestamp → they lasted forever).
+- Party sims no longer compound shared buff objects across players (player 3 got ~3× the buff).
+- The Promote effect actually initializes and swaps the promoted monster into the fight.
+- Units that die to thorns/retaliation/parry stop auto-attacking.
+- EventQueue `clear*` methods no longer skip events displaced by heap sifts (+ regression test).
+- Labyrinth monster armor/resistances were scaled twice (defense-scaled then total-scaled) — high rooms sim correctly now.
+- `maxWaveReached` reported 0 for failed dungeon runs (probed wave `#0` which never exists).
+- Multi-worker result merge used nonexistent `hit` keys — attack breakdowns are complete.
+- Deleted write-only drop tables and the unreachable `isWeakened` accuracy branch.
+
+**Combat sim UI & upgrade advisor**
+
+- Ability level-up costs computed from your current level, not level 0 (`levelExperienceTable` was missing from the game-data payload) — ability upgrades rank correctly in gold-per-improvement.
+- Lab Sim simulates the self player, not party slot 0; deaths read for the simmed player.
+- Seek/Simulate elapsed timer can't leak; concurrent runs blocked.
+- Cross-slot upgrades (main+off ↔ two-hand) credit resale of all removed items.
+- Skilling upgrade analysis yields to the UI — Stop button and progress bar work.
+- History metrics cached per player tab (no more cross-player deltas).
+- Lab sim sort listeners no longer accumulate per Analyze run.
+- Multi-player import accepts exports whose slot 1 is empty.
+- Deleted unused `runAllLabyrinths`/`getLabyrinthCrates` exports; `.then()` → async/await.
+
+**Labyrinth & combat tracking**
+
+- Dungeon tracker: phantom 0ms "validated" runs no longer saved; stale in-progress runs (>10 min) not restored on page load; hibernation label now reaches the UI; deleted a dead query API that could never match.
+- Dungeon tracker UI: the 1 Hz tick no longer re-reads IndexedDB and rebuilds the run list/filter dropdown every second — heavy rebuilds are event-driven.
+- Labyrinth clear rate: what-if metrics include gathering/gourmet buffs (skillId was dropped); combat sim cache invalidates when loadout snapshots change.
+- Scroll simulator UI: scroll config saves to the loadout selected at click time, not injection time.
+- Milkonomy export of other players uses their achievements, not yours.
+- Combat summary rows render independently; zero durations can't produce Infinity/hour.
+
+**Calculations & action panels**
+
+- One-sided book/material markets no longer costed at half price (null-vs-`-1` sentinel bug) in ability book and house build costs.
+- Drink Concentration divides drink duration instead of multiplying (drinks-remaining estimates were up to ~69% high).
+- Scroll-simulation arming is exception-safe — early returns (e.g. untradable tailoring outputs) left phantom scroll buffs inflating action-time/tea/max-produceable/task-profit numbers app-wide.
+- Profit-panel input listeners no longer accumulate per refresh; same for tea-recommendation drag handlers, enhancing-panel inputs, missing-materials watchers.
+- Loot log stats refresh as ongoing logs grow (premature processed-guard removed); history entries update by `characterActionId`.
+- Pinned actions page tears down fully on nav-away; output-totals prunes detached panels; `.then()` chains converted.
+
+**Market features**
+
+- CSV import understands its own export's Status column (re-imports were column-shifted/corrupted).
+- Single re-syncing writer for `marketListingTimestamps` — deleted listings stop resurrecting.
+- History viewer `disable()` disconnects its observer and removes the injected tab; import failures clear the progress overlay; date filters use local midnight.
+- Listing price display: per-table observers pruned; sort reset can't inject stale detached rows.
+- Consumable tooltips re-process when MUI reuses a popper for a different item.
+- Expired-listing detection matches item identity and active status; dead diverged copy deleted.
+- Philo calculator: Escape listener lifecycle fixed; explicit +0 Drink Concentration preserved.
+- Marketplace shortcuts dropdown no longer leaks a document listener per open; removed a double percent sign in EV breakdowns; market price patches write debounced instead of per-WS-message.
+
+**Alchemy, enhancement, house, skilling**
+
+- History viewer row-deletes reload fresh sessions first (deleting a row could destroy sessions saved while the modal was open) — coinify, transmute, decompose.
+- Input Item columns sort correctly; date filters parse local midnight.
+- Alchemy panel per-panel observers/listeners torn down per panel, not only on disable; config popup backdrop removed on close.
+- Five body-wide MutationObservers bail out early unless a tablist actually changed.
+- Enhancement UI settings listeners actually unregister; dead session-resume path deleted; transmute tracker stops persisting empty sessions.
+- House cost display updates can't interleave/duplicate; house modal observer no longer accumulates per open.
+
+**Inventory, tasks, networth, guild**
+
+- Stuck `isRendering`/`isCalculating` guard flags can't wedge the UI (try/finally + wait-loop deadline + empty-reduce guards).
+- Custom tabs enhancement-swaps don't duplicate items.
+- Task materials badge tracks live progress; task profit `disable()` clears pending timers.
+- Networth parallel worker split respects bid pricing mode (no more UI freeze/ask substitution in bid mode).
+- Networth chart moving average measures actual time, not data points; guild XP outlier cutoff uses the true median.
+- Task reroll popup removes its backdrop; stack-price badges clear immediately when toggled off.
+
+**Chat, profile, settings UI, misc**
+
+- Crafting plan observers disconnect on disable (UI stopped resurrecting itself).
+- Alchemy item dimming only dims the real Alchemize selector, not catalyst/guild menus.
+- Queue monitor per-action countdowns consume elapsed time sequentially through the queue.
+- Alt+click navigation ignores stale closed-tooltip items.
+- Combat score export feedback colors render (quoted template literals fixed, 9×); same for ability book calculator error color.
+- Chat commands register one character-switch listener total; chat history extender evicts only off-screen handlers.
+- Settings: custom price override of 0 is preserved; character sheet equipment parses real `/item_locations/` hrids; XP tracker guards zero time deltas.
+
+**Shared utils**
+
+- One drink-concentration implementation (deleted diverged duplicate); deleted abandoned `calculateTaskTokenValue` stub and unused `setupAltClickNavigation`; enhancement bonus table deduplicated via shared `ENHANCEMENT_BONUSES`.
+
+### `bfb3eb0` — Labyrinth bar placement, duplicate Logs button, loadout tab sync
+
+- Removed the duplicate Logs button from the labyrinth tab bar (the calculate bar already has one).
+- Calculate bar docks correctly when the game's Upgrade button shares the Entries/Max Path row (marker detection reads own text nodes, not only leaf nodes).
+- Custom-tab loadout sync keeps items still referenced by another loadout bound to the same tab when a loadout replaces an item or changes enhancement level; no duplicate entries. New test suite.
+
+## Merged to main — PR [#1](https://github.com/MHipp/Toolasha/pull/1) (`05c7a9f`, 2026-07-28)
+
+### `1d6b014` — Combat trigger editor in the sim loadout editor
+
+- ⚡ button on every ability/food/drink row opens a trigger editor: add (up to 4), remove, or reset to game defaults; dependency/condition/comparator/value fields with condition lists filtered to what the dependency supports. Custom triggers highlighted with summary tooltips; trigger edits appear in sim labels.
+
+### `fcaaeb9` — Ability swap mode in Lab Sim upgrade analyzer
+
+- Lab Sim's upgrade Mode dropdown gains Ability Swaps (engine support already existed).
+
+### `6e6d222` — Keep ability triggers when simming ability level upgrades
+
+- Upgrade analysis preserves your configured combat triggers when leveling an equipped ability instead of resetting to defaults — fixes ability level upgrades wrongly simming as negative.
+
+### `b901f5c` — Retry labyrinth combat tile sims that run before data is ready
+
+- Initial auto-calc no longer shows 0% on combat tiles: failed/0% sims aren't cached and auto-retry up to 3 times while loadout snapshots load.
+
+### `276a785` — Skip-level room levels, bump-to-improvement, collapsed loadouts
+
+- Lab Sim skilling: "Use Skip Levels" calculates per-skill clear rates at each skill's automation skip level; upgrade candidates bump +1 level until an improvement shows; Skill Loadouts default collapsed.
+
+### `54419d1` — Read labyrinth grid from React state so calc bar shows on load
+
+- The calculate bar and auto-calc work immediately after refresh by reading `characterLabyrinth` from React fiber state instead of waiting for the first room completion.
+
+### `d4e3b6b` — Lab sim ability upgrades; calc bar and auto-calc on load
+
+- Ability Levels (and combined) modes in Lab Sim's upgrade analyzer; calc bar injected on labyrinth panel load; auto-calc recalculates whenever rooms are visible.
+
+### `60c4de9` — Calc bar top-left; clear badges on cleared rooms
+
+- Calculate bar docks in the Entries/Max Path row like the reference script; badges are pruned from cleared rooms (with a delayed re-sweep).
+
+### `a10368f` — Sim Hours instead of trials
+
+- Labyrinth tile controls use a Sim Hours input (1–100, default 3) wired to the `labyrinthRecommendSimHours` setting.
+
+### `dc9be56` — Price enhanced tier targets like enhancement candidates
+
+- Tier upgrades to enhanced items use the market ask at that level or base price + enhancement cost — no more 0-cost refined rows.
+
+### `2881cd1` — Restyle labyrinth tile controls and badges
+
+- Compact corner badges with 5-tier solid colors and plain-seconds ETA; dark control bar with blue Calculate button and green progress track, matching the reference script's look.
+
+### `7e56eec` — Refined upgrade costs, sortable results, auto tile calc
+
+- Refined items priced correctly in the advisor; upgrade results table sortable by every column; optional auto-calculation of newly revealed lab tiles (off by default).
+
+### `a29afc0` — Per-tile clear chance overlays
+
+- Calculate button computes and overlays clear chance + ETA badges on every uncleared labyrinth tile (skilling, enhancing, and combat via sim).
+
+### `8eb8e5f` — Labyrinth what-if previews, max floor, room logs
+
+- Rich hover previews on lab tiles: next-level/efficiency-tier/speed-tier/upgrade what-ifs and XP/hour; max-floor display; new Labyrinth Room Logs feature recording per-action outcomes with a draggable panel (ported from dakonglong's MIT-licensed Labyrinth Clear Rate Calculator, loan scroll excluded).
+
+### `078b0fe` — Keep labyrinth live clear chance visible between actions
+
+- Live display stale-timeout scales with action time (no more flicker); percent-scale chances normalized.
+
+### `420a08d` — Refined +10 clamp, combined upgrade view, compact-width guard
+
+- Refined recommendations clamp to +10 instead of being dropped; Combat Sim gains the Equipment + Abilities combined mode; guard against `actionBar_compactWidth` being enabled unexpectedly at load.
+
+### `2eec924` — Second round of runtime fixes from code review
+
+- Marketplace navigation fallbacks, tooltip and observer fixes, and other runtime corrections from the initial audit.
+
+### `a7d53ad` — Skip refined equipment recommendations below +10
+
+- First pass of the refined-equipment gating in the upgrade advisor (later refined to the +10 clamp).
+
+### `85d14ea` — Crash guards, wrong-result bugs, and teardown fixes
+
+- Broad fixes from the initial audit: crash guards on missing data, wrong-result calculation bugs, HTML escaping (XSS) in dungeon tracker history and combat score, blob URL lifetime in pop-out chat, initialization guards, and feature teardown.
+
+### `a703f0c` — Feature cleanup teardown and settings accessors
+
+- Feature registry wires `disable`/`cleanup` teardown with instance capture; `config.getSetting`/`setSetting` handle checkbox vs value settings correctly; `characterSettingsLoaded` flag; new config/settings-storage test suites.
+
+---
+
+## Upstream Changelog
+
 ## [2.84.0](https://github.com/Celasha/Toolasha/compare/v2.83.0...v2.84.0) (2026-07-27)
 
 ### Features
