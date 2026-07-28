@@ -356,7 +356,9 @@ class PhiloCalculator {
         if (!philoDrop) return null;
 
         const philoDropRate = philoDrop.dropRate;
-        const philoChance = successRate * philoDropRate;
+        // Per-action chance drives the math; the displayed Philo % matches the
+        // game's output panel (conditional on a successful transmute)
+        const philoChancePerAction = successRate * philoDropRate;
 
         // Get item cost (market ask price, falling back to bid on thin markets).
         // Refined capes are often listed only at low enhancement levels, so scan
@@ -398,6 +400,10 @@ class PhiloCalculator {
             let dropValue;
             if (drop.itemHrid === PHILO_HRID) {
                 dropValue = this.philoPrice;
+            } else if (drop.itemHrid === itemHrid) {
+                // Self-return: value at the same resolved cost used on the cost
+                // side, so untradable inputs (refined capes) credit the return
+                dropValue = itemCost;
             } else {
                 const dropPrice = marketAPI.getPrice(drop.itemHrid, 0);
                 dropValue = dropPrice?.bid;
@@ -412,14 +418,14 @@ class PhiloCalculator {
         const profitPerAction = evPerAction - totalCostPerAction;
 
         // Actions and items needed per philo
-        const actionsPerPhilo = 1 / philoChance;
+        const actionsPerPhilo = 1 / philoChancePerAction;
 
         // Net items consumed per action (input minus expected self-returns)
         const selfDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === itemHrid);
         const selfDropRate = selfDrop ? selfDrop.dropRate : 0;
         const avgSelfCount = selfDrop ? (selfDrop.minCount + selfDrop.maxCount) / 2 : 0;
-        const returnChance = successRate * selfDropRate;
-        const itemsPerAction = bulkMultiplier - returnChance * avgSelfCount;
+        const returnChancePerAction = successRate * selfDropRate;
+        const itemsPerAction = bulkMultiplier - returnChancePerAction * avgSelfCount;
 
         // Items needed per philo (net items consumed × actions needed)
         const itemsPerPhilo = actionsPerPhilo * itemsPerAction;
@@ -445,8 +451,9 @@ class PhiloCalculator {
             itemHrid,
             name: this.getItemName(itemHrid) + (costIsCraftEstimate ? ' ⚒' : ''),
             cost: itemCost,
-            philoChance,
-            returnChance,
+            // Displayed as the game shows them: conditional on a successful transmute
+            philoChance: philoDropRate,
+            returnChance: selfDropRate,
             transmuteChance: baseTransmuteRate,
             effectiveTransmuteChance: successRate,
             transmuteCost: totalCostPerAction,

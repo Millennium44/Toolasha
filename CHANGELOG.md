@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Philo calculator: game-matching drop percentages and self-return credit
+
+- **Philo % and Return % now match the game's output panel**: they show the drop chances conditional on a successful transmute (e.g. 10% / 90% for refined capes) instead of being pre-multiplied by the success rate. The per-action math behind Acts/Philo and profit is unchanged.
+- **Self-returns are credited in EV at the input's resolved cost** (replacement cost). Untradable inputs like refined capes previously contributed zero for the ~59%-per-action chance of returning your cape while the cost side charged a full cape every action, making cape profit wildly pessimistic. Tradable fodder self-returns are now valued at ask (replacement) instead of bid — cost and EV sides use the same price basis.
+
 ### Profit columns in coinify and decompose history
 
 - Both viewers gain the same sortable, color-coded **Profit** column as transmute history: coins earned / recorded output value, minus consumed inputs (priced at the current buy price for the session's enhancement level), catalysts consumed (both trackers record catalyst usage), and the alchemy coin fee. Breakdown tooltip per session; included in CSV exports.
