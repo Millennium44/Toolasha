@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth automation rows: stable layout and prefilled skip editing
+
+- **Badges get their own line.** The clear-rate text, Rec, and Best badges were injected inline next to the native "≥ N Edit" controls, so longer combinations made values wrap mid-number and rows jump to different heights — and in edit mode the −/+/input/Save buttons collided with the badges. All annotations now share one full-width line below the native controls in every row, so the value/buttons always have the whole first line to themselves.
+- **Edit prefills the current skip level.** Clicking a row's Edit button now fills the game's (natively empty) number input with the row's current threshold, so nudging a value doesn't mean retyping it. Prefill only happens when the input is empty, so it never overwrites anything you've typed.
+
 ### Labyrinth recommendations survive setting edits and room switches
 
 - Running Recommend and then touching any setting — including editing a skip threshold in the automation panel itself — no longer wipes every recommendation badge, and neither does the lab advancing rooms mid-run. The `setting_updated` / `loadouts_updated` / snapshot-update events fire constantly, and each unconditionally cleared minutes of recommendation work; invalidation is now fingerprint-based, clearing only when an input recommendations actually depend on changed: labyrinth loadout **assignments**, crate selections, or loadout **contents** (gear/enhancement levels).

@@ -7,6 +7,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import labyrinthTracker from './labyrinth-tracker.js';
+import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 
 class LabyrinthBestLevel {
     constructor() {
@@ -52,12 +53,14 @@ class LabyrinthBestLevel {
         this.updateHandler = () => this.refreshAll();
         labyrinthTracker.onUpdate(this.updateHandler);
 
-        // Widen the labyrinth automation section to accommodate badge text
+        // Widen the labyrinth automation section to accommodate badge text.
+        // Cells wrap so the shared annotation line renders below the native
+        // value/buttons (order applies within the annotation container).
         this.styleEl = document.createElement('style');
         this.styleEl.id = 'mwi-labyrinth-best-style';
         this.styleEl.textContent = `
             [class*="LabyrinthPanel_automationContent"] { max-width: 36rem !important; }
-            [class*="LabyrinthPanel_skipThreshold"] { display: flex; align-items: center; }
+            [class*="LabyrinthPanel_skipThreshold"] { display: flex; align-items: center; flex-wrap: wrap; }
             .mwi-labyrinth-best { order: 99; }
         `;
         document.head.appendChild(this.styleEl);
@@ -89,6 +92,7 @@ class LabyrinthBestLevel {
         this.unregisterHandlers = [];
 
         document.querySelectorAll('.mwi-labyrinth-best').forEach((el) => el.remove());
+        pruneEmptyAnnotationContainers();
 
         if (this.styleEl) {
             this.styleEl.remove();
@@ -224,13 +228,13 @@ class LabyrinthBestLevel {
         const badge = document.createElement('span');
         badge.className = 'mwi-labyrinth-best';
         badge.textContent = text;
-        badge.style.cssText = 'font-size:0.75rem;opacity:0.75;margin-left:6px;';
+        badge.style.cssText = 'font-size:0.75rem;opacity:0.75;white-space:nowrap;';
         if (tooltip) {
             badge.title = tooltip;
             badge.style.cursor = 'help';
         }
 
-        cell.appendChild(badge);
+        getAnnotationContainer(cell).appendChild(badge);
     }
 
     /**
