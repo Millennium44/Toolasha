@@ -133,7 +133,7 @@ class LabyrinthClearRate {
         this.clearLiveProgress();
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
-        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
         document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
         if (this.autoTileTimer) {
             clearTimeout(this.autoTileTimer);
@@ -170,7 +170,7 @@ class LabyrinthClearRate {
             this.roomData = roomData;
             this.injectOverlays();
             if (previousFloor !== this.currentFloor) {
-                document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+                document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
             }
             this.injectTileControls();
@@ -1408,10 +1408,11 @@ class LabyrinthClearRate {
         }
 
         const chancePct = (estimate.clearChance * 100).toFixed(1);
+        const attemptText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
         if (estimate.isEnhancing) {
-            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left]`;
+            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${attemptText}]`;
         } else {
-            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left]`;
+            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${attemptText}]`;
         }
 
         const tooltipLines = [
@@ -1566,7 +1567,8 @@ class LabyrinthClearRate {
 
         for (let i = 0; i < flatRooms.length; i++) {
             if (!flatRooms[i]?.isCleared) continue;
-            cells[i]?.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
+            const pruneBadge = cells[i]?.querySelector(`.${TILE_BADGE_CLASS}`);
+            if (pruneBadge) this.removeTileBadge(pruneBadge);
         }
     }
 
@@ -1744,7 +1746,7 @@ class LabyrinthClearRate {
         if (!auto) {
             this.calculatedTileKeys.clear();
             this.autoTileRetryCount = 0;
-            document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
         }
 
         // Gather targets first so the progress bar has a stable total
@@ -1844,6 +1846,17 @@ class LabyrinthClearRate {
     /**
      * Overlay a clear-chance badge in the corner of a run grid tile
      */
+    /**
+     * Remove a tile badge and drop its cell's preview binding so cleared or
+     * reset tiles stop showing hover tooltips
+     * @param {HTMLElement} badge - Badge element inside a tile cell
+     */
+    removeTileBadge(badge) {
+        const cell = badge.parentElement;
+        if (cell) cell.__mwiPreviewResult = null;
+        badge.remove();
+    }
+
     appendTileBadge(cell, result, roomLevel) {
         cell.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
 
@@ -1869,11 +1882,8 @@ class LabyrinthClearRate {
         badge.appendChild(chanceSpan);
         badge.appendChild(etaSpan);
 
-        if (result.type === 'skilling' || result.type === 'enhancing') {
-            this.bindPreview(badge, result);
-        } else {
-            badge.title = this.formatTooltip(result, roomLevel);
-        }
+        // Rich preview for every tile type, triggered from anywhere in the tile
+        this.bindPreview(cell, result);
 
         const cellStyle = window.getComputedStyle(cell);
         if (cellStyle.position === 'static') {
@@ -2125,9 +2135,13 @@ class LabyrinthClearRate {
         const pct = (v) => `${(Math.min(1, Math.max(0, v)) * 100).toFixed(1)}%`;
         const deltaPct = (v) => `+${(Math.max(0, v) * 100).toFixed(2)}%`;
 
+        const titleText =
+            result.type === 'combat'
+                ? `${result.monsterName} · Lv.${result.roomLevel}`
+                : `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room · Lv.${result.roomLevel}`;
         const title = document.createElement('div');
         title.style.cssText = 'margin-bottom:4px; font-weight:700; color:#9ec4ff;';
-        title.textContent = `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room · Lv.${result.roomLevel}`;
+        title.textContent = titleText;
         el.appendChild(title);
 
         const addRow = (label, value) => {
@@ -2143,6 +2157,16 @@ class LabyrinthClearRate {
             row.appendChild(valueEl);
             el.appendChild(row);
         };
+
+        if (result.type === 'combat') {
+            addRow('Win Rate', pct(result.winRate));
+            addRow('Avg Fight', `${Math.round(result.avgFightSeconds)}s`);
+            if (result.loadoutName) {
+                addRow('Loadout', `"${result.loadoutName}"`);
+            }
+            this.appendExpectedRows(addRow);
+            return;
+        }
 
         if (result.type === 'enhancing') {
             addRow('Target Enhancement', `+${result.targetLevel}`);
@@ -2183,6 +2207,14 @@ class LabyrinthClearRate {
             addRow('Next Double Upgrade', pct(result.nextDoubleUpgradeClearChance));
         }
 
+        this.appendExpectedRows(addRow);
+    }
+
+    /**
+     * Append the expected token/box reward rows for the current floor
+     * @param {Function} addRow - Row builder from renderPreviewContent
+     */
+    appendExpectedRows(addRow) {
         const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
         if (floor >= 1) {
             addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);

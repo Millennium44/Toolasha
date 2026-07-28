@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth tiles: attempt counter and whole-tile hover previews
+
+- The live header display appends the current attempt number: `[Clear 78.7% | 8 left | #12]`.
+- Tile hover previews trigger from anywhere in the tile, not just the small corner badge, and combat tiles now use the rich preview panel (win rate, avg fight, loadout, expected token/box) instead of a plain browser tooltip. Cleared or reset tiles drop their tooltip bindings.
+
 ### Philo calculator: realistic acquisition costs
 
 - **Bids are never used as acquisition cost anymore** — a bid is a buyer's offer, not a price you can buy at, and lowball bids (e.g. a 27M bid on a ~950M-to-craft refined crossbow) made rows absurdly profitable. Costs now use ask prices only.
