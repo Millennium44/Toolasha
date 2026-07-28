@@ -212,6 +212,34 @@ describe('generateCandidates combat_level mode', () => {
         ]);
     });
 
+    test('magic weapons exclude the melee and ranged skills', () => {
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_staff'] = {
+            name: 'Fine Staff',
+            itemLevel: 50,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { magicDamage: 12 } },
+        };
+        const player = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/fine_staff', enhancementLevel: 0 } },
+            staminaLevel: 90,
+            intelligenceLevel: 90,
+            attackLevel: 90,
+            meleeLevel: 90,
+            defenseLevel: 90,
+            rangedLevel: 90,
+            magicLevel: 90,
+        };
+        const candidates = generateCandidates(player, gameData, 'combat_level', 5);
+
+        // Attack, Melee, and Ranged are all excluded for magic weapons
+        expect(candidates.map((c) => c.skillKey)).toEqual([
+            'staminaLevel',
+            'intelligenceLevel',
+            'defenseLevel',
+            'magicLevel',
+        ]);
+    });
+
     test('defaults the boost to 5 and combat level costs are null', () => {
         const player = { equipment: {}, staminaLevel: 50 };
         const candidates = generateCandidates(player, buildGameData(), 'combat_level', 0);
@@ -282,7 +310,7 @@ describe('findMatchingCharmForSkill', () => {
 });
 
 describe('getMainTrainingSkills', () => {
-    test('unions the weapon primary training skill with its style XP skills', () => {
+    test('unions the weapon primary training skill with its style offense skills', () => {
         const gameData = {
             itemDetailMap: {
                 '/items/spear': {
@@ -293,7 +321,17 @@ describe('getMainTrainingSkills', () => {
                 },
             },
             combatStyleDetailMap: {
-                '/combat_styles/stab': { skillExpMap: { '/skills/attack': 0.5, '/skills/melee': 0.5 } },
+                '/combat_styles/stab': {
+                    // Real skillExpMaps include stamina/intelligence/defense too —
+                    // only the offensive skills count as "main"
+                    skillExpMap: {
+                        '/skills/attack': 0.2,
+                        '/skills/melee': 0.2,
+                        '/skills/stamina': 0.2,
+                        '/skills/intelligence': 0.2,
+                        '/skills/defense': 0.2,
+                    },
+                },
             },
         };
         const player = { equipment: { [MAIN_HAND]: { hrid: '/items/spear', enhancementLevel: 0 } } };

@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Combat Levels tab polish: no more squished controls, cleaner Main Time
+
+- **Top controls no longer get cut off**: the Player, Mode, and Charm dropdowns previously inherited a flex style that let them shrink into slivers when the row got crowded; they now size to their content and the row wraps instead.
+- **Main Time only tracks the weapon's offense skills** (attack/melee/ranged/magic from its style's XP map — e.g. Attack + Melee for a spear). Stamina/Intelligence/Defense appear in every style's XP split and were cluttering the column with "—" entries.
+- Results table cells and headers no longer wrap mid-value ("Level Time", "+7.2K (+2.83%)" stay on one line); the Main Time column absorbs the remaining width.
+- **The Targets grid hides style-irrelevant skills** (same filtering as the candidate rows), so a melee player no longer sees Ranged/Magic target inputs.
+
 ### Task protection highlight leaves the card's top edge clear
 
 - The protected-task green highlight (and the orange reroll-cap highlight) now draws on the sides and bottom of the task card only, leaving the top edge unchanged so it no longer frames the card's header area. Drawn with inset edge shadows, so card layout is unaffected.

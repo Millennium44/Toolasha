@@ -22,7 +22,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
-import { runUpgradeAnalysis } from './upgrade-advisor.js';
+import { runUpgradeAnalysis, getStyleExcludedSkills } from './upgrade-advisor.js';
 import { SimEditor } from './sim-editor.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
@@ -412,11 +412,15 @@ class CombatSimUI {
             border-bottom: 1px solid #222;
             flex-shrink: 0;
         `;
+        // Upgrade-row selects size to their content instead of inheriting the
+        // Configure row's flex:1/min-width:0, which let them shrink to slivers
+        const upgradeSelectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
-            <select id="mwi-csim-upgrade-player" style="${selectStyle}"></select>
+            <select id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Mode</label>
-            <select id="mwi-csim-upgrade-mode" style="${selectStyle}">
+            <select id="mwi-csim-upgrade-mode" style="${upgradeSelectStyle}">
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
@@ -437,7 +441,7 @@ class CombatSimUI {
             </span>
             <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Charm</label>
-                <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${selectStyle}"></select>
+                <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${upgradeSelectStyle}"></select>
                 <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
                     background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
                     padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
@@ -3162,7 +3166,18 @@ class CombatSimUI {
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const boost = parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 5;
 
+        // Hide skills the weapon style can't train (matches candidate filtering)
+        const gameData = buildGameDataPayload();
+        const excluded = dto && gameData ? getStyleExcludedSkills(dto, gameData) : new Set();
+
         this.panel.querySelectorAll('[data-combat-target]').forEach((input) => {
+            const isExcluded = excluded.has(input.dataset.combatTarget);
+            const wrapper = input.closest('span');
+            if (wrapper) wrapper.style.display = isExcluded ? 'none' : 'inline-flex';
+            if (isExcluded) {
+                input.value = '';
+                return;
+            }
             const current = Math.max(1, Math.floor(dto?.[input.dataset.combatTarget] || 1));
             input.value = Math.min(200, current + boost);
         });
@@ -3382,8 +3397,10 @@ class CombatSimUI {
 
         const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
         const thStyle =
-            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none;';
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+        // Value cells stay on one line; wide free-text cells (Main Time) may wrap
+        const nowrapTd = `${tdStyle} white-space:nowrap;`;
 
         const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
         const showMainTimes = isCombatLevelMode && this._showMainSkillTimes;
@@ -3484,12 +3501,12 @@ class CombatSimUI {
                 }
 
                 html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                    <td style="${tdStyle}">${r.candidate.description}</td>
-                    <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                    <td style="${nowrapTd}">${r.candidate.description}</td>
+                    <td style="${nowrapTd}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                     ${mainTimeCell}
-                    <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
-                    <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
-                    <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
+                    <td style="${nowrapTd} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
+                    <td style="${nowrapTd} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
+                    <td style="${nowrapTd} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
                 </tr>`;
             } else {
                 const costStr = r.cost == null ? '?' : formatKMB(r.cost);
