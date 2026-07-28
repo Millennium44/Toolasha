@@ -1030,16 +1030,25 @@ export function calculateUpgradeCost(candidate, gameData) {
  * @returns {number|null} Buy price in gold, or null when unknown
  */
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
-    const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel }).price;
-    if (direct > 0) {
-        return direct;
+    if (enhancementLevel > 0) {
+        // Same method as enhancement candidates: use the market only when the
+        // target level has an actual listing. resolveItemPrice cannot be used
+        // here — its production-cost fallback ignores the enhancement level and
+        // would price a +10 item as a +0 craft.
+        const market = getItemPrices(itemHrid, enhancementLevel);
+        if (market?.ask > 0) {
+            return market.ask;
+        }
+
+        // No listing at the target level: base item price + enhancement cost
+        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot });
+        const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
+        return total > 0 ? total : null;
     }
 
-    const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
-    const enhanceCost =
-        enhancementLevel > 0 ? calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot }) : 0;
-    const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
-    return total > 0 ? total : null;
+    const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+    return direct > 0 ? direct : null;
 }
 
 /**
