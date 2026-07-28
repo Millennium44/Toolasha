@@ -10,6 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import labyrinthRoomLogs from './labyrinth-room-logs.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -37,7 +38,6 @@ class LabyrinthClearRate {
         this.simRunning = false;
         this.recommendations = new Map();
         this.recommendRunning = false;
-        this._recommendSimHours = 1;
         this._recommendTargetPct = 70;
         this.liveProgressHandler = null;
         this.liveProgressTimeout = null;
@@ -972,7 +972,15 @@ class LabyrinthClearRate {
     buildCombatCacheKey(monsterHrid, roomLevel) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${crateHrids.join(',')}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getCombatTrials()}:${crateHrids.join(',')}`;
+    }
+
+    /**
+     * Combat sim trials for labyrinth calculations (1 trial = one 120s room)
+     */
+    getCombatTrials() {
+        const raw = Number(config.getSettingValue('labyrinthCombatTrials', 100));
+        return Math.min(2000, Math.max(1, Math.floor(raw) || 100));
     }
 
     getCachedCombatResult(monsterHrid, roomLevel) {
@@ -1002,7 +1010,7 @@ class LabyrinthClearRate {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                hours: this._recommendSimHours || 1,
+                hours: this.getCombatTrials() / 30,
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -1126,10 +1134,6 @@ class LabyrinthClearRate {
             targetPct > 0 && targetPct <= 100 ? targetPct : config.getSetting('labyrinthRecommendTargetRate') || 70;
         const targetRate = this._recommendTargetPct / 100;
 
-        const hoursInput = document.getElementById('mwi-recommend-sim-hours');
-        const hoursVal = hoursInput ? parseInt(hoursInput.value, 10) : null;
-        this._recommendSimHours =
-            hoursVal > 0 && hoursVal <= 100 ? hoursVal : config.getSetting('labyrinthRecommendSimHours') || 1;
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
         const rooms = [];
 
@@ -1205,13 +1209,10 @@ class LabyrinthClearRate {
      */
     injectRecommendControls() {
         const defaultRate = config.getSettingValue('labyrinthRecommendTargetRate', 70);
-        const defaultHours = config.getSettingValue('labyrinthRecommendSimHours', 1);
 
         if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) {
             const rateInput = document.getElementById('mwi-recommend-target-rate');
-            const hoursInput = document.getElementById('mwi-recommend-sim-hours');
             if (rateInput && !rateInput.dataset.userEdited) rateInput.value = defaultRate;
-            if (hoursInput && !hoursInput.dataset.userEdited) hoursInput.value = defaultHours;
             return;
         }
 
@@ -1243,22 +1244,6 @@ class LabyrinthClearRate {
             rateInput.dataset.userEdited = '1';
         });
 
-        const hoursLabel = document.createElement('span');
-        hoursLabel.style.cssText = labelStyle;
-        hoursLabel.textContent = 'Sim Hours';
-
-        const hoursInput = document.createElement('input');
-        hoursInput.type = 'number';
-        hoursInput.id = 'mwi-recommend-sim-hours';
-        hoursInput.min = '1';
-        hoursInput.max = '100';
-        hoursInput.step = '1';
-        hoursInput.value = defaultHours;
-        hoursInput.style.cssText = inputStyle;
-        hoursInput.addEventListener('input', () => {
-            hoursInput.dataset.userEdited = '1';
-        });
-
         const button = document.createElement('button');
         button.textContent = 'Recommend';
         button.style.cssText =
@@ -1267,8 +1252,6 @@ class LabyrinthClearRate {
 
         container.appendChild(rateLabel);
         container.appendChild(rateInput);
-        container.appendChild(hoursLabel);
-        container.appendChild(hoursInput);
         container.appendChild(button);
         table.parentNode.insertBefore(container, table);
     }
@@ -1473,26 +1456,87 @@ class LabyrinthClearRate {
 
         const container = document.createElement('div');
         container.className = TILE_CONTROLS_CLASS;
-        container.style.cssText = 'display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;';
+        container.style.cssText =
+            'display:flex; flex-wrap:wrap; align-items:center; column-gap:6px; row-gap:3px; ' +
+            'width:fit-content; max-width:100%; box-sizing:border-box; padding:4px 7px; margin:0 0 6px 0; ' +
+            'border-radius:6px; background:rgba(0,0,0,0.62); color:#f0f4ff; box-shadow:0 2px 8px rgba(0,0,0,0.28); user-select:none;';
 
         const button = document.createElement('button');
-        button.textContent = 'Calc Tiles';
+        button.className = `${TILE_CONTROLS_CLASS}-button`;
+        button.textContent = 'Calculate Labyrinth';
         button.style.cssText =
-            'padding:2px 10px; cursor:pointer; font-size:0.75rem; border-radius:4px; border:1px solid #555; background:#333; color:#ccc;';
+            'min-width:96px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         button.addEventListener('click', () => this.runTileCalculation());
+        container.appendChild(button);
+
+        const trialsLabel = document.createElement('span');
+        trialsLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        trialsLabel.textContent = 'Combat Trials';
+        container.appendChild(trialsLabel);
+
+        const trialsInput = document.createElement('input');
+        trialsInput.type = 'number';
+        trialsInput.min = '1';
+        trialsInput.max = '2000';
+        trialsInput.step = '1';
+        trialsInput.value = String(this.getCombatTrials());
+        trialsInput.style.cssText =
+            'width:52px; height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
+            'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; text-align:center; outline:none;';
+        trialsInput.addEventListener('change', () => {
+            const n = Math.min(2000, Math.max(1, Math.floor(Number(trialsInput.value) || 100)));
+            trialsInput.value = String(n);
+            config.setSettingValue('labyrinthCombatTrials', n);
+            this.combatCache.clear();
+        });
+        container.appendChild(trialsInput);
+
+        if (config.getSetting('labyrinthRoomLogs')) {
+            const logsButton = document.createElement('button');
+            logsButton.textContent = 'Logs';
+            logsButton.style.cssText =
+                'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(77,151,255,0.95); ' +
+                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+            logsButton.addEventListener('click', () => labyrinthRoomLogs.togglePanel());
+            container.appendChild(logsButton);
+        }
 
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'font-size:0.75rem; color:#888;';
-
-        container.appendChild(button);
+        status.style.cssText = 'font-size:10px; color:#9ab0d8;';
         container.appendChild(status);
+
+        const track = document.createElement('div');
+        track.style.cssText =
+            'flex:1 1 100%; width:100%; height:5px; border-radius:999px; background:rgba(255,255,255,0.2); overflow:hidden;';
+        const bar = document.createElement('div');
+        bar.className = `${TILE_CONTROLS_CLASS}-bar`;
+        bar.style.cssText =
+            'width:0%; height:100%; background:linear-gradient(90deg, #57d08a 0%, #8ed447 100%); transition:width 0.08s linear;';
+        track.appendChild(bar);
+        container.appendChild(track);
+
         gridParent.parentElement.insertBefore(container, gridParent);
     }
 
     setTileStatus(message) {
         const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
         if (status) status.textContent = message || '';
+    }
+
+    setTileProgress(ratio) {
+        const bar = document.querySelector(`.${TILE_CONTROLS_CLASS}-bar`);
+        if (bar) bar.style.width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
+    }
+
+    setTileButtonRunning(running) {
+        const btn = document.querySelector(`.${TILE_CONTROLS_CLASS}-button`);
+        if (btn) {
+            btn.disabled = running;
+            btn.textContent = running ? 'Calculating...' : 'Calculate Labyrinth';
+            btn.style.opacity = running ? '0.75' : '1';
+        }
     }
 
     /**
@@ -1524,62 +1568,70 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
         }
 
+        // Gather targets first so the progress bar has a stable total
+        const skillingTargets = [];
+        const combatTargets = [];
+        for (let i = 0; i < flatRooms.length; i++) {
+            const room = flatRooms[i];
+            const cell = cells[i];
+            if (!room || !cell || room.isCleared) continue;
+
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            if (roomLevel <= 0) continue;
+
+            const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            if (auto && this.calculatedTileKeys.has(tileKey)) continue;
+
+            if (room.skillHrid) {
+                skillingTargets.push({ room, cell, roomLevel, tileKey });
+            } else if (room.monsterHrid) {
+                combatTargets.push({ room, cell, roomLevel, tileKey });
+            }
+        }
+
+        const total = skillingTargets.length + combatTargets.length;
+        if (!total) {
+            if (!auto) this.setTileStatus('No calculable tiles');
+            return;
+        }
+
         this.tileCalcRunning = true;
-        if (!auto) this.setTileStatus('Calculating...');
+        this.setTileButtonRunning(true);
+        this.setTileStatus('');
+        this.setTileProgress(0);
+        let completed = 0;
 
         try {
-            const combatIndexes = [];
-            let computedAny = false;
-            for (let i = 0; i < flatRooms.length; i++) {
-                const room = flatRooms[i];
-                const cell = cells[i];
-                if (!room || !cell || room.isCleared) continue;
-
-                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
-                if (roomLevel <= 0) continue;
-
-                const tileKey = `${i % cols},${Math.floor(i / cols)}`;
-                if (auto && this.calculatedTileKeys.has(tileKey)) continue;
-
-                if (room.skillHrid) {
-                    const result =
-                        room.skillHrid === '/skills/enhancing'
-                            ? this.computeEnhancingClear(roomLevel)
-                            : this.computeSkillingClear(room.skillHrid, roomLevel);
-                    if (result) {
-                        this.appendTileBadge(cell, result, roomLevel);
-                        this.calculatedTileKeys.add(tileKey);
-                        computedAny = true;
-                    }
-                } else if (room.monsterHrid) {
-                    combatIndexes.push(i);
+            for (const target of skillingTargets) {
+                const result =
+                    target.room.skillHrid === '/skills/enhancing'
+                        ? this.computeEnhancingClear(target.roomLevel)
+                        : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
+                if (result) {
+                    this.appendTileBadge(target.cell, result, target.roomLevel);
+                    this.calculatedTileKeys.add(target.tileKey);
                 }
+                completed++;
+                this.setTileProgress(completed / total);
             }
 
-            for (let done = 0; done < combatIndexes.length; done++) {
-                const i = combatIndexes[done];
-                const room = flatRooms[i];
-                const cell = cells[i];
-                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
-                const tileKey = `${i % cols},${Math.floor(i / cols)}`;
-                this.setTileStatus(`Combat ${done + 1}/${combatIndexes.length}`);
-
-                const result = await this.computeCombatClear(room.monsterHrid, roomLevel);
-                if (result && cell.isConnected) {
-                    this.appendTileBadge(cell, result, roomLevel);
-                    this.calculatedTileKeys.add(tileKey);
-                    computedAny = true;
+            for (const target of combatTargets) {
+                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
+                if (result && target.cell.isConnected) {
+                    this.appendTileBadge(target.cell, result, target.roomLevel);
+                    this.calculatedTileKeys.add(target.tileKey);
                 }
+                completed++;
+                this.setTileProgress(completed / total);
             }
 
-            if (!auto || computedAny) {
-                this.setTileStatus('Done');
-            }
+            this.setTileProgress(1);
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
             this.setTileStatus('Failed');
         } finally {
             this.tileCalcRunning = false;
+            this.setTileButtonRunning(false);
         }
     }
 
@@ -1589,19 +1641,27 @@ class LabyrinthClearRate {
     appendTileBadge(cell, result, roomLevel) {
         cell.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
 
+        const chance = Math.min(1, Math.max(0, result.clearChance ?? 0));
+        const pct = Math.round(chance * 100);
+
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
-        const chance = result.clearChance ?? result.winRate ?? 0;
         badge.style.cssText =
-            'position:absolute; right:1px; bottom:1px; z-index:9; padding:1px 3px; border-radius:3px; ' +
-            'font-size:9px; font-weight:700; line-height:1.1; white-space:nowrap; color:#fff; ' +
-            'text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
-            `background:${this.getTileBadgeBackground(chance)};`;
+            'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
+            'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; gap:2px; ' +
+            'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            `background:${this.getTileBadgeColor(chance)};`;
 
-        const pct = Math.round(Math.min(1, Math.max(0, chance)) * 100);
-        const expected = result.expectedSeconds ?? result.avgFightSeconds;
-        const timeText = Number.isFinite(expected) ? this.formatTime(expected) : '999+';
-        badge.textContent = `${pct}% ${timeText}`;
+        const chanceSpan = document.createElement('span');
+        chanceSpan.style.cssText = 'font-size:9px; font-weight:700; line-height:1;';
+        chanceSpan.textContent = `${pct}%`;
+
+        const etaSpan = document.createElement('span');
+        etaSpan.style.cssText = 'font-size:8px; font-weight:600; line-height:1; opacity:0.95;';
+        etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
+
+        badge.appendChild(chanceSpan);
+        badge.appendChild(etaSpan);
 
         if (result.type === 'skilling' || result.type === 'enhancing') {
             this.bindPreview(badge, result);
@@ -1616,10 +1676,18 @@ class LabyrinthClearRate {
         cell.appendChild(badge);
     }
 
-    getTileBadgeBackground(clearChance) {
-        if (clearChance >= 0.95) return 'rgba(0, 150, 90, 0.85)';
-        if (clearChance >= 0.7) return 'rgba(180, 125, 30, 0.85)';
-        return 'rgba(170, 50, 50, 0.85)';
+    getTileBadgeColor(clearChance) {
+        if (clearChance >= 0.95) return '#1fbf60';
+        if (clearChance >= 0.8) return '#77b82a';
+        if (clearChance >= 0.6) return '#d2ac19';
+        if (clearChance >= 0.4) return '#d27a1f';
+        return '#d84b4b';
+    }
+
+    formatEtaSeconds(expectedSeconds, pct) {
+        if (pct === 0 || !Number.isFinite(expectedSeconds)) return '999+';
+        const seconds = Math.max(0, Math.ceil(expectedSeconds));
+        return seconds > 999 ? '999+' : `${seconds}s`;
     }
 
     findRoomByMonsterHrid(monsterHrid) {

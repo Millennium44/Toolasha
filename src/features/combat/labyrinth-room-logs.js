@@ -527,4 +527,5 @@ export default {
     name: 'Labyrinth Room Logs',
     initialize: () => labyrinthRoomLogs.initialize(),
     disable: () => labyrinthRoomLogs.disable(),
+    togglePanel: () => labyrinthRoomLogs.togglePanel(),
 };
