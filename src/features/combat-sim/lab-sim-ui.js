@@ -18,6 +18,7 @@ import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js
 import { findMaxLabyrinthLevel } from './labyrinth-level-finder.js';
 import {
     runLabyrinthUpgradeAnalysis,
+    runLabyrinthAllFightsAnalysis,
     computeSkillingClearRatesFromEditor,
     runSkillingUpgradeAnalysis,
 } from './upgrade-advisor.js';
@@ -311,6 +312,7 @@ class LabSimUI {
                 <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
                 <option value="combat_level">Combat Levels</option>
+                <option value="combat_level_all">Combat Levels — All Fights</option>
             </select>
             <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-labsim-upgrade-level-type" style="${selectStyle}">
@@ -581,10 +583,10 @@ class LabSimUI {
             const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
             const levelInput = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
             const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-            const isCombatLevelMode = e.target.value === 'combat_level';
+            const isCombatLevelMode = e.target.value === 'combat_level' || e.target.value === 'combat_level_all';
             levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
-            // Combat Levels mode reuses the number input as the charm size (+N
-            // levels per skill); the increment/target selector doesn't apply
+            // Combat Levels modes reuse the number input as the +N levels per
+            // skill; the increment/target selector doesn't apply
             if (levelType) levelType.style.display = isCombatLevelMode ? 'none' : '';
             if (levelInput && isCombatLevelMode) levelInput.value = 5;
         });
@@ -1017,8 +1019,9 @@ class LabSimUI {
             10000,
             Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-hours')?.value) || 10)
         );
+        const isAllFights = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value === 'combat_level_all';
 
-        if (!monsterHrid) {
+        if (!monsterHrid && !isAllFights) {
             this._setStatus('Select a monster in the Configure tab first.');
             return;
         }
@@ -1065,6 +1068,48 @@ class LabSimUI {
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
         );
 
+        if (isAllFights) {
+            try {
+                const fights = this._collectLabyrinthFights();
+                if (!fights.length) {
+                    this._setStatus(
+                        'No labyrinth fights found — set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
+                    );
+                    return;
+                }
+                const analysisResult = await runLabyrinthAllFightsAnalysis(
+                    {
+                        fights,
+                        crates,
+                        hours,
+                        communityBuffs,
+                        labyrinthCombatBuffs,
+                        abilityTargetLevel,
+                    },
+                    ({ current, total, description }) => {
+                        if (this._upgradeAborted) return;
+                        const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
+                        const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                        if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                        if (text) text.textContent = `${current} / ${total}: ${description}`;
+                    },
+                    { abortSignal: () => this._upgradeAborted }
+                );
+
+                this._renderAllFightsResults(analysisResult, resultsEl);
+            } catch (error) {
+                if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+                    console.error('[LabSimUI] All-fights analysis failed:', error);
+                    this._setStatus('All-fights analysis failed: ' + error.message);
+                }
+            } finally {
+                progressEl.style.display = 'none';
+                runBtn.style.display = '';
+                stopBtn.style.display = 'none';
+            }
+            return;
+        }
+
         try {
             const analysisResult = await runLabyrinthUpgradeAnalysis(
                 {
@@ -1101,6 +1146,110 @@ class LabSimUI {
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
         }
+    }
+
+    /**
+     * Collect every labyrinth combat fight: each monster with a resolvable
+     * room level (live room while in a run, otherwise effective combat level +
+     * skip threshold − 1) paired with the player DTO wearing its assigned
+     * labyrinth loadout.
+     * @private
+     * @returns {Array<{monsterHrid: string, monsterName: string, roomLevel: number, dto: Object, loadoutName: string}>}
+     */
+    _collectLabyrinthFights() {
+        const fights = [];
+        for (const monster of getLabyrinthMonsters()) {
+            const roomLevel = labyrinthClearRate.getCombatRoomLevel(monster.hrid);
+            if (!roomLevel) continue; // no skip threshold configured for this monster
+            const loadoutId = labyrinthClearRate.getLabyrinthLoadoutId(monster.hrid);
+            const dto = labyrinthClearRate.buildLabyrinthPlayerDTO(loadoutId);
+            if (!dto) continue;
+            const loadoutName =
+                loadoutSnapshot.snapshots[loadoutId]?.name || (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
+            fights.push({ monsterHrid: monster.hrid, monsterName: monster.name, roomLevel, dto, loadoutName });
+        }
+        return fights;
+    }
+
+    /**
+     * Render the all-fights combat level analysis: candidates ranked by how
+     * much they improve the chance of clearing every fight in the run, with a
+     * per-fight breakdown on click.
+     * @private
+     */
+    _renderAllFightsResults(analysisResult, container) {
+        const baseline = analysisResult?.baseline;
+        const results = analysisResult?.results;
+        if (!baseline || !results?.length) {
+            container.innerHTML =
+                '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
+            this._setStatus('All-fights analysis produced no results.');
+            return;
+        }
+
+        const pct = (v) => `${(v * 100).toFixed(1)}%`;
+        const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
+        const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const bestDelta = Math.max(...results.map((r) => r.runClearDelta));
+
+        let html = `
+            <div style="margin-bottom:8px; font-size:12px; color:#888;">
+                Baseline run clear (all ${baseline.fights.length} fights):
+                <span style="color:#e0e0e0; font-weight:700;">${pct(baseline.runClearChance)}</span>
+                <span style="color:#555; font-size:10px; margin-left:6px;">product of every fight's win rate at its skip level with its assigned loadout</span>
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}">Skill</th>
+                <th style="${thStyle}" title="Chance to win every combat room in one run">Run Clear</th>
+                <th style="${thStyle}" title="Change in whole-run clear chance vs baseline">ΔRun Clear</th>
+                <th style="${thStyle}" title="Average per-fight win rate change">Avg ΔWin</th>
+            </tr></thead><tbody>`;
+
+        results.forEach((r, i) => {
+            const isBest = r.runClearDelta === bestDelta && bestDelta > 0.0001;
+            const runStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle} ${runStyle}">${pct(r.runClearChance)}</td>
+                <td style="${tdStyle} color:${deltaColor(r.runClearDelta)}; ${isBest ? 'font-weight:700;' : ''}">${deltaPct(r.runClearDelta)}</td>
+                <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
+            </tr>`;
+
+            // Per-fight breakdown (hidden until the row is clicked)
+            let fightRows = '';
+            for (let f = 0; f < r.fights.length; f++) {
+                const fight = r.fights[f];
+                const base = baseline.fights[f];
+                fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+                    <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                    <span style="white-space:nowrap;">${pct(base.winRate)} → ${pct(fight.winRate)}
+                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span></span>
+                </div>`;
+            }
+            html += `<tr data-allfights-detail="${i}" style="display:none;">
+                <td colspan="4" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        container.querySelectorAll('[data-allfights-row]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const detail = container.querySelector(`[data-allfights-detail="${row.dataset.allfightsRow}"]`);
+                if (detail) {
+                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                }
+            });
+        });
+
+        this._setStatus(
+            `All-fights analysis complete: ${results.length} skill upgrades × ${baseline.fights.length} fights.`
+        );
     }
 
     /** @private */

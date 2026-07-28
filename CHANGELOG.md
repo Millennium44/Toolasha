@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Lab Sim: "Combat Levels — All Fights" analysis across the whole labyrinth
+
+- New upgrade mode that sims **every labyrinth combat room** — each monster with its **assigned labyrinth loadout** at its **skip-derived room level** (live room level while in a run) — once at current levels and once per +N combat level boost, then ranks the boosts by **whole-run impact**: the change in the chance to clear every fight in one run (product of all win rates).
+- Results show Run Clear %, ΔRun Clear, and average per-fight Δwin; clicking a row expands the per-fight breakdown (monster, room level, loadout, baseline → boosted win rate).
+- Candidates are the union of style-relevant skills across all assigned loadouts, so if one monster uses a ranged loadout and another melee, both Ranged and Melee rows appear. The regular per-monster Combat Levels mode in Lab Sim shares the same style filtering as Combat Sim (including Attack always showing).
+
 ### Combat Levels tab polish: no more squished controls, cleaner Main Time
 
 - **Top controls no longer get cut off**: the Player, Mode, and Charm dropdowns previously inherited a flex style that let them shrink into slivers when the row got crowded; they now size to their content and the row wraps instead.

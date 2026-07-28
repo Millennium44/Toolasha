@@ -28,10 +28,17 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 vi.mock('../../utils/ability-cost-calculator.js', () => ({ calculateAbilityLevelUpCost: vi.fn() }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { generateCandidates, calculateUpgradeCost, findMatchingCharmForSkill, getMainTrainingSkills } =
-    await import('./upgrade-advisor.js');
+const {
+    generateCandidates,
+    calculateUpgradeCost,
+    findMatchingCharmForSkill,
+    getMainTrainingSkills,
+    runLabyrinthAllFightsAnalysis,
+} = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
+const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
+const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
 const MAIN_HAND = '/equipment_types/main_hand';
 const BACK = '/equipment_types/back';
@@ -345,6 +352,80 @@ describe('getMainTrainingSkills', () => {
         expect(getMainTrainingSkills({ equipment: {} }, { itemDetailMap: {}, combatStyleDetailMap: {} })).toEqual([
             'melee',
         ]);
+    });
+});
+
+describe('runLabyrinthAllFightsAnalysis', () => {
+    test('unions candidates across loadout styles and ranks by run-clear delta', async () => {
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_bow'] = {
+            name: 'Fine Bow',
+            itemLevel: 50,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { rangedDamage: 12 } },
+        };
+        buildGameDataPayload.mockReturnValue(gameData);
+
+        const levels = {
+            staminaLevel: 50,
+            intelligenceLevel: 50,
+            attackLevel: 50,
+            meleeLevel: 50,
+            defenseLevel: 50,
+            rangedLevel: 50,
+            magicLevel: 50,
+        };
+        const meleeDTO = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            ...levels,
+        };
+        const rangedDTO = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/fine_bow', enhancementLevel: 0 } },
+            ...levels,
+        };
+
+        // Boosting melee improves the goblin fight only; nothing else moves
+        runLabyrinthSimulation.mockImplementation(async ({ playerDTOs, monsterHrid }) => {
+            let winRate = monsterHrid === '/monsters/goblin' ? 0.8 : 0.5;
+            if (monsterHrid === '/monsters/goblin' && playerDTOs[0].meleeLevel === 55) winRate = 0.9;
+            return { labyAttemptCount: 100, encounters: winRate * 100 };
+        });
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: meleeDTO },
+                    { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 110, dto: rangedDTO },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                abilityTargetLevel: 5,
+            },
+            null,
+            {}
+        );
+
+        // Candidate union: melee loadout contributes Melee, ranged loadout
+        // contributes Ranged; Magic stays excluded (no loadout trains it)
+        expect(result.results.map((r) => r.candidate.skillKey).sort()).toEqual([
+            'attackLevel',
+            'defenseLevel',
+            'intelligenceLevel',
+            'meleeLevel',
+            'rangedLevel',
+            'staminaLevel',
+        ]);
+
+        expect(result.baseline.runClearChance).toBeCloseTo(0.8 * 0.5, 5);
+
+        // Melee gives the only improvement and ranks first
+        expect(result.results[0].candidate.skillKey).toBe('meleeLevel');
+        const meleeRow = result.results[0];
+        expect(meleeRow.fights[0].winRate).toBeCloseTo(0.9, 5);
+        expect(meleeRow.fights[0].winRateDelta).toBeCloseTo(0.1, 5);
+        expect(meleeRow.runClearChance).toBeCloseTo(0.9 * 0.5, 5);
+        expect(meleeRow.runClearDelta).toBeCloseTo(0.05, 5);
     });
 });
 
