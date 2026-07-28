@@ -1576,7 +1576,7 @@ export const settingsGroups = {
                 min: 1,
                 max: 100,
                 step: 1,
-                help: 'Clear chance at or above which the labyrinth path planner treats a tile as clearable without a beacon (separate from the skip recommendation target)',
+                help: 'Clear chance at or above which the labyrinth path planner treats a tile as clearable without a shroud (separate from the skip recommendation target)',
             },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',

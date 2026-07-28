@@ -31,33 +31,33 @@ const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 
-/** Lexicographic weight: one beacon outweighs any number of torches */
-const PATH_BEACON_WEIGHT = 1e6;
+/** Lexicographic weight: one shroud outweighs any number of torches */
+const PATH_SHROUD_WEIGHT = 1e6;
 
 /**
- * Compute the cheapest route from the cleared region to the floor exit over a
- * flat labyrinth grid. Priorities, lexicographic: fewest beacons (uncleared
- * tiles below the clearable threshold that must be bypassed), then most
- * treasure rooms, then fewest torches (uncleared tiles revealed). Treasure
- * rooms are grafted onto the route greedily whenever they can be reached
- * without spending an extra beacon — a chest is always worth extra torches,
- * never an extra beacon.
+ * Compute the cheapest route from the cleared region (or the entrance) to the
+ * floor exit over a flat labyrinth grid. Priorities, lexicographic: fewest
+ * shrouds (a shroud instantly clears a room, spent on uncleared tiles below
+ * the clearable threshold), then most treasure rooms, then fewest torches
+ * (uncleared tiles revealed). Treasure rooms are grafted onto the route
+ * greedily whenever they can be reached without an extra shroud — a chest is
+ * always worth extra torches, never an extra shroud.
  *
  * Pure function so the routing logic is testable without DOM or sims.
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
- *   { cleared, needsBeacon, isTreasure, isDescend }
+ *   { cleared, isEntrance, needsShroud, isTreasure, isExit }
  * @param {number} cols - Grid width
- * @returns {Object|null} { route: Set<number>, chests: Set<number>, beacons,
+ * @returns {Object|null} { route: Set<number>, chests: Set<number>, shrouds,
  *   torches, target } or null when there is no start/exit/route
  */
 export function computeLabyrinthPath(tiles, cols) {
-    const target = tiles.findIndex((t) => t?.isDescend && !t.cleared);
-    const targetIdx = target >= 0 ? target : tiles.findIndex((t) => t?.isDescend);
+    const target = tiles.findIndex((t) => t?.isExit && !t.cleared);
+    const targetIdx = target >= 0 ? target : tiles.findIndex((t) => t?.isExit);
     if (targetIdx < 0) return null;
 
     const sources = [];
     for (let i = 0; i < tiles.length; i++) {
-        if (tiles[i]?.cleared) sources.push(i);
+        if (tiles[i]?.cleared || tiles[i]?.isEntrance) sources.push(i);
     }
     if (!sources.length) return null;
 
@@ -71,13 +71,14 @@ export function computeLabyrinthPath(tiles, cols) {
         return out;
     };
 
-    // Entering a tile costs beacons*W + 1 torch when uncleared; cleared tiles
-    // and tiles already on the route are free. Walls are impassable.
+    // Entering a tile costs shrouds*W + 1 torch when uncleared; cleared
+    // tiles, the entrance, and tiles already on the route are free. Walls
+    // are impassable.
     const enterCost = (idx, routeSet) => {
         const t = tiles[idx];
         if (!t) return null;
-        if (t.cleared || routeSet.has(idx)) return 0;
-        return (t.needsBeacon ? PATH_BEACON_WEIGHT : 0) + 1;
+        if (t.cleared || t.isEntrance || routeSet.has(idx)) return 0;
+        return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1;
     };
 
     const dijkstra = (sourceIndices, routeSet) => {
@@ -125,7 +126,7 @@ export function computeLabyrinthPath(tiles, cols) {
     if (!Number.isFinite(base.dist[targetIdx])) return null;
     for (const idx of tracePath(base.prev, targetIdx, sourceSet)) routeSet.add(idx);
 
-    // Graft on every treasure room reachable without an extra beacon,
+    // Graft on every treasure room reachable without an extra shroud,
     // cheapest branch (fewest torches) first
     const chests = new Set();
     for (const idx of routeSet) {
@@ -145,23 +146,23 @@ export function computeLabyrinthPath(tiles, cols) {
                 bestChest = idx;
             }
         }
-        if (bestChest < 0 || bestCost >= PATH_BEACON_WEIGHT) break;
+        if (bestChest < 0 || bestCost >= PATH_SHROUD_WEIGHT) break;
         const stopSet = new Set([...sourceSet, ...routeSet]);
         for (const idx of tracePath(run.prev, bestChest, stopSet)) routeSet.add(idx);
         chests.add(bestChest);
         pool = pool.filter((idx) => !routeSet.has(idx));
     }
 
-    let beacons = 0;
+    let shrouds = 0;
     let torches = 0;
     for (const idx of routeSet) {
         const t = tiles[idx];
-        if (!t || t.cleared) continue;
+        if (!t || t.cleared || t.isEntrance) continue;
         torches++;
-        if (t.needsBeacon) beacons++;
+        if (t.needsShroud) shrouds++;
     }
 
-    return { route: routeSet, chests, beacons, torches, target: targetIdx };
+    return { route: routeSet, chests, shrouds, torches, target: targetIdx };
 }
 
 class LabyrinthClearRate {
@@ -1969,7 +1970,7 @@ class LabyrinthClearRate {
         pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
         pathButton.textContent = 'Path';
         pathButton.title =
-            'Highlight the best route to the floor exit: fewest beacons, then most treasure rooms, then fewest torches';
+            'Highlight the best route to the floor exit: fewest shrouds, then most treasure rooms, then fewest torches';
         pathButton.style.cssText =
             'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#8e5bd8; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
@@ -1979,7 +1980,7 @@ class LabyrinthClearRate {
         const pathLabel = document.createElement('span');
         pathLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
         pathLabel.textContent = 'Clear ≥';
-        pathLabel.title = 'Tiles below this clear chance (%) count as unclearable and cost a beacon on the path';
+        pathLabel.title = 'Tiles below this clear chance (%) count as unclearable and cost a shroud on the path';
         container.appendChild(pathLabel);
 
         const pathInput = document.createElement('input');
@@ -2248,8 +2249,10 @@ class LabyrinthClearRate {
         this.setPathButtonRunning(true);
 
         try {
-            // Classify every room and gather clear chances (treasure and the
-            // exit are freely enterable; combat needs sims, cached when possible)
+            // Classify every room and gather clear chances (treasure, the exit,
+            // and the entrance are freely enterable; combat needs sims, cached
+            // when possible). The final floor's flag room may use a different
+            // type than /descend, so match any exit-like room type.
             const tiles = new Array(flat.length).fill(null);
             const combatToSim = [];
             for (let i = 0; i < flat.length; i++) {
@@ -2260,13 +2263,14 @@ class LabyrinthClearRate {
                     index: i,
                     room,
                     cleared: !!room.isCleared,
+                    isEntrance: /\/(entrance|start)$/.test(type),
                     isTreasure: type.endsWith('/treasure'),
-                    isDescend: type.endsWith('/descend'),
+                    isExit: /\/(descend|exit|finish|flag|victory)$/.test(type),
                     clearChance: 1,
-                    needsBeacon: false,
+                    needsShroud: false,
                 };
                 tiles[i] = tile;
-                if (tile.cleared || tile.isTreasure || tile.isDescend) continue;
+                if (tile.cleared || tile.isEntrance || tile.isTreasure || tile.isExit) continue;
 
                 const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
                 if (room.skillHrid && roomLevel > 0) {
@@ -2287,33 +2291,42 @@ class LabyrinthClearRate {
                 tile.clearChance = result && !result.failed ? result.clearChance : 0;
             }
             for (const tile of tiles) {
-                if (tile && !tile.cleared && !tile.isTreasure && !tile.isDescend) {
-                    tile.needsBeacon = tile.clearChance < threshold;
+                if (tile && !tile.cleared && !tile.isEntrance && !tile.isTreasure && !tile.isExit) {
+                    tile.needsShroud = tile.clearChance < threshold;
                 }
+            }
+
+            if (!tiles.some((t) => t?.isExit)) {
+                const seenTypes = [...new Set(flat.filter(Boolean).map((r) => String(r.roomType || '')))];
+                console.warn('[LabyrinthClearRate] No exit-like room type found. Types on this floor:', seenTypes);
+                this.setTileStatus('No floor exit found in room data');
+                return;
+            }
+            if (!tiles.some((t) => t?.cleared || t?.isEntrance)) {
+                this.setTileStatus('No cleared room or entrance to path from');
+                return;
             }
 
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
-                this.setTileStatus(
-                    tiles.some((t) => t?.cleared) ? 'No route to the floor exit' : 'No cleared room to path from'
-                );
+                this.setTileStatus('No route to the floor exit');
                 return;
             }
 
             for (const idx of path.route) {
                 const tile = tiles[idx];
                 const cell = cells[idx];
-                if (!tile || tile.cleared || !cell) continue;
+                if (!tile || tile.cleared || tile.isEntrance || !cell) continue;
                 let color;
                 let label = '';
-                if (tile.isDescend) {
+                if (tile.isExit) {
                     color = '#c792ff';
                     label = '⚑';
                 } else if (tile.isTreasure) {
                     color = '#ffd54f';
-                } else if (tile.needsBeacon) {
+                } else if (tile.needsShroud) {
                     color = '#ff5252';
-                    label = 'Beacon';
+                    label = 'Shroud';
                 } else {
                     color = '#57d08a';
                 }
@@ -2322,7 +2335,7 @@ class LabyrinthClearRate {
 
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             this.setTileStatus(
-                `Path: ${plural(path.torches, 'room')} · ${plural(path.beacons, 'beacon')} · ${plural(path.chests.size, 'chest')}`
+                `Path: ${plural(path.torches, 'room')} · ${plural(path.shrouds, 'shroud')} · ${plural(path.chests.size, 'chest')}`
             );
         } catch (error) {
             console.error('[LabyrinthClearRate] Path calculation failed:', error);
