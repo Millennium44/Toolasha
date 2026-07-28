@@ -435,7 +435,11 @@ class CombatSimUI {
                     border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
                     title="Number of levels to add to each ability">
             </span>
-            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+            <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
+                <label style="color:#888; font-size:12px;">Charm</label>
+                <select id="mwi-csim-charm-select" style="${selectStyle}"></select>
+            </span>
+            <label id="mwi-csim-skip-back-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
             </label>
@@ -538,20 +542,34 @@ class CombatSimUI {
             const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
             const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
             const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
+            const charmGroup = this.panel.querySelector('#mwi-csim-charm-group');
+            const skipBackLabel = this.panel.querySelector('#mwi-csim-skip-back-label');
             const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
             const isCombatLevelMode = e.target.value === 'combat_level';
-            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
-            // Combat Levels mode reuses the number input as the charm size (+N
-            // levels per skill); the increment/target selector doesn't apply
+
+            // Combat Levels: replace Skip Back with a charm selector; the level
+            // input becomes the custom charm size and only shows for "Custom"
+            charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
+            skipBackLabel.style.display = isCombatLevelMode ? 'none' : 'flex';
             levelType.style.display = isCombatLevelMode ? 'none' : '';
             levelInput.title = isCombatLevelMode
                 ? 'Levels added to each combat skill (simulated charm)'
                 : 'Number of levels to add to each ability';
+
+            if (isCombatLevelMode) {
+                this._populateCharmSelect();
+                const charmSelect = this.panel.querySelector('#mwi-csim-charm-select');
+                levelGroup.style.display = charmSelect.value === 'custom' ? 'inline-flex' : 'none';
+            } else {
+                levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
+            }
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
-            } else if (isCombatLevelMode) {
-                levelInput.value = 5;
             }
+        });
+        this.panel.querySelector('#mwi-csim-charm-select').addEventListener('change', (e) => {
+            const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
+            levelGroup.style.display = e.target.value === 'custom' ? 'inline-flex' : 'none';
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
             const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -3047,6 +3065,65 @@ class CombatSimUI {
      * Set default ability target level input to increment mode with value 5.
      * @private
      */
+    /**
+     * Populate the charm selector for Combat Levels mode. Charm items found in
+     * game data with a detectable +level stat become options; generic presets
+     * and a Custom entry (which reveals the number input) are always available.
+     * @private
+     */
+    _populateCharmSelect() {
+        const select = this.panel.querySelector('#mwi-csim-charm-select');
+        if (!select || select.options.length > 0) return;
+
+        const options = [];
+        const seen = new Set();
+        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        for (const item of Object.values(itemDetailMap)) {
+            if (item?.equipmentDetail?.type !== '/equipment_types/charm') continue;
+            const stats = {
+                ...(item.equipmentDetail.combatStats || {}),
+                ...(item.equipmentDetail.noncombatStats || {}),
+            };
+            let boost = 0;
+            for (const [key, value] of Object.entries(stats)) {
+                if (/level/i.test(key) && Number.isFinite(value) && value > 0 && value <= 50) {
+                    boost = Math.max(boost, Math.round(value));
+                }
+            }
+            const dedupeKey = `${item.name}|${boost}`;
+            if (boost > 0 && !seen.has(dedupeKey)) {
+                seen.add(dedupeKey);
+                options.push({ label: `${item.name} (+${boost})`, value: boost });
+            }
+        }
+        options.sort((a, b) => a.value - b.value);
+
+        if (options.length === 0) {
+            // No charm level stats in game data — offer plain presets
+            options.push(
+                { label: '+3', value: 3 },
+                { label: '+5', value: 5 },
+                { label: '+8', value: 8 },
+                { label: '+10', value: 10 }
+            );
+        }
+
+        for (const opt of options) {
+            const el = document.createElement('option');
+            el.value = String(opt.value);
+            el.textContent = opt.label;
+            select.appendChild(el);
+        }
+        const custom = document.createElement('option');
+        custom.value = 'custom';
+        custom.textContent = 'Custom…';
+        select.appendChild(custom);
+
+        // Default to +5 when available
+        const five = [...select.options].find((o) => o.value === '5');
+        if (five) select.value = '5';
+    }
+
     _setDefaultAbilityTargetLevel() {
         const typeSelect = this.panel.querySelector('#mwi-csim-upgrade-level-type');
         const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -3075,10 +3152,16 @@ class CombatSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         const upgradeMode = this.panel.querySelector('#mwi-csim-upgrade-mode')?.value || 'equipment';
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
-        const abilityTargetLevel = Math.min(
+        let abilityTargetLevel = Math.min(
             200,
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
+        if (upgradeMode === 'combat_level') {
+            const charmValue = this.panel.querySelector('#mwi-csim-charm-select')?.value;
+            if (charmValue && charmValue !== 'custom') {
+                abilityTargetLevel = parseInt(charmValue) || 5;
+            }
+        }
 
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
@@ -3178,12 +3261,30 @@ class CombatSimUI {
         }
 
         this._upgradeResultsData = results;
+        // Combat Levels mode has no gold costs — rank by raw improvement instead
+        const isCombatLevelMode =
+            results.results.length > 0 && results.results.every((r) => r.candidate?.type === 'combat_level');
         if (!this._upgradeSort) {
             this._upgradeSort = { key: 'dps', asc: true };
         }
         const sortKey = this._upgradeSort.key;
         const sortAsc = this._upgradeSort.asc;
         const sortValue = (r) => {
+            if (isCombatLevelMode) {
+                // Negated deltas so ascending sort puts the biggest gain first
+                switch (sortKey) {
+                    case 'upgrade':
+                        return r.candidate.description.toLowerCase();
+                    case 'time':
+                        return r.levelTimeHours ?? Infinity;
+                    case 'xp':
+                        return -(r.metrics.xpPerHour - results.baseline.xpPerHour);
+                    case 'profit':
+                        return -(r.metrics.profitPerHour - results.baseline.profitPerHour);
+                    default:
+                        return -(r.metrics.dps - results.baseline.dps);
+                }
+            }
             switch (sortKey) {
                 case 'upgrade':
                     return r.candidate.description.toLowerCase();
@@ -3217,7 +3318,18 @@ class CombatSimUI {
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
 
         const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
-        let html = `<table style="${tableStyle}">
+        let html;
+        if (isCombatLevelMode) {
+            html = `<table style="${tableStyle}">
+            <thead><tr>
+                <th style="${thStyle}" data-sort-key="upgrade">Skill${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-sort-key="time">Level Time${arrow('time')}</th>
+                <th style="${thStyle}" data-sort-key="dps">\u0394DPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-sort-key="xp">\u0394EXP/hr${arrow('xp')}</th>
+                <th style="${thStyle}" data-sort-key="profit">\u0394Profit/hr${arrow('profit')}</th>
+            </tr></thead><tbody>`;
+        } else {
+            html = `<table style="${tableStyle}">
             <thead><tr>
                 <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
@@ -3225,6 +3337,7 @@ class CombatSimUI {
                 <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
                 <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
             </tr></thead><tbody>`;
+        }
 
         // Find best (lowest non-Infinity) value in each gold/0.1% column
         let bestDps = Infinity;
@@ -3236,31 +3349,78 @@ class CombatSimUI {
             if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
         }
 
+        // Best (largest) raw deltas for Combat Levels mode highlighting
+        let bestDpsDelta = -Infinity;
+        let bestXpDelta = -Infinity;
+        let bestProfitDelta = -Infinity;
+        if (isCombatLevelMode) {
+            for (const r of results.results) {
+                bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - results.baseline.dps);
+                bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - results.baseline.xpPerHour);
+                bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - results.baseline.profitPerHour);
+            }
+        }
+
+        const fmtLevelTime = (h) => {
+            if (!Number.isFinite(h)) return '—';
+            if (h < 24) return `${h.toFixed(1)}h`;
+            return `${(h / 24).toFixed(1)}d`;
+        };
+
         sortedResults.forEach((r, i) => {
-            const costStr = r.cost == null ? (r.candidate?.type === 'combat_level' ? '—' : '?') : formatKMB(r.cost);
+            const bestColor = '#4caf50';
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
 
-            const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
-            const bestColor = '#4caf50';
-            const dpsGoldStr = fmtGoldPer(r.goldPer.dps);
-            const xpGoldStr = fmtGoldPer(r.goldPer.xp);
-            const profitGoldStr = fmtGoldPer(r.goldPer.profit);
-            const dpsStyle =
-                r.goldPer.dps === bestDps && bestDps !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-            const xpStyle =
-                r.goldPer.xp === bestXp && bestXp !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-            const profitStyle =
-                r.goldPer.profit === bestProfit && bestProfit !== Infinity
-                    ? `color:${bestColor}; font-weight:700;`
-                    : '';
+            if (isCombatLevelMode) {
+                const dpsDelta = r.metrics.dps - results.baseline.dps;
+                const xpDelta = r.metrics.xpPerHour - results.baseline.xpPerHour;
+                const profitDelta = r.metrics.profitPerHour - results.baseline.profitPerHour;
+                const fmtCell = (delta, pct) => {
+                    if (Math.abs(delta) < 1e-9) return '—';
+                    const sign = delta >= 0 ? '+' : '';
+                    return `${sign}${formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
+                };
+                const deltaStyle = (delta, best) => {
+                    if (delta === best && Number.isFinite(best) && best > 0)
+                        return `color:${bestColor}; font-weight:700;`;
+                    if (delta > 0) return 'color:#8bc34a;';
+                    if (delta < 0) return 'color:#f44336;';
+                    return 'color:#888;';
+                };
+                const timeTitle = Number.isFinite(r.levelTimeHours)
+                    ? 'Grinding time at this zone’s XP rates to earn these levels'
+                    : 'Your current combat style earns no XP in this skill here';
 
-            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                <td style="${tdStyle}">${r.candidate.description}</td>
-                <td style="${tdStyle}">${costStr}</td>
-                <td style="${tdStyle} ${dpsStyle}">${dpsGoldStr}</td>
-                <td style="${tdStyle} ${xpStyle}">${xpGoldStr}</td>
-                <td style="${tdStyle} ${profitStyle}">${profitGoldStr}</td>
-            </tr>`;
+                html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
+                    <td style="${tdStyle}">${r.candidate.description}</td>
+                    <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                    <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
+                    <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
+                    <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
+                </tr>`;
+            } else {
+                const costStr = r.cost == null ? '?' : formatKMB(r.cost);
+                const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
+                const dpsGoldStr = fmtGoldPer(r.goldPer.dps);
+                const xpGoldStr = fmtGoldPer(r.goldPer.xp);
+                const profitGoldStr = fmtGoldPer(r.goldPer.profit);
+                const dpsStyle =
+                    r.goldPer.dps === bestDps && bestDps !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
+                const xpStyle =
+                    r.goldPer.xp === bestXp && bestXp !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
+                const profitStyle =
+                    r.goldPer.profit === bestProfit && bestProfit !== Infinity
+                        ? `color:${bestColor}; font-weight:700;`
+                        : '';
+
+                html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
+                    <td style="${tdStyle}">${r.candidate.description}</td>
+                    <td style="${tdStyle}">${costStr}</td>
+                    <td style="${tdStyle} ${dpsStyle}">${dpsGoldStr}</td>
+                    <td style="${tdStyle} ${xpStyle}">${xpGoldStr}</td>
+                    <td style="${tdStyle} ${profitStyle}">${profitGoldStr}</td>
+                </tr>`;
+            }
 
             // Expanded detail row with deltas (hidden by default)
             const dpsValueDelta = r.metrics.dps - results.baseline.dps;

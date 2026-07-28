@@ -1222,7 +1222,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
-        results.push({ candidate, cost: candidate.cost, metrics, deltas, goldPer });
+        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer };
+        if (candidate.type === 'combat_level') {
+            row.levelTimeHours = estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid);
+        }
+        results.push(row);
         current++;
         onProgress?.({ current, total, description: candidate.description });
     }
@@ -1235,6 +1239,37 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     });
 
     return { baseline: baselineMetrics, results };
+}
+
+/**
+ * Estimate hours of grinding (at the baseline sim's per-skill XP rates) needed
+ * to raise a combat skill from its current level to the candidate's boosted
+ * level. Infinity when the current setup earns no XP in that skill.
+ * @param {Object} candidate - combat_level candidate
+ * @param {Object} baselineResult - Baseline sim result
+ * @param {Object} gameData - Game data (levelExperienceTable)
+ * @param {string} playerHrid - Player HRID in the sim result
+ * @returns {number} Hours needed, or Infinity
+ */
+function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid) {
+    const levelXpTable = gameData.levelExperienceTable || [];
+    const skillName = candidate.skillKey.replace('Level', '');
+    const simHours = (baselineResult.simulatedTime || 0) / (3600 * 1e9) || 1;
+    const xpPerHour = (baselineResult.experienceGained?.[playerHrid]?.[skillName] || 0) / simHours;
+    if (!(xpPerHour > 0)) return Infinity;
+
+    const targetXp = levelXpTable[candidate.upgradeLevel];
+    if (!Number.isFinite(targetXp)) return Infinity;
+
+    // Use the character's actual XP when their live skill matches the simmed
+    // level; otherwise assume the start of the current level
+    let currentXp = levelXpTable[candidate.currentLevel] || 0;
+    const liveSkill = dataManager.getSkills?.()?.find((s) => s.skillHrid === `/skills/${skillName}`);
+    if (liveSkill && liveSkill.level === candidate.currentLevel && Number.isFinite(liveSkill.experience)) {
+        currentXp = liveSkill.experience;
+    }
+
+    return Math.max(0, targetXp - currentXp) / xpPerHour;
 }
 
 /**
