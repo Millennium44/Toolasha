@@ -1919,6 +1919,121 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     };
 }
 
+/**
+ * Sim every labyrinth combat room — each with its assigned loadout at its
+ * skip-derived room level — under each combat-level boost, to rank which
+ * skill level upgrade improves the whole run the most. The collective metric
+ * is the run clear chance: the product of every fight's win rate.
+ *
+ * Candidates are the union of style-relevant skills across all fight loadouts
+ * (loadouts can differ in style, e.g. a ranged loadout for one monster and a
+ * melee loadout for another), so a skill shows if any assigned loadout trains it.
+ * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel }
+ *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal: () => boolean }
+ * @returns {Promise<Object>} { baseline: { fights, runClearChance }, results: [{candidate, fights, runClearChance, runClearDelta, avgWinDelta}] }
+ */
+export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
+    const { fights, crates, hours, communityBuffs, labyrinthCombatBuffs = [], abilityTargetLevel } = params;
+    const { abortSignal } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+
+    const zoneHrid =
+        Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
+
+    // Union of combat-level candidates across the fight loadouts
+    const candidatesByKey = new Map();
+    for (const fight of fights) {
+        for (const candidate of generateCandidates(fight.dto, gameData, 'combat_level', abilityTargetLevel)) {
+            if (!candidatesByKey.has(candidate.skillKey)) {
+                candidatesByKey.set(candidate.skillKey, candidate);
+            }
+        }
+    }
+    const candidates = [...candidatesByKey.values()];
+
+    const total = fights.length * (candidates.length + 1);
+    let current = 0;
+
+    const simFightWinRate = async (fight, dtoOverride) => {
+        const simResult = await runLabyrinthSimulation({
+            gameData,
+            playerDTOs: [dtoOverride || fight.dto],
+            zoneHrid,
+            monsterHrid: fight.monsterHrid,
+            roomLevel: fight.roomLevel,
+            crates,
+            hours,
+            communityBuffs,
+            labyrinthCombatBuffs,
+        });
+        const attempts = simResult.labyAttemptCount || 1;
+        return (simResult.encounters || 0) / attempts;
+    };
+
+    const fightMeta = (fight) => ({
+        monsterHrid: fight.monsterHrid,
+        monsterName: fight.monsterName,
+        roomLevel: fight.roomLevel,
+        loadoutName: fight.loadoutName,
+    });
+
+    // Baseline pass: every fight with its current levels
+    const baselineFights = [];
+    for (const fight of fights) {
+        if (abortSignal?.()) return { baseline: null, results: [] };
+        onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
+        const winRate = await simFightWinRate(fight);
+        baselineFights.push({ ...fightMeta(fight), winRate });
+        current++;
+    }
+    const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
+
+    // One pass per combat-level candidate across every fight
+    const results = [];
+    for (const candidate of candidates) {
+        const fightResults = [];
+        let aborted = false;
+        for (let i = 0; i < fights.length; i++) {
+            if (abortSignal?.()) {
+                aborted = true;
+                break;
+            }
+            onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
+            const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
+            boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
+            const winRate = await simFightWinRate(fights[i], boostedDTO);
+            fightResults.push({
+                ...fightMeta(fights[i]),
+                winRate,
+                winRateDelta: winRate - baselineFights[i].winRate,
+            });
+            current++;
+        }
+        if (aborted) break;
+
+        const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
+        const avgWinDelta = fightResults.reduce((sum, f) => sum + f.winRateDelta, 0) / (fightResults.length || 1);
+        results.push({
+            candidate,
+            fights: fightResults,
+            runClearChance,
+            runClearDelta: runClearChance - baselineRunClear,
+            avgWinDelta,
+        });
+    }
+
+    // Biggest whole-run improvement first
+    results.sort((a, b) => b.runClearDelta - a.runClearDelta);
+
+    return {
+        baseline: { fights: baselineFights, runClearChance: baselineRunClear },
+        results,
+    };
+}
+
 // ─── Editor-Based Skilling Analysis ──────────────────────────────────────────
 
 const SKILLING_DTO_KEYS = {
