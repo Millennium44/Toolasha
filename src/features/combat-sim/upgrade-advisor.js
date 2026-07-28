@@ -80,11 +80,15 @@ export function findMatchingCharmForSkill(currentCharm, skillKey, gameData, char
     return fallback;
 }
 
+/** Offensive combat skills a weapon can train — the "main" skills of a style */
+const OFFENSE_SKILLS = new Set(['attack', 'melee', 'ranged', 'magic']);
+
 /**
- * Skills trained by the player's weapon: the weapon's primary training skill
- * plus every skill in its combat style's XP map (a melee-only weapon trains
- * melee; a spear trains attack and melee). These keep earning XP even while a
- * charm focuses another skill.
+ * Main skills trained by the player's weapon: the weapon's primary training
+ * skill plus the offensive skills in its combat style's XP map (a melee-only
+ * weapon trains melee; a spear trains attack and melee). Stamina/Intelligence/
+ * Defense appear in every style's XP map and are deliberately excluded — they
+ * aren't what the weapon is "for".
  * @param {Object} playerDTO
  * @param {Object} gameData
  * @returns {Array<string>} Skill names, e.g. ['attack', 'melee']
@@ -102,7 +106,10 @@ export function getMainTrainingSkills(playerDTO, gameData) {
     const skillExpMap = styleHrid ? gameData.combatStyleDetailMap?.[styleHrid]?.skillExpMap : null;
     if (skillExpMap) {
         for (const skillHrid of Object.keys(skillExpMap)) {
-            skills.add(skillHrid.split('/').pop());
+            const skillName = skillHrid.split('/').pop();
+            if (OFFENSE_SKILLS.has(skillName)) {
+                skills.add(skillName);
+            }
         }
     }
 
@@ -120,7 +127,7 @@ export function getMainTrainingSkills(playerDTO, gameData) {
  * @param {Object} gameData
  * @returns {Set<string>} Excluded DTO level keys, e.g. {'rangedLevel', 'magicLevel'}
  */
-function getStyleExcludedSkills(playerDTO, gameData) {
+export function getStyleExcludedSkills(playerDTO, gameData) {
     const weapon =
         playerDTO.equipment?.['/equipment_types/main_hand'] || playerDTO.equipment?.['/equipment_types/two_hand'];
     const stats = weapon ? gameData.itemDetailMap[weapon.hrid]?.equipmentDetail?.combatStats : null;
