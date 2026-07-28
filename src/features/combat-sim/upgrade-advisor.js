@@ -1120,11 +1120,22 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         if (candidate.slot.startsWith('ability_')) {
             // Ability upgrade/swap
             const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            modifiedDTOs[playerIndex].abilities[slotIdx] = {
-                hrid: candidate.upgradeHrid,
-                level: candidate.upgradeLevel,
-                triggers: null,
-            };
+            const existingAbility = modifiedDTOs[playerIndex].abilities[slotIdx];
+            if (existingAbility?.hrid === candidate.upgradeHrid) {
+                // Leveling the equipped ability: keep its configured combat
+                // triggers — wiping them made every level-up sim against the
+                // baseline's tuned triggers and read as a regression
+                modifiedDTOs[playerIndex].abilities[slotIdx] = {
+                    ...existingAbility,
+                    level: candidate.upgradeLevel,
+                };
+            } else {
+                modifiedDTOs[playerIndex].abilities[slotIdx] = {
+                    hrid: candidate.upgradeHrid,
+                    level: candidate.upgradeLevel,
+                    triggers: null,
+                };
+            }
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -1498,11 +1509,20 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         if (candidate.slot.startsWith('ability_')) {
             const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            modifiedDTO.abilities[slotIdx] = {
-                hrid: candidate.upgradeHrid,
-                level: candidate.upgradeLevel,
-                triggers: null,
-            };
+            const existingAbility = modifiedDTO.abilities[slotIdx];
+            if (existingAbility?.hrid === candidate.upgradeHrid) {
+                // Keep configured triggers when leveling the equipped ability
+                modifiedDTO.abilities[slotIdx] = {
+                    ...existingAbility,
+                    level: candidate.upgradeLevel,
+                };
+            } else {
+                modifiedDTO.abilities[slotIdx] = {
+                    hrid: candidate.upgradeHrid,
+                    level: candidate.upgradeLevel,
+                    triggers: null,
+                };
+            }
         } else if (candidate.type === 'cross_slot') {
             for (const slot of candidate.clearedSlots) {
                 modifiedDTO.equipment[slot] = null;
