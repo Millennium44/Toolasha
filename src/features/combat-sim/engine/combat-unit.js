@@ -148,6 +148,10 @@ class CombatUnit {
         },
     };
     combatBuffs = {};
+    // All active sources per buff uniqueHrid; combatBuffs holds the strongest.
+    // The game applies the strongest source of a buff and falls back to the
+    // next strongest when it expires.
+    buffSources = new Map();
     permanentBuffs = {};
     zoneBuffs = {};
     extraBuffs = {};
@@ -366,10 +370,50 @@ class CombatUnit {
     }
 
     addBuff(buff, currentTime) {
-        buff.startTime = currentTime;
-        this.combatBuffs[buff.uniqueHrid] = buff;
+        // Clone: buff definitions are shared across aura targets and sim runs
+        const instance = structuredClone(buff);
+        instance.startTime = currentTime;
+
+        let sources = this.buffSources.get(instance.uniqueHrid);
+        if (!sources) {
+            sources = [];
+            this.buffSources.set(instance.uniqueHrid, sources);
+        }
+
+        // Drop expired sources, then refresh-in-place when the same-strength
+        // source reapplies (recast/re-tick) so lists stay bounded
+        const active = sources.filter((b) => b.startTime + b.duration > currentTime);
+        const sameStrength = active.findIndex(
+            (b) => b.ratioBoost === instance.ratioBoost && b.flatBoost === instance.flatBoost
+        );
+        if (sameStrength !== -1) {
+            active[sameStrength] = instance;
+        } else {
+            active.push(instance);
+        }
+        this.buffSources.set(instance.uniqueHrid, active);
+
+        this.combatBuffs[instance.uniqueHrid] = this.strongestBuff(active);
 
         this.updateCombatDetails();
+    }
+
+    /**
+     * Pick the strongest source of a buff (largest magnitude — debuffs like
+     * curse carry negative boosts, so compare absolute values).
+     * @param {Array<Object>} sources - Active buff instances for one uniqueHrid
+     * @returns {Object} The strongest buff instance
+     */
+    strongestBuff(sources) {
+        let strongest = sources[0];
+        for (let i = 1; i < sources.length; i++) {
+            const b = sources[i];
+            const ratioDiff = Math.abs(b.ratioBoost) - Math.abs(strongest.ratioBoost);
+            if (ratioDiff > 0 || (ratioDiff === 0 && Math.abs(b.flatBoost) > Math.abs(strongest.flatBoost))) {
+                strongest = b;
+            }
+        }
+        return strongest;
     }
 
     removeBuff(buff) {
@@ -377,6 +421,7 @@ class CombatUnit {
             return;
         }
         delete this.combatBuffs[buff.uniqueHrid];
+        this.buffSources.delete(buff.uniqueHrid);
 
         this.updateCombatDetails();
     }
@@ -447,18 +492,34 @@ class CombatUnit {
     }
 
     removeExpiredBuffs(currentTime) {
-        const expiredBuffs = Object.values(this.combatBuffs).filter(
-            (buff) => buff.startTime + buff.duration <= currentTime
-        );
-        expiredBuffs.forEach((buff) => {
-            delete this.combatBuffs[buff.uniqueHrid];
-        });
+        for (const [uniqueHrid, sources] of this.buffSources) {
+            const active = sources.filter((b) => b.startTime + b.duration > currentTime);
+            if (active.length === sources.length) {
+                continue;
+            }
+            if (active.length === 0) {
+                this.buffSources.delete(uniqueHrid);
+                delete this.combatBuffs[uniqueHrid];
+            } else {
+                // Strongest source expired → fall back to the next strongest
+                this.buffSources.set(uniqueHrid, active);
+                this.combatBuffs[uniqueHrid] = this.strongestBuff(active);
+            }
+        }
+
+        // Buffs written directly to combatBuffs (fury) have no source list
+        for (const buff of Object.values(this.combatBuffs)) {
+            if (!this.buffSources.has(buff.uniqueHrid) && buff.startTime + buff.duration <= currentTime) {
+                delete this.combatBuffs[buff.uniqueHrid];
+            }
+        }
 
         this.updateCombatDetails();
     }
 
     clearBuffs() {
         this.combatBuffs = structuredClone(this.permanentBuffs);
+        this.buffSources = new Map();
         this.furyAmount = 0;
         this.furyExpireTime = 0;
         this.updateCombatDetails();
