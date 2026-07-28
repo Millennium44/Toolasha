@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Philo calculator: realistic acquisition costs
+
+- **Bids are never used as acquisition cost anymore** — a bid is a buyer's offer, not a price you can buy at, and lowball bids (e.g. a 27M bid on a ~950M-to-craft refined crossbow) made rows absurdly profitable. Costs now use ask prices only.
+- **Refined craft estimates include the base item**: crafting cost = base item (market ask → shop → production cost) + refinement materials, so refined boots price at their full ~190M make-cost instead of shards only. Bases with no resolvable price (skilling capes the player already owns) still contribute nothing, keeping cape rows stones-only as intended.
+- Refined rows take the cheaper of the +0 ask and the craft estimate; low-enhancement listings remain a last resort.
+
 ### Philo calculator: game-matching drop percentages and self-return credit
 
 - **Philo % and Return % now match the game's output panel**: they show the drop chances conditional on a successful transmute (e.g. 10% / 90% for refined capes) instead of being pre-multiplied by the success rate. The per-action math behind Acts/Philo and profit is unchanged.
