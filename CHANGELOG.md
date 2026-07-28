@@ -19,7 +19,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat Levels mode only sims skills relevant to your weapon style
 
-- Melee weapons no longer show Ranged/Magic rows, ranged weapons drop Attack/Melee/Magic, and magic weapons drop Attack/Melee/Ranged — Stamina, Intelligence, and Defense always remain. Unarmed counts as melee (the engine sims it as smash). Applies to both the Combat Sim and Lab Sim analyzers.
+- Melee weapons no longer show Ranged/Magic rows, ranged weapons drop Melee/Magic, and magic weapons drop Melee/Ranged — Stamina, Intelligence, Attack, and Defense always remain (Attack trains under every style: directly with a spear, via the XP split otherwise). Unarmed counts as melee (the engine sims it as smash). Applies to both the Combat Sim and Lab Sim analyzers.
 
 ### Combat Levels mode: levels-first controls, charm tier dropdown, main-skill time
 
