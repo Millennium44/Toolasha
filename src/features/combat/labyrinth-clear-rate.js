@@ -44,6 +44,8 @@ class LabyrinthClearRate {
         this.liveProgressHandler = null;
         this.liveProgressTimeout = null;
         this.snapshotUpdateHandler = null;
+        this._settingsFingerprint = null;
+        this._snapshotFingerprint = null;
     }
 
     initialize() {
@@ -58,25 +60,29 @@ class LabyrinthClearRate {
         this.wsHandler = (data) => this.onLabyrinthUpdated(data);
         webSocketHook.on('labyrinth_updated', this.wsHandler);
 
+        // Settings fire for every character-setting change — including editing a
+        // skip threshold in the automation panel itself — so recommendations are
+        // only dropped when something they depend on actually changed (loadout
+        // assignments, crates, or loadout contents). The combat cache never needs
+        // clearing here: its key already includes loadoutId/roomLevel/crates/hours.
         this.settingHandler = () => {
-            this.combatCache.clear();
-            this.recommendations.clear();
+            this._invalidateIfInputsChanged();
             this.injectOverlays();
         };
         webSocketHook.on('setting_updated', this.settingHandler);
 
         this.loadoutsHandler = () => {
-            this.combatCache.clear();
-            this.recommendations.clear();
+            this._invalidateIfInputsChanged();
             this.injectOverlays();
         };
         webSocketHook.on('loadouts_updated', this.loadoutsHandler);
 
-        // Invalidate cached sim results when snapshot gear/enhancement levels change,
-        // since buildCombatCacheKey does not include snapshot content
+        // Snapshot content is not part of buildCombatCacheKey, so sims must be
+        // invalidated when loadout gear actually changes — but snapshots also
+        // re-broadcast unchanged (e.g. when the lab equips the next room's
+        // loadout), so verify content really differs before wiping anything
         this.snapshotUpdateHandler = () => {
-            this.combatCache.clear();
-            this.recommendations.clear();
+            this._invalidateIfInputsChanged();
         };
         loadoutSnapshot.onUpdate(this.snapshotUpdateHandler);
 
@@ -101,7 +107,11 @@ class LabyrinthClearRate {
             this.scheduleAutoTileCalc();
         }, 500);
 
-        setTimeout(() => this.injectOverlays(), 500);
+        setTimeout(() => {
+            // Seed the invalidation baselines once character data is present
+            this._invalidateIfInputsChanged();
+            this.injectOverlays();
+        }, 500);
 
         this.isInitialized = true;
     }
@@ -161,6 +171,8 @@ class LabyrinthClearRate {
         this.simRunning = false;
         this.recommendations.clear();
         this.recommendRunning = false;
+        this._settingsFingerprint = null;
+        this._snapshotFingerprint = null;
         this.isInitialized = false;
     }
 
@@ -1175,6 +1187,83 @@ class LabyrinthClearRate {
     }
 
     /**
+     * djb2 string hash — cheap change detection for snapshot contents
+     * @private
+     */
+    _hashString(str) {
+        let hash = 5381;
+        for (let i = 0; i < str.length; i++) {
+            hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+        }
+        return String(hash);
+    }
+
+    /**
+     * Fingerprint of the settings recommendations depend on: labyrinth loadout
+     * assignments and crate selections. Skip thresholds are deliberately not
+     * included — changing one doesn't change what any room's recommendation is.
+     * @private
+     */
+    _recommendSettingsFingerprint() {
+        const charSetting = dataManager.characterData?.characterSetting || {};
+        const parts = [];
+        for (const [key, value] of Object.entries(charSetting)) {
+            if (key.startsWith('labyrinthLoadout')) {
+                parts.push(`${key}=${value}`);
+            }
+        }
+        parts.sort();
+        parts.push(`crates=${this.getCrateHrids().join(',')}`);
+        return parts.join('|');
+    }
+
+    /**
+     * Fingerprint of loadout snapshot contents (gear + enhancement levels)
+     * @private
+     */
+    _snapshotContentFingerprint() {
+        try {
+            return this._hashString(JSON.stringify(loadoutSnapshot.snapshots || {}));
+        } catch {
+            // Unhashable → treat as changed so stale sims never survive
+            return `err-${Date.now()}`;
+        }
+    }
+
+    /**
+     * Drop recommendations (and, for loadout content changes, cached sims)
+     * only when the inputs they were computed from actually changed. Events
+     * like setting_updated and snapshot rebuilds fire constantly — on every
+     * skip-threshold edit and every lab room switch — and used to wipe
+     * minutes of recommendation work for no reason.
+     * @private
+     * @returns {boolean} True when something was invalidated
+     */
+    _invalidateIfInputsChanged() {
+        const settingsFp = this._recommendSettingsFingerprint();
+        const snapshotFp = this._snapshotContentFingerprint();
+        let stale = false;
+
+        if (this._settingsFingerprint !== null && settingsFp !== this._settingsFingerprint) {
+            stale = true;
+        }
+        this._settingsFingerprint = settingsFp;
+
+        if (this._snapshotFingerprint !== null && snapshotFp !== this._snapshotFingerprint) {
+            stale = true;
+            // Snapshot content is not part of the combat cache key — gear
+            // changes genuinely invalidate cached sims
+            this.combatCache.clear();
+        }
+        this._snapshotFingerprint = snapshotFp;
+
+        if (stale) {
+            this.recommendations.clear();
+        }
+        return stale;
+    }
+
+    /**
      * Run recommendations for all visible rooms
      */
     async runRecommendations() {
@@ -1182,6 +1271,9 @@ class LabyrinthClearRate {
         this.recommendRunning = true;
         this.recommendations.clear();
         this.combatCache.clear();
+        // Anchor the invalidation baselines to the state this run computes from
+        this._settingsFingerprint = this._recommendSettingsFingerprint();
+        this._snapshotFingerprint = this._snapshotContentFingerprint();
 
         const rateInput = document.getElementById('mwi-recommend-target-rate');
         const targetPct = rateInput ? parseInt(rateInput.value, 10) : null;

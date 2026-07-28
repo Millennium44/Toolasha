@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth recommendations survive setting edits and room switches
+
+- Running Recommend and then touching any setting — including editing a skip threshold in the automation panel itself — no longer wipes every recommendation badge, and neither does the lab advancing rooms mid-run. The `setting_updated` / `loadouts_updated` / snapshot-update events fire constantly, and each unconditionally cleared minutes of recommendation work; invalidation is now fingerprint-based, clearing only when an input recommendations actually depend on changed: labyrinth loadout **assignments**, crate selections, or loadout **contents** (gear/enhancement levels).
+- Cached combat sims also stop being wiped on setting changes — the cache key already includes loadout, room level, crates, and hours, so entries stay valid; only genuine loadout-content changes clear them.
+
 ### Lab Sim: per-skill targets and a meaningful all-fights metric
 
 - **Targets button in the Lab Sim Upgrade tab** (both Combat Levels modes), matching Combat Sim: a per-skill target-level grid prefilled from current levels + the +Levels boost; while open, targets replace the uniform boost. In single-monster mode the grid hides skills the weapon style can't train; All Fights keeps every skill visible since assigned loadouts can differ in style.
