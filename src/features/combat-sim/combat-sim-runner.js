@@ -439,9 +439,11 @@ export async function runLabyrinthSimulation(params, onProgress) {
     const extraBuffs = [...buildExtraBuffs(communityBuffs, guildCombatBuffs), ...(labyrinthCombatBuffs || [])];
     const ONE_HOUR_NS = 3600 * 1e9;
 
-    // Cancel any previous run
-    cancelSimulation();
-
+    // Unlike runSimulation, labyrinth sims do NOT preempt other runs: each has
+    // its own worker, and several background consumers run concurrently (tile
+    // badge sims fire on every room switch while skip-recommendation searches
+    // are in flight — cancelling here killed the other side's sim mid-run).
+    // Explicit Stop buttons still cancel everything via cancelSimulation().
     const taskId = ++taskIdCounter;
     const message = {
         type: 'start_simulation',
