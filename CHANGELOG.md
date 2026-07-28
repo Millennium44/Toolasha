@@ -6,10 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
-### Labyrinth automation rows: stable layout and prefilled skip editing
+### Right-click a labyrinth tile → Lab Sim opens preconfigured
+
+- **Combat tiles**: right-clicking now opens the Lab Sim with that monster selected, its assigned labyrinth loadout applied to the editor, and the tile's room level filled in — no more re-picking everything after opening.
+- **Skilling tiles** (including enhancing) gain the same right-click: the Lab Sim opens on the Skilling tab with the tile's room level set (Use Skip Levels unchecked so it applies) and the loadout table filtered to that skill. The skilling tooltip now shows the right-click hint too.
+
+### Labyrinth automation rows: stable layout and autofilled skip editing
 
 - **Badges get their own line.** The clear-rate text, Rec, and Best badges were injected inline next to the native "≥ N Edit" controls, so longer combinations made values wrap mid-number and rows jump to different heights — and in edit mode the −/+/input/Save buttons collided with the badges. All annotations now share one full-width line below the native controls in every row, so the value/buttons always have the whole first line to themselves.
-- **Edit prefills the current skip level.** Clicking a row's Edit button now fills the game's (natively empty) number input with the row's current threshold, so nudging a value doesn't mean retyping it. Prefill only happens when the input is empty, so it never overwrites anything you've typed.
+- **Edit can autofill the recommended threshold.** With the new "Labyrinth: Autofill skip Edit input" setting enabled (off by default), clicking a row's Edit button fills the input with the row's recommended threshold from the last Recommend run (falling back to the current value when none exists), replacing whatever the input holds — run Recommend, click Edit, hit Save.
 
 ### Labyrinth recommendations survive setting edits and room switches
 
