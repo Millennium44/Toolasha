@@ -30,6 +30,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() })
 
 const { generateCandidates, calculateUpgradeCost } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+const { getItemPrices } = await import('../../utils/market-data.js');
 
 const MAIN_HAND = '/equipment_types/main_hand';
 
@@ -106,7 +107,30 @@ describe('generateCandidates refined-equipment gating', () => {
 });
 
 describe('calculateUpgradeCost for items without high-level listings', () => {
-    test('falls back to base price when the target enhancement level has no price', () => {
+    test('uses the market ask when the target enhancement level has a listing', () => {
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((hrid, { side }) => {
+            if (side === 'sell') return { price: 1_000_000 };
+            return { price: 5_000_000 };
+        });
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'tier',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 10,
+                upgradeHrid: '/items/regal_sword_refined',
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        expect(cost).toBe(199_000_000);
+    });
+
+    test('falls back to base price when the target enhancement level has no listing', () => {
+        getItemPrices.mockReturnValue(null);
         resolveItemPrice.mockImplementation((hrid, { enhancementLevel, side }) => {
             if (side === 'sell') return { price: 1_000_000 };
             if (enhancementLevel === 10) return { price: 0 };
@@ -130,6 +154,7 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
     });
 
     test('returns null instead of 0 when no price is known at all', () => {
+        getItemPrices.mockReturnValue(null);
         resolveItemPrice.mockImplementation(() => ({ price: 0 }));
 
         const cost = calculateUpgradeCost(
