@@ -67,6 +67,8 @@ class SkillingSimulatorUI {
     }
 
     initialize() {
+        if (this.isInitialized) return;
+        this.isInitialized = true;
         this.currentLevel = getPlayerSkillLevel(this.currentSkill);
         this.watcher = createMutationWatcher(document.body, () => this._tryInjectTabButton(), {
             childList: true,
@@ -1354,7 +1356,8 @@ class SkillingSimulatorUI {
 
     cleanup() {
         if (this.watcher) {
-            this.watcher.disconnect();
+            // createMutationWatcher returns an unwatch function, not the observer
+            this.watcher();
             this.watcher = null;
         }
         this._closePicker();
@@ -1366,6 +1369,7 @@ class SkillingSimulatorUI {
         this.panel = null;
         this.contentParent = null;
         this.isActive = false;
+        this.isInitialized = false;
     }
 }
 

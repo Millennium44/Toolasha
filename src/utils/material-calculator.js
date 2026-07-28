@@ -134,7 +134,7 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
  */
 export function calculateMaterialRequirements(actionHrid, numActions, accountForQueue = false) {
     const actionDetails = dataManager.getActionDetails(actionHrid);
-    const inventory = dataManager.getInventory();
+    const inventory = dataManager.getInventory() || [];
     const gameData = dataManager.getInitClientData();
 
     if (!actionDetails) {
@@ -331,7 +331,7 @@ export function calculateEnhancementMaterialRequirements(
         guzzlingBonus: params.guzzlingBonus,
     });
 
-    const inventory = dataManager.getInventory();
+    const inventory = dataManager.getInventory() || [];
     const materials = [];
 
     // Process enhancement cost materials

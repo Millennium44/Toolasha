@@ -10,6 +10,7 @@
  * - Market tax (2%)
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
@@ -338,6 +339,7 @@ export async function calculateGatheringProfit(actionHrid) {
         gatheringQuantity: totalGathering, // Total gathering quantity bonus (as decimal) - renamed for display consistency
         totalGathering, // Alias used by formatProfitDisplay
         hasMissingPrices,
+        pricingMode: config.getSettingValue('profitCalc_pricingMode', 'hybrid'), // Pricing mode for display
         // Top-level gathering breakdown for formatProfitDisplay
         gatheringTea,
         communityGathering,
