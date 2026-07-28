@@ -28,7 +28,8 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 vi.mock('../../utils/ability-cost-calculator.js', () => ({ calculateAbilityLevelUpCost: vi.fn() }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { generateCandidates } = await import('./upgrade-advisor.js');
+const { generateCandidates, calculateUpgradeCost } = await import('./upgrade-advisor.js');
+const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 
 const MAIN_HAND = '/equipment_types/main_hand';
 
@@ -101,5 +102,48 @@ describe('generateCandidates refined-equipment gating', () => {
         );
         expect(enhancement).toBeDefined();
         expect(enhancement.upgradeLevel).toBeGreaterThanOrEqual(10);
+    });
+});
+
+describe('calculateUpgradeCost for items without high-level listings', () => {
+    test('falls back to base price when the target enhancement level has no price', () => {
+        resolveItemPrice.mockImplementation((hrid, { enhancementLevel, side }) => {
+            if (side === 'sell') return { price: 1_000_000 };
+            if (enhancementLevel === 10) return { price: 0 };
+            return { price: 5_000_000 };
+        });
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'tier',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 10,
+                upgradeHrid: '/items/regal_sword_refined',
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        // Base price (5M) + enhancement cost (0, no enhancementCosts data) - sell current (1M)
+        expect(cost).toBe(4_000_000);
+    });
+
+    test('returns null instead of 0 when no price is known at all', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'tier',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 5,
+                upgradeHrid: '/items/regal_sword_refined',
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        expect(cost).toBeNull();
     });
 });

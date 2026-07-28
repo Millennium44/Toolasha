@@ -1582,6 +1582,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Records per-action success/fail/double logs for labyrinth skilling rooms (Logs button in the labyrinth panel)',
             },
+            labyrinthAutoCalcTiles: {
+                id: 'labyrinthAutoCalcTiles',
+                label: 'Labyrinth: Auto-calc revealed tiles',
+                type: 'checkbox',
+                default: false,
+                help: 'Automatically calculates clear chances for newly revealed labyrinth tiles without clicking Calc Tiles',
+            },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
                 label: 'Show battle/wave counter in current action panel during combat',
