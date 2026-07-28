@@ -5,9 +5,16 @@
  * - Dungeons: "Wave N · Battle #N" — wave from wave index, battle from battleId
  * - Labyrinth: "Attempt #N" — from entryCount in labyrinth_updated room data
  *
+ * Which variant renders is decided by the header title itself: labyrinth
+ * fights are titled "Labyrinth - <Monster>". State flags are NOT trusted for
+ * this decision — a labyrinth run stays "active" between entries while the
+ * player fights regular zones, and stale labyrinth messages arrive shortly
+ * after exiting, so every flag-based scheme mislabeled one side or the other
+ * (normal zones showing "Attempt #", or lab fights showing "Battle #").
+ *
  * Target: Header_actionName (inline with zone name, e.g. "Chimerical Den · Wave 5")
  * domObserver watches Header_actionName so the span is re-injected whenever
- * React replaces that element between dungeon waves.
+ * React replaces that element between waves or zone changes.
  */
 
 import webSocketHook from '../../core/websocket.js';
@@ -28,7 +35,6 @@ class CombatBattleCounter {
         this.battleId = 0;
         this.currentWave = 0;
         this.isDungeon = false;
-        this.isLabyrinth = false;
         this.labyrinthAttempt = 0;
     }
 
@@ -69,7 +75,6 @@ class CombatBattleCounter {
             this.battleId = 0;
             this.currentWave = 0;
             this.isDungeon = false;
-            this.isLabyrinth = false;
             this.labyrinthAttempt = 0;
             document.getElementById(COUNTER_ID)?.remove();
         }
@@ -77,100 +82,91 @@ class CombatBattleCounter {
 
     _onLabyrinthUpdated(data) {
         const labyrinth = data.labyrinth;
-        if (!labyrinth?.isActive) return;
+        if (!labyrinth) return;
 
-        // Cross-check: only trust labyrinth state if the player's current action is
-        // actually the labyrinth explore action. Stale labyrinth_updated messages
-        // can arrive shortly after exiting and otherwise stamp "Attempt #N" onto
-        // the next regular combat zone.
-        const actions = dataManager.getCurrentActions();
-        const activeLabAction = actions.find((a) => a.actionHrid === '/actions/labyrinth/explore' && !a.isDone);
-        if (!activeLabAction) return;
+        // Run over — never let a stale attempt count leak into later zones
+        if (!labyrinth.isActive) {
+            if (this.labyrinthAttempt !== 0) {
+                this.labyrinthAttempt = 0;
+                this._injectOrUpdate();
+            }
+            return;
+        }
 
         let pathCoords;
+        let roomRows = labyrinth.roomData;
         try {
             pathCoords = JSON.parse(labyrinth.pathData || '[]');
+            if (typeof roomRows === 'string') roomRows = JSON.parse(roomRows);
         } catch {
             return;
         }
-        if (!pathCoords.length) return;
+        if (!pathCoords.length || !Array.isArray(roomRows)) return;
 
         const active = pathCoords[pathCoords.length - 1];
-        const room = labyrinth.roomData?.[active.y]?.[active.x];
-        if (!room || room.roomType !== '/labyrinth_room_types/combat') return;
+        const room = roomRows?.[active.y]?.[active.x];
+        if (!room || room.roomType !== '/labyrinth_room_types/combat') {
+            // Moved to a non-combat room — the previous fight's attempt count
+            // no longer applies
+            if (this.labyrinthAttempt !== 0) {
+                this.labyrinthAttempt = 0;
+                this._injectOrUpdate();
+            }
+            return;
+        }
 
         const entryCount = room.entryCount || 0;
         if (entryCount > 0) {
-            this.isLabyrinth = true;
             this.labyrinthAttempt = entryCount;
             this._injectOrUpdate();
         }
     }
 
     _onNewBattle(data) {
+        this.battleId = data.battleId || 0;
+
         const actions = dataManager.getCurrentActions();
         const combatAction = actions.find((a) => a.actionHrid?.startsWith('/actions/combat/') && !a.isDone);
-        if (!combatAction) return;
-
-        // A new battle implies we're not in a static labyrinth state — clear any
-        // lingering labyrinth attempt count so it can't leak into a render.
-        this.isLabyrinth = false;
-        this.labyrinthAttempt = 0;
-        this.battleId = data.battleId;
-        const isDungeon = combatAction
+        this.isDungeon = combatAction
             ? dataManager.getActionDetails(combatAction.actionHrid)?.combatZoneInfo?.isDungeon === true
             : false;
-
-        if (isDungeon) {
-            this.isDungeon = true;
-            this.currentWave = data.wave ?? 0;
-        } else {
-            this.isDungeon = false;
-        }
+        this.currentWave = this.isDungeon ? (data.wave ?? 0) : 0;
         this._injectOrUpdate();
     }
 
     _injectOrUpdate() {
-        if (this.battleId === 0 && this.labyrinthAttempt === 0) {
-            document.getElementById(COUNTER_ID)?.remove();
-            return;
-        }
-
-        // Defensive: if state claims labyrinth but the current action isn't a
-        // labyrinth explore, clear the labyrinth flags and re-derive what to
-        // render from the remaining state.
-        if (this.isLabyrinth) {
-            const actions = dataManager.getCurrentActions();
-            const isCurrentlyLab = actions.some((a) => a.actionHrid === '/actions/labyrinth/explore' && !a.isDone);
-            if (!isCurrentlyLab) {
-                this.isLabyrinth = false;
-                this.labyrinthAttempt = 0;
-                if (this.battleId === 0) {
-                    document.getElementById(COUNTER_ID)?.remove();
-                    return;
-                }
-            }
-        }
-
         const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
         if (!currentAction || !nameRow) return;
 
+        // The header title decides the variant: labyrinth fights are titled
+        // "Labyrinth - <Monster>" (our appended counter text never contains
+        // the word, so reading the row's full text is safe)
+        const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
+
+        let text = '';
+        if (isLabyrinthFight) {
+            // Never show "Battle #" on a labyrinth fight — if the attempt
+            // count hasn't arrived yet, show nothing
+            text = this.labyrinthAttempt > 0 ? `· Attempt #${this.labyrinthAttempt}` : '';
+        } else if (this.isDungeon && this.battleId > 0) {
+            text = `· Wave ${this.currentWave} · Battle #${this.battleId}`;
+        } else if (this.battleId > 0) {
+            text = `· Battle #${this.battleId}`;
+        }
+
         let el = document.getElementById(COUNTER_ID);
+        if (!text) {
+            el?.remove();
+            return;
+        }
         if (!el || !el.isConnected) {
             el = document.createElement('span');
             el.id = COUNTER_ID;
             el.style.cssText = 'color: rgba(255,255,255,0.6); margin-left: 6px; white-space: nowrap;';
             nameRow.appendChild(el);
         }
-
-        if (this.isLabyrinth) {
-            el.textContent = `· Attempt #${this.labyrinthAttempt}`;
-        } else if (this.isDungeon) {
-            el.textContent = `· Wave ${this.currentWave} · Battle #${this.battleId}`;
-        } else {
-            el.textContent = `· Battle #${this.battleId}`;
-        }
+        el.textContent = text;
     }
 
     disable() {
@@ -191,6 +187,10 @@ class CombatBattleCounter {
             this.unregisterObserver = null;
         }
         document.getElementById(COUNTER_ID)?.remove();
+        this.battleId = 0;
+        this.currentWave = 0;
+        this.isDungeon = false;
+        this.labyrinthAttempt = 0;
         this.initialized = false;
     }
 }

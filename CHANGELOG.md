@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Battle counter: labyrinth fights always show Attempt #, zones always show Battle
+
+- The counter's labyrinth detection relied on state flags and an action HRID guess, and both go stale in opposite directions — a labyrinth run stays "active" between entries while you fight regular zones, and stale labyrinth messages arrive right after exiting — which is why every previous fix flipped the bug from one side to the other. The render decision now comes from the header title itself (labyrinth fights are titled "Labyrinth - <Monster>"), so lab fights show `· Attempt #N` (or nothing until the attempt count arrives — never `Battle #`), and regular zones/dungeons show `Battle #`/`Wave · Battle #` regardless of lingering labyrinth state.
+
 ### Labyrinth path planner: optimal route to the flag
 
 - New **Path** button in the labyrinth tile controls bar computes and highlights the best route from your cleared rooms to the floor exit, using the same per-tile clear chances as the badges (combat tiles sim on demand, cached).
