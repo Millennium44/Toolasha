@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -52,6 +53,10 @@ class TransmuteHistoryViewer {
         this.activeFilterPopup = null;
         this.activeFilterButton = null;
         this.popupCloseHandler = null;
+
+        // Computed profit per session id — kept out of the session objects so
+        // it is never persisted back to storage
+        this.profitCache = new Map();
 
         // Tab injection
         this.alchemyTab = null;
@@ -183,6 +188,7 @@ class TransmuteHistoryViewer {
     async openModal() {
         this.sessions = await transmuteHistoryTracker.loadSessions();
         this.cachedDateRange = null;
+        this.profitCache.clear();
         this.applyFilters();
 
         if (!this.modal) {
@@ -320,6 +326,12 @@ class TransmuteHistoryViewer {
     applyFilters() {
         this.cachedDateRange = null;
 
+        for (const session of this.sessions) {
+            if (!this.profitCache.has(session.id)) {
+                this.profitCache.set(session.id, this.computeSessionProfit(session));
+            }
+        }
+
         const hasDateFilter = !!(this.filters.dateFrom || this.filters.dateTo);
         let dateToEndOfDay = null;
         if (hasDateFilter && this.filters.dateTo) {
@@ -363,6 +375,9 @@ class TransmuteHistoryViewer {
             if (this.sortColumn === 'inputItemHrid') {
                 aVal = this.getItemName(String(aVal));
                 bVal = this.getItemName(String(bVal));
+            } else if (this.sortColumn === '_profit') {
+                aVal = this.profitCache.get(a.id)?.profit ?? 0;
+                bVal = this.profitCache.get(b.id)?.profit ?? 0;
             }
             const cmp = typeof aVal === 'string' ? aVal.localeCompare(String(bVal)) : aVal - bVal;
             return this.sortDirection === 'asc' ? cmp : -cmp;
@@ -439,6 +454,7 @@ class TransmuteHistoryViewer {
             { key: 'totalAttempts', label: 'Attempts', filterable: false },
             { key: 'totalSuccesses', label: 'Successes', filterable: false },
             { key: 'results', label: 'Results', filterable: true },
+            { key: '_profit', label: 'Profit', filterable: false },
             { key: '_delete', label: '', filterable: false },
         ];
 
@@ -565,6 +581,22 @@ class TransmuteHistoryViewer {
                 this.renderResultsCell(resultsCell, session);
                 row.appendChild(resultsCell);
 
+                // Profit
+                const profitCell = document.createElement('td');
+                const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+                profitCell.textContent = formatKMB(profitDetail.profit, 1);
+                profitCell.style.cssText = `
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
+                `;
+                profitCell.title =
+                    `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
+                    `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
+                    `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
+                    `Excludes catalysts and teas`;
+                row.appendChild(profitCell);
+
                 // Delete
                 const deleteCell = document.createElement('td');
                 deleteCell.style.cssText = 'padding: 6px 4px; text-align: center;';
@@ -593,6 +625,40 @@ class TransmuteHistoryViewer {
         table.appendChild(tbody);
         tableContainer.appendChild(table);
         this.renderPagination();
+    }
+
+    /**
+     * Compute session profit: recorded output value minus the cost of consumed
+     * inputs (at current buy price — historical input prices were not recorded)
+     * and the transmute coin fee. Catalysts and teas are not tracked, so they
+     * are excluded.
+     * @param {Object} session
+     * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number}}
+     */
+    computeSessionProfit(session) {
+        const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
+        const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+
+        let revenue = 0;
+        let selfReturned = 0;
+        for (const result of Object.values(session.results || {})) {
+            if (result.isSelfReturn) {
+                selfReturned += result.count || 0;
+            } else {
+                revenue += result.totalValue || 0;
+            }
+        }
+
+        const attempts = session.totalAttempts || 0;
+        const netConsumed = Math.max(0, attempts * bulkMultiplier - selfReturned);
+        const inputPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' }) || 0;
+        const inputCost = netConsumed * inputPrice;
+
+        // Transmute coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
+        const sellPrice = itemDetails?.sellPrice || 0;
+        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+
+        return { profit: revenue - inputCost - coinCost, revenue, inputCost, coinCost, netConsumed };
     }
 
     /**
@@ -1346,7 +1412,7 @@ class TransmuteHistoryViewer {
     exportHistory() {
         const escape = (val) => `"${String(val === null || val === undefined ? '' : val).replace(/"/g, '""')}"`;
 
-        const headers = ['Session Start', 'Input Item', 'Attempts', 'Successes', 'Failures', 'Results'];
+        const headers = ['Session Start', 'Input Item', 'Attempts', 'Successes', 'Failures', 'Results', 'Profit'];
 
         const rows = this.sessions.map((session) => {
             const start = formatDateTime(new Date(session.startTime));
@@ -1369,7 +1435,17 @@ class TransmuteHistoryViewer {
                     return `${name} x${result.count} = ${total} (${each} each)`;
                 });
 
-            return [start, inputName, session.totalAttempts, session.totalSuccesses, failures, resultParts.join('; ')]
+            const profit = (this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit;
+
+            return [
+                start,
+                inputName,
+                session.totalAttempts,
+                session.totalSuccesses,
+                failures,
+                resultParts.join('; '),
+                Math.round(profit),
+            ]
                 .map(escape)
                 .join(',');
         });
