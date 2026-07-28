@@ -29,6 +29,140 @@ const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
+const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+
+/** Lexicographic weight: one beacon outweighs any number of torches */
+const PATH_BEACON_WEIGHT = 1e6;
+
+/**
+ * Compute the cheapest route from the cleared region to the floor exit over a
+ * flat labyrinth grid. Priorities, lexicographic: fewest beacons (uncleared
+ * tiles below the clearable threshold that must be bypassed), then most
+ * treasure rooms, then fewest torches (uncleared tiles revealed). Treasure
+ * rooms are grafted onto the route greedily whenever they can be reached
+ * without spending an extra beacon — a chest is always worth extra torches,
+ * never an extra beacon.
+ *
+ * Pure function so the routing logic is testable without DOM or sims.
+ * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
+ *   { cleared, needsBeacon, isTreasure, isDescend }
+ * @param {number} cols - Grid width
+ * @returns {Object|null} { route: Set<number>, chests: Set<number>, beacons,
+ *   torches, target } or null when there is no start/exit/route
+ */
+export function computeLabyrinthPath(tiles, cols) {
+    const target = tiles.findIndex((t) => t?.isDescend && !t.cleared);
+    const targetIdx = target >= 0 ? target : tiles.findIndex((t) => t?.isDescend);
+    if (targetIdx < 0) return null;
+
+    const sources = [];
+    for (let i = 0; i < tiles.length; i++) {
+        if (tiles[i]?.cleared) sources.push(i);
+    }
+    if (!sources.length) return null;
+
+    const neighbors = (idx) => {
+        const x = idx % cols;
+        const out = [];
+        if (x > 0) out.push(idx - 1);
+        if (x < cols - 1) out.push(idx + 1);
+        if (idx - cols >= 0) out.push(idx - cols);
+        if (idx + cols < tiles.length) out.push(idx + cols);
+        return out;
+    };
+
+    // Entering a tile costs beacons*W + 1 torch when uncleared; cleared tiles
+    // and tiles already on the route are free. Walls are impassable.
+    const enterCost = (idx, routeSet) => {
+        const t = tiles[idx];
+        if (!t) return null;
+        if (t.cleared || routeSet.has(idx)) return 0;
+        return (t.needsBeacon ? PATH_BEACON_WEIGHT : 0) + 1;
+    };
+
+    const dijkstra = (sourceIndices, routeSet) => {
+        const dist = new Array(tiles.length).fill(Infinity);
+        const prev = new Array(tiles.length).fill(-1);
+        const visited = new Array(tiles.length).fill(false);
+        for (const s of sourceIndices) dist[s] = 0;
+        for (;;) {
+            let u = -1;
+            let best = Infinity;
+            for (let i = 0; i < tiles.length; i++) {
+                if (!visited[i] && dist[i] < best) {
+                    best = dist[i];
+                    u = i;
+                }
+            }
+            if (u < 0) break;
+            visited[u] = true;
+            for (const v of neighbors(u)) {
+                const cost = enterCost(v, routeSet);
+                if (cost === null) continue;
+                if (dist[u] + cost < dist[v]) {
+                    dist[v] = dist[u] + cost;
+                    prev[v] = u;
+                }
+            }
+        }
+        return { dist, prev };
+    };
+
+    const tracePath = (prev, end, stopSet) => {
+        const path = [];
+        let cur = end;
+        while (cur >= 0 && !stopSet.has(cur)) {
+            path.push(cur);
+            cur = prev[cur];
+        }
+        return path;
+    };
+
+    // Base route: cleared region → floor exit
+    const routeSet = new Set();
+    const sourceSet = new Set(sources);
+    const base = dijkstra(sources, routeSet);
+    if (!Number.isFinite(base.dist[targetIdx])) return null;
+    for (const idx of tracePath(base.prev, targetIdx, sourceSet)) routeSet.add(idx);
+
+    // Graft on every treasure room reachable without an extra beacon,
+    // cheapest branch (fewest torches) first
+    const chests = new Set();
+    for (const idx of routeSet) {
+        if (tiles[idx]?.isTreasure) chests.add(idx);
+    }
+    let pool = [];
+    for (let i = 0; i < tiles.length; i++) {
+        if (tiles[i]?.isTreasure && !tiles[i].cleared && !routeSet.has(i)) pool.push(i);
+    }
+    while (pool.length) {
+        const run = dijkstra([...sourceSet, ...routeSet], routeSet);
+        let bestChest = -1;
+        let bestCost = Infinity;
+        for (const idx of pool) {
+            if (run.dist[idx] < bestCost) {
+                bestCost = run.dist[idx];
+                bestChest = idx;
+            }
+        }
+        if (bestChest < 0 || bestCost >= PATH_BEACON_WEIGHT) break;
+        const stopSet = new Set([...sourceSet, ...routeSet]);
+        for (const idx of tracePath(run.prev, bestChest, stopSet)) routeSet.add(idx);
+        chests.add(bestChest);
+        pool = pool.filter((idx) => !routeSet.has(idx));
+    }
+
+    let beacons = 0;
+    let torches = 0;
+    for (const idx of routeSet) {
+        const t = tiles[idx];
+        if (!t || t.cleared) continue;
+        torches++;
+        if (t.needsBeacon) beacons++;
+    }
+
+    return { route: routeSet, chests, beacons, torches, target: targetIdx };
+}
 
 class LabyrinthClearRate {
     constructor() {
@@ -225,6 +359,8 @@ class LabyrinthClearRate {
         document.querySelectorAll(`.${RECOMMEND_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${RECOMMEND_CONTROLS_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
+        this.clearPathOverlays();
+        this.pathCalcRunning = false;
         pruneEmptyAnnotationContainers();
 
         if (this._editClickHandler) {
@@ -255,6 +391,7 @@ class LabyrinthClearRate {
             this.roomData = roomData;
             this.injectOverlays();
             if (previousFloor !== this.currentFloor) {
+                this.clearPathOverlays();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
             }
@@ -1828,6 +1965,39 @@ class LabyrinthClearRate {
         });
         container.appendChild(hoursInput);
 
+        const pathButton = document.createElement('button');
+        pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
+        pathButton.textContent = 'Path';
+        pathButton.title =
+            'Highlight the best route to the floor exit: fewest beacons, then most treasure rooms, then fewest torches';
+        pathButton.style.cssText =
+            'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#8e5bd8; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        pathButton.addEventListener('click', () => this.runPathCalculation());
+        container.appendChild(pathButton);
+
+        const pathLabel = document.createElement('span');
+        pathLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        pathLabel.textContent = 'Clear ≥';
+        pathLabel.title = 'Tiles below this clear chance (%) count as unclearable and cost a beacon on the path';
+        container.appendChild(pathLabel);
+
+        const pathInput = document.createElement('input');
+        pathInput.className = `${TILE_CONTROLS_CLASS}-path-threshold`;
+        pathInput.type = 'number';
+        pathInput.min = '1';
+        pathInput.max = '100';
+        pathInput.step = '1';
+        pathInput.value = String(config.getSettingValue('labyrinthPathClearThreshold', 70));
+        pathInput.title = pathLabel.title;
+        pathInput.style.cssText = hoursInput.style.cssText;
+        pathInput.addEventListener('change', () => {
+            const n = Math.min(100, Math.max(1, Math.floor(Number(pathInput.value) || 70)));
+            pathInput.value = String(n);
+            config.setSettingValue('labyrinthPathClearThreshold', n);
+        });
+        container.appendChild(pathInput);
+
         if (config.getSetting('labyrinthRoomLogs')) {
             const logsButton = document.createElement('button');
             logsButton.textContent = 'Logs';
@@ -2039,6 +2209,164 @@ class LabyrinthClearRate {
         } finally {
             this.tileCalcRunning = false;
             this.setTileButtonRunning(false);
+        }
+    }
+
+    /**
+     * Compute and highlight the optimal route to the floor exit.
+     * Clear chances come from the same per-tile math as the badges; the
+     * clearable threshold is its own setting, separate from the skip
+     * recommendation target.
+     */
+    async runPathCalculation() {
+        if (this.pathCalcRunning) return;
+        if (!this.roomData) {
+            this.setTileStatus('No labyrinth data');
+            return;
+        }
+
+        const rows = this.roomData;
+        const flat = rows.flat();
+        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        const cells = this.findRoomGridCells(flat.length);
+        if (!cols || cells.length !== flat.length) {
+            this.setTileStatus('Grid not found');
+            return;
+        }
+
+        const input = document.querySelector(`.${TILE_CONTROLS_CLASS}-path-threshold`);
+        const thresholdPct = Math.min(
+            100,
+            Math.max(1, Math.floor(Number(input?.value) || config.getSettingValue('labyrinthPathClearThreshold', 70)))
+        );
+        if (input) input.value = String(thresholdPct);
+        config.setSettingValue('labyrinthPathClearThreshold', thresholdPct);
+        const threshold = thresholdPct / 100;
+
+        this.clearPathOverlays();
+        this.pathCalcRunning = true;
+        this.setPathButtonRunning(true);
+
+        try {
+            // Classify every room and gather clear chances (treasure and the
+            // exit are freely enterable; combat needs sims, cached when possible)
+            const tiles = new Array(flat.length).fill(null);
+            const combatToSim = [];
+            for (let i = 0; i < flat.length; i++) {
+                const room = flat[i];
+                if (!room) continue;
+                const type = String(room.roomType || '');
+                const tile = {
+                    index: i,
+                    room,
+                    cleared: !!room.isCleared,
+                    isTreasure: type.endsWith('/treasure'),
+                    isDescend: type.endsWith('/descend'),
+                    clearChance: 1,
+                    needsBeacon: false,
+                };
+                tiles[i] = tile;
+                if (tile.cleared || tile.isTreasure || tile.isDescend) continue;
+
+                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+                if (room.skillHrid && roomLevel > 0) {
+                    const result =
+                        room.skillHrid === '/skills/enhancing'
+                            ? this.computeEnhancingClear(roomLevel)
+                            : this.computeSkillingClear(room.skillHrid, roomLevel);
+                    tile.clearChance = result ? result.clearChance : 1;
+                } else if (room.monsterHrid && roomLevel > 0) {
+                    combatToSim.push({ tile, roomLevel });
+                }
+            }
+
+            for (let i = 0; i < combatToSim.length; i++) {
+                const { tile, roomLevel } = combatToSim[i];
+                this.setTileStatus(`Pathing: fight sims ${i + 1}/${combatToSim.length}`);
+                const result = await this.computeCombatClear(tile.room.monsterHrid, roomLevel);
+                tile.clearChance = result && !result.failed ? result.clearChance : 0;
+            }
+            for (const tile of tiles) {
+                if (tile && !tile.cleared && !tile.isTreasure && !tile.isDescend) {
+                    tile.needsBeacon = tile.clearChance < threshold;
+                }
+            }
+
+            const path = computeLabyrinthPath(tiles, cols);
+            if (!path) {
+                this.setTileStatus(
+                    tiles.some((t) => t?.cleared) ? 'No route to the floor exit' : 'No cleared room to path from'
+                );
+                return;
+            }
+
+            for (const idx of path.route) {
+                const tile = tiles[idx];
+                const cell = cells[idx];
+                if (!tile || tile.cleared || !cell) continue;
+                let color;
+                let label = '';
+                if (tile.isDescend) {
+                    color = '#c792ff';
+                    label = '⚑';
+                } else if (tile.isTreasure) {
+                    color = '#ffd54f';
+                } else if (tile.needsBeacon) {
+                    color = '#ff5252';
+                    label = 'Beacon';
+                } else {
+                    color = '#57d08a';
+                }
+                this.appendPathOverlay(cell, color, label);
+            }
+
+            const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+            this.setTileStatus(
+                `Path: ${plural(path.torches, 'room')} · ${plural(path.beacons, 'beacon')} · ${plural(path.chests.size, 'chest')}`
+            );
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Path calculation failed:', error);
+            this.setTileStatus('Path failed');
+        } finally {
+            this.pathCalcRunning = false;
+            this.setPathButtonRunning(false);
+        }
+    }
+
+    /**
+     * Outline a run-grid tile as part of the computed route
+     */
+    appendPathOverlay(cell, color, label) {
+        const cellStyle = window.getComputedStyle(cell);
+        if (cellStyle.position === 'static') {
+            cell.style.position = 'relative';
+        }
+        const overlay = document.createElement('div');
+        overlay.className = PATH_OVERLAY_CLASS;
+        overlay.style.cssText =
+            `position:absolute; inset:0; border:2px solid ${color}; border-radius:6px; ` +
+            'pointer-events:none; z-index:8; box-sizing:border-box;';
+        if (label) {
+            const tag = document.createElement('div');
+            tag.style.cssText =
+                `position:absolute; top:1px; left:1px; padding:0 3px; border-radius:3px; background:${color}; ` +
+                'color:#000; font-size:8px; font-weight:700; line-height:1.4;';
+            tag.textContent = label;
+            overlay.appendChild(tag);
+        }
+        cell.appendChild(overlay);
+    }
+
+    clearPathOverlays() {
+        document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+    }
+
+    setPathButtonRunning(running) {
+        const btn = document.querySelector(`.${TILE_CONTROLS_CLASS}-path-button`);
+        if (btn) {
+            btn.disabled = running;
+            btn.textContent = running ? 'Pathing...' : 'Path';
+            btn.style.opacity = running ? '0.75' : '1';
         }
     }
 

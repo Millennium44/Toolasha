@@ -1568,6 +1568,16 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Hours of combat simulation per labyrinth tile and recommendation calculation (higher = more accurate, slower)',
             },
+            labyrinthPathClearThreshold: {
+                id: 'labyrinthPathClearThreshold',
+                label: 'Labyrinth: Path clearable threshold (%)',
+                type: 'number',
+                default: 70,
+                min: 1,
+                max: 100,
+                step: 1,
+                help: 'Clear chance at or above which the labyrinth path planner treats a tile as clearable without a beacon (separate from the skip recommendation target)',
+            },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
                 label: 'Labyrinth: Autofill skip Edit input',

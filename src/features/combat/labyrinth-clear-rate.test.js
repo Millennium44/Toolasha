@@ -20,7 +20,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runLabyrinthSimulation: vi.fn() }));
 vi.mock('./loadout-snapshot.js', () => ({ default: {} }));
 
-const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { default: labyrinthClearRate, computeLabyrinthPath } = await import('./labyrinth-clear-rate.js');
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -161,5 +161,77 @@ describe('attachSkillingWhatIfs', () => {
         });
         expect(result.efficiencyDelta).toBeNull();
         expect(result.efficiencyTierClearChance).toBeNull();
+    });
+});
+
+describe('computeLabyrinthPath', () => {
+    // ASCII grids: S = cleared start, . = clearable, X = unclearable (beacon),
+    // # = wall, T = treasure, F = floor exit
+    function grid(rows) {
+        const cols = rows[0].length;
+        const tiles = [];
+        for (const row of rows) {
+            for (const ch of row) {
+                if (ch === '#') {
+                    tiles.push(null);
+                    continue;
+                }
+                tiles.push({
+                    cleared: ch === 'S',
+                    needsBeacon: ch === 'X',
+                    isTreasure: ch === 'T',
+                    isDescend: ch === 'F',
+                });
+            }
+        }
+        return { tiles, cols };
+    }
+
+    test('routes straight to the exit', () => {
+        const { tiles, cols } = grid(['S.F']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.beacons).toBe(0);
+        expect(path.torches).toBe(2);
+        expect([...path.route].sort()).toEqual([1, 2]);
+    });
+
+    test('detours around unclearable tiles instead of spending a beacon', () => {
+        const { tiles, cols } = grid(['SXF', '...']);
+        const path = computeLabyrinthPath(tiles, cols);
+        // 0 beacons via the bottom row (4 torches) beats 1 beacon (2 torches)
+        expect(path.beacons).toBe(0);
+        expect(path.torches).toBe(4);
+        expect(path.route.has(1)).toBe(false);
+    });
+
+    test('spends a beacon when the exit is walled off otherwise', () => {
+        const { tiles, cols } = grid(['SXF', '###']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.beacons).toBe(1);
+        expect(path.torches).toBe(2);
+        expect(path.route.has(1)).toBe(true);
+    });
+
+    test('grafts on treasure rooms reachable without beacons', () => {
+        const { tiles, cols } = grid(['S.F', '#T#']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.beacons).toBe(0);
+        expect(path.chests.size).toBe(1);
+        expect(path.route.has(4)).toBe(true);
+        expect(path.torches).toBe(3);
+    });
+
+    test('never spends a beacon to reach a chest', () => {
+        const { tiles, cols } = grid(['S.F', '#X#', '#T#']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.beacons).toBe(0);
+        expect(path.chests.size).toBe(0);
+        expect(path.route.has(7)).toBe(false);
+        expect(path.torches).toBe(2);
+    });
+
+    test('returns null when no cleared start or exit exists', () => {
+        expect(computeLabyrinthPath(grid(['..F']).tiles, 3)).toBeNull();
+        expect(computeLabyrinthPath(grid(['S..']).tiles, 3)).toBeNull();
     });
 });
