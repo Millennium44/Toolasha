@@ -970,12 +970,12 @@ export function calculateUpgradeCost(candidate, gameData) {
 
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
-        for (const [, item] of Object.entries(candidate.addedSlots)) {
-            const price = resolveItemPrice(item.hrid, {
-                side: 'buy',
-                enhancementLevel: item.enhancementLevel,
-            });
-            buyCost += price.price;
+        for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+            const price = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, slot, gameData);
+            if (price === null) {
+                return null; // Unknown acquisition cost — don't rank as free
+            }
+            buyCost += price;
         }
         const sellPrice = resolveItemPrice(candidate.currentHrid, {
             side: 'sell',
@@ -1004,17 +1004,42 @@ export function calculateUpgradeCost(candidate, gameData) {
         );
     }
 
-    // Tier upgrade: buy new item at same enhancement - sell current item
-    const buyPrice = resolveItemPrice(candidate.upgradeHrid, {
-        side: 'buy',
-        enhancementLevel: candidate.upgradeLevel,
-    }).price;
+    // Tier upgrade: buy new item at target enhancement - sell current item
+    const buyPrice = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, candidate.slot, gameData);
+    if (buyPrice === null) {
+        return null; // Unknown acquisition cost — don't rank as free
+    }
     const sellPrice = resolveItemPrice(candidate.currentHrid, {
         side: 'sell',
         enhancementLevel: candidate.currentLevel,
     }).price;
 
     return Math.max(0, buyPrice - sellPrice);
+}
+
+/**
+ * Resolve the buy price of an item at a given enhancement level.
+ * When no price exists at that level (common for refined gear, which rarely
+ * has listings above +0), fall back to the base item price plus the expected
+ * enhancement cost to reach the level. Returns null when no price is known
+ * at all so callers can surface "unknown" instead of a free upgrade.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Target enhancement level
+ * @param {string} slot - Equipment slot HRID (for enhancement cost params)
+ * @param {Object} gameData - Game data payload
+ * @returns {number|null} Buy price in gold, or null when unknown
+ */
+function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
+    const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel }).price;
+    if (direct > 0) {
+        return direct;
+    }
+
+    const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+    const enhanceCost =
+        enhancementLevel > 0 ? calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot }) : 0;
+    const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
+    return total > 0 ? total : null;
 }
 
 /**
@@ -1179,17 +1204,19 @@ function computeDeltas(baseline, upgraded) {
  * Lower = better value.
  */
 function computeGoldPerImprovement(cost, deltas) {
+    // Unknown cost (null) must rank as Infinity, never as free
+    const safeCost = cost == null ? Infinity : cost;
     const goldPer = (pctDelta) => {
         if (pctDelta <= 0) return Infinity;
         // Gold per 0.1% = cost / (pctDelta * 10)
         // pctDelta is already in percent (e.g., 2 = 2%)
-        return cost / (pctDelta * 10);
+        return safeCost / (pctDelta * 10);
     };
 
     // For deaths, fewer is better — use negative delta (reduction)
     const goldPerReduction = (pctDelta) => {
         if (pctDelta >= 0) return Infinity; // Deaths didn't decrease
-        return cost / (Math.abs(pctDelta) * 10);
+        return safeCost / (Math.abs(pctDelta) * 10);
     };
 
     return {
@@ -1510,7 +1537,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             cost: candidate.cost,
             winRate,
             winRateDelta,
-            goldPerWinRate: winRateDelta > 0 ? candidate.cost / (winRateDelta * 100) : Infinity,
+            goldPerWinRate:
+                winRateDelta > 0 && candidate.cost != null ? candidate.cost / (winRateDelta * 100) : Infinity,
             metricType: 'winRate',
         });
         current++;

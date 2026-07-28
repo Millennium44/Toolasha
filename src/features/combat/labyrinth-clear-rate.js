@@ -114,6 +114,11 @@ class LabyrinthClearRate {
         document.getElementById(PREVIEW_ID)?.remove();
         document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
+        if (this.autoTileTimer) {
+            clearTimeout(this.autoTileTimer);
+            this.autoTileTimer = null;
+        }
+        this.calculatedTileKeys?.clear();
 
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
@@ -141,8 +146,18 @@ class LabyrinthClearRate {
             this.injectOverlays();
             if (previousFloor !== this.currentFloor) {
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+                this.calculatedTileKeys?.clear();
             }
             this.injectTileControls();
+
+            // Auto-calc newly revealed tiles when enabled (off by default)
+            if (config.getSetting('labyrinthAutoCalcTiles')) {
+                if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
+                this.autoTileTimer = setTimeout(() => {
+                    this.autoTileTimer = null;
+                    this.runTileCalculation({ auto: true });
+                }, 800);
+            }
         }
     }
 
@@ -1483,10 +1498,11 @@ class LabyrinthClearRate {
     /**
      * Compute and overlay clear chances on every calculable tile of the run grid
      */
-    async runTileCalculation() {
+    async runTileCalculation(options = {}) {
+        const auto = options.auto === true;
         if (this.tileCalcRunning) return;
         if (!this.roomData) {
-            this.setTileStatus('No labyrinth data');
+            if (!auto) this.setTileStatus('No labyrinth data');
             return;
         }
 
@@ -1495,16 +1511,25 @@ class LabyrinthClearRate {
         const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
         const cells = this.findRoomGridCells(flatRooms.length);
         if (!cols || cells.length !== flatRooms.length) {
-            this.setTileStatus('Grid not found');
+            if (!auto) this.setTileStatus('Grid not found');
             return;
         }
 
+        if (!this.calculatedTileKeys) {
+            this.calculatedTileKeys = new Set();
+        }
+        // Manual runs recalculate everything; auto runs only touch new tiles
+        if (!auto) {
+            this.calculatedTileKeys.clear();
+            document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        }
+
         this.tileCalcRunning = true;
-        this.setTileStatus('Calculating...');
-        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        if (!auto) this.setTileStatus('Calculating...');
 
         try {
             const combatIndexes = [];
+            let computedAny = false;
             for (let i = 0; i < flatRooms.length; i++) {
                 const room = flatRooms[i];
                 const cell = cells[i];
@@ -1513,6 +1538,9 @@ class LabyrinthClearRate {
                 const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
                 if (roomLevel <= 0) continue;
 
+                const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+                if (auto && this.calculatedTileKeys.has(tileKey)) continue;
+
                 if (room.skillHrid) {
                     const result =
                         room.skillHrid === '/skills/enhancing'
@@ -1520,6 +1548,8 @@ class LabyrinthClearRate {
                             : this.computeSkillingClear(room.skillHrid, roomLevel);
                     if (result) {
                         this.appendTileBadge(cell, result, roomLevel);
+                        this.calculatedTileKeys.add(tileKey);
+                        computedAny = true;
                     }
                 } else if (room.monsterHrid) {
                     combatIndexes.push(i);
@@ -1531,15 +1561,20 @@ class LabyrinthClearRate {
                 const room = flatRooms[i];
                 const cell = cells[i];
                 const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+                const tileKey = `${i % cols},${Math.floor(i / cols)}`;
                 this.setTileStatus(`Combat ${done + 1}/${combatIndexes.length}`);
 
                 const result = await this.computeCombatClear(room.monsterHrid, roomLevel);
                 if (result && cell.isConnected) {
                     this.appendTileBadge(cell, result, roomLevel);
+                    this.calculatedTileKeys.add(tileKey);
+                    computedAny = true;
                 }
             }
 
-            this.setTileStatus('Done');
+            if (!auto || computedAny) {
+                this.setTileStatus('Done');
+            }
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
             this.setTileStatus('Failed');
