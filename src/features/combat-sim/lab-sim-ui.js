@@ -62,6 +62,7 @@ class LabSimUI {
         this._skillingAborted = false;
         this._skillLoadouts = {};
         this._skillLoadoutsLoaded = false;
+        this._loadoutsCollapsed = true;
     }
 
     buildPanel() {
@@ -373,7 +374,12 @@ class LabSimUI {
         `;
         skillingControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Room Level</label>
-            <input id="mwi-labsim-skilling-level" type="number" min="1" max="300" value="100" style="${inputStyle}">
+            <input id="mwi-labsim-skilling-level" type="number" min="1" max="300" value="100" disabled style="${inputStyle}">
+            <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                title="Use each skill's automation skip level to derive its room level (effective level + skip - 1)">
+                <input type="checkbox" id="mwi-labsim-skilling-useskip" checked style="margin:0; cursor:pointer;">
+                Use Skip Levels
+            </label>
             <button id="mwi-labsim-skilling-calc" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -582,6 +588,10 @@ class LabSimUI {
         this.panel
             .querySelector('#mwi-labsim-skilling-upgrade')
             .addEventListener('click', () => this._onSkillingUpgradeAnalyze());
+        this.panel.querySelector('#mwi-labsim-skilling-useskip').addEventListener('change', (e) => {
+            const levelInput = this.panel.querySelector('#mwi-labsim-skilling-level');
+            if (levelInput) levelInput.disabled = e.target.checked;
+        });
         this.panel.querySelector('#mwi-labsim-skilling-stop').addEventListener('click', () => {
             this._skillingAborted = true;
         });
@@ -1405,8 +1415,38 @@ class LabSimUI {
     }
 
     /** @private */
+    /**
+     * Room level(s) for skilling calculations: a per-skill map derived from
+     * each skill's automation skip level when "Use Skip Levels" is checked,
+     * otherwise the single manual room level.
+     * @private
+     */
+    _getSkillingRoomLevels() {
+        const useSkip = this.panel.querySelector('#mwi-labsim-skilling-useskip')?.checked;
+        if (!useSkip) {
+            return parseInt(this.panel.querySelector('#mwi-labsim-skilling-level')?.value, 10) || 100;
+        }
+        const skillHrids = [
+            '/skills/milking',
+            '/skills/foraging',
+            '/skills/woodcutting',
+            '/skills/cheesesmithing',
+            '/skills/crafting',
+            '/skills/tailoring',
+            '/skills/cooking',
+            '/skills/brewing',
+            '/skills/alchemy',
+            '/skills/enhancing',
+        ];
+        const levels = {};
+        for (const skillHrid of skillHrids) {
+            levels[skillHrid] = labyrinthClearRate.getTargetRoomLevel(skillHrid);
+        }
+        return levels;
+    }
+
     _onSkillingCalculate() {
-        const roomLevel = parseInt(this.panel.querySelector('#mwi-labsim-skilling-level')?.value) || 100;
+        const roomLevel = this._getSkillingRoomLevels();
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._setStatus('No game data available.');
@@ -1437,14 +1477,19 @@ class LabSimUI {
         const container = this.panel?.querySelector('#mwi-labsim-skilling-results');
         if (!container) return;
 
-        const avgClearRate = results.reduce((s, r) => s + (r.clearChance || 0), 0) / results.length;
+        const usesSkipLevels = roomLevel && typeof roomLevel === 'object';
+        const activeResults = results.filter((r) => !r.skipped);
+        const avgClearRate = activeResults.length
+            ? activeResults.reduce((s, r) => s + (r.clearChance || 0), 0) / activeResults.length
+            : 0;
 
         const thStyle = 'text-align:right; padding:4px; color:#888; border-bottom:1px solid #333; font-size:10px;';
         const thLeftStyle = 'text-align:left; padding:4px; color:#888; border-bottom:1px solid #333; font-size:10px;';
         const tdStyle = 'padding:3px 4px; text-align:right; font-size:11px;';
 
+        const headerText = usesSkipLevels ? 'Skip-Level Rooms' : `Skilling Room Level ${roomLevel}`;
         let html = `<div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:6px;">
-            Skilling Room Level ${roomLevel}
+            ${headerText}
             <span style="color:#888; font-weight:400; font-size:11px; margin-left:8px;">
                 Avg Clear: <span style="color:${avgClearRate >= 0.95 ? '#4caf50' : avgClearRate >= 0.5 ? '#ff9800' : '#f44336'}; font-weight:600;">${(avgClearRate * 100).toFixed(1)}%</span>
             </span>
@@ -1453,6 +1498,7 @@ class LabSimUI {
         html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
         html += `<thead><tr>
             <th style="${thLeftStyle}">Skill</th>
+            <th style="${thStyle}">Room</th>
             <th style="${thStyle}">Level</th>
             <th style="${thStyle}">Eff. Lvl</th>
             <th style="${thStyle}">Success</th>
@@ -1461,12 +1507,26 @@ class LabSimUI {
         </tr></thead><tbody>`;
 
         for (const r of results) {
+            if (r.skipped) {
+                html += `<tr style="border-bottom:1px solid #1a1a1a; opacity:0.55;">
+                    <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
+                    <td style="${tdStyle} color:#888;">Skip</td>
+                    <td style="${tdStyle} color:#ccc;">${r.baseLevel}</td>
+                    <td style="${tdStyle} color:#888;">—</td>
+                    <td style="${tdStyle} color:#888;">—</td>
+                    <td style="${tdStyle} color:#888;">—</td>
+                    <td style="${tdStyle} color:#888;">—</td>
+                </tr>`;
+                continue;
+            }
             const clearColor = r.clearChance >= 0.95 ? '#4caf50' : r.clearChance >= 0.5 ? '#ff9800' : '#f44336';
             const successPct = ((r.successChance || 0) * 100).toFixed(1);
             const clearPct = ((r.clearChance || 0) * 100).toFixed(1);
+            const rowRoomLevel = r.roomLevel ?? roomLevel;
 
             html += `<tr style="border-bottom:1px solid #1a1a1a;">
                 <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
+                <td style="${tdStyle} color:#ccc;">${rowRoomLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${r.baseLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${r.effectiveLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${successPct}%</td>
@@ -1477,12 +1537,16 @@ class LabSimUI {
 
         html += '</tbody></table>';
         container.innerHTML = html;
-        this._setStatus(`Skilling clear rates calculated for level ${roomLevel}.`);
+        this._setStatus(
+            usesSkipLevels
+                ? 'Skilling clear rates calculated from automation skip levels.'
+                : `Skilling clear rates calculated for level ${roomLevel}.`
+        );
     }
 
     /** @private */
     async _onSkillingUpgradeAnalyze() {
-        const roomLevel = parseInt(this.panel.querySelector('#mwi-labsim-skilling-level')?.value) || 100;
+        const roomLevel = this._getSkillingRoomLevels();
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._setStatus('No game data available.');
