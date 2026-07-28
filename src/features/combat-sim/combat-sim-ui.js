@@ -420,6 +420,7 @@ class CombatSimUI {
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
+                <option value="combined">Equipment + Abilities</option>
             </select>
             <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-csim-upgrade-level-type" style="
@@ -534,7 +535,7 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-mode').addEventListener('change', (e) => {
             const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-            const isLevelMode = e.target.value === 'ability_level';
+            const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
             levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();

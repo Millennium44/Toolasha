@@ -733,6 +733,13 @@ class ActionTimeDisplay {
      * Update the display with current action data
      */
     updateDisplay() {
+        // Don't paint while settings are mid-switch or not yet character-loaded —
+        // a stale actionBar_compactWidth read here is how the bar could load compact
+        // even though the setting is off
+        if (!config.characterSettingsLoaded || dataManager.getIsCharacterSwitching()) {
+            return;
+        }
+
         if (!this.displayElement) {
             this.createDisplayPanel();
             if (!this.displayElement) {

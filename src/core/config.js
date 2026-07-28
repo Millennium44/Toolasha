@@ -440,6 +440,7 @@ class Config {
         // This prevents loading from the wrong storage key during early initialization
         if (!characterId) {
             this.settingsMap = settingsStorage.buildDefaults();
+            this.characterSettingsLoaded = false;
             return;
         }
 
@@ -449,6 +450,7 @@ class Config {
 
         // Load settings from settings-storage (which uses settings-schema as source of truth)
         this.settingsMap = await settingsStorage.loadSettings();
+        this.characterSettingsLoaded = true;
 
         // Fire change callbacks for settings that differ from what was previously loaded
         for (const key of Object.keys(this.settingChangeCallbacks)) {
@@ -468,6 +470,7 @@ class Config {
      */
     clearSettingsCache() {
         this.settingsMap = {};
+        this.characterSettingsLoaded = false;
     }
 
     /**
