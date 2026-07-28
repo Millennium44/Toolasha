@@ -390,7 +390,8 @@ class PopOutChat {
 
         this.popoutWindow = window.open(url, 'mwi-chat-popout', 'width=960,height=720,resizable=yes');
 
-        URL.revokeObjectURL(url);
+        // Defer revocation — revoking synchronously races the new window's fetch of the blob
+        this.timerRegistry.registerTimeout(setTimeout(() => URL.revokeObjectURL(url), 10000));
 
         if (!this.popoutWindow) {
             console.error('[PopOutChat] Popup blocked by browser');

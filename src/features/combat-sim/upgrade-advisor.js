@@ -1080,6 +1080,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 level: candidate.upgradeLevel,
                 triggers: null,
             };
+        } else if (candidate.type === 'cross_slot') {
+            // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
+            // clear the replaced slots and equip every added item
+            for (const slot of candidate.clearedSlots) {
+                modifiedDTOs[playerIndex].equipment[slot] = null;
+            }
+            for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+                modifiedDTOs[playerIndex].equipment[slot] = item;
+            }
         } else {
             // Equipment upgrade
             modifiedDTOs[playerIndex].equipment[candidate.slot] = {

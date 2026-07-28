@@ -556,8 +556,8 @@ class CollectionFilters {
             this.unregisterHandlers.push(unregSkilling);
         }
 
-        // Reload data on character switch
-        dataManager.on('character_initialized', async () => {
+        // Reload data on character switch (keep the reference so disable() can remove it)
+        this.characterInitHandler = async () => {
             await this._load();
             // Re-apply flags to any currently visible Collections panel
             const panelEl = document.querySelector(
@@ -567,10 +567,15 @@ class CollectionFilters {
             if (panelEl) {
                 this._rerenderPanel(panelEl);
             }
-        });
+        };
+        dataManager.on('character_initialized', this.characterInitHandler);
     }
 
     disable() {
+        if (this.characterInitHandler) {
+            dataManager.off('character_initialized', this.characterInitHandler);
+            this.characterInitHandler = null;
+        }
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
         this.isInitialized = false;

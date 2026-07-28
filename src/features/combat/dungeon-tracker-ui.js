@@ -720,8 +720,16 @@ class DungeonTrackerUI {
         // Clear instance reference
         this.container = null;
 
-        // Clean up module references
+        // Clean up module references (destroy Chart.js instances before dropping them)
         if (this.chart) {
+            if (this.chart.chartInstance) {
+                this.chart.chartInstance.destroy();
+                this.chart.chartInstance = null;
+            }
+            if (this.chart.modalChartInstance) {
+                this.chart.modalChartInstance.destroy();
+                this.chart.modalChartInstance = null;
+            }
             this.chart = null;
         }
         if (this.history) {

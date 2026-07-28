@@ -242,14 +242,16 @@ class DungeonTrackerUIChart {
             border-radius: 4px;
             font-weight: bold;
         `;
-        closeBtn.addEventListener('click', () => {
+        const closeModal = () => {
             // Destroy chart before removing modal
             if (this.modalChartInstance) {
                 this.modalChartInstance.destroy();
                 this.modalChartInstance = null;
             }
             modal.remove();
-        });
+            document.removeEventListener('keydown', escHandler);
+        };
+        closeBtn.addEventListener('click', closeModal);
 
         header.appendChild(title);
         header.appendChild(closeBtn);
@@ -273,16 +275,10 @@ class DungeonTrackerUIChart {
         // Render chart in modal
         this.renderModalChart(canvas);
 
-        // Close on ESC key
+        // Close on ESC key (closeModal removes this listener on either close path)
         const escHandler = (e) => {
             if (e.key === 'Escape') {
-                // Destroy chart before removing modal
-                if (this.modalChartInstance) {
-                    this.modalChartInstance.destroy();
-                    this.modalChartInstance = null;
-                }
-                modal.remove();
-                document.removeEventListener('keydown', escHandler);
+                closeModal();
             }
         };
         document.addEventListener('keydown', escHandler);
@@ -310,8 +306,8 @@ class DungeonTrackerUIChart {
         filteredRuns.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
         // Prepare data (same as main chart)
-        // Label runs in reverse chronological order to match list (newest = Run 1, oldest = Run N)
-        const labels = filteredRuns.map((_, i) => `Run ${filteredRuns.length - i}`);
+        // Label runs oldest to newest (Run 1 = oldest), matching the inline chart and run list
+        const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
         const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000);
 
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
