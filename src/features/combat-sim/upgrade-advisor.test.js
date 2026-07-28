@@ -204,9 +204,11 @@ describe('generateCandidates combat_level mode', () => {
         };
         const candidates = generateCandidates(player, gameData, 'combat_level', 5);
 
+        // Attack stays — it trains under every style via the XP split
         expect(candidates.map((c) => c.skillKey)).toEqual([
             'staminaLevel',
             'intelligenceLevel',
+            'attackLevel',
             'defenseLevel',
             'rangedLevel',
         ]);
@@ -231,10 +233,11 @@ describe('generateCandidates combat_level mode', () => {
         };
         const candidates = generateCandidates(player, gameData, 'combat_level', 5);
 
-        // Attack, Melee, and Ranged are all excluded for magic weapons
+        // Melee and Ranged are excluded for magic weapons; Attack stays
         expect(candidates.map((c) => c.skillKey)).toEqual([
             'staminaLevel',
             'intelligenceLevel',
+            'attackLevel',
             'defenseLevel',
             'magicLevel',
         ]);

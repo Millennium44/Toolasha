@@ -120,9 +120,11 @@ export function getMainTrainingSkills(playerDTO, gameData) {
 /**
  * Combat skill keys irrelevant to the player's weapon style, excluded from
  * Combat Levels candidates: melee weapons don't sim Ranged/Magic, ranged
- * weapons don't sim Attack/Melee/Magic, magic weapons don't sim
- * Attack/Melee/Ranged. Unarmed counts as melee (the engine sims it as smash);
- * a weapon whose style can't be determined excludes nothing.
+ * weapons don't sim Melee/Magic, magic weapons don't sim Melee/Ranged.
+ * Attack is never excluded — it trains under every style (directly with a
+ * spear, via the XP split otherwise). Unarmed counts as melee (the engine
+ * sims it as smash); a weapon whose style can't be determined excludes
+ * nothing.
  * @param {Object} playerDTO
  * @param {Object} gameData
  * @returns {Set<string>} Excluded DTO level keys, e.g. {'rangedLevel', 'magicLevel'}
@@ -132,8 +134,8 @@ export function getStyleExcludedSkills(playerDTO, gameData) {
         playerDTO.equipment?.['/equipment_types/main_hand'] || playerDTO.equipment?.['/equipment_types/two_hand'];
     const stats = weapon ? gameData.itemDetailMap[weapon.hrid]?.equipmentDetail?.combatStats : null;
     const style = weapon ? getItemDamageStyle(stats) : 'smash';
-    if (style === 'ranged') return new Set(['attackLevel', 'meleeLevel', 'magicLevel']);
-    if (style === 'magic') return new Set(['attackLevel', 'meleeLevel', 'rangedLevel']);
+    if (style === 'ranged') return new Set(['meleeLevel', 'magicLevel']);
+    if (style === 'magic') return new Set(['meleeLevel', 'rangedLevel']);
     if (style === 'unknown') return new Set();
     return new Set(['rangedLevel', 'magicLevel']);
 }
