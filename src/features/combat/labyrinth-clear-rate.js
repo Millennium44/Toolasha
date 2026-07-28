@@ -13,6 +13,7 @@ import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
+import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -113,7 +114,64 @@ class LabyrinthClearRate {
             this.injectOverlays();
         }, 500);
 
+        // Skip-threshold cells wrap so the shared annotation line (clear rate,
+        // recommendation, best level) sits below the native value/buttons
+        // instead of squeezing them into wrapping mid-value
+        this.styleEl = document.createElement('style');
+        this.styleEl.id = 'mwi-labyrinth-clear-style';
+        this.styleEl.textContent = `
+            [class*="LabyrinthPanel_automationContent"] { max-width: 36rem !important; }
+            [class*="LabyrinthPanel_skipThreshold"] { display: flex; align-items: center; flex-wrap: wrap; }
+            .${BADGE_CLASS} { order: 1; }
+            .${RECOMMEND_CLASS} { order: 2; }
+        `;
+        document.head.appendChild(this.styleEl);
+
+        // Prefill the game's skip-threshold edit input with the current value
+        this._editClickHandler = (e) => this.onSkipEditClick(e);
+        document.addEventListener('click', this._editClickHandler, true);
+
         this.isInitialized = true;
+    }
+
+    /**
+     * When the game's Edit button on a skip-threshold row is clicked, prefill
+     * the (natively empty) number input with the row's current threshold so
+     * small adjustments don't require retyping the whole value.
+     * @param {MouseEvent} event
+     */
+    onSkipEditClick(event) {
+        const button = event.target?.closest?.('button');
+        if (!button || button.textContent.trim() !== 'Edit') return;
+        const cell = button.closest('[class*="LabyrinthPanel_skipThreshold"]');
+        if (!cell) return;
+        const roomHrid = this.extractRoomHrid(cell);
+        if (!roomHrid) return;
+
+        const threshold = roomHrid.startsWith('/skills/')
+            ? this.getSkipThreshold(roomHrid)
+            : this.getCombatSkipThreshold(roomHrid);
+        if (threshold <= 0) return;
+
+        // React renders the input a beat after the click; retry briefly
+        let attempts = 0;
+        const tryFill = () => {
+            const input = cell.querySelector('input');
+            if (input) {
+                if (!input.value || input.value === '0') {
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                    if (setter) {
+                        setter.call(input, String(threshold));
+                    } else {
+                        input.value = String(threshold);
+                    }
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                return;
+            }
+            if (++attempts < 10) setTimeout(tryFill, 50);
+        };
+        setTimeout(tryFill, 0);
     }
 
     disable() {
@@ -164,6 +222,16 @@ class LabyrinthClearRate {
         document.querySelectorAll(`.${RECOMMEND_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${RECOMMEND_CONTROLS_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
+        pruneEmptyAnnotationContainers();
+
+        if (this._editClickHandler) {
+            document.removeEventListener('click', this._editClickHandler, true);
+            this._editClickHandler = null;
+        }
+        if (this.styleEl) {
+            this.styleEl.remove();
+            this.styleEl = null;
+        }
 
         this.roomData = null;
         this.combatCache.clear();
@@ -1334,7 +1402,7 @@ class LabyrinthClearRate {
 
             const badge = document.createElement('span');
             badge.className = RECOMMEND_CLASS;
-            badge.style.cssText = 'font-size:0.7rem; margin-left:6px; white-space:nowrap; font-weight:bold;';
+            badge.style.cssText = 'font-size:0.7rem; white-space:nowrap; font-weight:bold;';
             badge.textContent = `Rec: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
 
             badge.title = `Recommended skip threshold for ≥${this._recommendTargetPct}% clear rate`;
@@ -1347,7 +1415,7 @@ class LabyrinthClearRate {
                 badge.style.color = '#d9534f';
             }
 
-            cell.appendChild(badge);
+            getAnnotationContainer(cell).appendChild(badge);
         }
     }
 
@@ -2093,9 +2161,9 @@ class LabyrinthClearRate {
     appendBadge(cell, result, roomLevel) {
         const badge = document.createElement('span');
         badge.className = BADGE_CLASS;
-        badge.style.cssText = 'font-size:0.7rem; margin-left:6px; white-space:nowrap;';
+        badge.style.cssText = 'font-size:0.7rem; white-space:nowrap;';
         this.decorateBadge(badge, result, roomLevel);
-        cell.appendChild(badge);
+        getAnnotationContainer(cell).appendChild(badge);
         return badge;
     }
 
@@ -2121,10 +2189,10 @@ class LabyrinthClearRate {
     appendPlaceholderBadge(cell) {
         const badge = document.createElement('span');
         badge.className = BADGE_CLASS;
-        badge.style.cssText = 'font-size:0.7rem; margin-left:6px; white-space:nowrap; color:#999;';
+        badge.style.cssText = 'font-size:0.7rem; white-space:nowrap; color:#999;';
         badge.textContent = '...';
         badge.title = 'Simulating combat...';
-        cell.appendChild(badge);
+        getAnnotationContainer(cell).appendChild(badge);
         return badge;
     }
 
