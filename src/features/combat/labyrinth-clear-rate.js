@@ -135,12 +135,15 @@ class LabyrinthClearRate {
     }
 
     /**
-     * When the game's Edit button on a skip-threshold row is clicked, prefill
-     * the (natively empty) number input with the row's current threshold so
-     * small adjustments don't require retyping the whole value.
+     * When the game's Edit button on a skip-threshold row is clicked, fill the
+     * number input with the recommended threshold (falling back to the row's
+     * current value when no recommendation has been computed), replacing
+     * whatever the input holds. Gated behind the labyrinthSkipEditAutofill
+     * setting (off by default).
      * @param {MouseEvent} event
      */
     onSkipEditClick(event) {
+        if (!config.getSetting('labyrinthSkipEditAutofill')) return;
         const button = event.target?.closest?.('button');
         if (!button || button.textContent.trim() !== 'Edit') return;
         const cell = button.closest('[class*="LabyrinthPanel_skipThreshold"]');
@@ -148,25 +151,25 @@ class LabyrinthClearRate {
         const roomHrid = this.extractRoomHrid(cell);
         if (!roomHrid) return;
 
-        const threshold = roomHrid.startsWith('/skills/')
+        const recommended = this.recommendations.get(roomHrid)?.threshold;
+        const current = roomHrid.startsWith('/skills/')
             ? this.getSkipThreshold(roomHrid)
             : this.getCombatSkipThreshold(roomHrid);
-        if (threshold <= 0) return;
+        const value = Number.isFinite(recommended) && recommended > 0 ? recommended : current;
+        if (!(value > 0)) return;
 
         // React renders the input a beat after the click; retry briefly
         let attempts = 0;
         const tryFill = () => {
             const input = cell.querySelector('input');
             if (input) {
-                if (!input.value || input.value === '0') {
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-                    if (setter) {
-                        setter.call(input, String(threshold));
-                    } else {
-                        input.value = String(threshold);
-                    }
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                if (setter) {
+                    setter.call(input, String(value));
+                } else {
+                    input.value = String(value);
                 }
+                input.dispatchEvent(new Event('input', { bubbles: true }));
                 return;
             }
             if (++attempts < 10) setTimeout(tryFill, 50);
@@ -557,6 +560,7 @@ class LabyrinthClearRate {
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
         result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
+        result.skillHrid = skillHrid;
         this.attachSkillingWhatIfs(result, metrics, {
             attempts,
             successChance,
@@ -693,6 +697,7 @@ class LabyrinthClearRate {
         result.targetLevel = targetLevel;
         result.roomLevel = roomLevel;
         result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
+        result.skillHrid = '/skills/enhancing';
         this.attachEnhancingWhatIfs(result, metrics, {
             attempts,
             successChance,
@@ -2260,7 +2265,9 @@ class LabyrinthClearRate {
         badge.addEventListener('mouseleave', () => this.hidePreview());
         badge.addEventListener('contextmenu', (e) => {
             const res = badge.__mwiPreviewResult;
-            if (!res || res.type !== 'combat') return;
+            if (!res) return;
+            const isCombat = res.type === 'combat';
+            if (isCombat ? !res.monsterHrid : !res.skillHrid) return;
             const simButton = document.querySelector('.toolasha-lab-sim-btn');
             if (!simButton) return;
             e.preventDefault();
@@ -2268,6 +2275,16 @@ class LabyrinthClearRate {
             if (!panel || panel.style.display === 'none') {
                 simButton.click();
             }
+            // Preconfigure the sim from this tile: combat tiles select the
+            // monster (applying its assigned loadout) at the tile's room
+            // level; skilling tiles open the Skilling tab at that level
+            document.dispatchEvent(
+                new CustomEvent('mwi-labsim-open', {
+                    detail: isCombat
+                        ? { monsterHrid: res.monsterHrid, roomLevel: res.roomLevel }
+                        : { skillHrid: res.skillHrid, roomLevel: res.roomLevel },
+                })
+            );
             this.hidePreview();
         });
     }
@@ -2409,6 +2426,9 @@ class LabyrinthClearRate {
         }
 
         this.appendExpectedRows(addRow, result.type);
+        if (result.skillHrid && document.querySelector('.toolasha-lab-sim-btn')) {
+            addRow('Action', 'Right-click to open simulator');
+        }
     }
 
     /**

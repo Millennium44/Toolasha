@@ -72,6 +72,12 @@ class LabSimUI {
     buildPanel() {
         if (this.panel) return;
 
+        // Labyrinth tile right-clicks request a preconfigured open via this event
+        this._openRequestHandler = (e) => {
+            this.openPreconfigured(e.detail || {});
+        };
+        document.addEventListener('mwi-labsim-open', this._openRequestHandler);
+
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
         this.panel.style.cssText = `
@@ -2072,7 +2078,71 @@ class LabSimUI {
         }
     }
 
+    /**
+     * Open the panel preconfigured from a labyrinth tile: combat tiles select
+     * the monster (applying its assigned labyrinth loadout) at the tile's room
+     * level; skilling tiles open the Skilling tab with the room level set and
+     * the skill's loadout row filtered.
+     * @param {Object} detail - { monsterHrid?, skillHrid?, roomLevel? }
+     */
+    async openPreconfigured(detail = {}) {
+        if (!this.panel) return;
+        if (this.panel.style.display === 'none') {
+            this.toggle();
+        } else {
+            bringPanelToFront(this.panel);
+        }
+
+        const roomLevel = Math.round(Number(detail.roomLevel) || 0);
+
+        if (detail.monsterHrid) {
+            this._switchTab('configure');
+            const select = this.panel.querySelector('#mwi-labsim-monster');
+            if (select) select.value = detail.monsterHrid;
+            if (roomLevel > 0) {
+                const levelInput = this.panel.querySelector('#mwi-labsim-level');
+                if (levelInput) levelInput.value = roomLevel;
+            }
+            // Applying the assigned loadout needs the editor loaded
+            await this._whenEditorReady();
+            this._onMonsterChange(detail.monsterHrid);
+        } else if (detail.skillHrid) {
+            this._switchTab('skilling');
+            if (roomLevel > 0) {
+                const useSkip = this.panel.querySelector('#mwi-labsim-skilling-useskip');
+                const levelInput = this.panel.querySelector('#mwi-labsim-skilling-level');
+                if (useSkip) useSkip.checked = false;
+                if (levelInput) {
+                    levelInput.disabled = false;
+                    levelInput.value = roomLevel;
+                }
+            }
+            const filter = this.panel.querySelector('#mwi-labsim-skilling-filter');
+            if (filter && [...filter.options].some((o) => o.value === detail.skillHrid)) {
+                filter.value = detail.skillHrid;
+                filter.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
+    }
+
+    /**
+     * Wait (up to ~10s) for the configure editor to finish initializing.
+     * @private
+     * @returns {Promise<boolean>} True when the editor is ready
+     */
+    async _whenEditorReady() {
+        for (let i = 0; i < 40; i++) {
+            if (this._editor?.isInitialized()) return true;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return this._editor?.isInitialized() || false;
+    }
+
     destroy() {
+        if (this._openRequestHandler) {
+            document.removeEventListener('mwi-labsim-open', this._openRequestHandler);
+            this._openRequestHandler = null;
+        }
         if (this.elapsedTimer) {
             clearInterval(this.elapsedTimer);
             this.elapsedTimer = null;

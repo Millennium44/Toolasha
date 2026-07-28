@@ -1568,6 +1568,13 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Hours of combat simulation per labyrinth tile and recommendation calculation (higher = more accurate, slower)',
             },
+            labyrinthSkipEditAutofill: {
+                id: 'labyrinthSkipEditAutofill',
+                label: 'Labyrinth: Autofill skip Edit input',
+                type: 'checkbox',
+                default: false,
+                help: "Clicking a skip threshold's Edit button fills the input with the recommended threshold (or the current value when no recommendation exists), replacing whatever is in it",
+            },
             labyrinthLiveProgress: {
                 id: 'labyrinthLiveProgress',
                 label: 'Labyrinth: Show live clear chance',
