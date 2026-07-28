@@ -897,37 +897,51 @@ export function generateCandidates(
         }
     }
 
-    return candidates.filter((candidate) => !recommendsRefinedBelowMinLevel(candidate));
+    candidates.forEach(clampRefinedCandidateToMinLevel);
+    return candidates;
 }
 
 /**
- * Check whether a candidate would have the player acquire a refined item below +10.
- * Refined equipment cannot exist below +10, so such recommendations are invalid.
- * Enhancement candidates on an already-equipped refined item are unaffected —
- * their breakpoint table (BREAKPOINTS_REFINED) already starts at +10.
- * @param {Object} candidate - Candidate from generateCandidates()
- * @returns {boolean} True if the candidate should be dropped
+ * Clamp candidates that acquire a refined item to at least +10.
+ * Refined equipment cannot exist below +10, so a refined suggestion carrying a
+ * lower current enhancement level would be an impossible acquisition — instead
+ * of dropping it, suggest the refined item at +10 (cost and sim both use the
+ * clamped level). Enhancement candidates on an already-equipped refined item
+ * are unaffected — their breakpoint table (BREAKPOINTS_REFINED) starts at +10.
+ * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
  */
-function recommendsRefinedBelowMinLevel(candidate) {
+function clampRefinedCandidateToMinLevel(candidate) {
     const MIN_REFINED_LEVEL = 10;
+    let clamped = false;
 
     if (
         candidate.upgradeHrid !== candidate.currentHrid &&
         candidate.upgradeHrid?.endsWith('_refined') &&
         candidate.upgradeLevel < MIN_REFINED_LEVEL
     ) {
-        return true;
+        candidate.upgradeLevel = MIN_REFINED_LEVEL;
+        clamped = true;
     }
 
     if (candidate.addedSlots) {
         for (const added of Object.values(candidate.addedSlots)) {
             if (added?.hrid?.endsWith('_refined') && (added.enhancementLevel || 0) < MIN_REFINED_LEVEL) {
-                return true;
+                added.enhancementLevel = MIN_REFINED_LEVEL;
+                clamped = true;
             }
         }
     }
 
-    return false;
+    if (clamped) {
+        // Reflect the clamped level(s) in the display text, e.g. "(+4)" → "(+10)",
+        // or "(+4/+10)" when a cross-slot swap mixes refined and non-refined items
+        const levels = candidate.addedSlots
+            ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+            : [candidate.upgradeLevel];
+        const unique = [...new Set(levels)];
+        const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+        candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+    }
 }
 
 /**
@@ -1030,14 +1044,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const playerDTO = playerDTOs[playerIndex];
     const playerHrid = playerDTO.hrid;
 
-    // Generate candidates and compute costs
-    const candidates = generateCandidates(
-        playerDTO,
-        gameData,
-        upgradeMode,
-        abilityTargetLevel,
-        abilityLevelType,
-        skipBackSlot
+    // Generate candidates and compute costs.
+    // 'combined' runs equipment and ability-level candidates together in one ranked list.
+    const candidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+    const candidates = candidateModes.flatMap((mode) =>
+        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,

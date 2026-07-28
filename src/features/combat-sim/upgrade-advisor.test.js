@@ -67,13 +67,15 @@ function buildPlayer(hrid, enhancementLevel) {
 }
 
 describe('generateCandidates refined-equipment gating', () => {
-    test('does not recommend refined gear below +10', () => {
+    test('clamps refined recommendations below +10 up to +10', () => {
         const candidates = generateCandidates(buildPlayer('/items/fine_sword', 4), buildGameData(), 'equipment');
 
-        const refinedRecommendations = candidates.filter(
-            (c) => c.upgradeHrid.endsWith('_refined') && c.upgradeHrid !== c.currentHrid
-        );
-        expect(refinedRecommendations).toEqual([]);
+        // The refined tier upgrade is still suggested, but at +10 (refined items
+        // cannot exist below +10), and its description reflects the clamped level
+        const refinedTier = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/regal_sword_refined');
+        expect(refinedTier).toBeDefined();
+        expect(refinedTier.upgradeLevel).toBe(10);
+        expect(refinedTier.description).toContain('(+10)');
 
         // The regular enhancement candidate on the current item is still present
         expect(candidates.some((c) => c.type === 'enhancement' && c.upgradeHrid === '/items/fine_sword')).toBe(true);
