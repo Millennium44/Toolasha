@@ -34,6 +34,7 @@ const {
     findMatchingCharmForSkill,
     getMainTrainingSkills,
     runLabyrinthAllFightsAnalysis,
+    generateSkillingEquipmentCandidates,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -458,6 +459,42 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(result.results).toHaveLength(1);
         expect(result.results[0].candidate.skillKey).toBe('meleeLevel');
         expect(result.results[0].candidate.upgradeLevel).toBe(60);
+    });
+});
+
+describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
+    function skillingGameData() {
+        return {
+            itemDetailMap: {
+                '/items/spatula': {
+                    name: 'Spatula',
+                    itemLevel: 50,
+                    equipmentDetail: { type: '/equipment_types/tool', noncombatStats: { cookingSpeed: 0.1 } },
+                },
+                '/items/wisdom_necklace': {
+                    name: 'Wisdom Necklace',
+                    itemLevel: 50,
+                    equipmentDetail: { type: '/equipment_types/neck', noncombatStats: { skillingSpeed: 0.05 } },
+                },
+            },
+        };
+    }
+
+    test('restricts candidates to the target skill loadout when set', () => {
+        const editorDTO = {
+            equipment: { '/equipment_types/tool': { hrid: '/items/spatula', enhancementLevel: 0 } },
+        };
+        const map = {
+            '/skills/alchemy': {
+                '/equipment_types/neck': { hrid: '/items/wisdom_necklace', enhancementLevel: 0 },
+            },
+        };
+
+        const all = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), map);
+        expect(all.map((c) => c.currentHrid).sort()).toEqual(['/items/spatula', '/items/wisdom_necklace']);
+
+        const alchemyOnly = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), map, '/skills/alchemy');
+        expect(alchemyOnly.map((c) => c.currentHrid)).toEqual(['/items/wisdom_necklace']);
     });
 });
 
