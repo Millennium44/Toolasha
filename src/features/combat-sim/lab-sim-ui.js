@@ -306,6 +306,7 @@ class LabSimUI {
             <select id="mwi-labsim-upgrade-mode" style="${selectStyle}">
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
+                <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
             </select>
             <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
