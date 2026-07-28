@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Profit columns in coinify and decompose history
+
+- Both viewers gain the same sortable, color-coded **Profit** column as transmute history: coins earned / recorded output value, minus consumed inputs (priced at the current buy price for the session's enhancement level), catalysts consumed (both trackers record catalyst usage), and the alchemy coin fee. Breakdown tooltip per session; included in CSV exports.
+
 ### Philo calculator: craft-cost pricing for untradable refined capes
 
 - Refined capes are untradable, so market pricing can never resolve them. When no market price exists at any enhancement level, refined items are now priced at the market cost of the **refinement materials** (lab refinement stones) consumed by their upgrade action — the base cape you already own is excluded. Rows priced this way are marked with ⚒ next to the name.

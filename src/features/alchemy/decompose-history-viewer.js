@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { decomposeHistoryTracker } from './decompose-history-tracker.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -55,6 +56,10 @@ class DecomposeHistoryViewer {
         this.activeFilterPopup = null;
         this.activeFilterButton = null;
         this.popupCloseHandler = null;
+
+        // Computed profit per session id — kept out of the session objects so
+        // it is never persisted back to storage
+        this.profitCache = new Map();
 
         // Tab injection
         this.alchemyTab = null;
@@ -187,6 +192,7 @@ class DecomposeHistoryViewer {
      */
     async openModal() {
         this.sessions = await decomposeHistoryTracker.loadSessions();
+        this.profitCache.clear();
         this.cachedDateRange = null;
         this.applyFilters();
 
@@ -360,6 +366,12 @@ class DecomposeHistoryViewer {
             return true;
         });
 
+        for (const session of this.sessions) {
+            if (!this.profitCache.has(session.id)) {
+                this.profitCache.set(session.id, this.computeSessionProfit(session));
+            }
+        }
+
         // Sort
         filtered.sort((a, b) => {
             let aVal = a[this.sortColumn] ?? 0;
@@ -368,6 +380,9 @@ class DecomposeHistoryViewer {
             if (this.sortColumn === 'inputItemHrid') {
                 aVal = this.getItemName(String(aVal));
                 bVal = this.getItemName(String(bVal));
+            } else if (this.sortColumn === '_profit') {
+                aVal = this.profitCache.get(a.id)?.profit ?? 0;
+                bVal = this.profitCache.get(b.id)?.profit ?? 0;
             }
             const cmp = typeof aVal === 'string' ? aVal.localeCompare(String(bVal)) : aVal - bVal;
             return this.sortDirection === 'asc' ? cmp : -cmp;
@@ -418,6 +433,50 @@ class DecomposeHistoryViewer {
         this.renderTable();
     }
 
+    /**
+     * Compute session profit: recorded output value minus consumed inputs (at
+     * current buy price for the session's enhancement level — historical input
+     * prices were not recorded), catalysts consumed, and the alchemy coin fee.
+     * @param {Object} session
+     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number, netConsumed: number}}
+     */
+    computeSessionProfit(session) {
+        const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
+        const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        const attempts = session.totalAttempts || 0;
+
+        let revenue = 0;
+        for (const result of Object.values(session.results || {})) {
+            revenue += result.totalValue || 0;
+        }
+
+        const netConsumed = attempts * bulkMultiplier;
+        const inputPrices = getItemPrices(session.inputItemHrid, session.enhancementLevel || 0);
+        const inputPrice = inputPrices?.ask > 0 ? inputPrices.ask : inputPrices?.bid > 0 ? inputPrices.bid : 0;
+        const inputCost = netConsumed * inputPrice;
+
+        const catalystPrice = (hrid) => {
+            const prices = getItemPrices(hrid, 0);
+            return prices?.ask > 0 ? prices.ask : prices?.bid > 0 ? prices.bid : 0;
+        };
+        const catalystCost =
+            (session.catalystOfDecompositionUsed || 0) * catalystPrice(CATALYST_OF_DECOMPOSITION_HRID) +
+            (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
+
+        // Alchemy coin fee: max(50, vendorPrice / 5) per item, bulkMultiplier items per attempt
+        const sellPrice = itemDetails?.sellPrice || 0;
+        const coinCost = Math.max(50, Math.floor(sellPrice / 5)) * bulkMultiplier * attempts;
+
+        return {
+            profit: revenue - inputCost - catalystCost - coinCost,
+            revenue,
+            inputCost,
+            catalystCost,
+            coinCost,
+            netConsumed,
+        };
+    }
+
     // ─── Rendering ───────────────────────────────────────────────────────────
 
     /**
@@ -448,6 +507,7 @@ class DecomposeHistoryViewer {
             { key: 'results', label: 'Results', filterable: true },
             { key: '_catalystOfDecomposition', label: 'Catalyst of Decomposition', filterable: false },
             { key: '_primeCatalyst', label: 'Prime Catalyst', filterable: false },
+            { key: '_profit', label: 'Profit', filterable: false },
             { key: '_delete', label: '', filterable: false },
         ];
 
@@ -616,6 +676,22 @@ class DecomposeHistoryViewer {
                 pcCell.style.cssText = 'padding: 6px 10px; text-align: center;';
                 this.renderCatalystCell(pcCell, PRIME_CATALYST_HRID, session.primeCatalystUsed || 0);
                 row.appendChild(pcCell);
+
+                // Profit
+                const profitCell = document.createElement('td');
+                const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+                profitCell.textContent = formatKMB(profitDetail.profit, 1);
+                profitCell.style.cssText = `
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
+                `;
+                profitCell.title =
+                    `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
+                    `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
+                    `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}\n` +
+                    `Alchemy coins: −${formatKMB(profitDetail.coinCost, 1)}`;
+                row.appendChild(profitCell);
 
                 // Delete
                 const deleteCell = document.createElement('td');
@@ -1424,6 +1500,7 @@ class DecomposeHistoryViewer {
             'Results',
             'Catalyst of Decomposition',
             'Prime Catalyst',
+            'Profit',
         ];
 
         const rows = this.sessions.map((session) => {
@@ -1455,6 +1532,7 @@ class DecomposeHistoryViewer {
                 resultParts.join('; '),
                 session.catalystOfDecompositionUsed || 0,
                 session.primeCatalystUsed || 0,
+                Math.round((this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit),
             ]
                 .map(escape)
                 .join(',');
