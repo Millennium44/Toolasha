@@ -897,7 +897,37 @@ export function generateCandidates(
         }
     }
 
-    return candidates;
+    return candidates.filter((candidate) => !recommendsRefinedBelowMinLevel(candidate));
+}
+
+/**
+ * Check whether a candidate would have the player acquire a refined item below +10.
+ * Refined equipment cannot exist below +10, so such recommendations are invalid.
+ * Enhancement candidates on an already-equipped refined item are unaffected —
+ * their breakpoint table (BREAKPOINTS_REFINED) already starts at +10.
+ * @param {Object} candidate - Candidate from generateCandidates()
+ * @returns {boolean} True if the candidate should be dropped
+ */
+function recommendsRefinedBelowMinLevel(candidate) {
+    const MIN_REFINED_LEVEL = 10;
+
+    if (
+        candidate.upgradeHrid !== candidate.currentHrid &&
+        candidate.upgradeHrid?.endsWith('_refined') &&
+        candidate.upgradeLevel < MIN_REFINED_LEVEL
+    ) {
+        return true;
+    }
+
+    if (candidate.addedSlots) {
+        for (const added of Object.values(candidate.addedSlots)) {
+            if (added?.hrid?.endsWith('_refined') && (added.enhancementLevel || 0) < MIN_REFINED_LEVEL) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 /**
