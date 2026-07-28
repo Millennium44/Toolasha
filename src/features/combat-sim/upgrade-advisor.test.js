@@ -33,6 +33,7 @@ const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 
 const MAIN_HAND = '/equipment_types/main_hand';
+const BACK = '/equipment_types/back';
 
 function buildGameData() {
     return {
@@ -54,6 +55,24 @@ function buildGameData() {
                 equipmentDetail: {
                     type: MAIN_HAND,
                     combatStats: { slashDamage: 15 },
+                },
+            },
+            '/items/plain_cape': {
+                name: 'Plain Cape',
+                itemLevel: 50,
+                sortIndex: 3,
+                equipmentDetail: {
+                    type: BACK,
+                    combatStats: { slashDamage: 3 },
+                },
+            },
+            '/items/grand_cape_refined': {
+                name: 'Grand Cape (R)',
+                itemLevel: 60,
+                sortIndex: 4,
+                equipmentDetail: {
+                    type: BACK,
+                    combatStats: { slashDamage: 5 },
                 },
             },
         },
@@ -103,6 +122,36 @@ describe('generateCandidates refined-equipment gating', () => {
         );
         expect(enhancement).toBeDefined();
         expect(enhancement.upgradeLevel).toBeGreaterThanOrEqual(10);
+    });
+
+    test('does not clamp refined capes — the back slot is exempt', () => {
+        const player = {
+            equipment: {
+                [BACK]: { hrid: '/items/plain_cape', enhancementLevel: 4 },
+            },
+        };
+        const candidates = generateCandidates(player, buildGameData(), 'equipment');
+
+        const refinedCape = candidates.find((c) => c.type === 'tier' && c.upgradeHrid === '/items/grand_cape_refined');
+        expect(refinedCape).toBeDefined();
+        expect(refinedCape.upgradeLevel).toBe(4);
+        expect(refinedCape.description).toContain('(+4)');
+    });
+
+    test('equipped refined capes below +10 use the back breakpoints', () => {
+        const player = {
+            equipment: {
+                [BACK]: { hrid: '/items/grand_cape_refined', enhancementLevel: 3 },
+            },
+        };
+        const candidates = generateCandidates(player, buildGameData(), 'equipment');
+
+        const enhancement = candidates.find(
+            (c) => c.type === 'enhancement' && c.upgradeHrid === '/items/grand_cape_refined'
+        );
+        expect(enhancement).toBeDefined();
+        // Next back-slot breakpoint after +3 is +5, not the refined table's +10
+        expect(enhancement.upgradeLevel).toBe(5);
     });
 });
 
