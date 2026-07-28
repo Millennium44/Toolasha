@@ -1658,10 +1658,29 @@ export function computeSkillingClearRatesFromEditor(
 
     for (const skillHrid of LABYRINTH_SKILLS) {
         const skillId = skillHrid.replace('/skills/', '');
-        const actionTypeHrid = `/action_types/${skillId}`;
+        const skillName = skillId.charAt(0).toUpperCase() + skillId.slice(1);
         const dtoKey = SKILLING_DTO_KEYS[skillHrid];
         const baseLevel = editorDTO[dtoKey] || 1;
 
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) {
+            results.push({
+                clearChance: 0,
+                expectedSeconds: Infinity,
+                skipped: true,
+                roomLevel: 0,
+                baseLevel,
+                effectiveLevel: baseLevel,
+                successChance: 0,
+                attempts: 0,
+                skillHrid,
+                skillId,
+                skillName,
+            });
+            continue;
+        }
+
+        const actionTypeHrid = `/action_types/${skillId}`;
         const editorState = {
             equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
             houseRooms: editorDTO.houseRooms,
@@ -1674,13 +1693,14 @@ export function computeSkillingClearRatesFromEditor(
 
         let result;
         if (skillHrid === '/skills/enhancing') {
-            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel);
+            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel);
         } else {
-            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel);
+            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
         }
         result.skillHrid = skillHrid;
         result.skillId = skillId;
-        result.skillName = skillId.charAt(0).toUpperCase() + skillId.slice(1);
+        result.skillName = skillName;
+        result.roomLevel = skillRoomLevel;
         results.push(result);
     }
 
@@ -1698,6 +1718,20 @@ export function computeSkillingClearRatesFromEditor(
  * @param {Object} [options.skillEquipmentMap] - Per-skill equipment overrides
  * @returns {number} Average clear rate (0-1)
  */
+/**
+ * Resolve the room level for a skill: roomLevel may be a single number or a
+ * per-skill map { [skillHrid]: level } built from the automation skip levels.
+ * @param {number|Object} roomLevel
+ * @param {string} skillHrid
+ * @returns {number} Room level (0 = skill is skipped)
+ */
+function resolveSkillRoomLevel(roomLevel, skillHrid) {
+    if (roomLevel && typeof roomLevel === 'object') {
+        return Math.max(0, Math.floor(Number(roomLevel[skillHrid]) || 0));
+    }
+    return Math.max(0, Math.floor(Number(roomLevel) || 0));
+}
+
 function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
     const { metricOverride = null, skillEquipmentMap = {}, targetSkill = null } = options;
 
@@ -1707,6 +1741,9 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
     const skillsToEval = targetSkill ? [targetSkill] : LABYRINTH_SKILLS;
 
     for (const skillHrid of skillsToEval) {
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) continue; // Skill room is skipped
+
         const skillId = skillHrid.replace('/skills/', '');
         const actionTypeHrid = `/action_types/${skillId}`;
         const dtoKey = SKILLING_DTO_KEYS[skillHrid];
@@ -1728,9 +1765,17 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
 
         let clearChance;
         if (skillHrid === '/skills/enhancing') {
-            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            ).clearChance;
         } else {
-            clearChance = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+            clearChance = labyrinthClearRate.computeSkillingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            ).clearChance;
         }
 
         total += clearChance;
@@ -1917,26 +1962,66 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
             }
         }
 
-        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+        const evaluate = (evalCandidate, dto, equipMap) => {
+            const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
+            if (dto.equipment?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
+                dto.equipment[evalCandidate.slot] = payload;
+            }
+            for (const skillEquip of Object.values(equipMap)) {
+                if (skillEquip?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
+                    skillEquip[evalCandidate.slot] = payload;
+                }
+            }
+            return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
+                skillEquipmentMap: equipMap,
+                targetSkill,
+            });
+        };
+
+        let evalCandidate = candidate;
+        let modifiedClearRate = computeAverageSkillingClearRateFromEditor(
             roomLevel,
             modifiedDTO,
             crateHrids,
             gameData,
-            { skillEquipmentMap: modifiedSkillEquipMap, targetSkill }
+            {
+                skillEquipmentMap: modifiedSkillEquipMap,
+                targetSkill,
+            }
         );
-        const clearRateDelta = modifiedClearRate - baselineClearRate;
+        let clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        // A breakpoint jump sometimes lands between improvement thresholds —
+        // keep raising the target one level at a time until the clear rate
+        // actually moves (skip when the baseline is already maxed)
+        const MAX_ENHANCEMENT = 20;
+        while (clearRateDelta <= 1e-9 && baselineClearRate < 0.999999 && evalCandidate.upgradeLevel < MAX_ENHANCEMENT) {
+            if (abortSignal?.()) break;
+            const nextLevel = evalCandidate.upgradeLevel + 1;
+            const bumped = {
+                ...evalCandidate,
+                upgradeLevel: nextLevel,
+                description: evalCandidate.description.replace(/\+\d+$/, `+${nextLevel}`),
+            };
+            bumped.cost = calculateUpgradeCost(bumped, gameData);
+            const freshDTO = JSON.parse(JSON.stringify(editorDTO));
+            const freshEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
+            modifiedClearRate = evaluate(bumped, freshDTO, freshEquipMap);
+            clearRateDelta = modifiedClearRate - baselineClearRate;
+            evalCandidate = bumped;
+        }
 
         results.push({
-            candidate,
+            candidate: evalCandidate,
             costType: 'gold',
-            cost: candidate.cost,
+            cost: evalCandidate.cost,
             clearRate: modifiedClearRate,
             clearRateDelta,
-            goldPerClearRate: clearRateDelta > 0 ? candidate.cost / (clearRateDelta * 100) : Infinity,
+            goldPerClearRate: clearRateDelta > 0 ? evalCandidate.cost / (clearRateDelta * 100) : Infinity,
             metricType: 'clearRate',
         });
         current++;
-        onProgress?.({ current, total, description: candidate.description });
+        onProgress?.({ current, total, description: evalCandidate.description });
     }
 
     results.sort((a, b) => {
