@@ -301,6 +301,22 @@ class LabSimUI {
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
             <select id="mwi-labsim-upgrade-player" style="${selectStyle}"></select>
+            <label style="color:#888; font-size:12px;">Mode</label>
+            <select id="mwi-labsim-upgrade-mode" style="${selectStyle}">
+                <option value="equipment">Equipment</option>
+                <option value="ability_level">Ability Levels</option>
+                <option value="combined">Equipment + Abilities</option>
+            </select>
+            <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
+                <select id="mwi-labsim-upgrade-level-type" style="${selectStyle}">
+                    <option value="increment">+Levels</option>
+                    <option value="target">Target Lv</option>
+                </select>
+                <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="200" value="5" style="
+                    width:55px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
+                    title="Number of levels to add to each ability">
+            </span>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto;
                 background: ${ACCENT_BTN_BG};
@@ -550,6 +566,11 @@ class LabSimUI {
 
         // Upgrade listeners
         this.panel.querySelector('#mwi-labsim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
+        this.panel.querySelector('#mwi-labsim-upgrade-mode').addEventListener('change', (e) => {
+            const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
+            const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
+            levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
+        });
         this.panel.querySelector('#mwi-labsim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
         });
@@ -1007,6 +1028,13 @@ class LabSimUI {
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
 
+        const upgradeMode = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value || 'equipment';
+        const abilityLevelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.value || 'increment';
+        const abilityTargetLevel = Math.min(
+            200,
+            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
+        );
+
         try {
             const analysisResult = await runLabyrinthUpgradeAnalysis(
                 {
@@ -1018,7 +1046,9 @@ class LabSimUI {
                     hours,
                     communityBuffs,
                     labyrinthCombatBuffs,
-                    upgradeMode: 'equipment',
+                    upgradeMode,
+                    abilityLevelType,
+                    abilityTargetLevel,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;

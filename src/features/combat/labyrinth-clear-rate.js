@@ -77,11 +77,18 @@ class LabyrinthClearRate {
         );
         this.unregisterHandlers.push(unregister);
 
-        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () =>
-            this.injectTileControls()
-        );
+        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
+            this.seedFromCharacterData();
+            this.injectTileControls();
+            this.pruneClearedTileBadges();
+            this.scheduleAutoTileCalc();
+        });
         this.unregisterHandlers.push(unregisterTiles);
-        setTimeout(() => this.injectTileControls(), 500);
+        setTimeout(() => {
+            this.seedFromCharacterData();
+            this.injectTileControls();
+            this.scheduleAutoTileCalc();
+        }, 500);
 
         setTimeout(() => this.injectOverlays(), 500);
 
@@ -163,13 +170,7 @@ class LabyrinthClearRate {
             }, 400);
 
             // Auto-calc newly revealed tiles when enabled (off by default)
-            if (config.getSetting('labyrinthAutoCalcTiles')) {
-                if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
-                this.autoTileTimer = setTimeout(() => {
-                    this.autoTileTimer = null;
-                    this.runTileCalculation({ auto: true });
-                }, 800);
-            }
+            this.scheduleAutoTileCalc();
         }
     }
 
@@ -1452,6 +1453,31 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Seed labyrinth state from the initial character data so the control bar
+     * and auto-calc work right after a page refresh, before any
+     * labyrinth_updated message arrives
+     */
+    seedFromCharacterData() {
+        if (this.roomData) return;
+        const labyrinth = dataManager.characterData?.characterLabyrinth;
+        if (!labyrinth || !Array.isArray(labyrinth.roomData) || !labyrinth.roomData.length) return;
+        this.roomData = labyrinth.roomData;
+        this.currentFloor = Math.max(0, Math.floor(Number(labyrinth.currentFloor) || 0));
+    }
+
+    /**
+     * Debounced auto tile calculation (no-op unless the setting is enabled)
+     */
+    scheduleAutoTileCalc() {
+        if (!config.getSetting('labyrinthAutoCalcTiles')) return;
+        if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
+        this.autoTileTimer = setTimeout(() => {
+            this.autoTileTimer = null;
+            this.runTileCalculation({ auto: true });
+        }, 800);
+    }
+
+    /**
      * Remove clear-chance badges from rooms that have been cleared
      */
     pruneClearedTileBadges() {
@@ -1650,7 +1676,9 @@ class LabyrinthClearRate {
             if (roomLevel <= 0) continue;
 
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
-            if (auto && this.calculatedTileKeys.has(tileKey)) continue;
+            if (auto && this.calculatedTileKeys.has(tileKey) && cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
+                continue;
+            }
 
             if (room.skillHrid) {
                 skillingTargets.push({ room, cell, roomLevel, tileKey });
