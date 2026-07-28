@@ -1719,6 +1719,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         abilityLevelType,
         abilityTargetLevel,
         skipBackSlot,
+        combatLevelTargets,
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1732,7 +1733,15 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // Generate candidates ('combined' runs equipment and ability levels together)
     const labCandidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
     const candidates = labCandidateModes.flatMap((mode) =>
-        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
+        generateCandidates(
+            playerDTO,
+            gameData,
+            mode,
+            abilityTargetLevel,
+            abilityLevelType,
+            skipBackSlot,
+            combatLevelTargets
+        )
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
@@ -1919,23 +1928,43 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     };
 }
 
+/** Win-rate floor for expected-attempts math so 0% fights stay finite (= 1000 tries) */
+const ATTEMPT_WIN_RATE_FLOOR = 0.001;
+
+/** Expected labyrinth attempts to clear one fight (retry until win) */
+function expectedFightAttempts(winRate) {
+    return 1 / Math.max(winRate, ATTEMPT_WIN_RATE_FLOOR);
+}
+
 /**
  * Sim every labyrinth combat room — each with its assigned loadout at its
  * skip-derived room level — under each combat-level boost, to rank which
  * skill level upgrade improves the whole run the most. The collective metric
- * is the run clear chance: the product of every fight's win rate.
+ * is the expected number of combat attempts to clear every fight (Σ 1/win
+ * rate — the labyrinth lets you retry a failed room), which naturally weights
+ * the worst fights. The all-fights-in-one-go product (run clear chance) is
+ * also returned but is near zero whenever several fights sit below ~50%.
  *
  * Candidates are the union of style-relevant skills across all fight loadouts
  * (loadouts can differ in style, e.g. a ranged loadout for one monster and a
  * melee loadout for another), so a skill shows if any assigned loadout trains it.
- * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel }
+ * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel, combatLevelTargets }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
- * @returns {Promise<Object>} { baseline: { fights, runClearChance }, results: [{candidate, fights, runClearChance, runClearDelta, avgWinDelta}] }
+ * @returns {Promise<Object>} { baseline: { fights, runClearChance, expectedAttempts },
+ *   results: [{candidate, fights, runClearChance, runClearDelta, expectedAttempts, attemptsDelta, avgWinDelta}] }
  */
 export async function runLabyrinthAllFightsAnalysis(params, onProgress, options = {}) {
-    const { fights, crates, hours, communityBuffs, labyrinthCombatBuffs = [], abilityTargetLevel } = params;
+    const {
+        fights,
+        crates,
+        hours,
+        communityBuffs,
+        labyrinthCombatBuffs = [],
+        abilityTargetLevel,
+        combatLevelTargets,
+    } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
     if (!gameData) throw new Error('No game data available');
@@ -1946,7 +1975,16 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // Union of combat-level candidates across the fight loadouts
     const candidatesByKey = new Map();
     for (const fight of fights) {
-        for (const candidate of generateCandidates(fight.dto, gameData, 'combat_level', abilityTargetLevel)) {
+        const fightCandidates = generateCandidates(
+            fight.dto,
+            gameData,
+            'combat_level',
+            abilityTargetLevel,
+            'increment',
+            false,
+            combatLevelTargets
+        );
+        for (const candidate of fightCandidates) {
             if (!candidatesByKey.has(candidate.skillKey)) {
                 candidatesByKey.set(candidate.skillKey, candidate);
             }
@@ -1990,6 +2028,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         current++;
     }
     const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
+    const baselineAttempts = baselineFights.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
 
     // One pass per combat-level candidate across every fight
     const results = [];
@@ -2015,21 +2054,24 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         if (aborted) break;
 
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
+        const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
         const avgWinDelta = fightResults.reduce((sum, f) => sum + f.winRateDelta, 0) / (fightResults.length || 1);
         results.push({
             candidate,
             fights: fightResults,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
+            expectedAttempts,
+            attemptsDelta: expectedAttempts - baselineAttempts,
             avgWinDelta,
         });
     }
 
-    // Biggest whole-run improvement first
-    results.sort((a, b) => b.runClearDelta - a.runClearDelta);
+    // Biggest attempts reduction (most negative delta) first
+    results.sort((a, b) => a.attemptsDelta - b.attemptsDelta);
 
     return {
-        baseline: { fights: baselineFights, runClearChance: baselineRunClear },
+        baseline: { fights: baselineFights, runClearChance: baselineRunClear, expectedAttempts: baselineAttempts },
         results,
     };
 }

@@ -418,14 +418,46 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         ]);
 
         expect(result.baseline.runClearChance).toBeCloseTo(0.8 * 0.5, 5);
+        expect(result.baseline.expectedAttempts).toBeCloseTo(1 / 0.8 + 1 / 0.5, 5);
 
-        // Melee gives the only improvement and ranks first
+        // Melee gives the only improvement (fewest expected attempts) and ranks first
         expect(result.results[0].candidate.skillKey).toBe('meleeLevel');
         const meleeRow = result.results[0];
         expect(meleeRow.fights[0].winRate).toBeCloseTo(0.9, 5);
         expect(meleeRow.fights[0].winRateDelta).toBeCloseTo(0.1, 5);
         expect(meleeRow.runClearChance).toBeCloseTo(0.9 * 0.5, 5);
-        expect(meleeRow.runClearDelta).toBeCloseTo(0.05, 5);
+        expect(meleeRow.expectedAttempts).toBeCloseTo(1 / 0.9 + 1 / 0.5, 5);
+        expect(meleeRow.attemptsDelta).toBeCloseTo(1 / 0.9 - 1 / 0.8, 5);
+    });
+
+    test('per-skill target levels flow through to the candidate union', async () => {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+
+        const dto = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            staminaLevel: 50,
+            meleeLevel: 50,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [{ monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto }],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                abilityTargetLevel: 5,
+                combatLevelTargets: { meleeLevel: 60 },
+            },
+            null,
+            {}
+        );
+
+        // Only the targeted skill produces a candidate, at its target level
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0].candidate.skillKey).toBe('meleeLevel');
+        expect(result.results[0].candidate.upgradeLevel).toBe(60);
     });
 });
 

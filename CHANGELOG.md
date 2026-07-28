@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Lab Sim: per-skill targets and a meaningful all-fights metric
+
+- **Targets button in the Lab Sim Upgrade tab** (both Combat Levels modes), matching Combat Sim: a per-skill target-level grid prefilled from current levels + the +Levels boost; while open, targets replace the uniform boost. In single-monster mode the grid hides skills the weapon style can't train; All Fights keeps every skill visible since assigned loadouts can differ in style.
+- **All Fights now ranks by expected combat attempts instead of run-clear product.** The product of ten sub-50% win rates is astronomically small (≈0.0% for everyone), so it read as zero across the board. The labyrinth lets you retry failed rooms, so the new collective metric is Σ 1/win-rate — the expected number of combat attempts to clear every fight — with ΔAttempts (negative = better) as the ranking column. The per-fight breakdown also shows expected tries per fight (e.g. `4.2% → 6.5% | 23.8 → 15.4 tries`), which spotlights the fights actually costing you attempts.
+
 ### Lab Sim: "Combat Levels — All Fights" analysis across the whole labyrinth
 
 - New upgrade mode that sims **every labyrinth combat room** — each monster with its **assigned labyrinth loadout** at its **skip-derived room level** (live room level while in a run) — once at current levels and once per +N combat level boost, then ranks the boosts by **whole-run impact**: the change in the chance to clear every fight in one run (product of all win rates).
