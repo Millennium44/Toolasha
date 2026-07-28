@@ -1445,14 +1445,10 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const zoneHrid =
         Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
-    // Generate equipment candidates
-    const candidates = generateCandidates(
-        playerDTO,
-        gameData,
-        upgradeMode,
-        abilityTargetLevel,
-        abilityLevelType,
-        skipBackSlot
+    // Generate candidates ('combined' runs equipment and ability levels together)
+    const labCandidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+    const candidates = labCandidateModes.flatMap((mode) =>
+        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
