@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Combat Levels mode: per-skill charm swapping and target levels
+
+- **Level Time now assumes the right charm**: for each skill, the XP-rate estimate runs a sim with the equivalent charm for that skill equipped (matched by tier from your current charm, e.g. Expert Melee Charm → Expert Defense Charm, keeping its enhancement level; highest available charm or none as fallback) — so leveling Defense no longer shows — just because your equipped melee charm redirects all XP. The tooltip names the charm each estimate assumes.
+- **Per-skill target levels**: a Targets button (Combat Levels mode) opens a grid of desired levels per skill, prefilled from current levels + the charm boost. While open, targets replace the uniform boost — skills left blank or at/below current level are skipped.
+
 ### Combat Levels mode: relevant columns, charm selector, time-to-level
 
 - Combat Levels results get their own table: Skill | **Level Time** | ΔDPS | ΔEXP/hr | ΔProfit/hr (all sortable), replacing the gold-per columns that don't apply to XP-cost upgrades. Deltas are color-coded with the best per column highlighted.

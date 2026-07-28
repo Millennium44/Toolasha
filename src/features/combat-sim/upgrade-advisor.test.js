@@ -185,6 +185,19 @@ describe('generateCandidates combat_level mode', () => {
         expect(stamina.upgradeLevel).toBe(55);
         expect(calculateUpgradeCost(stamina, buildGameData())).toBeNull();
     });
+
+    test('per-skill target levels override the uniform boost', () => {
+        const player = { equipment: {}, staminaLevel: 50, attackLevel: 100, defenseLevel: 80 };
+        const targets = { staminaLevel: 60, attackLevel: 90, defenseLevel: 85 };
+        const candidates = generateCandidates(player, buildGameData(), 'combat_level', 5, 'increment', false, targets);
+
+        // attack target (90) is below current (100) → skipped; others use targets
+        expect(candidates.find((c) => c.skillKey === 'attackLevel')).toBeUndefined();
+        expect(candidates.find((c) => c.skillKey === 'staminaLevel').upgradeLevel).toBe(60);
+        expect(candidates.find((c) => c.skillKey === 'defenseLevel').upgradeLevel).toBe(85);
+        // skills without a target entry are skipped too
+        expect(candidates.find((c) => c.skillKey === 'magicLevel')).toBeUndefined();
+    });
 });
 
 describe('calculateUpgradeCost for items without high-level listings', () => {

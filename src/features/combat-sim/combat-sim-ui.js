@@ -438,6 +438,9 @@ class CombatSimUI {
             <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Charm</label>
                 <select id="mwi-csim-charm-select" style="${selectStyle}"></select>
+                <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
+                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
+                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
             </span>
             <label id="mwi-csim-skip-back-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
@@ -466,6 +469,33 @@ class CombatSimUI {
                 font-family:inherit;">Stop</button>
         `;
 
+        // Per-skill target levels for Combat Levels mode (hidden until toggled)
+        const combatTargets = document.createElement('div');
+        combatTargets.id = 'mwi-csim-combat-targets';
+        combatTargets.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+        combatTargets.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the charm boost while open):</span>' +
+            [
+                ['staminaLevel', 'Stamina'],
+                ['intelligenceLevel', 'Int'],
+                ['attackLevel', 'Attack'],
+                ['meleeLevel', 'Melee'],
+                ['defenseLevel', 'Defense'],
+                ['rangedLevel', 'Ranged'],
+                ['magicLevel', 'Magic'],
+            ]
+                .map(
+                    ([key, label]) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${label}</label>
+                    <input type="number" min="1" max="200" data-combat-target="${key}" style="
+                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-csim-upgrade-progress';
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
@@ -483,6 +513,7 @@ class CombatSimUI {
         upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
 
         upgradeContent.appendChild(upgradeControls);
+        upgradeContent.appendChild(combatTargets);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -551,6 +582,9 @@ class CombatSimUI {
             // input becomes the custom charm size and only shows for "Custom"
             charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
             skipBackLabel.style.display = isCombatLevelMode ? 'none' : 'flex';
+            if (!isCombatLevelMode) {
+                this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
+            }
             levelType.style.display = isCombatLevelMode ? 'none' : '';
             levelInput.title = isCombatLevelMode
                 ? 'Levels added to each combat skill (simulated charm)'
@@ -570,6 +604,14 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-charm-select').addEventListener('change', (e) => {
             const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
             levelGroup.style.display = e.target.value === 'custom' ? 'inline-flex' : 'none';
+        });
+        this.panel.querySelector('#mwi-csim-combat-targets-toggle').addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-csim-combat-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) {
+                this._prefillCombatTargets();
+            }
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
             const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -3124,6 +3166,45 @@ class CombatSimUI {
         if (five) select.value = '5';
     }
 
+    /**
+     * Prefill the per-skill target inputs from the selected player's current
+     * levels plus the selected charm boost.
+     * @private
+     */
+    _prefillCombatTargets() {
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const charmValue = this.panel.querySelector('#mwi-csim-charm-select')?.value;
+        const boost =
+            charmValue && charmValue !== 'custom'
+                ? parseInt(charmValue) || 5
+                : parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 5;
+
+        this.panel.querySelectorAll('[data-combat-target]').forEach((input) => {
+            const current = Math.max(1, Math.floor(dto?.[input.dataset.combatTarget] || 1));
+            input.value = Math.min(200, current + boost);
+        });
+    }
+
+    /**
+     * Read the per-skill target map when the targets grid is open.
+     * @private
+     * @returns {Object|null} {skillKey: targetLevel} or null when not in use
+     */
+    _getCombatLevelTargets() {
+        const grid = this.panel.querySelector('#mwi-csim-combat-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-combat-target]').forEach((input) => {
+            const value = parseInt(input.value);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.combatTarget] = Math.min(200, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
+    }
+
     _setDefaultAbilityTargetLevel() {
         const typeSelect = this.panel.querySelector('#mwi-csim-upgrade-level-type');
         const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -3204,6 +3285,7 @@ class CombatSimUI {
 
         try {
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
+            const combatLevelTargets = upgradeMode === 'combat_level' ? this._getCombatLevelTargets() : null;
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -3216,6 +3298,7 @@ class CombatSimUI {
                     abilityLevelType,
                     abilityTargetLevel,
                     skipBackSlot,
+                    combatLevelTargets,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -3387,9 +3470,10 @@ class CombatSimUI {
                     if (delta < 0) return 'color:#f44336;';
                     return 'color:#888;';
                 };
+                const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
                 const timeTitle = Number.isFinite(r.levelTimeHours)
-                    ? 'Grinding time at this zone’s XP rates to earn these levels'
-                    : 'Your current combat style earns no XP in this skill here';
+                    ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
+                    : `No XP accrues in this skill at this zone${charmNote}`;
 
                 html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
                     <td style="${tdStyle}">${r.candidate.description}</td>
