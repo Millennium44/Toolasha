@@ -4,7 +4,8 @@
  * and requiring a confirmation click before rerolling.
  *
  * Users configure which action/monster HRIDs to protect. When a task matches,
- * it gets a green border and the reroll buttons require a double-click to proceed.
+ * it gets a green border (sides and bottom, leaving the card's top edge
+ * untouched) and the reroll buttons require a double-click to proceed.
  */
 
 import config from '../../core/config.js';
@@ -126,20 +127,28 @@ class TaskRerollProtection {
         // Check if this card is currently at the reroll cap
         const isAtCap = this.capProtectionEnabled && this._cardIsAtCap(taskCard);
 
-        // Update visual state — per-task green takes precedence over cap orange
+        // Update visual state — per-task green takes precedence over cap orange.
+        // Inset edge shadows draw the highlight on the sides and bottom only,
+        // leaving the card's top edge untouched (and shifting no layout).
+        const edgeHighlight = (color, glow) =>
+            `inset 2px 0 0 0 ${color}, inset -2px 0 0 0 ${color}, inset 0 -2px 0 0 ${color}, 0 4px 8px ${glow}`;
         if (isProtected && !config.getSetting('taskRerollProtection_hideHighlight')) {
-            taskCard.style.setProperty('outline', '2px solid rgba(76, 175, 80, 0.7)', 'important');
-            taskCard.style.setProperty('outline-offset', '-2px');
-            taskCard.style.setProperty('box-shadow', '0 0 8px 2px rgba(76, 175, 80, 0.3)', 'important');
+            taskCard.style.setProperty(
+                'box-shadow',
+                edgeHighlight('rgba(76, 175, 80, 0.7)', 'rgba(76, 175, 80, 0.3)'),
+                'important'
+            );
         } else if (isAtCap) {
-            taskCard.style.setProperty('outline', '2px solid rgba(251, 146, 60, 0.7)', 'important');
-            taskCard.style.setProperty('outline-offset', '-2px');
-            taskCard.style.setProperty('box-shadow', '0 0 8px 2px rgba(251, 146, 60, 0.3)', 'important');
+            taskCard.style.setProperty(
+                'box-shadow',
+                edgeHighlight('rgba(251, 146, 60, 0.7)', 'rgba(251, 146, 60, 0.3)'),
+                'important'
+            );
         } else {
-            taskCard.style.removeProperty('outline');
-            taskCard.style.removeProperty('outline-offset');
             taskCard.style.removeProperty('box-shadow');
         }
+        taskCard.style.removeProperty('outline');
+        taskCard.style.removeProperty('outline-offset');
 
         // Wire reroll button interception (only once per card)
         if (!taskCard.dataset.mwiRerollProtection) {

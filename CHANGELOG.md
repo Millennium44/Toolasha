@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Task protection highlight leaves the card's top edge clear
+
+- The protected-task green highlight (and the orange reroll-cap highlight) now draws on the sides and bottom of the task card only, leaving the top edge unchanged so it no longer frames the card's header area. Drawn with inset edge shadows, so card layout is unaffected.
+
+### Combat Levels mode only sims skills relevant to your weapon style
+
+- Melee weapons no longer show Ranged/Magic rows, ranged weapons drop Attack/Melee/Magic, and magic weapons drop Attack/Melee/Ranged — Stamina, Intelligence, and Defense always remain. Unarmed counts as melee (the engine sims it as smash). Applies to both the Combat Sim and Lab Sim analyzers.
+
 ### Combat Levels mode: levels-first controls, charm tier dropdown, main-skill time
 
 - **+Levels is the primary control**: the number input is always visible in Combat Levels mode and drives the simulated boost (and the Targets prefill) — it's no longer hidden behind a "Custom" charm option.

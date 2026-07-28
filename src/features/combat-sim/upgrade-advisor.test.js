@@ -157,9 +157,9 @@ describe('generateCandidates refined-equipment gating', () => {
 });
 
 describe('generateCandidates combat_level mode', () => {
-    test('generates one +N candidate per combat skill', () => {
+    test('generates one +N candidate per style-relevant combat skill', () => {
         const player = {
-            equipment: {},
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
             staminaLevel: 90,
             intelligenceLevel: 95,
             attackLevel: 100,
@@ -170,12 +170,46 @@ describe('generateCandidates combat_level mode', () => {
         };
         const candidates = generateCandidates(player, buildGameData(), 'combat_level', 5);
 
-        expect(candidates).toHaveLength(7);
-        const ranged = candidates.find((c) => c.skillKey === 'rangedLevel');
-        expect(ranged.currentLevel).toBe(110);
-        expect(ranged.upgradeLevel).toBe(115);
-        expect(ranged.description).toBe('Ranged 110 → 115');
+        // Melee weapon → Ranged and Magic are irrelevant and excluded
+        expect(candidates.map((c) => c.skillKey)).toEqual([
+            'staminaLevel',
+            'intelligenceLevel',
+            'attackLevel',
+            'meleeLevel',
+            'defenseLevel',
+        ]);
+        const melee = candidates.find((c) => c.skillKey === 'meleeLevel');
+        expect(melee.currentLevel).toBe(100);
+        expect(melee.upgradeLevel).toBe(105);
+        expect(melee.description).toBe('Melee 100 → 105');
         expect(candidates.every((c) => c.type === 'combat_level')).toBe(true);
+    });
+
+    test('ranged weapons exclude the melee and magic skills', () => {
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_bow'] = {
+            name: 'Fine Bow',
+            itemLevel: 50,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { rangedDamage: 12 } },
+        };
+        const player = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/fine_bow', enhancementLevel: 0 } },
+            staminaLevel: 90,
+            intelligenceLevel: 90,
+            attackLevel: 90,
+            meleeLevel: 90,
+            defenseLevel: 90,
+            rangedLevel: 90,
+            magicLevel: 90,
+        };
+        const candidates = generateCandidates(player, gameData, 'combat_level', 5);
+
+        expect(candidates.map((c) => c.skillKey)).toEqual([
+            'staminaLevel',
+            'intelligenceLevel',
+            'defenseLevel',
+            'rangedLevel',
+        ]);
     });
 
     test('defaults the boost to 5 and combat level costs are null', () => {
@@ -185,6 +219,8 @@ describe('generateCandidates combat_level mode', () => {
         const stamina = candidates.find((c) => c.skillKey === 'staminaLevel');
         expect(stamina.upgradeLevel).toBe(55);
         expect(calculateUpgradeCost(stamina, buildGameData())).toBeNull();
+        // Unarmed counts as melee — Ranged and Magic are excluded here too
+        expect(candidates.some((c) => c.skillKey === 'rangedLevel' || c.skillKey === 'magicLevel')).toBe(false);
     });
 
     test('per-skill target levels override the uniform boost', () => {

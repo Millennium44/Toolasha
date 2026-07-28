@@ -111,6 +111,27 @@ export function getMainTrainingSkills(playerDTO, gameData) {
 }
 
 /**
+ * Combat skill keys irrelevant to the player's weapon style, excluded from
+ * Combat Levels candidates: melee weapons don't sim Ranged/Magic, ranged
+ * weapons don't sim Attack/Melee/Magic, magic weapons don't sim
+ * Attack/Melee/Ranged. Unarmed counts as melee (the engine sims it as smash);
+ * a weapon whose style can't be determined excludes nothing.
+ * @param {Object} playerDTO
+ * @param {Object} gameData
+ * @returns {Set<string>} Excluded DTO level keys, e.g. {'rangedLevel', 'magicLevel'}
+ */
+function getStyleExcludedSkills(playerDTO, gameData) {
+    const weapon =
+        playerDTO.equipment?.['/equipment_types/main_hand'] || playerDTO.equipment?.['/equipment_types/two_hand'];
+    const stats = weapon ? gameData.itemDetailMap[weapon.hrid]?.equipmentDetail?.combatStats : null;
+    const style = weapon ? getItemDamageStyle(stats) : 'smash';
+    if (style === 'ranged') return new Set(['attackLevel', 'meleeLevel', 'magicLevel']);
+    if (style === 'magic') return new Set(['attackLevel', 'meleeLevel', 'rangedLevel']);
+    if (style === 'unknown') return new Set();
+    return new Set(['rangedLevel', 'magicLevel']);
+}
+
+/**
  * Get the next ability level target (next multiple of 10) above the current level.
  * Used as fallback when no explicit target level is provided.
  * @param {number} currentLevel - Current ability level
@@ -1000,7 +1021,9 @@ export function generateCandidates(
             combatLevelTargets && typeof combatLevelTargets === 'object' && Object.keys(combatLevelTargets).length > 0
                 ? combatLevelTargets
                 : null;
+        const excludedSkills = getStyleExcludedSkills(playerDTO, gameData);
         for (const skill of COMBAT_LEVEL_SKILLS) {
+            if (excludedSkills.has(skill.key)) continue;
             const currentLevel = Math.max(1, Math.floor(playerDTO[skill.key] || 1));
             const upgradeLevel = targets ? Math.min(200, Math.floor(targets[skill.key] || 0)) : currentLevel + boost;
             if (upgradeLevel <= currentLevel) continue;
