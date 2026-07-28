@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth path planner: optimal route to the flag
+
+- New **Path** button in the labyrinth tile controls bar computes and highlights the best route from your cleared rooms to the floor exit, using the same per-tile clear chances as the badges (combat tiles sim on demand, cached).
+- **Priorities are lexicographic**: fewest beacons first (a beacon bypasses any tile whose clear chance is below the threshold), then most treasure rooms — every chest reachable without spending an extra beacon is grafted onto the route, even at extra torch cost — then fewest torches (uncleared rooms revealed).
+- **"Clear ≥" threshold input** next to the button sets what counts as clearable (persisted as its own setting, default 70%, fully separate from the skip recommendation target).
+- Route tiles get colored outlines: green = clearable, red "Beacon" tag = bypass needed, gold = treasure, purple ⚑ = floor exit; the status line summarizes rooms/beacons/chests. Overlays clear on floor change.
+
 ### Labyrinth sims stop killing each other — recommendations finally survive lab runs
 
 - The real interruption: every labyrinth simulation started by **terminating all in-flight sim workers**. During a lab run, each room switch queues tile-badge sims, and each one killed the skip-recommendation search's sim mid-flight (the killed sim read as a 0% result, corrupting or aborting the binary search). Labyrinth sims no longer preempt each other — each runs in its own worker, so tile badges, recommendation searches, and Lab Sim runs coexist; Stop buttons still cancel everything.
