@@ -11,6 +11,7 @@ import marketAPI from '../../api/marketplace.js';
 import storage from '../../core/storage.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
+import { resolveItemPrice } from '../../utils/profit-helpers.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -262,14 +263,15 @@ class PhiloCalculator {
     }
 
     /**
-     * Resolve the crafting cost of an untradable refined item from the market
-     * cost of the refinement materials its upgrade action consumes. The base
-     * item (upgradeItemHrid) is excluded — refined capes are made from a cape
-     * the player already owns.
+     * Resolve the crafting cost of a refined item: the market cost of the
+     * refinement materials its upgrade action consumes, plus the acquisition
+     * cost of the base item being refined (market ask → shop → production
+     * cost). Bases with no resolvable price (skilling capes, which the player
+     * already owns) contribute nothing.
      * @param {string} itemHrid - Refined item HRID
-     * @returns {number|null} Material cost, or null when not resolvable
+     * @returns {number|null} Craft cost, or null when not resolvable
      */
-    getRefinementMaterialCost(itemHrid) {
+    getRefinementCraftCost(itemHrid) {
         if (!this._refineActionByOutput) {
             this._refineActionByOutput = new Map();
             const actions = dataManager.getInitClientData()?.actionDetailMap || {};
@@ -296,6 +298,13 @@ class PhiloCalculator {
             const price = priceData?.ask > 0 ? priceData.ask : priceData?.bid > 0 ? priceData.bid : null;
             if (price === null) return null;
             cost += price * count;
+        }
+
+        if (action.upgradeItemHrid) {
+            const base = resolveItemPrice(action.upgradeItemHrid, { side: 'buy', mode: 'ask', context: 'profit' });
+            if (!base.missing && base.price > 0) {
+                cost += base.price;
+            }
         }
 
         return cost > 0 ? cost : null;
@@ -360,26 +369,26 @@ class PhiloCalculator {
         // game's output panel (conditional on a successful transmute)
         const philoChancePerAction = successRate * philoDropRate;
 
-        // Get item cost (market ask price, falling back to bid on thin markets).
-        // Refined capes are often listed only at low enhancement levels, so scan
-        // those before giving up on a refined item.
-        const resolveCost = (level) => {
+        // Acquisition cost. Only ask prices are actionable — a bid is what a
+        // buyer offers, not a price the item can be acquired at, and lowball
+        // bids made bid-priced rows absurdly profitable. Refined items compare
+        // the +0 ask against crafting (base item + refinement materials) and
+        // take the cheaper path; capes are often listed only at low
+        // enhancement levels, so those are scanned as a last resort.
+        const askAt = (level) => {
             const priceData = marketAPI.getPrice(itemHrid, level);
-            const ask = priceData?.ask > 0 ? priceData.ask : null;
-            const bid = priceData?.bid > 0 ? priceData.bid : null;
-            return ask ?? bid;
+            return priceData?.ask > 0 ? priceData.ask : null;
         };
-        let itemCost = resolveCost(0);
+        let itemCost = askAt(0);
         let costIsCraftEstimate = false;
-        if (itemCost === null && itemHrid.endsWith('_refined')) {
-            for (let level = 1; level <= 5 && itemCost === null; level++) {
-                itemCost = resolveCost(level);
+        if (itemHrid.endsWith('_refined')) {
+            const craftCost = this.getRefinementCraftCost(itemHrid);
+            if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
+                itemCost = craftCost;
+                costIsCraftEstimate = true;
             }
-            // Untradable refined items (capes): price at the refinement
-            // materials consumed by their upgrade action
-            if (itemCost === null) {
-                itemCost = this.getRefinementMaterialCost(itemHrid);
-                costIsCraftEstimate = itemCost !== null;
+            for (let level = 1; level <= 5 && itemCost === null; level++) {
+                itemCost = askAt(level);
             }
         }
         if (itemCost === null || itemCost === undefined) return null;
