@@ -118,6 +118,10 @@ class LabyrinthClearRate {
             clearTimeout(this.autoTileTimer);
             this.autoTileTimer = null;
         }
+        if (this.pruneTileTimer) {
+            clearTimeout(this.pruneTileTimer);
+            this.pruneTileTimer = null;
+        }
         this.calculatedTileKeys?.clear();
 
         this.unregisterHandlers.forEach((fn) => fn());
@@ -149,6 +153,14 @@ class LabyrinthClearRate {
                 this.calculatedTileKeys?.clear();
             }
             this.injectTileControls();
+            this.pruneClearedTileBadges();
+            // Re-run after React repaints the cleared tile (the WS message
+            // usually arrives before the DOM updates)
+            if (this.pruneTileTimer) clearTimeout(this.pruneTileTimer);
+            this.pruneTileTimer = setTimeout(() => {
+                this.pruneTileTimer = null;
+                this.pruneClearedTileBadges();
+            }, 400);
 
             // Auto-calc newly revealed tiles when enabled (off by default)
             if (config.getSetting('labyrinthAutoCalcTiles')) {
@@ -1440,7 +1452,24 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Inject the "Calc Tiles" button above the active run grid
+     * Remove clear-chance badges from rooms that have been cleared
+     */
+    pruneClearedTileBadges() {
+        if (!this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        const cols = Array.isArray(this.roomData[0]) ? this.roomData[0].length : 0;
+        if (!cols || !flatRooms.length) return;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (cells.length !== flatRooms.length) return;
+
+        for (let i = 0; i < flatRooms.length; i++) {
+            if (!flatRooms[i]?.isCleared) continue;
+            cells[i]?.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
+        }
+    }
+
+    /**
+     * Inject the calculate control bar (top-left entries row when available)
      */
     injectTileControls() {
         if (!this.roomData) return;
@@ -1450,9 +1479,13 @@ class LabyrinthClearRate {
         const gridParent = this.findRoomGridParent(flatRooms.length);
         if (!gridParent || !gridParent.parentElement) return;
 
+        const host = this.findEntriesRowHost(gridParent);
         const existing = document.querySelector(`.${TILE_CONTROLS_CLASS}`);
-        if (existing && existing.isConnected && existing.nextElementSibling === gridParent) return;
-        if (existing) existing.remove();
+        if (existing && existing.isConnected) {
+            const placedCorrectly = host ? existing.parentElement === host : existing.nextElementSibling === gridParent;
+            if (placedCorrectly) return;
+            existing.remove();
+        }
 
         const container = document.createElement('div');
         container.className = TILE_CONTROLS_CLASS;
@@ -1517,7 +1550,44 @@ class LabyrinthClearRate {
         track.appendChild(bar);
         container.appendChild(track);
 
-        gridParent.parentElement.insertBefore(container, gridParent);
+        if (host) {
+            container.style.margin = '2px 0 2px 12px';
+            host.appendChild(container);
+        } else {
+            gridParent.parentElement.insertBefore(container, gridParent);
+        }
+    }
+
+    /**
+     * Find the "N / M Entries · Max Path" info row at the top-left of the
+     * labyrinth panel so the control bar can live there like the reference UI
+     */
+    findEntriesRowHost(gridParent) {
+        const panelRoot =
+            gridParent.closest('[class*="LabyrinthPanel_labyrinthPanel"]') ||
+            gridParent.closest('[class*="LabyrinthPanel"]') ||
+            gridParent.parentElement;
+        if (!panelRoot) return null;
+
+        let marker = null;
+        for (const node of panelRoot.querySelectorAll('div, span')) {
+            if (node.childElementCount > 0) continue;
+            const text = String(node.textContent || '').trim();
+            if (text && text.length < 40 && /max path/i.test(text)) {
+                marker = node;
+                break;
+            }
+        }
+        if (!marker) return null;
+
+        let current = marker.parentElement;
+        for (let depth = 0; depth < 3 && current; depth++) {
+            if (window.getComputedStyle(current).display.includes('flex')) {
+                return current;
+            }
+            current = current.parentElement;
+        }
+        return marker.parentElement;
     }
 
     setTileStatus(message) {
