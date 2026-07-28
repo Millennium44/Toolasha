@@ -180,12 +180,6 @@ function setupCharacterSwitchHandler() {
 
         reinitScheduled = true;
 
-        // Force cleanup of dungeon tracker UI (safety measure)
-        const dungeonTrackerFeature = getFeature('dungeonTrackerUI');
-        if (dungeonTrackerFeature && typeof dungeonTrackerFeature.cleanup === 'function') {
-            dungeonTrackerFeature.cleanup();
-        }
-
         try {
             // Wait for cleanup to complete (with safety timeout)
             if (cleanupPromise) {
