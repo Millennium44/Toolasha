@@ -21,6 +21,8 @@ const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
+const PREVIEW_ID = 'mwi-labyrinth-preview';
+const UPGRADE_MAX_LEVEL = 12;
 
 class LabyrinthClearRate {
     constructor() {
@@ -100,6 +102,8 @@ class LabyrinthClearRate {
         }
 
         this.clearLiveProgress();
+        this.hidePreview();
+        document.getElementById(PREVIEW_ID)?.remove();
 
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
@@ -119,6 +123,7 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
+        this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
         if (roomData) {
             this.roomData = roomData;
@@ -408,7 +413,106 @@ class LabyrinthClearRate {
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
         result.xpPerRoom = roomLevel * 50;
+        this.attachSkillingWhatIfs(result, metrics, {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            progressPerSuccess,
+            targetProgress,
+            roomLevel,
+        });
         return result;
+    }
+
+    /**
+     * Attach what-if clear chances (level up, efficiency/speed tiers, labyrinth
+     * upgrades) and XP/hour to a skilling result for the hover preview.
+     */
+    attachSkillingWhatIfs(result, metrics, params) {
+        const {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            progressPerSuccess,
+            targetProgress,
+        } = params;
+        const clampChance = (v) => Math.min(1, Math.max(0, v));
+        const upgrades = this.getLabyrinthUpgrades();
+
+        // +1 effective skill level (improves both success chance and work power)
+        const nextLevel = effectiveLevel + 1;
+        const nextLevelDelta = nextLevel - params.roomLevel;
+        const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
+        result.nextLevelClearChance = this.computeNonEnhancingClearStats(
+            attempts,
+            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            doubleChance,
+            Math.max(0, Math.floor(nextLevel * (1 + metrics.efficiencyBonus))),
+            targetProgress
+        ).clearChance;
+
+        // Efficiency needed to require one fewer progress unit
+        result.efficiencyDelta = null;
+        result.efficiencyTierClearChance = null;
+        const neededUnits = progressPerSuccess > 0 ? Math.ceil(targetProgress / progressPerSuccess - 1e-9) : 0;
+        if (neededUnits > 1 && effectiveLevel > 0) {
+            const requiredPerSuccess = Math.ceil(targetProgress / (neededUnits - 1) - 1e-9);
+            const requiredEfficiency = requiredPerSuccess / effectiveLevel - 1;
+            if (Number.isFinite(requiredEfficiency)) {
+                result.efficiencyDelta = Math.max(0, requiredEfficiency - metrics.efficiencyBonus);
+                result.efficiencyTierClearChance = this.computeNonEnhancingClearStats(
+                    attempts,
+                    successChance,
+                    doubleChance,
+                    requiredPerSuccess,
+                    targetProgress
+                ).clearChance;
+            }
+        }
+
+        // Action speed needed to fit one more attempt into the room
+        result.speedDelta = Math.max(
+            0,
+            (BASE_SKILLING_TIME * (attempts + 1)) / ROOM_DURATION - 1 - metrics.actionSpeedBonus
+        );
+        result.speedTierClearChance = this.computeNonEnhancingClearStats(
+            attempts + 1,
+            successChance,
+            doubleChance,
+            progressPerSuccess,
+            targetProgress
+        ).clearChance;
+
+        // Next labyrinth upgrade tiers (null when already maxed)
+        result.nextSuccessUpgradeClearChance =
+            upgrades.success < UPGRADE_MAX_LEVEL
+                ? this.computeNonEnhancingClearStats(
+                      attempts,
+                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      doubleChance,
+                      progressPerSuccess,
+                      targetProgress
+                  ).clearChance
+                : null;
+        result.nextDoubleUpgradeClearChance =
+            upgrades.doubleProgress < UPGRADE_MAX_LEVEL
+                ? this.computeNonEnhancingClearStats(
+                      attempts,
+                      successChance,
+                      clampChance(doubleChance + UPGRADE_STEP),
+                      progressPerSuccess,
+                      targetProgress
+                  ).clearChance
+                : null;
+
+        result.xpPerHour =
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+                : 0;
     }
 
     /**
@@ -444,7 +548,70 @@ class LabyrinthClearRate {
         result.actionSeconds = actionSeconds;
         result.targetLevel = targetLevel;
         result.roomLevel = roomLevel;
+        result.xpPerRoom = roomLevel * 50;
+        this.attachEnhancingWhatIfs(result, metrics, {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            targetLevel,
+            roomLevel,
+        });
         return result;
+    }
+
+    /**
+     * Attach what-if clear chances and XP/hour to an enhancing result.
+     */
+    attachEnhancingWhatIfs(result, metrics, params) {
+        const { attempts, successChance, doubleChance, levelBonus, effectiveLevel, targetLevel } = params;
+        const clampChance = (v) => Math.min(1, Math.max(0, v));
+        const upgrades = this.getLabyrinthUpgrades();
+
+        const nextLevelDelta = effectiveLevel + 1 - params.roomLevel;
+        const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
+        result.nextLevelClearChance = this.computeEnhancingClearStats(
+            attempts,
+            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            doubleChance,
+            targetLevel
+        ).clearChance;
+
+        result.speedDelta = Math.max(
+            0,
+            (BASE_ENHANCING_TIME * (attempts + 1)) / ROOM_DURATION - 1 - metrics.actionSpeedBonus
+        );
+        result.speedTierClearChance = this.computeEnhancingClearStats(
+            attempts + 1,
+            successChance,
+            doubleChance,
+            targetLevel
+        ).clearChance;
+
+        result.nextSuccessUpgradeClearChance =
+            upgrades.success < UPGRADE_MAX_LEVEL
+                ? this.computeEnhancingClearStats(
+                      attempts,
+                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      doubleChance,
+                      targetLevel
+                  ).clearChance
+                : null;
+        result.nextDoubleUpgradeClearChance =
+            upgrades.doubleProgress < UPGRADE_MAX_LEVEL
+                ? this.computeEnhancingClearStats(
+                      attempts,
+                      successChance,
+                      clampChance(doubleChance + UPGRADE_STEP),
+                      targetLevel
+                  ).clearChance
+                : null;
+
+        result.xpPerHour =
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+                : 0;
     }
 
     buildResult(clearStats, actionSeconds) {
@@ -1298,15 +1465,28 @@ class LabyrinthClearRate {
         const badge = document.createElement('span');
         badge.className = BADGE_CLASS;
         badge.style.cssText = 'font-size:0.7rem; margin-left:6px; white-space:nowrap;';
-        badge.style.color = this.getBadgeColor(result.clearChance);
-
-        const pct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        badge.textContent = pct >= 100 ? timeText : `${pct}% ${timeText}`;
-        badge.title = this.formatTooltip(result, roomLevel);
-
+        this.decorateBadge(badge, result, roomLevel);
         cell.appendChild(badge);
         return badge;
+    }
+
+    /**
+     * Apply text (with max reachable floor), color, and hover preview to a badge
+     */
+    decorateBadge(badge, result, roomLevel) {
+        badge.style.color = this.getBadgeColor(result.clearChance);
+        const pct = Math.round(result.clearChance * 100);
+        const timeText = this.formatTime(result.expectedSeconds);
+        const maxFloor = Math.floor((roomLevel || 0) / 20);
+        const floorText = maxFloor >= 1 ? `F${maxFloor} · ` : '';
+        badge.textContent = pct >= 100 ? `${floorText}${timeText}` : `${floorText}${pct}% ${timeText}`;
+
+        if (result.type === 'skilling' || result.type === 'enhancing') {
+            badge.removeAttribute('title');
+            this.bindPreview(badge, result);
+        } else {
+            badge.title = this.formatTooltip(result, roomLevel);
+        }
     }
 
     appendPlaceholderBadge(cell) {
@@ -1320,11 +1500,7 @@ class LabyrinthClearRate {
     }
 
     updateBadge(badge, result, roomLevel) {
-        badge.style.color = this.getBadgeColor(result.clearChance);
-        const pct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        badge.textContent = pct >= 100 ? timeText : `${pct}% ${timeText}`;
-        badge.title = this.formatTooltip(result, roomLevel);
+        this.decorateBadge(badge, result, roomLevel);
     }
 
     /**
@@ -1365,6 +1541,148 @@ class LabyrinthClearRate {
             return `/monsters/${slug}`;
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * Bind hover preview events to a badge (result stored on the element so
+     * updates replace content without re-binding listeners)
+     */
+    bindPreview(badge, result) {
+        badge.__mwiPreviewResult = result;
+        if (badge.__mwiPreviewBound) return;
+        badge.__mwiPreviewBound = true;
+        badge.style.cursor = 'help';
+        const show = (e) => {
+            const res = badge.__mwiPreviewResult;
+            if (!res) return;
+            this.showPreview(res, e.clientX, e.clientY);
+        };
+        badge.addEventListener('mouseenter', show);
+        badge.addEventListener('mousemove', show);
+        badge.addEventListener('mouseleave', () => this.hidePreview());
+    }
+
+    /**
+     * Get or create the shared preview tooltip element
+     */
+    ensurePreviewEl() {
+        let el = document.getElementById(PREVIEW_ID);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = PREVIEW_ID;
+            el.style.cssText =
+                'position:fixed; min-width:180px; max-width:260px; padding:6px 9px; border-radius:6px; ' +
+                'border:1px solid rgba(128,170,255,0.45); background:rgba(12,16,24,0.96); color:#f2f7ff; ' +
+                `font-size:11px; line-height:1.4; pointer-events:none; display:none; z-index:${config.Z_NOTIFICATION};`;
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    /**
+     * Show the rich preview for a skilling/enhancing result near the cursor
+     */
+    showPreview(result, x, y) {
+        const el = this.ensurePreviewEl();
+        if (this._previewFor !== result) {
+            this.renderPreviewContent(el, result);
+            this._previewFor = result;
+        }
+        el.style.display = 'block';
+
+        const offset = 12;
+        const margin = 8;
+        const width = el.offsetWidth || 200;
+        const height = el.offsetHeight || 150;
+        let left = x + offset;
+        let top = y + offset;
+        if (left + width + margin > window.innerWidth) {
+            left = Math.max(margin, x - width - offset);
+        }
+        if (top + height + margin > window.innerHeight) {
+            top = Math.max(margin, y - height - offset);
+        }
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    }
+
+    hidePreview() {
+        const el = document.getElementById(PREVIEW_ID);
+        if (el) el.style.display = 'none';
+        this._previewFor = null;
+    }
+
+    /**
+     * Build the preview tooltip content for a skilling/enhancing result
+     */
+    renderPreviewContent(el, result) {
+        el.textContent = '';
+        const pct = (v) => `${(Math.min(1, Math.max(0, v)) * 100).toFixed(1)}%`;
+        const deltaPct = (v) => `+${(Math.max(0, v) * 100).toFixed(2)}%`;
+
+        const title = document.createElement('div');
+        title.style.cssText = 'margin-bottom:4px; font-weight:700; color:#9ec4ff;';
+        title.textContent = `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room · Lv.${result.roomLevel}`;
+        el.appendChild(title);
+
+        const addRow = (label, value) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; justify-content:space-between; gap:10px; white-space:nowrap;';
+            const labelEl = document.createElement('span');
+            labelEl.style.opacity = '0.75';
+            labelEl.textContent = label;
+            const valueEl = document.createElement('span');
+            valueEl.style.fontWeight = '700';
+            valueEl.textContent = value;
+            row.appendChild(labelEl);
+            row.appendChild(valueEl);
+            el.appendChild(row);
+        };
+
+        if (result.type === 'enhancing') {
+            addRow('Target Enhancement', `+${result.targetLevel}`);
+        } else {
+            addRow('Work Power', `${result.workPower.toFixed(2)} \u2192 ${result.progressPerSuccess}`);
+        }
+        addRow('Success Rate', pct(result.successChance));
+        addRow('Double Progress', pct(result.doubleChance));
+        addRow('Actions in 2m', `${result.attempts} @ ${result.actionSeconds.toFixed(2)}s`);
+        if (result.xpPerRoom) {
+            addRow('XP / Room', `${Math.round(result.xpPerRoom)}`);
+        }
+        if (result.xpPerHour > 0) {
+            addRow('XP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
+        }
+        const maxFloor = Math.floor((result.roomLevel || 0) / 20);
+        if (maxFloor >= 1) {
+            addRow('Max Floor', `${maxFloor}`);
+        }
+
+        if (Number.isFinite(result.nextLevelClearChance)) {
+            addRow('+1 Level Clear', pct(result.nextLevelClearChance));
+        }
+        if (result.type !== 'enhancing') {
+            if (result.efficiencyDelta === null) {
+                addRow('Efficiency Tier', 'Already optimal');
+            } else if (Number.isFinite(result.efficiencyTierClearChance)) {
+                addRow(`Efficiency ${deltaPct(result.efficiencyDelta)} Clear`, pct(result.efficiencyTierClearChance));
+            }
+        }
+        if (Number.isFinite(result.speedTierClearChance)) {
+            addRow(`Speed ${deltaPct(result.speedDelta)} Clear`, pct(result.speedTierClearChance));
+        }
+        if (Number.isFinite(result.nextSuccessUpgradeClearChance)) {
+            addRow('Next Success Upgrade', pct(result.nextSuccessUpgradeClearChance));
+        }
+        if (Number.isFinite(result.nextDoubleUpgradeClearChance)) {
+            addRow('Next Double Upgrade', pct(result.nextDoubleUpgradeClearChance));
+        }
+
+        const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
+        if (floor >= 1) {
+            addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
+            addRow('Box Expected', `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
         }
     }
 
