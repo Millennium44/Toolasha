@@ -1,19 +1,17 @@
 /**
  * Labyrinth Room Logs
  * Records per-action success/fail/double outcomes for labyrinth skilling and
- * enhancing rooms, shown in a floating panel toggled from the labyrinth tabs.
+ * enhancing rooms, shown in a floating panel toggled from the calculate bar.
  * Ported from dakonglong's MIT-licensed Labyrinth Clear Rate Calculator.
  */
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
-import domObserver from '../../core/dom-observer.js';
 
 const STORAGE_KEY = 'labyrinthRoomLogs';
 const MAX_SESSIONS = 30;
 const MAX_ACTIONS = 60;
-const BUTTON_CLASS = 'mwi-lab-logs-button';
 const PANEL_ID = 'mwi-lab-logs-panel';
 
 const OUTCOME_COLORS = {
@@ -31,7 +29,6 @@ class LabyrinthRoomLogs {
         this.labContext = null; // { runKey, roomKey, room }
         this.progressHandler = null;
         this.labyrinthHandler = null;
-        this.unregisterObserver = null;
         this.panel = null;
     }
 
@@ -50,16 +47,6 @@ class LabyrinthRoomLogs {
 
         this.labyrinthHandler = (data) => this.onLabyrinthUpdated(data);
         webSocketHook.on('labyrinth_updated', this.labyrinthHandler);
-
-        this.unregisterObserver = domObserver.onClass(
-            'LabyrinthRoomLogs',
-            'LabyrinthPanel_tabsComponentContainer',
-            (node) => this.injectButton(node)
-        );
-        const existing = document.querySelector('[class*="LabyrinthPanel_tabsComponentContainer"]');
-        if (existing) {
-            this.injectButton(existing);
-        }
     }
 
     disable() {
@@ -71,12 +58,7 @@ class LabyrinthRoomLogs {
             webSocketHook.off('labyrinth_updated', this.labyrinthHandler);
             this.labyrinthHandler = null;
         }
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
         this.finalizeActiveSession('feature_disabled');
-        document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.remove());
         document.getElementById(PANEL_ID)?.remove();
         this.panel = null;
         this.labContext = null;
@@ -315,21 +297,6 @@ class LabyrinthRoomLogs {
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
-
-    injectButton(tabsContainer) {
-        if (!tabsContainer || tabsContainer.querySelector(`.${BUTTON_CLASS}`)) return;
-
-        const innerContainer = tabsContainer.querySelector('[class*="TabsComponent_tabsContainer"] > div > div > div');
-        if (!innerContainer) return;
-
-        const button = document.createElement('div');
-        button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary ' + BUTTON_CLASS;
-        button.textContent = 'Logs';
-        button.style.cssText =
-            'cursor: pointer; background: #2d3e5f; color: #fff; border-radius: 4px; padding: 4px 10px; font-size: 12px; white-space: nowrap;';
-        button.addEventListener('click', () => this.togglePanel());
-        innerContainer.appendChild(button);
-    }
 
     togglePanel() {
         const panel = this.ensurePanel();
