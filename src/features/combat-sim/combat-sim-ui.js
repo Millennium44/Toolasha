@@ -1546,14 +1546,8 @@ class CombatSimUI {
             this._activeDetailIndex = this._simHistory.length - 1;
             this._displayResults(simResult, hours, gameData);
             this._switchTab('results');
-            const modeLabels = {
-                conservative: 'Buy: Ask / Sell: Bid',
-                hybrid: 'Buy: Ask / Sell: Ask',
-                optimistic: 'Buy: Bid / Sell: Ask',
-                patientBuy: 'Buy: Bid / Sell: Bid',
-            };
             const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            const modeLabel = modeLabels[mode] || mode;
+            const modeLabel = config.getPricingModeLabel(mode);
             const missingNote = missingMembers.length
                 ? ` | Missing: ${missingMembers.join(', ')} (open their profiles)`
                 : '';

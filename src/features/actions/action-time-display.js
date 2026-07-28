@@ -82,28 +82,38 @@ class ActionTimeDisplay {
         // Migrate old display mode setting to new granular toggles
         await this.migrateDisplayMode();
 
-        if (!config.getSetting('actionBar_enabled')) {
-            return;
+        // Set up setting change listeners for all action bar toggles (registered once,
+        // before the enabled check, so toggling the feature back on works without a reload)
+        if (!this.settingListenersRegistered) {
+            this.settingListenersRegistered = true;
+            const actionBarSettings = [
+                'actionBar_enabled',
+                'actionBar_compactWidth',
+                'actionBar_showQueueCount',
+                'actionBar_showActionDuration',
+                'actionBar_showActionsPerHour',
+                'actionBar_showTimeRemaining',
+                'profitCalc_pricingMode',
+            ];
+            for (const key of actionBarSettings) {
+                config.onSettingChange(key, (newValue) => {
+                    if (key === 'actionBar_enabled') {
+                        if (newValue) {
+                            this.initialize().catch((error) => {
+                                console.error('[ActionTimeDisplay] Re-initialization failed:', error);
+                            });
+                        } else {
+                            this.disable();
+                        }
+                        return;
+                    }
+                    this.updateDisplay();
+                });
+            }
         }
 
-        // Set up setting change listeners for all action bar toggles
-        const actionBarSettings = [
-            'actionBar_enabled',
-            'actionBar_compactWidth',
-            'actionBar_showQueueCount',
-            'actionBar_showActionDuration',
-            'actionBar_showActionsPerHour',
-            'actionBar_showTimeRemaining',
-            'profitCalc_pricingMode',
-        ];
-        for (const key of actionBarSettings) {
-            config.onSettingChange(key, (newValue) => {
-                if (key === 'actionBar_enabled' && !newValue) {
-                    this.disable();
-                    return;
-                }
-                this.updateDisplay();
-            });
+        if (!config.getSetting('actionBar_enabled')) {
+            return;
         }
 
         // Set up handler for character switching

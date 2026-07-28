@@ -155,6 +155,10 @@ class QueueMonitorUI {
             this.dragOffset.y = e.clientY - this.panel.getBoundingClientRect().top;
             header.style.cursor = 'grabbing';
             e.preventDefault();
+
+            // Attach document listeners only for the duration of the drag
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
         };
 
         const onMouseMove = (e) => {
@@ -172,11 +176,11 @@ class QueueMonitorUI {
                 this.isDragging = false;
                 header.style.cursor = 'grab';
             }
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
         };
 
         header.addEventListener('mousedown', onMouseDown);
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
     }
 
     /**

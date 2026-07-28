@@ -979,6 +979,7 @@ class GuildCreditValue {
         upgradeBtn.insertAdjacentElement('afterend', wrapper);
 
         const levelEl = modalEl.querySelector('[class*="GuildPanel_level"]');
+        if (!levelEl) return;
 
         upgradeBtn.addEventListener(
             'click',
