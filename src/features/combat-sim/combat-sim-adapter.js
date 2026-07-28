@@ -39,6 +39,7 @@ export function buildGameDataPayload() {
         abilitySlotsLevelRequirementList: clientData.abilitySlotsLevelRequirementList,
         openableLootDropMap: clientData.openableLootDropMap,
         labyrinthCrateDetailMap: clientData.labyrinthCrateDetailMap,
+        levelExperienceTable: clientData.levelExperienceTable,
     };
 }
 
@@ -273,7 +274,7 @@ export function parseShykaiImport(jsonString) {
     // - Single-player: {"player": {...}, "food": {...}, ...}
     let slotEntries;
 
-    if (typeof parsed === 'object' && parsed['1']) {
+    if (typeof parsed === 'object' && parsed !== null && ['1', '2', '3', '4', '5'].some((k) => parsed[k])) {
         // Multi-slot format
         slotEntries = [];
         for (let i = 1; i <= 5; i++) {
@@ -699,30 +700,6 @@ export function getLabyrinthMonsters() {
         .filter((m) => m.isLabyrinthMonster === true)
         .map((m) => ({ hrid: m.hrid, name: m.name }))
         .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/**
- * Get labyrinth crate options grouped by category.
- * @returns {{coffee: Array, food: Array, tea: Array}}
- */
-export function getLabyrinthCrates() {
-    return {
-        coffee: [
-            { hrid: '/items/basic_coffee_crate', name: 'Basic Coffee' },
-            { hrid: '/items/advanced_coffee_crate', name: 'Advanced Coffee' },
-            { hrid: '/items/expert_coffee_crate', name: 'Expert Coffee' },
-        ],
-        food: [
-            { hrid: '/items/basic_food_crate', name: 'Basic Food' },
-            { hrid: '/items/advanced_food_crate', name: 'Advanced Food' },
-            { hrid: '/items/expert_food_crate', name: 'Expert Food' },
-        ],
-        tea: [
-            { hrid: '/items/basic_tea_crate', name: 'Basic Tea' },
-            { hrid: '/items/advanced_tea_crate', name: 'Advanced Tea' },
-            { hrid: '/items/expert_tea_crate', name: 'Expert Tea' },
-        ],
-    };
 }
 
 /**

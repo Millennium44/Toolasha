@@ -336,7 +336,14 @@ function injectButton(navButtons) {
     button.textContent = 'Scroll Simulation';
     button.className = 'Button_button__1Fe9z';
     button.style.cssText = `white-space: nowrap;`;
-    button.addEventListener('click', () => popup.open(loadoutName));
+    button.addEventListener('click', () => {
+        // Resolve at click time: the loadout can be switched in place without re-injection,
+        // so the injection-time name may be stale
+        const currentName = getLoadoutName(navButtons);
+        const currentSnapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === currentName);
+        if (currentSnapshot?.actionTypeHrid === '/action_types/combat') return;
+        popup.open(currentName);
+    });
 
     // Insert before the Delete Loadout button (Button_warning class)
     const deleteBtn = navButtons.querySelector('[class*="Button_warning"]');

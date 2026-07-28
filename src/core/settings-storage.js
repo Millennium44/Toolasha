@@ -6,6 +6,15 @@
 import storage from './storage.js';
 import { settingsGroups } from './settings-schema.js';
 
+/**
+ * Whether a schema type stores its state as a boolean (.isTrue)
+ * @param {string} type - Setting type from the schema
+ * @returns {boolean}
+ */
+function isBooleanType(type) {
+    return type === 'checkbox' || type === 'checkboxWithButton';
+}
+
 class SettingsStorage {
     constructor() {
         this.storageKey = 'script_settingsMap'; // Legacy global key (used as template)
@@ -73,7 +82,7 @@ class SettingsStorage {
                 };
 
                 // Set default value
-                if (settingDef.type === 'checkbox') {
+                if (isBooleanType(settingDef.type)) {
                     settings[settingId].isTrue = settingDef.default ?? false;
                 } else {
                     settings[settingId].value = settingDef.default ?? '';
@@ -105,7 +114,15 @@ class SettingsStorage {
                     }
                     // Merge saved non-boolean values
                     if (savedValue.hasOwnProperty('value')) {
-                        settings[settingId].value = savedValue.value;
+                        if (isBooleanType(settings[settingId].type)) {
+                            // Migration: checkboxWithButton settings once persisted
+                            // their boolean in .value instead of .isTrue
+                            if (!savedValue.hasOwnProperty('isTrue')) {
+                                settings[settingId].isTrue = !!savedValue.value;
+                            }
+                        } else {
+                            settings[settingId].value = savedValue.value;
+                        }
                     }
                 }
             }
@@ -136,7 +153,7 @@ class SettingsStorage {
                     type: settingDef.type || 'checkbox',
                 };
 
-                if (settingDef.type === 'checkbox') {
+                if (isBooleanType(settingDef.type)) {
                     settings[settingId].isTrue = settingDef.default ?? false;
                 } else {
                     settings[settingId].value = settingDef.default ?? '';
@@ -255,7 +272,7 @@ class SettingsStorage {
         }
 
         // Return boolean for checkbox settings
-        if (setting.type === 'checkbox') {
+        if (isBooleanType(setting.type)) {
             return setting.isTrue ?? defaultValue;
         }
 
@@ -278,7 +295,7 @@ class SettingsStorage {
         }
 
         // Update value
-        if (settings[settingId].type === 'checkbox') {
+        if (isBooleanType(settings[settingId].type)) {
             settings[settingId].isTrue = value;
         } else {
             settings[settingId].value = value;

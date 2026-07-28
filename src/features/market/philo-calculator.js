@@ -31,9 +31,10 @@ class PhiloCalculator {
         this.useCatalyst = true;
         this.useCatalyticTea = false;
         this.catalyticTeaRatioBoost = 0;
-        this.drinkConcentrationLevel = 0; // 0-20
+        this.drinkConcentrationLevel = null; // 0-20; null = not saved yet (auto-detect from gear)
         this.hideNegativeProfitItems = true;
         this.filterText = '';
+        this._escHandler = null;
 
         // Cached row data
         this.rows = [];
@@ -59,11 +60,22 @@ class PhiloCalculator {
      * Disable / cleanup the feature
      */
     disable() {
+        this.closeModal();
+        this.isInitialized = false;
+    }
+
+    /**
+     * Close the modal and remove its document-level listeners
+     */
+    closeModal() {
         if (this.modal) {
             this.modal.remove();
             this.modal = null;
         }
-        this.isInitialized = false;
+        if (this._escHandler) {
+            document.removeEventListener('keydown', this._escHandler);
+            this._escHandler = null;
+        }
     }
 
     /**
@@ -178,7 +190,8 @@ class PhiloCalculator {
             if (saved) {
                 this.useCatalyst = saved.useCatalyst !== false;
                 this.useCatalyticTea = saved.useCatalyticTea || false;
-                this.drinkConcentrationLevel = saved.drinkConcentrationLevel || 0;
+                // ?? not || — an explicitly saved +0 must not fall back to auto-detect
+                this.drinkConcentrationLevel = saved.drinkConcentrationLevel ?? null;
                 this.hideNegativeProfitItems = saved.hideNegativeProfitItems !== false;
                 this.filterText = saved.filterText || '';
             }
@@ -443,9 +456,7 @@ class PhiloCalculator {
      * Open the calculator modal
      */
     async openModal() {
-        if (this.modal) {
-            this.modal.remove();
-        }
+        this.closeModal();
 
         // Load saved settings first
         await this.loadSettings();
@@ -454,7 +465,7 @@ class PhiloCalculator {
         this.catalyticTeaRatioBoost = this.calculateCatalyticTeaRatioBoost();
 
         // Set default drink concentration level (only if not previously saved)
-        if (this.drinkConcentrationLevel === 0) {
+        if (this.drinkConcentrationLevel === null) {
             let currentDrinkEnhancementLevel = 0;
             const gameData = dataManager.getInitClientData();
             const equipment = dataManager.getEquipment();
@@ -523,8 +534,7 @@ class PhiloCalculator {
             padding: 0 4px;
         `;
         closeBtn.addEventListener('click', () => {
-            this.modal.remove();
-            this.modal = null;
+            this.closeModal();
         });
         header.appendChild(closeBtn);
 
@@ -548,20 +558,17 @@ class PhiloCalculator {
         // Close on backdrop click
         this.modal.addEventListener('click', (e) => {
             if (e.target === this.modal) {
-                this.modal.remove();
-                this.modal = null;
+                this.closeModal();
             }
         });
 
-        // Close on Escape key
-        const escHandler = (e) => {
+        // Close on Escape key (handler removed in closeModal to avoid accumulating listeners)
+        this._escHandler = (e) => {
             if (e.key === 'Escape' && this.modal) {
-                this.modal.remove();
-                this.modal = null;
-                document.removeEventListener('keydown', escHandler);
+                this.closeModal();
             }
         };
-        document.addEventListener('keydown', escHandler);
+        document.addEventListener('keydown', this._escHandler);
 
         document.body.appendChild(this.modal);
         this.renderTable();

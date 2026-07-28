@@ -41,6 +41,7 @@ export default [
             'no-console': 'off', // Console logging is intentional in this project
             'no-debugger': 'warn',
             'no-dupe-keys': 'error',
+            'no-dupe-class-members': 'error',
             'no-duplicate-case': 'error',
             'no-empty': ['warn', { allowEmptyCatch: true }],
             'no-extra-boolean-cast': 'warn',

@@ -1050,6 +1050,11 @@ class CombatSimUI {
      * @private
      */
     async _onSeek() {
+        if (this.isRunning) {
+            this._setStatus('A simulation is already running.');
+            return;
+        }
+
         const input = this.panel?.querySelector('#mwi-csim-seek-input');
         const queryText = input?.value?.trim() || '';
 
@@ -1125,7 +1130,9 @@ class CombatSimUI {
 
         const simStartTime = Date.now();
         const zoneCount = zones.length;
-        this.elapsedTimer = setInterval(() => {
+        // Local timer handle — a shared instance field could be overwritten by a
+        // concurrent run, leaking the interval permanently
+        const elapsedTimer = setInterval(() => {
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Seeking ${itemName} in ${zoneCount} zone/tiers... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -1141,8 +1148,7 @@ class CombatSimUI {
                 }
             );
 
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
+            clearInterval(elapsedTimer);
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             const playerHrid = this._activePlayerTab || 'player1';
@@ -1180,8 +1186,6 @@ class CombatSimUI {
             this._displaySeekResults(seekRows, itemName);
             this._setStatus(`Seek complete in ${totalElapsed}: ${seekRows.length} sources found for ${itemName}`);
         } catch (error) {
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
             if (error.message === 'Cancelled') {
                 this._setStatus('Seek cancelled.');
             } else {
@@ -1189,6 +1193,7 @@ class CombatSimUI {
                 this._setStatus(`Seek error: ${error.message || 'Unknown error'}`);
             }
         } finally {
+            clearInterval(elapsedTimer);
             this.isRunning = false;
             runBtn.disabled = false;
             runBtn.style.opacity = '1';
@@ -1484,7 +1489,9 @@ class CombatSimUI {
         this._switchTab('results');
 
         const simStartTime = Date.now();
-        this.elapsedTimer = setInterval(() => {
+        // Local timer handle — a shared instance field could be overwritten by a
+        // concurrent run, leaking the interval permanently
+        const elapsedTimer = setInterval(() => {
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Simulating (${partyInfo})... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -1498,8 +1505,7 @@ class CombatSimUI {
                 }
             );
 
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
+            clearInterval(elapsedTimer);
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             this._lastSimResult = simResult;
@@ -1556,8 +1562,6 @@ class CombatSimUI {
                 `Simulation complete in ${totalElapsed}: ${formatWithSeparator(hours)} hours · ${partyInfo} · Pricing: ${modeLabel}${missingNote}`
             );
         } catch (error) {
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
             if (error.message === 'Cancelled') {
                 this._setStatus('Simulation cancelled.');
             } else {
@@ -1565,6 +1569,7 @@ class CombatSimUI {
                 this._setStatus(`Simulation error: ${error.message || 'Unknown error'}`);
             }
         } finally {
+            clearInterval(elapsedTimer);
             this.isRunning = false;
             this._resetRunButton(runBtn);
             progressContainer.style.display = 'none';
@@ -1645,7 +1650,9 @@ class CombatSimUI {
 
         const simStartTime = Date.now();
         const zoneCount = selectedZones.length;
-        this.elapsedTimer = setInterval(() => {
+        // Local timer handle — a shared instance field could be overwritten by a
+        // concurrent run, leaking the interval permanently
+        const elapsedTimer = setInterval(() => {
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Simulating ${zoneCount} zones... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -1661,8 +1668,7 @@ class CombatSimUI {
                 }
             );
 
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
+            clearInterval(elapsedTimer);
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             // Build zone results with revenue calculations
@@ -1694,8 +1700,6 @@ class CombatSimUI {
                 `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each`
             );
         } catch (error) {
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
             if (error.message === 'Cancelled') {
                 this._setStatus('Simulation cancelled.');
             } else {
@@ -1703,6 +1707,7 @@ class CombatSimUI {
                 this._setStatus(`Simulation error: ${error.message || 'Unknown error'}`);
             }
         } finally {
+            clearInterval(elapsedTimer);
             this.isRunning = false;
             this._resetRunButton(runBtn);
             progressContainer.style.display = 'none';
@@ -1740,8 +1745,8 @@ class CombatSimUI {
 
         let html = '';
 
-        // Pre-compute metrics for the latest history entry if not yet populated
-        this._ensureHistoryMetrics(simResult, hours, gameData, activeTab);
+        // Pre-compute metrics for history entries (recomputed on player-tab change)
+        this._ensureHistoryMetrics(activeTab);
 
         // History panel (above everything)
         if (this._simHistory.length > 0) {
@@ -2417,20 +2422,16 @@ class CombatSimUI {
     }
 
     /**
-     * Pre-compute and store metrics for the latest history entry if not yet populated.
-     * Also ensures all history entries have metrics for comparison table.
+     * Ensure all history entries have metrics for the active player tab.
+     * Metrics are per-player — entries cached for a different tab are recomputed
+     * from their own stored sim data so deltas and comparisons never mix players.
      * @private
      */
-    _ensureHistoryMetrics(simResult, hours, gameData, activeTab) {
-        const latestEntry = this._simHistory[this._simHistory.length - 1];
-        if (latestEntry && !latestEntry.metrics) {
-            latestEntry.metrics = this._computeMetrics(simResult, hours, gameData, activeTab);
-        }
-
-        // Ensure all entries have metrics (for comparison table)
+    _ensureHistoryMetrics(activeTab) {
         for (const entry of this._simHistory) {
-            if (!entry.metrics) {
+            if (!entry.metrics || entry.metricsTab !== activeTab) {
                 entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, activeTab);
+                entry.metricsTab = activeTab;
             }
         }
     }

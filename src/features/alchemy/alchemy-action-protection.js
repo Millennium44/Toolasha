@@ -32,6 +32,7 @@ class AlchemyActionProtection {
         this.isInitialized = false;
         this.protectedMap = new Map();
         this.unregisterHandlers = [];
+        this._panelCleanup = null; // Releases observers/listeners bound to the current alchemy panel
         this.confirmTimer = null;
         this.lockdownTimer = null;
         this._updatingGold = false;
@@ -147,6 +148,11 @@ class AlchemyActionProtection {
         const parent = itemSelectorContainer.parentElement;
         if (!parent || alchemyComponent.querySelector('.mwi-alchemy-protection-btn')) return;
 
+        // Release observers/listeners bound to the previous panel instance so they
+        // don't accumulate across panel remounts
+        this._teardownPanel();
+        const panelCleanups = [];
+
         // Flex row container for shield + pin
         const iconRow = document.createElement('div');
         iconRow.className = 'mwi-alchemy-icon-row';
@@ -229,7 +235,7 @@ class AlchemyActionProtection {
         if (tabContainer) {
             const observer = new MutationObserver(updateVisibility);
             observer.observe(tabContainer, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
-            this.unregisterHandlers.push(() => observer.disconnect());
+            panelCleanups.push(() => observer.disconnect());
         }
 
         // Watch item selection changes to update pin state and gold summary
@@ -239,7 +245,7 @@ class AlchemyActionProtection {
         };
         const itemObserver = new MutationObserver(updateAll);
         itemObserver.observe(alchemyComponent, { childList: true, subtree: true });
-        this.unregisterHandlers.push(() => itemObserver.disconnect());
+        panelCleanups.push(() => itemObserver.disconnect());
 
         // Watch action count input changes for gold summary
         const onInputChange = (e) => {
@@ -248,7 +254,7 @@ class AlchemyActionProtection {
             }
         };
         alchemyComponent.addEventListener('input', onInputChange);
-        this.unregisterHandlers.push(() => alchemyComponent.removeEventListener('input', onInputChange));
+        panelCleanups.push(() => alchemyComponent.removeEventListener('input', onInputChange));
 
         // Also update gold summary on tab changes
         if (tabContainer) {
@@ -258,16 +264,30 @@ class AlchemyActionProtection {
                 subtree: true,
                 attributeFilter: ['aria-selected'],
             });
-            this.unregisterHandlers.push(() => tabGoldObserver.disconnect());
+            panelCleanups.push(() => tabGoldObserver.disconnect());
         }
 
         // Update gold summary on inventory changes
         const onItemsUpdated = () => this._updateGoldSummary(alchemyComponent);
         dataManager.on('items_updated', onItemsUpdated);
-        this.unregisterHandlers.push(() => dataManager.off('items_updated', onItemsUpdated));
+        panelCleanups.push(() => dataManager.off('items_updated', onItemsUpdated));
+
+        this._panelCleanup = () => {
+            for (const fn of panelCleanups) fn();
+        };
 
         // Initial update
         this._updateGoldSummary(alchemyComponent);
+    }
+
+    /**
+     * Invoke and clear the current panel's cleanup function
+     */
+    _teardownPanel() {
+        if (this._panelCleanup) {
+            this._panelCleanup();
+            this._panelCleanup = null;
+        }
     }
 
     _getAlchemyType() {
@@ -426,10 +446,18 @@ class AlchemyActionProtection {
         if (existing) existing.remove();
     }
 
+    /**
+     * Remove the config popup and its invisible backdrop together
+     */
+    _closeConfigPopup() {
+        document.getElementById('mwi-alchemy-protection-popup')?.remove();
+        document.getElementById('mwi-alchemy-protection-backdrop')?.remove();
+    }
+
     async openConfigPopup() {
         const existing = document.getElementById('mwi-alchemy-protection-popup');
         if (existing) {
-            existing.remove();
+            this._closeConfigPopup();
             return;
         }
 
@@ -461,7 +489,7 @@ class AlchemyActionProtection {
         closeBtn.textContent = '\u2715';
         closeBtn.style.cssText =
             'background:#a33; color:#fff; border:none; cursor:pointer; font-size:16px; padding:2px 8px; border-radius:4px;';
-        closeBtn.addEventListener('click', () => popup.remove());
+        closeBtn.addEventListener('click', () => this._closeConfigPopup());
         header.appendChild(closeBtn);
         popup.appendChild(header);
 
@@ -519,11 +547,9 @@ class AlchemyActionProtection {
 
         // Click outside to close
         const backdrop = document.createElement('div');
+        backdrop.id = 'mwi-alchemy-protection-backdrop';
         backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:100000;';
-        backdrop.addEventListener('click', () => {
-            popup.remove();
-            backdrop.remove();
-        });
+        backdrop.addEventListener('click', () => this._closeConfigPopup());
 
         document.body.appendChild(backdrop);
         document.body.appendChild(popup);
@@ -583,6 +609,7 @@ class AlchemyActionProtection {
             unregister();
         }
         this.unregisterHandlers = [];
+        this._teardownPanel();
 
         if (this.lockdownTimer) clearTimeout(this.lockdownTimer);
         if (this.confirmTimer) clearTimeout(this.confirmTimer);
@@ -592,8 +619,7 @@ class AlchemyActionProtection {
 
         const warning = document.querySelector('.mwi-alchemy-protection-warning');
         if (warning) warning.remove();
-        const popup = document.getElementById('mwi-alchemy-protection-popup');
-        if (popup) popup.remove();
+        this._closeConfigPopup();
         const iconRow = document.querySelector('.mwi-alchemy-icon-row');
         if (iconRow) iconRow.remove();
         const goldSummary = document.querySelector('.mwi-alchemy-gold-summary');

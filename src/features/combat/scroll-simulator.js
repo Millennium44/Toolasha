@@ -29,6 +29,7 @@ class ScrollSimulator {
         /** @type {Object.<string, Set<string>>} loadoutName → Set of buffTypeHrids */
         this.scrollsByLoadout = {};
         this.initialized = false;
+        this.switchHandler = null;
     }
 
     async initialize() {
@@ -40,6 +41,15 @@ class ScrollSimulator {
             }
         }
         this.initialized = true;
+
+        if (!this.switchHandler) {
+            this.switchHandler = async () => {
+                this.scrollsByLoadout = {};
+                this.initialized = false;
+                await this.initialize();
+            };
+            dataManager.on('character_switched', this.switchHandler);
+        }
     }
 
     /**

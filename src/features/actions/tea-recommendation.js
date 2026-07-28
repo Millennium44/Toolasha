@@ -90,6 +90,7 @@ class TeaRecommendation {
         this.currentPopup = null;
         this.buttonContainer = null;
         this.closeHandlerCleanup = null;
+        this.dragCleanup = null;
         this.pinnedTeas = new Set();
         this.bannedTeas = new Set();
     }
@@ -1111,6 +1112,9 @@ class TeaRecommendation {
             this.closeHandlerCleanup();
             this.closeHandlerCleanup = null;
         }
+        if (this.dragCleanup) {
+            this.dragCleanup();
+        }
         if (this.currentPopup) {
             this.currentPopup.remove();
             this.currentPopup = null;
@@ -1125,6 +1129,11 @@ class TeaRecommendation {
      * @param {HTMLElement} handle - Handle element for dragging
      */
     makeDraggable(element, handle) {
+        // Remove document listeners from any previous render before re-attaching
+        if (this.dragCleanup) {
+            this.dragCleanup();
+        }
+
         let isDragging = false;
         let hasDragged = false;
         let startX, startY, initialX, initialY;
@@ -1140,7 +1149,7 @@ class TeaRecommendation {
             e.preventDefault();
         });
 
-        document.addEventListener('mousemove', (e) => {
+        const onMouseMove = (e) => {
             if (!isDragging) return;
 
             hasDragged = true;
@@ -1149,9 +1158,9 @@ class TeaRecommendation {
 
             element.style.left = `${initialX + dx}px`;
             element.style.top = `${initialY + dy}px`;
-        });
+        };
 
-        document.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             if (isDragging) {
                 isDragging = false;
                 handle.style.cursor = 'grab';
@@ -1164,7 +1173,16 @@ class TeaRecommendation {
                     document.addEventListener('click', suppressClick, true);
                 }
             }
-        });
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+
+        this.dragCleanup = () => {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            this.dragCleanup = null;
+        };
     }
 
     /**

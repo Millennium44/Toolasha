@@ -58,7 +58,7 @@ class ListingPriceDisplay {
         this.isInitialized = false;
         this.cleanupRegistry = createCleanupRegistry();
         this.activeRefreshes = new WeakSet(); // Track tables being refreshed (debouncing)
-        this.tbodyObservers = new WeakMap(); // Track MutationObservers per tbody
+        this.tbodyObservers = new Map(); // Track MutationObservers per tbody (pruned when tbody disconnects)
 
         // Multi-column sort state
         this.activeSortColumn = null; // currently sorted column key, or null
@@ -199,6 +199,14 @@ class ListingPriceDisplay {
      * @param {HTMLElement} tableNode - The listings table element
      */
     scheduleTableRefresh(tableNode) {
+        // Prune observers whose tbody React has discarded, so detached subtrees can be GC'd
+        for (const [oldTbody, oldObserver] of this.tbodyObservers) {
+            if (!oldTbody.isConnected) {
+                oldObserver.disconnect();
+                this.tbodyObservers.delete(oldTbody);
+            }
+        }
+
         // Debouncing: prevent multiple concurrent refreshes on same table
         if (this.activeRefreshes.has(tableNode)) {
             return;
@@ -240,11 +248,6 @@ class ListingPriceDisplay {
             });
 
             this.tbodyObservers.set(tbody, observer);
-
-            this.cleanupRegistry.registerCleanup(() => {
-                observer.disconnect();
-                this.tbodyObservers.delete(tbody);
-            });
         }
 
         // Start observing for row additions
@@ -315,6 +318,16 @@ class ListingPriceDisplay {
         const tbody = tableNode.querySelector('tbody');
         if (!tbody) {
             return;
+        }
+
+        // Drop sort state captured from a previous tbody (React re-created the table)
+        if (this.originalRowOrder.length > 0 && this.originalRowOrder[0].parentElement !== tbody) {
+            this.originalRowOrder = [];
+            if (this.activeSortColumn) {
+                this._updateHeaderIndicator(this.activeSortColumn, null);
+                this.activeSortColumn = null;
+                this.activeSortDirection = null;
+            }
         }
 
         const rowCount = tbody.querySelectorAll('tr').length;
@@ -496,7 +509,9 @@ class ListingPriceDisplay {
         const rows = Array.from(tbody.querySelectorAll('tr'));
         if (rows.length === 0) return;
 
-        if (this.originalRowOrder.length === 0) {
+        // Re-capture when the saved order belongs to a stale tbody (React re-created the table);
+        // appending those detached rows would duplicate the table with dead React handlers
+        if (this.originalRowOrder.length === 0 || this.originalRowOrder[0].parentElement !== tbody) {
             this.originalRowOrder = rows.slice();
         }
 
@@ -1207,9 +1222,11 @@ class ListingPriceDisplay {
      * Disable the listing price display
      */
     disable() {
-        // Cleanup all MutationObservers (tbodyObservers is a WeakMap, not iterable)
-        // WeakMap entries are GC'd automatically, just reset the reference
-        this.tbodyObservers = new WeakMap();
+        // Disconnect all per-tbody MutationObservers
+        for (const observer of this.tbodyObservers.values()) {
+            observer.disconnect();
+        }
+        this.tbodyObservers.clear();
 
         this.cleanupRegistry.cleanupAll();
         this.clearDisplays();

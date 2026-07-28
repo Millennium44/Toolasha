@@ -10,6 +10,7 @@
 
 import dataManager from '../core/data-manager.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
+import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
 
 /**
@@ -203,8 +204,8 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
     const gameData = dataManager.getInitClientData();
     const itemDetailMap = gameData?.itemDetailMap || {};
 
-    // Get drink concentration
-    const drinkConcentration = equipment ? calculateDrinkConcentration(equipment, itemDetailMap) : 0;
+    // Get drink concentration (tea-parser returns a decimal; convert to percentage for parseConsumableWisdom)
+    const drinkConcentration = equipment ? getDrinkConcentration(equipment, itemDetailMap) * 100 : 0;
 
     // Parse wisdom from all sources
     const equipmentWisdomData = parseEquipmentWisdom(equipment, itemDetailMap);
@@ -257,37 +258,6 @@ export function calculateExperienceMultiplier(skillHrid, actionTypeHrid) {
             charmExperience,
         },
     };
-}
-
-/**
- * Calculate drink concentration from Guzzling Pouch
- * @param {Map} equipment - Character equipment map
- * @param {Object} itemDetailMap - Item details from game data
- * @returns {number} Drink concentration percentage (e.g., 12.16 for 12.16%)
- */
-function calculateDrinkConcentration(equipment, itemDetailMap) {
-    // Find Guzzling Pouch in equipment
-    const pouchItem = equipment.get('/item_locations/pouch');
-    if (!pouchItem || !pouchItem.itemHrid.includes('guzzling_pouch')) {
-        return 0;
-    }
-
-    const itemDetails = itemDetailMap[pouchItem.itemHrid];
-    if (!itemDetails?.equipmentDetail) {
-        return 0;
-    }
-
-    // Get base drink concentration
-    const noncombatStats = itemDetails.equipmentDetail.noncombatStats || {};
-    const baseDrinkConcentration = noncombatStats.drinkConcentration || 0;
-
-    if (baseDrinkConcentration === 0) {
-        return 0;
-    }
-
-    const enhancementLevel = pouchItem.enhancementLevel || 0;
-    const multiplier = getEnhancementMultiplier(itemDetails, enhancementLevel);
-    return baseDrinkConcentration * multiplier * 100;
 }
 
 export default {

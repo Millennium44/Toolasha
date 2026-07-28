@@ -151,23 +151,26 @@ class CombatSummary {
 
                     battleDurationSec = days * 86400 + hours * 3600 + minutes * 60 + seconds;
 
-                    // Calculate encounters per hour
-                    const encountersPerHour = ((battles / battleDurationSec) * 3600).toFixed(1);
+                    // A 0s duration cannot support per-hour math — treat it the same as unparsed
+                    if (battleDurationSec > 0) {
+                        // Calculate encounters per hour
+                        const encountersPerHour = ((battles / battleDurationSec) * 3600).toFixed(1);
 
-                    elem.insertAdjacentHTML(
-                        'beforeend',
-                        `<div id="mwi-combat-encounters" style="color: ${textColor};">Encounters/hour: ${encountersPerHour}</div>`
-                    );
+                        elem.insertAdjacentHTML(
+                            'beforeend',
+                            `<div id="mwi-combat-encounters" style="color: ${textColor};">Encounters/hour: ${encountersPerHour}</div>`
+                        );
+                    } else {
+                        battleDurationSec = null;
+                    }
                 }
             }
 
-            // Total revenue
-            document
-                .querySelector('div#mwi-combat-encounters')
-                ?.insertAdjacentHTML(
-                    'afterend',
-                    `<div id="mwi-combat-revenue" style="color: ${textColor};">Total revenue: ${formatLargeNumber(Math.round(totalPriceAsk))} / ${formatLargeNumber(Math.round(totalPriceBid))}</div>`
-                );
+            // Total revenue (duration-independent — insert directly, not chained off optional siblings)
+            elem.insertAdjacentHTML(
+                'beforeend',
+                `<div id="mwi-combat-revenue" style="color: ${textColor};">Total revenue: ${formatLargeNumber(Math.round(totalPriceAsk))} / ${formatLargeNumber(Math.round(totalPriceBid))}</div>`
+            );
 
             // Per-hour revenue
             if (battleDurationSec) {
@@ -190,13 +193,11 @@ class CombatSummary {
                     );
             }
 
-            // Total experience
-            document
-                .querySelector('div#mwi-combat-revenue-day')
-                ?.insertAdjacentHTML(
-                    'afterend',
-                    `<div id="mwi-combat-total-exp" style="color: ${textColor};">Total exp: ${formatLargeNumber(Math.round(totalSkillsExp))}</div>`
-                );
+            // Total experience (duration-independent — insert directly, not chained off optional siblings)
+            elem.insertAdjacentHTML(
+                'beforeend',
+                `<div id="mwi-combat-total-exp" style="color: ${textColor};">Total exp: ${formatLargeNumber(Math.round(totalSkillsExp))}</div>`
+            );
 
             // Per-hour experience breakdowns
             if (battleDurationSec) {

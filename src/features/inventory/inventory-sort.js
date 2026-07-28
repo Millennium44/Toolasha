@@ -54,12 +54,18 @@ class InventorySort {
         config.onSettingChange('invSort_showBadges', () => {
             if (this.isInitialized) {
                 this.refresh();
+                // Force badge re-render so toggling the setting adds/removes badges immediately
+                inventoryBadgeManager.clearProcessedTracking();
+                inventoryBadgeManager.renderAllBadges();
             }
         });
 
         config.onSettingChange('invSort_badgesOnNone', () => {
             if (this.isInitialized) {
                 this.refresh();
+                // Force badge re-render so toggling the setting adds/removes badges immediately
+                inventoryBadgeManager.clearProcessedTracking();
+                inventoryBadgeManager.renderAllBadges();
             }
         });
     }
@@ -339,58 +345,59 @@ class InventorySort {
         if (this.isCalculating) return;
         this.isCalculating = true;
 
-        const inventoryElem = this.currentInventoryElem;
+        try {
+            const inventoryElem = this.currentInventoryElem;
 
-        // Trigger badge manager to calculate prices and render badges
-        await inventoryBadgeManager.renderAllBadges();
+            // Trigger badge manager to calculate prices and render badges
+            await inventoryBadgeManager.renderAllBadges();
 
-        // Skip order assignments when custom tabs has taken over the layout —
-        // badges are still updated above, but tile order is managed by custom tabs.
-        if (inventoryElem.classList.contains('toolasha-ct-active')) {
+            // Skip order assignments when custom tabs has taken over the layout —
+            // badges are still updated above, but tile order is managed by custom tabs.
+            if (inventoryElem.classList.contains('toolasha-ct-active')) {
+                return;
+            }
+
+            // Process each category
+            for (const categoryDiv of inventoryElem.children) {
+                // Get category name
+                const categoryButton = categoryDiv.querySelector('[class*="Inventory_categoryButton"]');
+                if (!categoryButton) continue;
+
+                const categoryName = categoryButton.textContent.trim();
+
+                // Equipment category: check setting for whether to enable sorting
+                // Loots category: always disable sorting (but allow badges)
+                const isEquipmentCategory = categoryName === 'Equipment';
+                const isLootsCategory = categoryName === 'Loots';
+                const shouldSort = isLootsCategory
+                    ? false
+                    : isEquipmentCategory
+                      ? config.getSetting('invSort_sortEquipment')
+                      : true;
+
+                // Ensure category label stays at top
+                const label = categoryDiv.querySelector('[class*="Inventory_label"]');
+                if (label) {
+                    label.style.order = Number.MIN_SAFE_INTEGER;
+                }
+
+                // Get all item elements
+                const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+
+                if (shouldSort && this.currentMode !== 'none') {
+                    // Sort by price (prices already calculated by badge manager)
+                    this.sortItemsByPrice(itemElems, this.currentMode);
+                } else {
+                    // Reset to default order
+                    itemElems.forEach((itemElem) => {
+                        itemElem.style.order = 0;
+                    });
+                }
+            }
+        } finally {
+            // Clear guard flag even on error so later sorts are not blocked forever
             this.isCalculating = false;
-            return;
         }
-
-        // Process each category
-        for (const categoryDiv of inventoryElem.children) {
-            // Get category name
-            const categoryButton = categoryDiv.querySelector('[class*="Inventory_categoryButton"]');
-            if (!categoryButton) continue;
-
-            const categoryName = categoryButton.textContent.trim();
-
-            // Equipment category: check setting for whether to enable sorting
-            // Loots category: always disable sorting (but allow badges)
-            const isEquipmentCategory = categoryName === 'Equipment';
-            const isLootsCategory = categoryName === 'Loots';
-            const shouldSort = isLootsCategory
-                ? false
-                : isEquipmentCategory
-                  ? config.getSetting('invSort_sortEquipment')
-                  : true;
-
-            // Ensure category label stays at top
-            const label = categoryDiv.querySelector('[class*="Inventory_label"]');
-            if (label) {
-                label.style.order = Number.MIN_SAFE_INTEGER;
-            }
-
-            // Get all item elements
-            const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-
-            if (shouldSort && this.currentMode !== 'none') {
-                // Sort by price (prices already calculated by badge manager)
-                this.sortItemsByPrice(itemElems, this.currentMode);
-            } else {
-                // Reset to default order
-                itemElems.forEach((itemElem) => {
-                    itemElem.style.order = 0;
-                });
-            }
-        }
-
-        // Clear guard flag
-        this.isCalculating = false;
     }
 
     /**
@@ -453,6 +460,9 @@ class InventorySort {
             } else if (existingBadge) {
                 existingBadge.remove();
             }
+        } else {
+            // Badges disabled — remove any leftover badge so it does not linger with stale values
+            itemElem.querySelector('.mwi-stack-price')?.remove();
         }
     }
 

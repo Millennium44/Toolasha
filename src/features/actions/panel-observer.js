@@ -694,14 +694,26 @@ function setupTabClickListeners(panel) {
  * @param {string} itemHrid - Item HRID
  */
 function addInputListener(input, panel, itemHrid) {
-    // Handler that triggers the shared debounced update
+    // Guard against duplicate listeners — handleEnhancingPanel re-runs against React-reused inputs
+    if (input.dataset.mwiEnhInputListenerAdded) return;
+    input.dataset.mwiEnhInputListenerAdded = 'true';
+
+    // Handler that triggers the shared debounced update.
+    // Read the item HRID at event time — the enhance target can change after attach.
     const handleInputChange = () => {
-        triggerEnhancementUpdate(panel, itemHrid);
+        triggerEnhancementUpdate(panel, panel.dataset.mwiItemHrid || itemHrid);
     };
 
     // Add change listeners
     input.addEventListener('input', handleInputChange);
     input.addEventListener('change', handleInputChange);
+
+    // Track for removal on disable
+    enhancingPanelWatchers.push(() => {
+        input.removeEventListener('input', handleInputChange);
+        input.removeEventListener('change', handleInputChange);
+        delete input.dataset.mwiEnhInputListenerAdded;
+    });
 }
 
 /**

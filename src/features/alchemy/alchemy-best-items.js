@@ -54,6 +54,24 @@ function calcXpPerAction(actionType, itemLevel, successRate) {
     return successRate * fullXP + (1 - successRate) * fullXP * 0.1;
 }
 
+/**
+ * Check whether any mutation added nodes that are, contain, or sit under a tablist.
+ * Keeps the body-wide watcher from re-scanning every tablist on unrelated DOM churn.
+ * @param {MutationRecord[]} mutations
+ * @returns {boolean}
+ */
+function mutationsTouchTablist(mutations) {
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            if (node.closest?.('[role="tablist"]') || node.querySelector?.('[role="tablist"]')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 class AlchemyBestItems {
     constructor() {
         this.isInitialized = false;
@@ -149,7 +167,8 @@ class AlchemyBestItems {
         if (!this.tabWatcher) {
             this.tabWatcher = createMutationWatcher(
                 document.body,
-                () => {
+                (mutations) => {
+                    if (!mutationsTouchTablist(mutations)) return;
                     if (this.alchemyTab && !document.body.contains(this.alchemyTab)) {
                         this.alchemyTab = null;
                     }

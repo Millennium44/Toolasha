@@ -15,6 +15,7 @@ class HousePanelObserver {
         this.isActive = false;
         this.cleanupRegistry = createCleanupRegistry();
         this.processedCards = new WeakSet();
+        this.modalObserver = null; // Unwatch function for the current modal's mutation watcher
     }
 
     /**
@@ -126,9 +127,24 @@ class HousePanelObserver {
      * @param {Element} modalContent - The house panel modal content
      */
     observeModalChanges(modalContent) {
-        const observer = createMutationWatcher(
+        // Only one modal is open at a time — release the previous modal's watcher
+        // so observers don't accumulate across modal opens
+        if (this.modalObserver) {
+            this.modalObserver();
+            this.modalObserver = null;
+        }
+
+        const unwatch = createMutationWatcher(
             modalContent,
             (mutations) => {
+                // Self-disconnect once the modal has been detached
+                if (!modalContent.isConnected) {
+                    if (this.modalObserver === unwatch) {
+                        this.modalObserver = null;
+                    }
+                    unwatch();
+                    return;
+                }
                 // Check if header changed (indicates room switch)
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' || mutation.type === 'characterData') {
@@ -147,7 +163,7 @@ class HousePanelObserver {
                 characterData: true,
             }
         );
-        this.cleanupRegistry.registerCleanup(observer);
+        this.modalObserver = unwatch;
     }
 
     /**
@@ -161,6 +177,10 @@ class HousePanelObserver {
      * Clean up observers
      */
     cleanup() {
+        if (this.modalObserver) {
+            this.modalObserver();
+            this.modalObserver = null;
+        }
         this.cleanupRegistry.cleanupAll();
         this.cleanupRegistry = createCleanupRegistry();
         this.processedCards = new WeakSet();

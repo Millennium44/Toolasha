@@ -243,7 +243,10 @@ class MarketplaceShortcuts {
             if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
         });
 
-        // Close on outside click
+        // Close on outside click (remove the previous menu's handler first — it would leak otherwise)
+        if (this.closeHandler) {
+            document.removeEventListener('click', this.closeHandler);
+        }
         this.closeHandler = () => closePanel();
         document.addEventListener('click', this.closeHandler);
 

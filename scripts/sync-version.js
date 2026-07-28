@@ -7,7 +7,6 @@
  * - userscript-header.txt (userscript @version tag)
  * - library-headers/*.txt (all library @version tags)
  * - README.md (badge and footer version)
- * - src/main.js (Toolasha.version property)
  * - src/entrypoint.js (Toolasha.version property)
  *
  * This ensures all version references stay in sync automatically.
@@ -104,11 +103,8 @@ function syncVersion() {
             filesUpdated.push('README.md');
         }
 
-        // 4. Update src/main.js and src/entrypoint.js (Toolasha.version property)
-        const versionFiles = [
-            join(rootDir, 'src', 'main.js'),
-            join(rootDir, 'src', 'entrypoint.js'),
-        ];
+        // 4. Update src/entrypoint.js (Toolasha.version property)
+        const versionFiles = [join(rootDir, 'src', 'entrypoint.js')];
 
         // Match: version: 'X.X.X', or version = 'X.X.X';
         const versionPropertyRegex = /(version\s*[:=]\s*['"])[\d.]+(['"][,;])/;

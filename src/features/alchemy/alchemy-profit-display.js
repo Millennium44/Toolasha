@@ -29,6 +29,7 @@ class AlchemyProfitDisplay {
         this.equipmentChangeHandler = null;
         this.sectionExpanded = new Map(); // Persistent expand/collapse state across rebuilds
         this.cachedInputField = null; // Cache input field since it gets removed when action starts
+        this.speedTimeInputListeners = null; // { field, onInput, onChange } attached to the Repeat input
         this._alchemyTargetLevel = null;
     }
 
@@ -1127,11 +1128,14 @@ class AlchemyProfitDisplay {
             // Initial update
             updateTotalTime();
 
-            // Watch for input changes
+            // Watch for input changes — remove the previous rebuild's listeners first,
+            // since the input element is reused across rebuilds via this.cachedInputField
+            this.removeSpeedTimeInputListeners();
             const updateOnInput = () => updateTotalTime();
             const updateOnChange = () => updateTotalTime();
             inputField.addEventListener('input', updateOnInput);
             inputField.addEventListener('change', updateOnChange);
+            this.speedTimeInputListeners = { field: inputField, onInput: updateOnInput, onChange: updateOnChange };
 
             // Create summary for collapsed view (dynamic based on input)
             const getSummary = () => {
@@ -1383,6 +1387,18 @@ class AlchemyProfitDisplay {
     }
 
     /**
+     * Remove the Repeat input listeners attached by createActionSpeedTimeSection
+     */
+    removeSpeedTimeInputListeners() {
+        if (this.speedTimeInputListeners) {
+            const { field, onInput, onChange } = this.speedTimeInputListeners;
+            field.removeEventListener('input', onInput);
+            field.removeEventListener('change', onChange);
+            this.speedTimeInputListeners = null;
+        }
+    }
+
+    /**
      * Remove profit display
      */
     removeDisplay() {
@@ -1453,6 +1469,7 @@ class AlchemyProfitDisplay {
             this.unregisterObserver = null;
         }
 
+        this.removeSpeedTimeInputListeners();
         this.removeDisplay();
         this.lastFingerprint = null; // Clear fingerprint on disable
         this.isActive = false;

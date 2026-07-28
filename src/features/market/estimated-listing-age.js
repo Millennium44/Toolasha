@@ -153,6 +153,37 @@ class EstimatedListingAge {
     }
 
     /**
+     * Delete a listing and persist. This module is the single writer for the shared
+     * storage key — writing the key from a divergent copy resurrects deleted entries.
+     * Re-syncs from storage first so a stale in-memory copy can't clobber other rows.
+     * @param {number} listingId - Listing ID to delete
+     */
+    async deleteListing(listingId) {
+        await this.loadHistoricalData();
+        this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
+        await this.saveHistoricalData();
+    }
+
+    /**
+     * Mark listings as active based on the current active listing IDs and persist
+     * (single writer for the shared storage key). Re-syncs from storage first.
+     * @param {Set<number>} activeListingIds - IDs of currently active listings
+     */
+    async markActiveListings(activeListingIds) {
+        await this.loadHistoricalData();
+        let changed = false;
+        for (const listing of this.knownListings) {
+            if (activeListingIds.has(listing.id) && (!listing.status || listing.status === 'unknown')) {
+                listing.status = 'active';
+                changed = true;
+            }
+        }
+        if (changed) {
+            await this.saveHistoricalData();
+        }
+    }
+
+    /**
      * Save order books cache to IndexedDB
      */
     async saveOrderBooksCache() {
@@ -508,9 +539,26 @@ class EstimatedListingAge {
 
                 if (price === null) continue;
 
-                // Find matching listing in our stored data
+                // Extract item HRID from the row's item icon (disambiguates listings that
+                // collide on side/price/quantity across different items)
+                let itemHrid = null;
+                for (const use of row.querySelectorAll('use')) {
+                    const href = use.href && use.href.baseVal ? use.href.baseVal : '';
+                    if (href.includes('#')) {
+                        const idPart = href.split('#')[1];
+                        if (idPart && !idPart.toLowerCase().includes('coin')) {
+                            itemHrid = `/items/${idPart}`;
+                            break;
+                        }
+                    }
+                }
+
+                // Find matching listing in our stored data (only active/unknown listings
+                // are candidates — already-resolved listings must not be re-marked)
                 const matchingListing = this.knownListings.find(
                     (listing) =>
+                        (!itemHrid || listing.itemHrid === itemHrid) &&
+                        (listing.status === 'active' || listing.status === 'unknown') &&
                         listing.isSell === isSell &&
                         listing.price === price &&
                         listing.orderQuantity === orderQuantity &&
@@ -809,24 +857,6 @@ class EstimatedListingAge {
 
         // Default to enhancement level 0 (non-equipment or base equipment)
         return 0;
-    }
-
-    /**
-     * Parse price from text (handles K/M suffixes)
-     * @param {string} text - Price text
-     * @returns {number} Price value
-     */
-    parsePrice(text) {
-        let multiplier = 1;
-        if (text.toUpperCase().includes('K')) {
-            multiplier = 1000;
-            text = text.replace(/K/gi, '');
-        } else if (text.toUpperCase().includes('M')) {
-            multiplier = 1000000;
-            text = text.replace(/M/gi, '');
-        }
-        const numStr = text.replace(/[^0-9.]/g, '');
-        return numStr ? Number(numStr) * multiplier : 0;
     }
 
     /**

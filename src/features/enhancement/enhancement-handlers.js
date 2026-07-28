@@ -102,64 +102,6 @@ function getProtectionItemHrid(action) {
 }
 
 /**
- * Handle enhancement action start
- * @param {Object} action - Enhancement action data
- */
-async function _handleEnhancementStart(action) {
-    try {
-        // Parse item hash to get HRID and level
-        const { itemHrid, level: currentLevel } = parseItemHash(action.primaryItemHash);
-
-        if (!itemHrid) {
-            return;
-        }
-
-        // Get target level from game UI (what the user set in the enhancement slider)
-        // If not available, default to +5
-        const targetLevel = action.enhancingMaxLevel || Math.min(currentLevel + 5, 20);
-        const protectFrom = action.enhancingProtectionMinLevel || 0;
-
-        // Priority 1: Check for matching TRACKING session (resume incomplete session)
-        const matchingSessionId = enhancementTracker.findMatchingSession(
-            itemHrid,
-            currentLevel,
-            targetLevel,
-            protectFrom
-        );
-
-        if (matchingSessionId) {
-            await enhancementTracker.resumeSession(matchingSessionId);
-            enhancementUI.scheduleUpdate();
-            return;
-        }
-
-        // Priority 2: Check for COMPLETED session that can be extended
-        const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, currentLevel);
-
-        if (extendableSessionId) {
-            const newTarget = action.enhancingMaxLevel || Math.min(currentLevel + 5, 20);
-            await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
-            enhancementUI.switchToSession(extendableSessionId);
-            enhancementUI.scheduleUpdate();
-            return;
-        }
-
-        // Priority 3: Different item or level - finalize any active session
-        const currentSession = enhancementTracker.getCurrentSession();
-        if (currentSession) {
-            await enhancementTracker.finalizeCurrentSession();
-        }
-
-        // Priority 4: Always start new session when tracker is enabled
-        const sessionId = await enhancementTracker.startSession(itemHrid, currentLevel, targetLevel, protectFrom);
-        enhancementUI.switchToSession(sessionId);
-        enhancementUI.scheduleUpdate();
-    } catch (error) {
-        console.error('[EnhancementHandlers] Enhancement start failed:', error);
-    }
-}
-
-/**
  * Parse item hash to extract HRID and level
  * Based on Ultimate Enhancement Tracker's parseItemHash function
  * @param {string} primaryItemHash - Item hash from action

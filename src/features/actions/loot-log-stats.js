@@ -19,7 +19,6 @@ class LootLogStats {
         this.unregisterHandlers = [];
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
-        this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
         this.itemsSpriteUrl = null;
         this.actionsSpriteUrl = null;
@@ -98,12 +97,6 @@ class LootLogStats {
      * @param {HTMLElement} lootElem - Loot log element
      */
     processLootLogElement(lootElem) {
-        // Skip if already processed
-        if (this.processedLogs.has(lootElem)) return;
-
-        // Mark as processed
-        this.processedLogs.add(lootElem);
-
         // Extract divs
         const divs = lootElem.querySelectorAll('div');
         if (divs.length < 3) return;
@@ -111,12 +104,18 @@ class LootLogStats {
         const secondDiv = divs[1]; // Timestamps
         const thirdDiv = divs[2]; // Duration
 
-        // Extract log data
+        // Extract log data — failures are retried on later loot_log_updated messages
         const logData = this.extractLogData(lootElem, secondDiv);
         if (!logData) return;
 
         // Skip enhancement actions
         if (logData.actionHrid === '/actions/enhancing/enhance') return;
+
+        // Skip re-injection only when the matched log entry hasn't changed since last time;
+        // ongoing entries keep updating (endTime/actionCount grow) and must be refreshed
+        const stamp = `${logData.endTime || ''}|${logData.actionCount || 0}`;
+        if (lootElem.dataset.mwiLootLogStamp === stamp) return;
+        lootElem.dataset.mwiLootLogStamp = stamp;
 
         // Calculate and inject total value
         this.injectTotalValue(secondDiv, logData);
@@ -885,7 +884,6 @@ class LootLogStats {
         this.timerRegistry.clearAll();
 
         // Reset state
-        this.processedLogs = new WeakSet();
         this.currentLootLogData = null;
         this.itemsSpriteUrl = null;
         this.actionsSpriteUrl = null;

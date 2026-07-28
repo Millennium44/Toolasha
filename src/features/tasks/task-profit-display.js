@@ -281,7 +281,24 @@ function refreshMaterialsBadges() {
             continue;
         }
 
-        const remaining = parseInt(container.dataset.remaining, 10) || 0;
+        // Derive remaining live from the task card's progress text — the stored
+        // dataset value is frozen at first render while progress keeps advancing.
+        let remaining = parseInt(container.dataset.remaining, 10) || 0;
+        const taskNode = container.closest('[class*="RandomTask_randomTask"]');
+        if (taskNode) {
+            for (const div of taskNode.querySelectorAll('div')) {
+                const text = div.textContent.trim();
+                if (text.startsWith('Progress:')) {
+                    const match = text.match(REGEX_TASK_PROGRESS);
+                    if (match) {
+                        remaining = Math.max(parseInt(match[2], 10) - parseInt(match[1], 10), 0);
+                        container.dataset.remaining = remaining;
+                    }
+                    break;
+                }
+            }
+        }
+
         const { craftable, details } = calcMaterialsAvailability(materials, remaining, invMap);
         const enough = craftable >= remaining;
 
@@ -678,6 +695,9 @@ class TaskProfitDisplay {
      * Update all task profit displays
      */
     updateTaskProfits(forceRefresh = false) {
+        // Guard against stray timeouts firing after disable()
+        if (!this.isInitialized) return;
+
         const taskListNode = document.querySelector(GAME.TASK_LIST);
         if (!taskListNode) return;
 
@@ -2186,6 +2206,9 @@ class TaskProfitDisplay {
      * Compares task action HRIDs against the player's action queue
      */
     updateQueuedIndicators() {
+        // Guard against stray timeouts firing after disable()
+        if (!this.isInitialized) return;
+
         if (!config.getSetting('taskQueuedIndicator')) {
             document.querySelectorAll('.mwi-task-queued-indicator').forEach((el) => el.remove());
             return;
@@ -2341,6 +2364,9 @@ class TaskProfitDisplay {
      * Disable the feature
      */
     disable() {
+        // Cancel pending timeouts so they cannot recreate UI after disable
+        this.timerRegistry.clearAll();
+
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 

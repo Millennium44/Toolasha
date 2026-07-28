@@ -11,6 +11,24 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
+/**
+ * Check whether any mutation added nodes that are, contain, or sit under a tablist.
+ * Keeps the body-wide watcher from re-scanning every tablist on unrelated DOM churn.
+ * @param {MutationRecord[]} mutations
+ * @returns {boolean}
+ */
+function mutationsTouchTablist(mutations) {
+    for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            if (node.closest?.('[role="tablist"]') || node.querySelector?.('[role="tablist"]')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 class TransmuteHistoryViewer {
     constructor() {
         this.isInitialized = false;
@@ -142,7 +160,8 @@ class TransmuteHistoryViewer {
         if (!this.tabWatcher) {
             this.tabWatcher = createMutationWatcher(
                 document.body,
-                () => {
+                (mutations) => {
+                    if (!mutationsTouchTablist(mutations)) return;
                     // If our tab was removed from DOM, clear reference
                     if (this.alchemyTab && !document.body.contains(this.alchemyTab)) {
                         this.alchemyTab = null;
@@ -338,9 +357,15 @@ class TransmuteHistoryViewer {
 
         // Sort
         filtered.sort((a, b) => {
-            const aVal = a[this.sortColumn] ?? 0;
-            const bVal = b[this.sortColumn] ?? 0;
-            return this.sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+            let aVal = a[this.sortColumn] ?? 0;
+            let bVal = b[this.sortColumn] ?? 0;
+            // Sort item columns by the displayed name, not the hrid
+            if (this.sortColumn === 'inputItemHrid') {
+                aVal = this.getItemName(String(aVal));
+                bVal = this.getItemName(String(bVal));
+            }
+            const cmp = typeof aVal === 'string' ? aVal.localeCompare(String(bVal)) : aVal - bVal;
+            return this.sortDirection === 'asc' ? cmp : -cmp;
         });
 
         this.filteredSessions = filtered;
@@ -960,16 +985,11 @@ class TransmuteHistoryViewer {
 
         const fromInput = this.createDateInput(
             'From:',
-            this.filters.dateFrom ? this.filters.dateFrom.toISOString().split('T')[0] : '',
+            this.formatLocalDateValue(this.filters.dateFrom),
             minDate,
             maxDate
         );
-        const toInput = this.createDateInput(
-            'To:',
-            this.filters.dateTo ? this.filters.dateTo.toISOString().split('T')[0] : '',
-            minDate,
-            maxDate
-        );
+        const toInput = this.createDateInput('To:', this.formatLocalDateValue(this.filters.dateTo), minDate, maxDate);
 
         popup.appendChild(fromInput.label);
         popup.appendChild(fromInput.input);
@@ -978,8 +998,8 @@ class TransmuteHistoryViewer {
 
         const btnRow = this.createPopupButtonRow(
             () => {
-                this.filters.dateFrom = fromInput.input.value ? new Date(fromInput.input.value) : null;
-                this.filters.dateTo = toInput.input.value ? new Date(toInput.input.value) : null;
+                this.filters.dateFrom = this.parseLocalDate(fromInput.input.value);
+                this.filters.dateTo = this.parseLocalDate(toInput.input.value);
                 this.applyFilters();
                 this.renderTable();
                 this.closeActiveFilterPopup();
@@ -1176,6 +1196,29 @@ class TransmuteHistoryViewer {
     }
 
     /**
+     * Parse a YYYY-MM-DD date input value as local midnight.
+     * new Date('YYYY-MM-DD') parses as UTC midnight, shifting the day boundary by the timezone offset.
+     * @param {string} value
+     * @returns {Date|null}
+     */
+    parseLocalDate(value) {
+        if (!value) return null;
+        const [y, m, d] = value.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
+    /**
+     * Format a Date as a YYYY-MM-DD input value using local calendar fields
+     * @param {Date|null} date
+     * @returns {string}
+     */
+    formatLocalDateValue(date) {
+        if (!date) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    /**
      * Create Apply + Clear button row for filter popups
      * @param {Function} onApply
      * @param {Function} onClear
@@ -1283,9 +1326,11 @@ class TransmuteHistoryViewer {
      * @param {string} sessionId
      */
     async deleteSession(sessionId) {
-        this.sessions = this.sessions.filter((s) => s.id !== sessionId);
-
         try {
+            // Reload before filtering — persisting the modal-open snapshot would erase
+            // sessions the tracker saved while the modal was open
+            const fresh = await transmuteHistoryTracker.loadSessions();
+            this.sessions = fresh.filter((s) => s.id !== sessionId);
             await transmuteHistoryTracker.deleteSessions(this.sessions);
         } catch (error) {
             console.error('[TransmuteHistoryViewer] Failed to delete session:', error);

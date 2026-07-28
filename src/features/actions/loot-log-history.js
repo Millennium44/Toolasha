@@ -34,20 +34,28 @@ class LootLogHistory {
     }
 
     /**
-     * Merge new entries from a loot_log_updated message into stored history.
-     * Deduplicates by characterActionId, keeps newest first, caps at MAX_ENTRIES.
+     * Merge entries from a loot_log_updated message into stored history.
+     * Deduplicates by characterActionId (incoming entries replace stored copies, so ongoing
+     * sessions stay fresh), keeps newest first, caps at MAX_ENTRIES.
      * @param {Array} lootLog - Array from the WebSocket message
      */
     async mergeAndSave(lootLog) {
         if (!lootLog || lootLog.length === 0) return;
 
         const existing = await this._load();
-        const existingIds = new Set(existing.map((e) => e.characterActionId));
+        const byId = new Map(existing.map((e) => [e.characterActionId, e]));
 
-        const newEntries = lootLog.filter((e) => !existingIds.has(e.characterActionId));
-        if (newEntries.length === 0) return;
+        let changed = false;
+        for (const entry of lootLog) {
+            const stored = byId.get(entry.characterActionId);
+            if (!stored || stored.endTime !== entry.endTime || stored.actionCount !== entry.actionCount) {
+                byId.set(entry.characterActionId, entry);
+                changed = true;
+            }
+        }
+        if (!changed) return;
 
-        const merged = [...newEntries, ...existing];
+        const merged = [...byId.values()];
         merged.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
 
         await this._save(merged.slice(0, MAX_ENTRIES));

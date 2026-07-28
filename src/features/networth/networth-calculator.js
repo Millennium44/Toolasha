@@ -405,6 +405,7 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
     const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
     const enhancementParams = getEnhancingParams();
+    const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
 
     // Separate items into those that need workers vs those that don't
     const itemsNeedingWorkers = [];
@@ -423,11 +424,13 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
             if (useHighEnhancementCost && enhancementLevel >= minLevel) {
                 needsWorker = true;
             } else {
-                // Check if market price is missing
+                // Check if the configured pricing mode's price is missing — valuation
+                // uses that mode, so classifying on ask alone would run the expensive
+                // enhancement-path fallback synchronously on the main thread
                 const priceKey = `${item.itemHrid}:${enhancementLevel}`;
                 const prices = priceCache ? priceCache.get(priceKey) : null;
                 const hasMarketPrice =
-                    prices && ((typeof prices === 'number' && prices > 0) || (prices.ask && prices.ask > 0));
+                    prices && ((typeof prices === 'number' && prices > 0) || prices[pricingMode] > 0);
 
                 if (!hasMarketPrice) {
                     needsWorker = true;
@@ -458,10 +461,14 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                               // Store ask and bid WITHOUT coalescing null to 0 (preserve null for "no data" vs "0 price")
                               priceMap[key + '_ask'] = prices.ask;
                               priceMap[key + '_bid'] = prices.bid;
-                              // Store selected pricing mode at the base key for worker item valuation
-                              const networthMode = config.getSettingValue('networth_pricingMode') || 'ask';
-                              const modePrice = prices[networthMode];
-                              priceMap[key] = modePrice && modePrice > 0 ? modePrice : prices.ask;
+                              // Store selected pricing mode at the base key for worker item valuation.
+                              // Leave it unset when the mode price is missing so the worker falls
+                              // back to enhancement-cost calculation like calculateItemValue does,
+                              // instead of silently substituting ask.
+                              const modePrice = prices[pricingMode];
+                              if (modePrice && modePrice > 0) {
+                                  priceMap[key] = modePrice;
+                              }
                           } else {
                               priceMap[key] = 0;
                           }

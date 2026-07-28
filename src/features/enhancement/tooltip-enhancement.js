@@ -99,6 +99,10 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
 
     for (let level = 1; level <= currentEnhancementLevel; level++) {
         const resultsForLevel = allResults[level - 1];
+        // No strategy succeeded for this level (e.g. missing data) — cannot build a path
+        if (resultsForLevel.length === 0) {
+            return null;
+        }
         // Find the result with minimum cost
         const minResult = resultsForLevel.reduce((best, curr) => (curr.totalCost < best.totalCost ? curr : best));
         targetCosts[level] = minResult.totalCost;
@@ -134,6 +138,9 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
 
     // Find which protection strategy was optimal for final level (before mirrors)
     const finalLevelResults = allResults[currentEnhancementLevel - 1];
+    if (finalLevelResults.length === 0) {
+        return null;
+    }
     const optimalTraditional = finalLevelResults.reduce((best, curr) =>
         curr.totalCost < best.totalCost ? curr : best
     );

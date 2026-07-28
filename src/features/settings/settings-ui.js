@@ -953,11 +953,15 @@ class SettingsUI {
         restoreBtn.addEventListener('click', () => this.handleRestore(restoreBtn));
 
         // Show restore immediately if a snapshot already exists from a prior All Off
-        this._getAllOffSnapshotKey().then((key) =>
-            storage.getJSON(key, 'settings', null).then((snap) => {
+        (async () => {
+            try {
+                const key = await this._getAllOffSnapshotKey();
+                const snap = await storage.getJSON(key, 'settings', null);
                 if (snap) restoreBtn.style.display = '';
-            })
-        );
+            } catch (error) {
+                console.error('[SettingsUI] Failed to check All Off snapshot:', error);
+            }
+        })();
 
         buttonsDiv.appendChild(syncBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
@@ -2359,8 +2363,8 @@ class SettingsUI {
                     } else {
                         workingOverrides[key].buy = Number(val);
                     }
-                    // If both empty, remove the entry
-                    if (!workingOverrides[key].buy && !workingOverrides[key].sell) {
+                    // If both empty, remove the entry (0 is a valid override, not "unset")
+                    if (workingOverrides[key].buy === undefined && workingOverrides[key].sell === undefined) {
                         delete workingOverrides[key];
                         renderTable();
                     }
@@ -2389,7 +2393,8 @@ class SettingsUI {
                     } else {
                         workingOverrides[key].sell = Number(val);
                     }
-                    if (!workingOverrides[key].buy && !workingOverrides[key].sell) {
+                    // 0 is a valid override, not "unset"
+                    if (workingOverrides[key].buy === undefined && workingOverrides[key].sell === undefined) {
                         delete workingOverrides[key];
                         renderTable();
                     }

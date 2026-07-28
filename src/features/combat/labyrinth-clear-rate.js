@@ -41,6 +41,7 @@ class LabyrinthClearRate {
         this._recommendTargetPct = 70;
         this.liveProgressHandler = null;
         this.liveProgressTimeout = null;
+        this.snapshotUpdateHandler = null;
     }
 
     initialize() {
@@ -68,6 +69,14 @@ class LabyrinthClearRate {
             this.injectOverlays();
         };
         webSocketHook.on('loadouts_updated', this.loadoutsHandler);
+
+        // Invalidate cached sim results when snapshot gear/enhancement levels change,
+        // since buildCombatCacheKey does not include snapshot content
+        this.snapshotUpdateHandler = () => {
+            this.combatCache.clear();
+            this.recommendations.clear();
+        };
+        loadoutSnapshot.onUpdate(this.snapshotUpdateHandler);
 
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
@@ -114,6 +123,11 @@ class LabyrinthClearRate {
         if (this.liveProgressHandler) {
             webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
             this.liveProgressHandler = null;
+        }
+
+        if (this.snapshotUpdateHandler) {
+            loadoutSnapshot.offUpdate(this.snapshotUpdateHandler);
+            this.snapshotUpdateHandler = null;
         }
 
         this.clearLiveProgress();
@@ -2236,6 +2250,7 @@ class LabyrinthClearRate {
             actionSpeedBonus: 0,
             successBonus: 0,
             doubleProgressBonus: 0,
+            gatheringBonus: 0,
         };
 
         const skillLevelType = `/buff_types/${skillId}_level`;
@@ -2255,7 +2270,7 @@ class LabyrinthClearRate {
                 if (!buff?.typeHrid) continue;
                 const amount = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
                 if (amount === 0) continue;
-                this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType);
+                this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType, skillId);
             }
         }
 
@@ -2263,7 +2278,7 @@ class LabyrinthClearRate {
             if (!buff?.typeHrid) continue;
             const amount = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
             if (amount === 0) continue;
-            this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType);
+            this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType, skillId);
         }
 
         const upgrades = overrides.tokenUpgrades || { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 };

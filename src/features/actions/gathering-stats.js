@@ -138,9 +138,14 @@ class GatheringStats {
                 actionHrid: actionHrid,
                 displayElement: existingDisplay,
             });
-            this.updateStats(actionPanel, { skipRender: true }).then(() => {
-                this.scheduleIndicatorUpdate();
-            });
+            (async () => {
+                try {
+                    await this.updateStats(actionPanel, { skipRender: true });
+                    this.scheduleIndicatorUpdate();
+                } catch (error) {
+                    console.error('[GatheringStats] Failed to update stats:', error);
+                }
+            })();
             // Register with shared sort manager
             actionPanelSort.registerPanel(actionPanel, actionHrid);
             if (existingDisplay) {
@@ -192,9 +197,14 @@ class GatheringStats {
         // Register with shared sort manager
         actionPanelSort.registerPanel(actionPanel, actionHrid);
 
-        this.updateStats(actionPanel).then(() => {
-            this.scheduleIndicatorUpdate();
-        });
+        (async () => {
+            try {
+                await this.updateStats(actionPanel);
+                this.scheduleIndicatorUpdate();
+            } catch (error) {
+                console.error('[GatheringStats] Failed to update stats:', error);
+            }
+        })();
 
         // Trigger sort
         actionPanelSort.triggerSort();

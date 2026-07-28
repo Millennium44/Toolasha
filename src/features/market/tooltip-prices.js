@@ -918,8 +918,8 @@ class TooltipPrices {
                     // Format drop rate percentage
                     const dropRatePercent = formatPercentage(drop.dropRate, 2);
 
-                    // Show full drop breakdown
-                    html += `<div>• ${drop.itemName} (${dropRatePercent}%): ${drop.avgCount.toFixed(2)} avg → ${formatTooltipPrice(drop.expectedValue)}</div>`;
+                    // Show full drop breakdown (formatPercentage already appends '%')
+                    html += `<div>• ${drop.itemName} (${dropRatePercent}): ${drop.avgCount.toFixed(2)} avg → ${formatTooltipPrice(drop.expectedValue)}</div>`;
                 }
             }
 

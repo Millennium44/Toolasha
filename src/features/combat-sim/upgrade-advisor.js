@@ -786,6 +786,7 @@ export function generateCandidates(
                                 '/equipment_types/off_hand': { hrid: bestOH.hrid, enhancementLevel: enhLevel },
                             },
                             clearedSlots: ['/equipment_types/two_hand'],
+                            removedItems: [{ hrid: twoHandEquip.hrid, enhancementLevel: enhLevel }],
                             description: `${currentName} → ${mainName} + ${ohName} (+${enhLevel})`,
                             type: 'cross_slot',
                         });
@@ -829,6 +830,12 @@ export function generateCandidates(
                             '/equipment_types/two_hand': { hrid: itemHrid, enhancementLevel: enhLevel },
                         },
                         clearedSlots,
+                        removedItems: [
+                            { hrid: mainHandEquip.hrid, enhancementLevel: enhLevel },
+                            ...(offHandEquip
+                                ? [{ hrid: offHandEquip.hrid, enhancementLevel: offHandEquip.enhancementLevel || 0 }]
+                                : []),
+                        ],
                         description: `${currentName} → ${twoHandName} (+${enhLevel})`,
                         type: 'cross_slot',
                     });
@@ -977,11 +984,19 @@ export function calculateUpgradeCost(candidate, gameData) {
             }
             buyCost += price;
         }
-        const sellPrice = resolveItemPrice(candidate.currentHrid, {
-            side: 'sell',
-            enhancementLevel: candidate.currentLevel,
-        }).price;
-        return Math.max(0, buyCost - sellPrice);
+        // Credit resale of every item the swap removes (e.g. both main and off hand
+        // when moving to a two-hander), not just the primary current item.
+        const removedItems = candidate.removedItems || [
+            { hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel },
+        ];
+        let sellCredit = 0;
+        for (const removed of removedItems) {
+            sellCredit += resolveItemPrice(removed.hrid, {
+                side: 'sell',
+                enhancementLevel: removed.enhancementLevel,
+            }).price;
+        }
+        return Math.max(0, buyCost - sellCredit);
     }
 
     if (candidate.type === 'enhancement') {
@@ -1903,9 +1918,9 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
  * @param {Object} [params.skillEquipmentMap] - Per-skill equipment overrides
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
- * @returns {Object} { baseline, results }
+ * @returns {Promise<Object>} { baseline, results }
  */
-export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
+export async function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
     const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {}, targetSkill = null } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1915,6 +1930,9 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
     const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap);
     const clearRateOpts = { skillEquipmentMap, targetSkill };
+
+    // Yield so Stop clicks and progress paints can land between the heavy sync chunks
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const total = buffCandidates.length + equipCandidates.length + 1;
     let current = 0;
@@ -1936,6 +1954,7 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
     const results = [];
 
     for (const buffCandidate of buffCandidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
         if (abortSignal?.()) break;
 
         onProgress?.({ current, total, description: `Evaluating: ${buffCandidate.description}` });
@@ -1965,6 +1984,7 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
     }
 
     for (const candidate of equipCandidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
         if (abortSignal?.()) break;
 
         onProgress?.({ current, total, description: `Evaluating: ${candidate.description}` });
@@ -2016,6 +2036,7 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
         // actually moves (skip when the baseline is already maxed)
         const MAX_ENHANCEMENT = 20;
         while (clearRateDelta <= 1e-9 && baselineClearRate < 0.999999 && evalCandidate.upgradeLevel < MAX_ENHANCEMENT) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
             if (abortSignal?.()) break;
             const nextLevel = evalCandidate.upgradeLevel + 1;
             const bumped = {

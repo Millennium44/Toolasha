@@ -33,13 +33,12 @@ async function initializeFeatures() {
                 continue;
             }
 
-            // Initialize feature
+            // Initialize feature. Always await so rejections from async
+            // initializers land in this try/catch even when the registry
+            // entry forgot to set the async flag (awaiting sync undefined
+            // is harmless).
             const start = performance.now();
-            if (feature.async) {
-                await feature.initialize();
-            } else {
-                feature.initialize();
-            }
+            await feature.initialize();
             performanceMonitor.snapshot(`init:${feature.key}`, performance.now() - start);
         } catch (error) {
             errors.push({
@@ -230,11 +229,7 @@ async function retryFailedFeatures(failedFeatures) {
         if (!feature) continue;
 
         try {
-            if (feature.async) {
-                await feature.initialize();
-            } else {
-                feature.initialize();
-            }
+            await feature.initialize();
 
             // Verify the retry actually worked by running health check
             if (feature.healthCheck) {

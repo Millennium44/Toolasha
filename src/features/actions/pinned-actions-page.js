@@ -1025,28 +1025,9 @@ class PinnedActionsPage {
             const clickedNav = e.target.closest('[class*="NavigationBar_nav"]');
             if (!clickedNav) return;
 
-            // Unhide the game content first so React can render into it
-            for (const { el, prevDisplay } of this.hiddenElements) {
-                el.style.display = prevDisplay;
-            }
-            this.hiddenElements = [];
-
-            // Remove our page container
-            if (this.pageContainer) {
-                this.pageContainer.remove();
-                this.pageContainer = null;
-            }
-
-            // Disconnect the mutation observer
-            if (this.navigationObserver) {
-                this.navigationObserver.disconnect();
-                this.navigationObserver = null;
-            }
-
-            this.isActive = false;
-            this.updateNavButtonState(false);
-            this.deactivatedNavItem = null;
-            this.stopNavClickInterceptor();
+            // Full teardown (unhide game content, unregister pin-change handler, disconnect
+            // observers) before the game navigates
+            this.hidePage(true);
         };
 
         navParent.addEventListener('click', this.navClickInterceptor);

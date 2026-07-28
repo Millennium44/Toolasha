@@ -292,6 +292,17 @@ class DungeonTracker {
         const saved = await storage.getJSON('dungeonTracker_inProgressRun', 'settings', null);
 
         if (saved && saved.dungeonHrid === dungeonAction.actionHrid) {
+            // Apply the same staleness guard as restoreInProgressRun: a record older than
+            // 10 minutes likely belongs to a previous run and would corrupt durations
+            if (Date.now() - saved.lastUpdateTime > 10 * 60 * 1000) {
+                await this.clearInProgressRun();
+                this.pendingDungeonInfo = {
+                    dungeonHrid: dungeonAction.actionHrid,
+                    tier: dungeonAction.difficultyTier,
+                };
+                return;
+            }
+
             // Restore state immediately so UI appears
             this.isTracking = true;
             this.currentBattleId = saved.battleId;
@@ -1086,7 +1097,10 @@ class DungeonTracker {
         const trackedTotalTime = endTime - completedRunData.startTime;
 
         // Get server-validated duration from party messages
-        const partyMessageDuration = firstTimestamp && lastTimestamp ? lastTimestamp - firstTimestamp : null;
+        // Require a strictly later completion timestamp: first === last means only the
+        // run-start key count was seen (no completion message), not a real 0ms run
+        const partyMessageDuration =
+            firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp ? lastTimestamp - firstTimestamp : null;
         const validated = partyMessageDuration !== null;
 
         // Use party message duration if available (authoritative), otherwise use tracked duration
@@ -1232,6 +1246,7 @@ class DungeonTracker {
             slowestWave,
             estimatedTimeRemaining,
             keyCountsMap: this.currentRun.keyCountsMap || {}, // Party member key counts
+            hibernationDetected: this.hibernationDetected || this.currentRun.hibernationDetected || false,
         };
     }
 

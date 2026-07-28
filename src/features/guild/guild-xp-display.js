@@ -61,7 +61,7 @@ function buildChart(chart) {
 
     if (chart.length >= 2) {
         const sorted = chart.slice().sort((a, b) => a.xpH - b.xpH);
-        const per50 = sorted[Math.ceil(chart.length / 2)].xpH;
+        const per50 = sorted[Math.floor(chart.length / 2)].xpH;
 
         for (const d of chart) {
             if (d.xpH > per50 * 2) {

@@ -732,9 +732,6 @@ class TaskRerollProtection {
         renderList('');
         searchInput.focus();
 
-        // Close handler
-        popup.querySelector('#mwi-task-protection-close').addEventListener('click', () => popup.remove());
-
         // Click outside to close
         const backdrop = document.createElement('div');
         backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99998;';
@@ -743,6 +740,12 @@ class TaskRerollProtection {
             backdrop.remove();
         });
         document.body.appendChild(backdrop);
+
+        // Close handler — must remove the backdrop too, or it swallows the next click
+        popup.querySelector('#mwi-task-protection-close').addEventListener('click', () => {
+            popup.remove();
+            backdrop.remove();
+        });
     }
 
     disable() {
