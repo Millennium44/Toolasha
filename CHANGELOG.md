@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Combat Levels mode in the upgrade analyzers
+
+- Combat Sim and Lab Sim gain a **Combat Levels** analysis mode: each combat skill (Stamina, Intelligence, Attack, Melee, Defense, Ranged, Magic) is simmed with a +N level boost — a simulated charm, N configurable, default +5 — and ranked by the resulting DPS/XP/profit (or lab win-rate) deltas, showing which skill is most effective to level next and in what order. Levels have no gold cost, so cost shows — and rankings default to raw improvement.
+
 ### Labyrinth tiles: reference-style previews with correct EXP and rich combat tooltips
 
 - **Skilling preview matches the reference script**: separate Actions in 2m and Action Duration rows; "Efficiency for −1 Progress" and "Speed for +1 Action" requirement rows; Next Level / Efficiency Tier / Speed Tier Clear % rows; Token Expected and Skilling Box Expected labels.

@@ -905,6 +905,33 @@ export function generateCandidates(
         }
     }
 
+    if (mode === 'combat_level') {
+        // Simulate a charm of +N levels on each combat skill to rank which
+        // skill is most effective to level next (abilityTargetLevel carries N)
+        const boost = Math.max(1, Math.floor(abilityTargetLevel) || 5);
+        const combatSkills = [
+            { key: 'staminaLevel', label: 'Stamina' },
+            { key: 'intelligenceLevel', label: 'Intelligence' },
+            { key: 'attackLevel', label: 'Attack' },
+            { key: 'meleeLevel', label: 'Melee' },
+            { key: 'defenseLevel', label: 'Defense' },
+            { key: 'rangedLevel', label: 'Ranged' },
+            { key: 'magicLevel', label: 'Magic' },
+        ];
+        for (const skill of combatSkills) {
+            const currentLevel = Math.max(1, Math.floor(playerDTO[skill.key] || 1));
+            candidates.push({
+                type: 'combat_level',
+                slot: `combat_level|${skill.key}`,
+                skillKey: skill.key,
+                currentLevel,
+                upgradeLevel: currentLevel + boost,
+                levelBoost: boost,
+                description: `${skill.label} ${currentLevel} → ${currentLevel + boost}`,
+            });
+        }
+    }
+
     candidates.forEach(clampRefinedCandidateToMinLevel);
     return candidates;
 }
@@ -968,6 +995,11 @@ function clampRefinedCandidateToMinLevel(candidate) {
  * @returns {number} Total gold cost
  */
 export function calculateUpgradeCost(candidate, gameData) {
+    // Combat skill levels cost XP and time, not gold
+    if (candidate.type === 'combat_level') {
+        return null;
+    }
+
     if (candidate.type === 'ability_level') {
         const levelXpTable = gameData.levelExperienceTable || [];
         const currentXp = levelXpTable[candidate.currentLevel] || 0;
@@ -1159,6 +1191,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                     triggers: null,
                 };
             }
+        } else if (candidate.type === 'combat_level') {
+            // Combat skill level boost (simulated charm)
+            modifiedDTOs[playerIndex][candidate.skillKey] = candidate.upgradeLevel;
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -1546,6 +1581,9 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
                     triggers: null,
                 };
             }
+        } else if (candidate.type === 'combat_level') {
+            // Combat skill level boost (simulated charm)
+            modifiedDTO[candidate.skillKey] = candidate.upgradeLevel;
         } else if (candidate.type === 'cross_slot') {
             for (const slot of candidate.clearedSlots) {
                 modifiedDTO.equipment[slot] = null;

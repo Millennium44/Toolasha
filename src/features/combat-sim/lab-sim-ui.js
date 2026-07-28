@@ -310,6 +310,7 @@ class LabSimUI {
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
+                <option value="combat_level">Combat Levels</option>
             </select>
             <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-labsim-upgrade-level-type" style="${selectStyle}">
@@ -577,8 +578,15 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
         this.panel.querySelector('#mwi-labsim-upgrade-mode').addEventListener('change', (e) => {
             const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
+            const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
+            const levelInput = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
             const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-            levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
+            const isCombatLevelMode = e.target.value === 'combat_level';
+            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+            // Combat Levels mode reuses the number input as the charm size (+N
+            // levels per skill); the increment/target selector doesn't apply
+            if (levelType) levelType.style.display = isCombatLevelMode ? 'none' : '';
+            if (levelInput && isCombatLevelMode) levelInput.value = 5;
         });
         this.panel.querySelector('#mwi-labsim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
