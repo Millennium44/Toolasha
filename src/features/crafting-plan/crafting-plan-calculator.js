@@ -85,10 +85,13 @@ export function computeBestCraftingPlan(
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
     const isTradable = itemDetails?.isTradable ?? false;
 
-    // Get market buy price (min of market ask and shop cost)
+    // Get market buy price (min of market ask and shop cost).
+    // Only pass mode through when it is a raw price type — profit-context modes
+    // like 'hybrid' are resolved by getItemPrice via context/side instead.
     let buyPrice = null;
     if (isTradable) {
-        const marketPrice = getItemPrice(itemHrid, { mode, context: 'profit', side: 'buy' });
+        const rawMode = mode === 'ask' || mode === 'bid' || mode === 'average' ? mode : undefined;
+        const marketPrice = getItemPrice(itemHrid, { mode: rawMode, context: 'profit', side: 'buy' });
         if (marketPrice !== null && marketPrice > 0) {
             buyPrice = marketPrice;
         }
@@ -171,8 +174,9 @@ export function computeBestCraftingPlan(
     // Find production action
     const production = findProductionAction(itemHrid);
     if (!production) {
-        // No recipe — must buy
-        const unitCost = buyPrice ?? 0;
+        // No recipe — must buy. Use Infinity like the other buy-only paths so an
+        // unpriceable item propagates as "unknown cost" instead of a free material.
+        const unitCost = buyPrice ?? Infinity;
         memo.set(itemHrid, {
             strategy: 'buy',
             unitCost,

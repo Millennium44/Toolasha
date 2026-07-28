@@ -19,6 +19,21 @@ import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 
 /**
+ * Escape a string for safe interpolation into innerHTML.
+ * Player and snapshot names are untrusted input.
+ * @param {string} value - Raw string
+ * @returns {string} HTML-escaped string
+ */
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+/**
  * CombatScore class manages combat score display on profiles
  */
 class CombatScore {
@@ -259,7 +274,7 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${playerName}</div>
+                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${escapeHtml(playerName)}</div>
                 <span id="mwi-score-close-btn" style="
                     cursor: pointer;
                     font-size: 18px;
@@ -556,16 +571,13 @@ class CombatScore {
             if (isOwnCharacter) {
                 const allSnapshots = loadoutSnapshot.getAllSnapshots();
                 const combatSnapshots = allSnapshots.filter((s) => s.actionTypeHrid === '/action_types/combat');
-                console.log(
-                    `[CombatScore] Combat Sim dropdown: profileCharId=${profileCharId}, myCharId=${dataManager.getCurrentCharacterId()}, totalSnapshots=${allSnapshots.length}, combatSnapshots=${combatSnapshots.length}`
-                );
                 if (combatSnapshots.length > 0) {
                     combatSimLoadoutBtn.style.display = '';
 
                     combatSimLoadoutDropdown.innerHTML = combatSnapshots
                         .map(
                             (s) =>
-                                `<div class="mwi-combat-sim-loadout-option" data-name="${s.name.replace(/"/g, '&quot;')}" style="
+                                `<div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" style="
                                 padding: 6px 10px;
                                 cursor: pointer;
                                 font-size: 0.8rem;
@@ -574,7 +586,7 @@ class CombatScore {
                                 white-space: nowrap;
                                 overflow: hidden;
                                 text-overflow: ellipsis;
-                            ">${s.name}</div>`
+                            ">${escapeHtml(s.name)}</div>`
                         )
                         .join('');
 
@@ -662,7 +674,7 @@ class CombatScore {
                     loadoutDropdown.innerHTML = snapshots
                         .map(
                             (s) =>
-                                `<div class="mwi-loadout-option" data-name="${s.name.replace(/"/g, '&quot;')}" style="
+                                `<div class="mwi-loadout-option" data-name="${escapeHtml(s.name)}" style="
                                 padding: 6px 10px;
                                 cursor: pointer;
                                 font-size: 0.8rem;
@@ -671,7 +683,7 @@ class CombatScore {
                                 white-space: nowrap;
                                 overflow: hidden;
                                 text-overflow: ellipsis;
-                            ">${s.name}</div>`
+                            ">${escapeHtml(s.name)}</div>`
                         )
                         .join('');
 
@@ -758,7 +770,7 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div id="mwi-abilities-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-shrink: 0; cursor: move; user-select: none;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${playerName} - Abilities & Triggers</div>
+                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${escapeHtml(playerName)} - Abilities & Triggers</div>
                 <div style="display: flex; align-items: center; gap: 4px;">
                     <span id="mwi-abilities-expand-btn" style="
                         cursor: pointer;

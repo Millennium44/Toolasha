@@ -24,13 +24,6 @@ const PRODUCTION_TYPES = [
     '/action_types/tailoring',
 ];
 
-const PRICING_MODE_LABELS = {
-    conservative: 'Buy: Ask / Sell: Bid',
-    hybrid: 'Buy: Ask / Sell: Ask',
-    optimistic: 'Buy: Bid / Sell: Ask',
-    patientBuy: 'Buy: Bid / Sell: Bid',
-};
-
 let domObserverUnregister = null;
 let processedPanels = new WeakSet();
 
@@ -157,7 +150,7 @@ function buildBlock(actionHrid, numActions, outputHrid, outputCount) {
     }
 
     const pricingMode = config.getSetting('profitCalc_pricingMode') || 'hybrid';
-    const pricingLabel = PRICING_MODE_LABELS[pricingMode] || pricingMode;
+    const pricingLabel = config.getPricingModeLabel(pricingMode);
 
     return renderBlock({
         directCost,

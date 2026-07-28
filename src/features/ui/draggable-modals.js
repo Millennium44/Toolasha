@@ -112,6 +112,10 @@ class DraggableModals {
 
             bar.style.cursor = 'grabbing';
             e.preventDefault();
+
+            // Attach document listeners only for the duration of the drag
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
         };
 
         const onMouseMove = (e) => {
@@ -126,6 +130,9 @@ class DraggableModals {
             dragging = false;
             bar.style.cursor = 'grab';
 
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+
             const t = new DOMMatrix(window.getComputedStyle(modalBox).transform);
             const dx = isNaN(t.m41) ? 0 : t.m41;
             const dy = isNaN(t.m42) ? 0 : t.m42;
@@ -134,8 +141,6 @@ class DraggableModals {
         };
 
         bar.addEventListener('mousedown', onMouseDown);
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
     }
 
     disable() {

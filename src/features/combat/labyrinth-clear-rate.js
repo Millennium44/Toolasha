@@ -10,6 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import labyrinthRoomLogs from './labyrinth-room-logs.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -21,6 +22,10 @@ const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
+const PREVIEW_ID = 'mwi-labyrinth-preview';
+const UPGRADE_MAX_LEVEL = 12;
+const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
+const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 
 class LabyrinthClearRate {
     constructor() {
@@ -33,7 +38,6 @@ class LabyrinthClearRate {
         this.simRunning = false;
         this.recommendations = new Map();
         this.recommendRunning = false;
-        this._recommendSimHours = 1;
         this._recommendTargetPct = 70;
         this.liveProgressHandler = null;
         this.liveProgressTimeout = null;
@@ -73,6 +77,19 @@ class LabyrinthClearRate {
         );
         this.unregisterHandlers.push(unregister);
 
+        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
+            this.seedFromCharacterData();
+            this.injectTileControls();
+            this.pruneClearedTileBadges();
+            this.scheduleAutoTileCalc();
+        });
+        this.unregisterHandlers.push(unregisterTiles);
+        setTimeout(() => {
+            this.seedFromCharacterData();
+            this.injectTileControls();
+            this.scheduleAutoTileCalc();
+        }, 500);
+
         setTimeout(() => this.injectOverlays(), 500);
 
         this.isInitialized = true;
@@ -100,6 +117,19 @@ class LabyrinthClearRate {
         }
 
         this.clearLiveProgress();
+        this.hidePreview();
+        document.getElementById(PREVIEW_ID)?.remove();
+        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
+        if (this.autoTileTimer) {
+            clearTimeout(this.autoTileTimer);
+            this.autoTileTimer = null;
+        }
+        if (this.pruneTileTimer) {
+            clearTimeout(this.pruneTileTimer);
+            this.pruneTileTimer = null;
+        }
+        this.calculatedTileKeys?.clear();
 
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
@@ -119,10 +149,28 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
+        const previousFloor = this.currentFloor;
+        this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
         if (roomData) {
             this.roomData = roomData;
             this.injectOverlays();
+            if (previousFloor !== this.currentFloor) {
+                document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+                this.calculatedTileKeys?.clear();
+            }
+            this.injectTileControls();
+            this.pruneClearedTileBadges();
+            // Re-run after React repaints the cleared tile (the WS message
+            // usually arrives before the DOM updates)
+            if (this.pruneTileTimer) clearTimeout(this.pruneTileTimer);
+            this.pruneTileTimer = setTimeout(() => {
+                this.pruneTileTimer = null;
+                this.pruneClearedTileBadges();
+            }, 400);
+
+            // Auto-calc newly revealed tiles when enabled (off by default)
+            this.scheduleAutoTileCalc();
         }
     }
 
@@ -408,7 +456,106 @@ class LabyrinthClearRate {
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
         result.xpPerRoom = roomLevel * 50;
+        this.attachSkillingWhatIfs(result, metrics, {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            progressPerSuccess,
+            targetProgress,
+            roomLevel,
+        });
         return result;
+    }
+
+    /**
+     * Attach what-if clear chances (level up, efficiency/speed tiers, labyrinth
+     * upgrades) and XP/hour to a skilling result for the hover preview.
+     */
+    attachSkillingWhatIfs(result, metrics, params) {
+        const {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            progressPerSuccess,
+            targetProgress,
+        } = params;
+        const clampChance = (v) => Math.min(1, Math.max(0, v));
+        const upgrades = this.getLabyrinthUpgrades();
+
+        // +1 effective skill level (improves both success chance and work power)
+        const nextLevel = effectiveLevel + 1;
+        const nextLevelDelta = nextLevel - params.roomLevel;
+        const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
+        result.nextLevelClearChance = this.computeNonEnhancingClearStats(
+            attempts,
+            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            doubleChance,
+            Math.max(0, Math.floor(nextLevel * (1 + metrics.efficiencyBonus))),
+            targetProgress
+        ).clearChance;
+
+        // Efficiency needed to require one fewer progress unit
+        result.efficiencyDelta = null;
+        result.efficiencyTierClearChance = null;
+        const neededUnits = progressPerSuccess > 0 ? Math.ceil(targetProgress / progressPerSuccess - 1e-9) : 0;
+        if (neededUnits > 1 && effectiveLevel > 0) {
+            const requiredPerSuccess = Math.ceil(targetProgress / (neededUnits - 1) - 1e-9);
+            const requiredEfficiency = requiredPerSuccess / effectiveLevel - 1;
+            if (Number.isFinite(requiredEfficiency)) {
+                result.efficiencyDelta = Math.max(0, requiredEfficiency - metrics.efficiencyBonus);
+                result.efficiencyTierClearChance = this.computeNonEnhancingClearStats(
+                    attempts,
+                    successChance,
+                    doubleChance,
+                    requiredPerSuccess,
+                    targetProgress
+                ).clearChance;
+            }
+        }
+
+        // Action speed needed to fit one more attempt into the room
+        result.speedDelta = Math.max(
+            0,
+            (BASE_SKILLING_TIME * (attempts + 1)) / ROOM_DURATION - 1 - metrics.actionSpeedBonus
+        );
+        result.speedTierClearChance = this.computeNonEnhancingClearStats(
+            attempts + 1,
+            successChance,
+            doubleChance,
+            progressPerSuccess,
+            targetProgress
+        ).clearChance;
+
+        // Next labyrinth upgrade tiers (null when already maxed)
+        result.nextSuccessUpgradeClearChance =
+            upgrades.success < UPGRADE_MAX_LEVEL
+                ? this.computeNonEnhancingClearStats(
+                      attempts,
+                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      doubleChance,
+                      progressPerSuccess,
+                      targetProgress
+                  ).clearChance
+                : null;
+        result.nextDoubleUpgradeClearChance =
+            upgrades.doubleProgress < UPGRADE_MAX_LEVEL
+                ? this.computeNonEnhancingClearStats(
+                      attempts,
+                      successChance,
+                      clampChance(doubleChance + UPGRADE_STEP),
+                      progressPerSuccess,
+                      targetProgress
+                  ).clearChance
+                : null;
+
+        result.xpPerHour =
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+                : 0;
     }
 
     /**
@@ -444,7 +591,70 @@ class LabyrinthClearRate {
         result.actionSeconds = actionSeconds;
         result.targetLevel = targetLevel;
         result.roomLevel = roomLevel;
+        result.xpPerRoom = roomLevel * 50;
+        this.attachEnhancingWhatIfs(result, metrics, {
+            attempts,
+            successChance,
+            doubleChance,
+            levelBonus,
+            effectiveLevel,
+            targetLevel,
+            roomLevel,
+        });
         return result;
+    }
+
+    /**
+     * Attach what-if clear chances and XP/hour to an enhancing result.
+     */
+    attachEnhancingWhatIfs(result, metrics, params) {
+        const { attempts, successChance, doubleChance, levelBonus, effectiveLevel, targetLevel } = params;
+        const clampChance = (v) => Math.min(1, Math.max(0, v));
+        const upgrades = this.getLabyrinthUpgrades();
+
+        const nextLevelDelta = effectiveLevel + 1 - params.roomLevel;
+        const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
+        result.nextLevelClearChance = this.computeEnhancingClearStats(
+            attempts,
+            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            doubleChance,
+            targetLevel
+        ).clearChance;
+
+        result.speedDelta = Math.max(
+            0,
+            (BASE_ENHANCING_TIME * (attempts + 1)) / ROOM_DURATION - 1 - metrics.actionSpeedBonus
+        );
+        result.speedTierClearChance = this.computeEnhancingClearStats(
+            attempts + 1,
+            successChance,
+            doubleChance,
+            targetLevel
+        ).clearChance;
+
+        result.nextSuccessUpgradeClearChance =
+            upgrades.success < UPGRADE_MAX_LEVEL
+                ? this.computeEnhancingClearStats(
+                      attempts,
+                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      doubleChance,
+                      targetLevel
+                  ).clearChance
+                : null;
+        result.nextDoubleUpgradeClearChance =
+            upgrades.doubleProgress < UPGRADE_MAX_LEVEL
+                ? this.computeEnhancingClearStats(
+                      attempts,
+                      successChance,
+                      clampChance(doubleChance + UPGRADE_STEP),
+                      targetLevel
+                  ).clearChance
+                : null;
+
+        result.xpPerHour =
+            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0
+                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1)
+                : 0;
     }
 
     buildResult(clearStats, actionSeconds) {
@@ -775,7 +985,15 @@ class LabyrinthClearRate {
     buildCombatCacheKey(monsterHrid, roomLevel) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${crateHrids.join(',')}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimHours()}h:${crateHrids.join(',')}`;
+    }
+
+    /**
+     * Combat sim hours for labyrinth tile and recommendation calculations
+     */
+    getSimHours() {
+        const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
+        return Math.min(100, Math.max(1, Math.floor(raw) || 3));
     }
 
     getCachedCombatResult(monsterHrid, roomLevel) {
@@ -791,7 +1009,7 @@ class LabyrinthClearRate {
 
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-        if (!dto) return { clearChance: 0, expectedSeconds: Infinity };
+        if (!dto) return { clearChance: 0, expectedSeconds: Infinity, failed: true };
 
         const gameData = buildGameDataPayload();
         const crateHrids = this.getCrateHrids();
@@ -805,7 +1023,7 @@ class LabyrinthClearRate {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                hours: this._recommendSimHours || 1,
+                hours: this.getSimHours(),
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -833,11 +1051,16 @@ class LabyrinthClearRate {
                 roomLevel,
             };
 
-            this.combatCache.set(cacheKey, result);
+            // Don't cache 0% results: right after page load the loadout
+            // snapshots may not be loaded yet, so a 0% can come from simming
+            // with the wrong gear. Leaving it uncached lets a retry correct it.
+            if (winRate > 0) {
+                this.combatCache.set(cacheKey, result);
+            }
             return result;
         } catch (error) {
             console.error('[LabyrinthClearRate] Combat sim failed:', error);
-            return { clearChance: 0, expectedSeconds: Infinity };
+            return { clearChance: 0, expectedSeconds: Infinity, failed: true };
         }
     }
 
@@ -929,10 +1152,6 @@ class LabyrinthClearRate {
             targetPct > 0 && targetPct <= 100 ? targetPct : config.getSetting('labyrinthRecommendTargetRate') || 70;
         const targetRate = this._recommendTargetPct / 100;
 
-        const hoursInput = document.getElementById('mwi-recommend-sim-hours');
-        const hoursVal = hoursInput ? parseInt(hoursInput.value, 10) : null;
-        this._recommendSimHours =
-            hoursVal > 0 && hoursVal <= 100 ? hoursVal : config.getSetting('labyrinthRecommendSimHours') || 1;
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
         const rooms = [];
 
@@ -1008,13 +1227,10 @@ class LabyrinthClearRate {
      */
     injectRecommendControls() {
         const defaultRate = config.getSettingValue('labyrinthRecommendTargetRate', 70);
-        const defaultHours = config.getSettingValue('labyrinthRecommendSimHours', 1);
 
         if (document.querySelector(`.${RECOMMEND_CONTROLS_CLASS}`)) {
             const rateInput = document.getElementById('mwi-recommend-target-rate');
-            const hoursInput = document.getElementById('mwi-recommend-sim-hours');
             if (rateInput && !rateInput.dataset.userEdited) rateInput.value = defaultRate;
-            if (hoursInput && !hoursInput.dataset.userEdited) hoursInput.value = defaultHours;
             return;
         }
 
@@ -1046,22 +1262,6 @@ class LabyrinthClearRate {
             rateInput.dataset.userEdited = '1';
         });
 
-        const hoursLabel = document.createElement('span');
-        hoursLabel.style.cssText = labelStyle;
-        hoursLabel.textContent = 'Sim Hours';
-
-        const hoursInput = document.createElement('input');
-        hoursInput.type = 'number';
-        hoursInput.id = 'mwi-recommend-sim-hours';
-        hoursInput.min = '1';
-        hoursInput.max = '100';
-        hoursInput.step = '1';
-        hoursInput.value = defaultHours;
-        hoursInput.style.cssText = inputStyle;
-        hoursInput.addEventListener('input', () => {
-            hoursInput.dataset.userEdited = '1';
-        });
-
         const button = document.createElement('button');
         button.textContent = 'Recommend';
         button.style.cssText =
@@ -1070,8 +1270,6 @@ class LabyrinthClearRate {
 
         container.appendChild(rateLabel);
         container.appendChild(rateInput);
-        container.appendChild(hoursLabel);
-        container.appendChild(hoursInput);
         container.appendChild(button);
         table.parentNode.insertBefore(container, table);
     }
@@ -1085,12 +1283,25 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Normalize a chance value that may arrive as a ratio (0-1) or percent (0-100)
+     * @param {*} value - Raw chance value from the WS message
+     * @returns {number} Chance clamped to 0-1
+     */
+    normalizeChance(value) {
+        const n = Number(value) || 0;
+        if (n > 1 && n <= 100) {
+            return Math.min(1, n / 100);
+        }
+        return Math.min(1, Math.max(0, n));
+    }
+
+    /**
      * Compute live clear estimate from room progress data
      */
     computeLiveEstimate(progress) {
         const isEnhancing = progress.targetLevel != null;
-        const successChance = Math.min(1, Math.max(0, Number(progress.successRate) || 0));
-        const doubleChance = Math.min(1, Math.max(0, Number(progress.doubleProgressChance) || 0));
+        const successChance = this.normalizeChance(progress.successRate);
+        const doubleChance = this.normalizeChance(progress.doubleProgressChance);
         const fallbackMs = (isEnhancing ? BASE_ENHANCING_TIME : BASE_SKILLING_TIME) * 1000;
         const actionTimeMs = Math.max(1, Number(progress.actionTimeMs) || fallbackMs);
         const totalAttempts = Math.max(0, Math.floor((ROOM_DURATION * 1000) / actionTimeMs));
@@ -1160,7 +1371,11 @@ class LabyrinthClearRate {
         if (this.liveProgressTimeout) {
             clearTimeout(this.liveProgressTimeout);
         }
-        this.liveProgressTimeout = setTimeout(() => this.clearLiveProgress(), LIVE_PROGRESS_STALE_MS);
+        // Progress messages arrive once per action (~8-10s base) — the stale timeout
+        // must outlive the action interval or the display flickers away between actions
+        const actionTimeMs = Math.max(1, Number(progress?.actionTimeMs) || BASE_SKILLING_TIME * 1000);
+        const staleMs = Math.max(LIVE_PROGRESS_STALE_MS, actionTimeMs * 2 + 2000);
+        this.liveProgressTimeout = setTimeout(() => this.clearLiveProgress(), staleMs);
 
         const estimate = this.computeLiveEstimate(progress);
         if (!estimate) return;
@@ -1206,6 +1421,459 @@ class LabyrinthClearRate {
             this.liveProgressTimeout = null;
         }
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-tile clear chances on the active run grid
+    // -------------------------------------------------------------------------
+
+    /**
+     * Find the grid container holding exactly all room cells of the active run
+     */
+    findRoomGridParent(totalCells) {
+        const allCells = Array.from(document.querySelectorAll('div[class*="LabyrinthPanel_roomCell"]'));
+        if (!allCells.length) return null;
+
+        const parentCount = new Map();
+        for (const cell of allCells) {
+            const parent = cell.parentElement;
+            if (!parent) continue;
+            parentCount.set(parent, (parentCount.get(parent) || 0) + 1);
+        }
+        for (const [parent, count] of parentCount.entries()) {
+            if (count === totalCells) return parent;
+        }
+        return null;
+    }
+
+    /**
+     * Get the room cells of the active run in grid order
+     */
+    findRoomGridCells(totalCells) {
+        const parent = this.findRoomGridParent(totalCells);
+        if (!parent) return [];
+        return Array.from(parent.children).filter((el) =>
+            String(el.className || '').includes('LabyrinthPanel_roomCell')
+        );
+    }
+
+    /**
+     * Seed labyrinth state right after a page refresh, before any
+     * labyrinth_updated message arrives. Tries the init character data first,
+     * then falls back to reading the client's React state (the init payload
+     * does not always carry the room grid, but the client state does).
+     */
+    seedFromCharacterData() {
+        if (this.roomData) return;
+
+        let labyrinth = dataManager.characterData?.characterLabyrinth;
+        let roomData = this.parseRoomData(labyrinth?.roomData);
+        if (!roomData) {
+            labyrinth = this.getLabyrinthFromReactState();
+            roomData = this.parseRoomData(labyrinth?.roomData);
+        }
+        if (!roomData) return;
+
+        this.roomData = roomData;
+        this.currentFloor = Math.max(0, Math.floor(Number(labyrinth.currentFloor) || 0));
+    }
+
+    /**
+     * Normalize roomData that may arrive as an array or a JSON string
+     */
+    parseRoomData(raw) {
+        if (Array.isArray(raw) && raw.length) return raw;
+        if (typeof raw === 'string' && raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) && parsed.length ? parsed : null;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Read characterLabyrinth from the game's React component state
+     * (same approach as the reference script - the client always holds the
+     * current labyrinth grid even when no WS update has arrived yet)
+     */
+    getLabyrinthFromReactState() {
+        try {
+            const rootEl = document.getElementById('root');
+            const rootFiber =
+                rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+            if (!rootFiber) return null;
+
+            const queue = [rootFiber];
+            let steps = 0;
+            while (queue.length && steps < 20000) {
+                const fiber = queue.shift();
+                if (!fiber || typeof fiber !== 'object') continue;
+                steps++;
+
+                const state = fiber.stateNode?.state;
+                if (state && typeof state === 'object' && state.characterLabyrinth) {
+                    return state.characterLabyrinth;
+                }
+
+                if (fiber.child) queue.push(fiber.child);
+                if (fiber.sibling) queue.push(fiber.sibling);
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Debounced auto tile calculation (no-op unless the setting is enabled)
+     */
+    scheduleAutoTileCalc() {
+        if (!config.getSetting('labyrinthAutoCalcTiles')) return;
+        if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
+        this.autoTileTimer = setTimeout(() => {
+            this.autoTileTimer = null;
+            this.runTileCalculation({ auto: true });
+        }, 800);
+    }
+
+    /**
+     * Remove clear-chance badges from rooms that have been cleared
+     */
+    pruneClearedTileBadges() {
+        if (!this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        const cols = Array.isArray(this.roomData[0]) ? this.roomData[0].length : 0;
+        if (!cols || !flatRooms.length) return;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (cells.length !== flatRooms.length) return;
+
+        for (let i = 0; i < flatRooms.length; i++) {
+            if (!flatRooms[i]?.isCleared) continue;
+            cells[i]?.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
+        }
+    }
+
+    /**
+     * Inject the calculate control bar (top-left entries row when available)
+     */
+    injectTileControls() {
+        if (!this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        if (!flatRooms.length) return;
+
+        const gridParent = this.findRoomGridParent(flatRooms.length);
+        if (!gridParent || !gridParent.parentElement) return;
+
+        const host = this.findEntriesRowHost(gridParent);
+        const existing = document.querySelector(`.${TILE_CONTROLS_CLASS}`);
+        if (existing && existing.isConnected) {
+            const placedCorrectly = host ? existing.parentElement === host : existing.nextElementSibling === gridParent;
+            if (placedCorrectly) return;
+            existing.remove();
+        }
+
+        const container = document.createElement('div');
+        container.className = TILE_CONTROLS_CLASS;
+        container.style.cssText =
+            'display:flex; flex-wrap:wrap; align-items:center; column-gap:6px; row-gap:3px; ' +
+            'width:fit-content; max-width:100%; box-sizing:border-box; padding:4px 7px; margin:0 0 6px 0; ' +
+            'border-radius:6px; background:rgba(0,0,0,0.62); color:#f0f4ff; box-shadow:0 2px 8px rgba(0,0,0,0.28); user-select:none;';
+
+        const button = document.createElement('button');
+        button.className = `${TILE_CONTROLS_CLASS}-button`;
+        button.textContent = 'Calculate Labyrinth';
+        button.style.cssText =
+            'min-width:96px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        button.addEventListener('click', () => this.runTileCalculation());
+        container.appendChild(button);
+
+        const hoursLabel = document.createElement('span');
+        hoursLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        hoursLabel.textContent = 'Sim Hours';
+        container.appendChild(hoursLabel);
+
+        const hoursInput = document.createElement('input');
+        hoursInput.type = 'number';
+        hoursInput.min = '1';
+        hoursInput.max = '100';
+        hoursInput.step = '1';
+        hoursInput.value = String(this.getSimHours());
+        hoursInput.style.cssText =
+            'width:52px; height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
+            'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; text-align:center; outline:none;';
+        hoursInput.addEventListener('change', () => {
+            const n = Math.min(100, Math.max(1, Math.floor(Number(hoursInput.value) || 3)));
+            hoursInput.value = String(n);
+            config.setSettingValue('labyrinthRecommendSimHours', n);
+            this.combatCache.clear();
+        });
+        container.appendChild(hoursInput);
+
+        if (config.getSetting('labyrinthRoomLogs')) {
+            const logsButton = document.createElement('button');
+            logsButton.textContent = 'Logs';
+            logsButton.style.cssText =
+                'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(77,151,255,0.95); ' +
+                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+            logsButton.addEventListener('click', () => labyrinthRoomLogs.togglePanel());
+            container.appendChild(logsButton);
+        }
+
+        const status = document.createElement('span');
+        status.className = `${TILE_CONTROLS_CLASS}-status`;
+        status.style.cssText = 'font-size:10px; color:#9ab0d8;';
+        container.appendChild(status);
+
+        const track = document.createElement('div');
+        track.style.cssText =
+            'flex:1 1 100%; width:100%; height:5px; border-radius:999px; background:rgba(255,255,255,0.2); overflow:hidden;';
+        const bar = document.createElement('div');
+        bar.className = `${TILE_CONTROLS_CLASS}-bar`;
+        bar.style.cssText =
+            'width:0%; height:100%; background:linear-gradient(90deg, #57d08a 0%, #8ed447 100%); transition:width 0.08s linear;';
+        track.appendChild(bar);
+        container.appendChild(track);
+
+        if (host) {
+            container.style.margin = '2px 0 2px 12px';
+            host.appendChild(container);
+        } else {
+            gridParent.parentElement.insertBefore(container, gridParent);
+        }
+    }
+
+    /**
+     * Find the "N / M Entries · Max Path" info row at the top-left of the
+     * labyrinth panel so the control bar can live there like the reference UI
+     */
+    findEntriesRowHost(gridParent) {
+        const panelRoot =
+            gridParent.closest('[class*="LabyrinthPanel_labyrinthPanel"]') ||
+            gridParent.closest('[class*="LabyrinthPanel"]') ||
+            gridParent.parentElement;
+        if (!panelRoot) return null;
+
+        let marker = null;
+        for (const node of panelRoot.querySelectorAll('div, span')) {
+            if (node.childElementCount > 0) continue;
+            const text = String(node.textContent || '').trim();
+            if (text && text.length < 40 && /max path/i.test(text)) {
+                marker = node;
+                break;
+            }
+        }
+        if (!marker) return null;
+
+        let current = marker.parentElement;
+        for (let depth = 0; depth < 3 && current; depth++) {
+            if (window.getComputedStyle(current).display.includes('flex')) {
+                return current;
+            }
+            current = current.parentElement;
+        }
+        return marker.parentElement;
+    }
+
+    setTileStatus(message) {
+        const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
+        if (status) status.textContent = message || '';
+    }
+
+    setTileProgress(ratio) {
+        const bar = document.querySelector(`.${TILE_CONTROLS_CLASS}-bar`);
+        if (bar) bar.style.width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
+    }
+
+    setTileButtonRunning(running) {
+        const btn = document.querySelector(`.${TILE_CONTROLS_CLASS}-button`);
+        if (btn) {
+            btn.disabled = running;
+            btn.textContent = running ? 'Calculating...' : 'Calculate Labyrinth';
+            btn.style.opacity = running ? '0.75' : '1';
+        }
+    }
+
+    /**
+     * Compute and overlay clear chances on every calculable tile of the run grid
+     */
+    async runTileCalculation(options = {}) {
+        const auto = options.auto === true;
+        if (this.tileCalcRunning) return;
+        if (!this.roomData) {
+            if (!auto) this.setTileStatus('No labyrinth data');
+            return;
+        }
+
+        const rows = this.roomData;
+        const flatRooms = rows.flat();
+        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (!cols || cells.length !== flatRooms.length) {
+            if (!auto) this.setTileStatus('Grid not found');
+            return;
+        }
+
+        if (!this.calculatedTileKeys) {
+            this.calculatedTileKeys = new Set();
+        }
+        // Manual runs recalculate everything; auto runs only touch new tiles
+        if (!auto) {
+            this.calculatedTileKeys.clear();
+            this.autoTileRetryCount = 0;
+            document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        }
+
+        // Gather targets first so the progress bar has a stable total
+        const skillingTargets = [];
+        const combatTargets = [];
+        for (let i = 0; i < flatRooms.length; i++) {
+            const room = flatRooms[i];
+            const cell = cells[i];
+            if (!room || !cell || room.isCleared) continue;
+
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            if (roomLevel <= 0) continue;
+
+            const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            if (auto && this.calculatedTileKeys.has(tileKey) && cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
+                continue;
+            }
+
+            if (room.skillHrid) {
+                skillingTargets.push({ room, cell, roomLevel, tileKey });
+            } else if (room.monsterHrid) {
+                combatTargets.push({ room, cell, roomLevel, tileKey });
+            }
+        }
+
+        const total = skillingTargets.length + combatTargets.length;
+        if (!total) {
+            if (!auto) this.setTileStatus('No calculable tiles');
+            return;
+        }
+
+        this.tileCalcRunning = true;
+        this.setTileButtonRunning(true);
+        this.setTileStatus('');
+        this.setTileProgress(0);
+        let completed = 0;
+
+        try {
+            for (const target of skillingTargets) {
+                const result =
+                    target.room.skillHrid === '/skills/enhancing'
+                        ? this.computeEnhancingClear(target.roomLevel)
+                        : this.computeSkillingClear(target.room.skillHrid, target.roomLevel);
+                if (result) {
+                    this.appendTileBadge(target.cell, result, target.roomLevel);
+                    this.calculatedTileKeys.add(target.tileKey);
+                }
+                completed++;
+                this.setTileProgress(completed / total);
+            }
+
+            let combatRetryNeeded = 0;
+            for (const target of combatTargets) {
+                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
+                completed++;
+                this.setTileProgress(completed / total);
+
+                if (!result || result.failed) {
+                    // Sim inputs not ready (e.g. loadout snapshots still loading) —
+                    // leave the tile unbadged and unmarked so a retry picks it up
+                    combatRetryNeeded++;
+                    continue;
+                }
+                if (!target.cell.isConnected) continue;
+
+                this.appendTileBadge(target.cell, result, target.roomLevel);
+                if (result.clearChance > 0 || !auto) {
+                    this.calculatedTileKeys.add(target.tileKey);
+                } else {
+                    // A 0% right after load is suspicious — keep the key unmarked
+                    // so the next auto pass re-sims it with loaded snapshots
+                    combatRetryNeeded++;
+                }
+            }
+
+            this.setTileProgress(1);
+
+            if (auto && combatRetryNeeded > 0 && (this.autoTileRetryCount || 0) < 3) {
+                this.autoTileRetryCount = (this.autoTileRetryCount || 0) + 1;
+                if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
+                this.autoTileTimer = setTimeout(() => {
+                    this.autoTileTimer = null;
+                    this.runTileCalculation({ auto: true });
+                }, 2500);
+            } else if (combatRetryNeeded === 0) {
+                this.autoTileRetryCount = 0;
+            }
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Tile calculation failed:', error);
+            this.setTileStatus('Failed');
+        } finally {
+            this.tileCalcRunning = false;
+            this.setTileButtonRunning(false);
+        }
+    }
+
+    /**
+     * Overlay a clear-chance badge in the corner of a run grid tile
+     */
+    appendTileBadge(cell, result, roomLevel) {
+        cell.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
+
+        const chance = Math.min(1, Math.max(0, result.clearChance ?? 0));
+        const pct = Math.round(chance * 100);
+
+        const badge = document.createElement('div');
+        badge.className = TILE_BADGE_CLASS;
+        badge.style.cssText =
+            'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
+            'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; gap:2px; ' +
+            'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            `background:${this.getTileBadgeColor(chance)};`;
+
+        const chanceSpan = document.createElement('span');
+        chanceSpan.style.cssText = 'font-size:9px; font-weight:700; line-height:1;';
+        chanceSpan.textContent = `${pct}%`;
+
+        const etaSpan = document.createElement('span');
+        etaSpan.style.cssText = 'font-size:8px; font-weight:600; line-height:1; opacity:0.95;';
+        etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
+
+        badge.appendChild(chanceSpan);
+        badge.appendChild(etaSpan);
+
+        if (result.type === 'skilling' || result.type === 'enhancing') {
+            this.bindPreview(badge, result);
+        } else {
+            badge.title = this.formatTooltip(result, roomLevel);
+        }
+
+        const cellStyle = window.getComputedStyle(cell);
+        if (cellStyle.position === 'static') {
+            cell.style.position = 'relative';
+        }
+        cell.appendChild(badge);
+    }
+
+    getTileBadgeColor(clearChance) {
+        if (clearChance >= 0.95) return '#1fbf60';
+        if (clearChance >= 0.8) return '#77b82a';
+        if (clearChance >= 0.6) return '#d2ac19';
+        if (clearChance >= 0.4) return '#d27a1f';
+        return '#d84b4b';
+    }
+
+    formatEtaSeconds(expectedSeconds, pct) {
+        if (pct === 0 || !Number.isFinite(expectedSeconds)) return '999+';
+        const seconds = Math.max(0, Math.ceil(expectedSeconds));
+        return seconds > 999 ? '999+' : `${seconds}s`;
     }
 
     findRoomByMonsterHrid(monsterHrid) {
@@ -1281,15 +1949,28 @@ class LabyrinthClearRate {
         const badge = document.createElement('span');
         badge.className = BADGE_CLASS;
         badge.style.cssText = 'font-size:0.7rem; margin-left:6px; white-space:nowrap;';
-        badge.style.color = this.getBadgeColor(result.clearChance);
-
-        const pct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        badge.textContent = pct >= 100 ? timeText : `${pct}% ${timeText}`;
-        badge.title = this.formatTooltip(result, roomLevel);
-
+        this.decorateBadge(badge, result, roomLevel);
         cell.appendChild(badge);
         return badge;
+    }
+
+    /**
+     * Apply text (with max reachable floor), color, and hover preview to a badge
+     */
+    decorateBadge(badge, result, roomLevel) {
+        badge.style.color = this.getBadgeColor(result.clearChance);
+        const pct = Math.round(result.clearChance * 100);
+        const timeText = this.formatTime(result.expectedSeconds);
+        const maxFloor = Math.floor((roomLevel || 0) / 20);
+        const floorText = maxFloor >= 1 ? `F${maxFloor} · ` : '';
+        badge.textContent = pct >= 100 ? `${floorText}${timeText}` : `${floorText}${pct}% ${timeText}`;
+
+        if (result.type === 'skilling' || result.type === 'enhancing') {
+            badge.removeAttribute('title');
+            this.bindPreview(badge, result);
+        } else {
+            badge.title = this.formatTooltip(result, roomLevel);
+        }
     }
 
     appendPlaceholderBadge(cell) {
@@ -1303,11 +1984,7 @@ class LabyrinthClearRate {
     }
 
     updateBadge(badge, result, roomLevel) {
-        badge.style.color = this.getBadgeColor(result.clearChance);
-        const pct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        badge.textContent = pct >= 100 ? timeText : `${pct}% ${timeText}`;
-        badge.title = this.formatTooltip(result, roomLevel);
+        this.decorateBadge(badge, result, roomLevel);
     }
 
     /**
@@ -1348,6 +2025,148 @@ class LabyrinthClearRate {
             return `/monsters/${slug}`;
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * Bind hover preview events to a badge (result stored on the element so
+     * updates replace content without re-binding listeners)
+     */
+    bindPreview(badge, result) {
+        badge.__mwiPreviewResult = result;
+        if (badge.__mwiPreviewBound) return;
+        badge.__mwiPreviewBound = true;
+        badge.style.cursor = 'help';
+        const show = (e) => {
+            const res = badge.__mwiPreviewResult;
+            if (!res) return;
+            this.showPreview(res, e.clientX, e.clientY);
+        };
+        badge.addEventListener('mouseenter', show);
+        badge.addEventListener('mousemove', show);
+        badge.addEventListener('mouseleave', () => this.hidePreview());
+    }
+
+    /**
+     * Get or create the shared preview tooltip element
+     */
+    ensurePreviewEl() {
+        let el = document.getElementById(PREVIEW_ID);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = PREVIEW_ID;
+            el.style.cssText =
+                'position:fixed; min-width:180px; max-width:260px; padding:6px 9px; border-radius:6px; ' +
+                'border:1px solid rgba(128,170,255,0.45); background:rgba(12,16,24,0.96); color:#f2f7ff; ' +
+                `font-size:11px; line-height:1.4; pointer-events:none; display:none; z-index:${config.Z_NOTIFICATION};`;
+            document.body.appendChild(el);
+        }
+        return el;
+    }
+
+    /**
+     * Show the rich preview for a skilling/enhancing result near the cursor
+     */
+    showPreview(result, x, y) {
+        const el = this.ensurePreviewEl();
+        if (this._previewFor !== result) {
+            this.renderPreviewContent(el, result);
+            this._previewFor = result;
+        }
+        el.style.display = 'block';
+
+        const offset = 12;
+        const margin = 8;
+        const width = el.offsetWidth || 200;
+        const height = el.offsetHeight || 150;
+        let left = x + offset;
+        let top = y + offset;
+        if (left + width + margin > window.innerWidth) {
+            left = Math.max(margin, x - width - offset);
+        }
+        if (top + height + margin > window.innerHeight) {
+            top = Math.max(margin, y - height - offset);
+        }
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+    }
+
+    hidePreview() {
+        const el = document.getElementById(PREVIEW_ID);
+        if (el) el.style.display = 'none';
+        this._previewFor = null;
+    }
+
+    /**
+     * Build the preview tooltip content for a skilling/enhancing result
+     */
+    renderPreviewContent(el, result) {
+        el.textContent = '';
+        const pct = (v) => `${(Math.min(1, Math.max(0, v)) * 100).toFixed(1)}%`;
+        const deltaPct = (v) => `+${(Math.max(0, v) * 100).toFixed(2)}%`;
+
+        const title = document.createElement('div');
+        title.style.cssText = 'margin-bottom:4px; font-weight:700; color:#9ec4ff;';
+        title.textContent = `${result.type === 'enhancing' ? 'Enhancing' : 'Skilling'} Room · Lv.${result.roomLevel}`;
+        el.appendChild(title);
+
+        const addRow = (label, value) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; justify-content:space-between; gap:10px; white-space:nowrap;';
+            const labelEl = document.createElement('span');
+            labelEl.style.opacity = '0.75';
+            labelEl.textContent = label;
+            const valueEl = document.createElement('span');
+            valueEl.style.fontWeight = '700';
+            valueEl.textContent = value;
+            row.appendChild(labelEl);
+            row.appendChild(valueEl);
+            el.appendChild(row);
+        };
+
+        if (result.type === 'enhancing') {
+            addRow('Target Enhancement', `+${result.targetLevel}`);
+        } else {
+            addRow('Work Power', `${result.workPower.toFixed(2)} \u2192 ${result.progressPerSuccess}`);
+        }
+        addRow('Success Rate', pct(result.successChance));
+        addRow('Double Progress', pct(result.doubleChance));
+        addRow('Actions in 2m', `${result.attempts} @ ${result.actionSeconds.toFixed(2)}s`);
+        if (result.xpPerRoom) {
+            addRow('XP / Room', `${Math.round(result.xpPerRoom)}`);
+        }
+        if (result.xpPerHour > 0) {
+            addRow('XP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
+        }
+        const maxFloor = Math.floor((result.roomLevel || 0) / 20);
+        if (maxFloor >= 1) {
+            addRow('Max Floor', `${maxFloor}`);
+        }
+
+        if (Number.isFinite(result.nextLevelClearChance)) {
+            addRow('+1 Level Clear', pct(result.nextLevelClearChance));
+        }
+        if (result.type !== 'enhancing') {
+            if (result.efficiencyDelta === null) {
+                addRow('Efficiency Tier', 'Already optimal');
+            } else if (Number.isFinite(result.efficiencyTierClearChance)) {
+                addRow(`Efficiency ${deltaPct(result.efficiencyDelta)} Clear`, pct(result.efficiencyTierClearChance));
+            }
+        }
+        if (Number.isFinite(result.speedTierClearChance)) {
+            addRow(`Speed ${deltaPct(result.speedDelta)} Clear`, pct(result.speedTierClearChance));
+        }
+        if (Number.isFinite(result.nextSuccessUpgradeClearChance)) {
+            addRow('Next Success Upgrade', pct(result.nextSuccessUpgradeClearChance));
+        }
+        if (Number.isFinite(result.nextDoubleUpgradeClearChance)) {
+            addRow('Next Double Upgrade', pct(result.nextDoubleUpgradeClearChance));
+        }
+
+        const floor = Math.max(0, Math.floor(Number(this.currentFloor) || 0));
+        if (floor >= 1) {
+            addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
+            addRow('Box Expected', `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
         }
     }
 

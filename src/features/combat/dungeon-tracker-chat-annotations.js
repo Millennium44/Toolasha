@@ -35,9 +35,11 @@ class DungeonTrackerChatAnnotations {
         // Wait for chat to be available
         this.waitForChat();
 
-        dataManager.on('character_switching', () => {
-            this.cleanup();
-        });
+        if (this.characterSwitchingHandler) {
+            dataManager.off('character_switching', this.characterSwitchingHandler);
+        }
+        this.characterSwitchingHandler = () => this.cleanup();
+        dataManager.on('character_switching', this.characterSwitchingHandler);
     }
 
     /**

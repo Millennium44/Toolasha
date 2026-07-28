@@ -14,6 +14,21 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * Escape a string for safe interpolation into innerHTML.
+     * Team keys and dungeon labels derive from other players' names — untrusted input.
+     * @param {string} value - Raw string
+     * @returns {string} HTML-escaped string
+     */
+    escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    /**
      * Group runs by team
      * @param {Array} runs - Array of runs
      * @returns {Array} Grouped runs with stats
@@ -82,7 +97,7 @@ class DungeonTrackerUIHistory {
             };
         }
 
-        const durations = runs.map((r) => r.duration);
+        const durations = runs.map((r) => r.duration || r.totalTime || 0);
         const total = durations.reduce((sum, d) => sum + d, 0);
 
         return {
@@ -159,7 +174,11 @@ class DungeonTrackerUIHistory {
             const currentValue = dungeonFilter.value;
             dungeonFilter.innerHTML =
                 '<option value="all">All Dungeons</option>' +
-                dungeons.map((dungeon) => `<option value="${dungeon}">${dungeon}</option>`).join('');
+                dungeons
+                    .map(
+                        (dungeon) => `<option value="${this.escapeHtml(dungeon)}">${this.escapeHtml(dungeon)}</option>`
+                    )
+                    .join('');
             // Restore selection if still valid
             if (dungeons.includes(currentValue)) {
                 dungeonFilter.value = currentValue;
@@ -174,7 +193,9 @@ class DungeonTrackerUIHistory {
             const currentValue = teamFilter.value;
             teamFilter.innerHTML =
                 '<option value="all">All Teams</option>' +
-                teams.map((team) => `<option value="${team}">${team}</option>`).join('');
+                teams
+                    .map((team) => `<option value="${this.escapeHtml(team)}">${this.escapeHtml(team)}</option>`)
+                    .join('');
             // Restore selection if still valid
             if (teams.includes(currentValue)) {
                 teamFilter.value = currentValue;
@@ -215,10 +236,10 @@ class DungeonTrackerUIHistory {
                         align-items: center;
                         margin-bottom: 6px;
                         cursor: pointer;
-                    " class="mwi-dt-group-header" data-group-label="${group.label}">
+                    " class="mwi-dt-group-header" data-group-label="${this.escapeHtml(group.label)}">
                         <div style="flex: 1;">
                             <div style="font-weight: bold; color: #4a9eff; margin-bottom: 2px;">
-                                ${group.label}
+                                ${this.escapeHtml(group.label)}
                             </div>
                             <div style="font-size: 10px; color: #aaa;">
                                 Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}
@@ -286,7 +307,7 @@ class DungeonTrackerUIHistory {
         let html = '';
         runs.forEach((run, index) => {
             const runNumber = runs.length - index;
-            const timeStr = this.formatTime(run.duration);
+            const timeStr = this.formatTime(run.duration || run.totalTime || 0);
             const dateObj = new Date(run.timestamp);
             const dateTime = formatDateTime(dateObj);
             const dungeonLabel = run.dungeonName || 'Unknown';
@@ -304,7 +325,7 @@ class DungeonTrackerUIHistory {
                     <span style="color: #fff; flex: 1; text-align: center;">
                         ${timeStr} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
                     </span>
-                    <span style="color: #888; margin-right: 6px; font-size: 9px;">${dungeonLabel}</span>
+                    <span style="color: #888; margin-right: 6px; font-size: 9px;">${this.escapeHtml(dungeonLabel)}</span>
                     <button class="mwi-dt-delete-run" style="
                         background: none;
                         border: 1px solid #ff6b6b;

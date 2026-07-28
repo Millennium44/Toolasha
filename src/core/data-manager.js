@@ -1014,7 +1014,7 @@ class DataManager {
      * @returns {number} Zone sortIndex (999 if not found)
      */
     getMonsterSortIndex(monsterHrid) {
-        return this.monsterSortIndexMap.get(monsterHrid) || 999;
+        return this.monsterSortIndexMap.get(monsterHrid) ?? 999;
     }
 
     /**

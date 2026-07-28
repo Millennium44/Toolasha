@@ -456,6 +456,7 @@ export class SimEditor {
                 data-ability-idx="${i}"
                 style="width:42px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            html += this._renderTriggerButton('abilities', i, ability, gameData);
             html += `<button data-ability-slot="${i}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
             html += '</div>';
         }
@@ -497,6 +498,9 @@ export class SimEditor {
                 '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
                 name +
                 '</span>';
+            if (item) {
+                html += this._renderTriggerButton('food', i, item, gameData);
+            }
             html +=
                 '<button data-consumable-slot="food-' +
                 i +
@@ -517,6 +521,9 @@ export class SimEditor {
                 '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
                 name +
                 '</span>';
+            if (item) {
+                html += this._renderTriggerButton('drinks', i, item, gameData);
+            }
             html +=
                 '<button data-consumable-slot="drinks-' +
                 i +
@@ -1025,6 +1032,293 @@ export class SimEditor {
         searchInput.focus();
     }
 
+    /**
+     * Resolve the default combat triggers for an ability or consumable.
+     * @private
+     * @param {string} slotType - 'abilities', 'food', or 'drinks'
+     * @param {string} hrid - Ability or item HRID
+     * @param {Object} gameData - Game data payload
+     * @returns {Array<Object>} Default trigger definitions (possibly empty)
+     */
+    _getDefaultTriggers(slotType, hrid, gameData) {
+        if (slotType === 'abilities') {
+            return gameData?.abilityDetailMap?.[hrid]?.defaultCombatTriggers || [];
+        }
+        return gameData?.itemDetailMap?.[hrid]?.consumableDetail?.defaultCombatTriggers || [];
+    }
+
+    /**
+     * Build a human-readable summary of a trigger list.
+     * @private
+     * @param {Array<Object>} triggers - Trigger definitions
+     * @param {Object} gameData - Game data payload
+     * @returns {string} One line per trigger
+     */
+    _describeTriggers(triggers, gameData) {
+        if (!triggers?.length) return 'Always activates';
+        const depMap = gameData?.combatTriggerDependencyDetailMap || {};
+        const condMap = gameData?.combatTriggerConditionDetailMap || {};
+        const compMap = gameData?.combatTriggerComparatorDetailMap || {};
+        const symbols = { greater_than_equal: '≥', less_than_equal: '≤' };
+
+        return triggers
+            .map((t) => {
+                const dep = depMap[t.dependencyHrid]?.name || t.dependencyHrid?.split('/').pop()?.replace(/_/g, ' ');
+                const cond = condMap[t.conditionHrid]?.name || t.conditionHrid?.split('/').pop()?.replace(/_/g, ' ');
+                const compKey = t.comparatorHrid?.split('/').pop();
+                const comp = symbols[compKey] || compMap[t.comparatorHrid]?.name || compKey?.replace(/_/g, ' ');
+                const usesValue = compKey === 'greater_than_equal' || compKey === 'less_than_equal';
+                return `${dep}: ${cond} ${comp}${usesValue ? ' ' + (t.value || 0) : ''}`;
+            })
+            .join('\n');
+    }
+
+    /**
+     * Render the trigger edit button for an ability/consumable row.
+     * @private
+     * @param {string} slotType - 'abilities', 'food', or 'drinks'
+     * @param {number} slotIndex - Slot index
+     * @param {Object} slotItem - DTO slot entry ({hrid, triggers, ...})
+     * @param {Object} gameData - Game data payload
+     * @returns {string} Button HTML
+     */
+    _renderTriggerButton(slotType, slotIndex, slotItem, gameData) {
+        const hasCustom = Array.isArray(slotItem.triggers);
+        const activeTriggers = hasCustom
+            ? slotItem.triggers
+            : this._getDefaultTriggers(slotType, slotItem.hrid, gameData);
+        const summary = this._describeTriggers(activeTriggers, gameData);
+        const title = `Triggers (${hasCustom ? 'custom' : 'default'}) — click to edit\n${summary}`
+            .replace(/"/g, '&quot;')
+            .replace(/\n/g, '&#10;');
+        const color = hasCustom ? ACCENT : '#aaa';
+        const border = hasCustom ? ACCENT_BTN_BORDER : '#444';
+        return `<button data-trigger-slot="${slotType}-${slotIndex}" title="${title}" style="background:rgba(255,255,255,0.06); border:1px solid ${border}; color:${color}; padding:1px 5px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">⚡</button>`;
+    }
+
+    /** @private */
+    _openTriggerEditor(slotType, slotIndex, dto, gameData) {
+        document.getElementById('mwi-csim-trigger-editor')?.remove();
+        document.getElementById('mwi-csim-trigger-backdrop')?.remove();
+
+        const slotItem = dto[slotType]?.[slotIndex];
+        if (!slotItem) return;
+
+        const isAbility = slotType === 'abilities';
+        const detail = isAbility ? gameData.abilityDetailMap?.[slotItem.hrid] : gameData.itemDetailMap?.[slotItem.hrid];
+        const itemName = detail?.name || slotItem.hrid.split('/').pop();
+        const defaults = this._getDefaultTriggers(slotType, slotItem.hrid, gameData);
+
+        const depMap = gameData.combatTriggerDependencyDetailMap || {};
+        const condMap = gameData.combatTriggerConditionDetailMap || {};
+        const compMap = gameData.combatTriggerComparatorDetailMap || {};
+
+        const sortedHrids = (map) =>
+            Object.keys(map).sort((a, b) => (map[a]?.sortIndex || 0) - (map[b]?.sortIndex || 0));
+        const depHrids = sortedHrids(depMap);
+        const condHrids = sortedHrids(condMap);
+        const compHrids = sortedHrids(compMap);
+
+        const displayName = (map, hrid) => map[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+
+        // Conditions only usable with multi-target dependencies (all allies / all enemies)
+        const MULTI_ONLY_CONDITIONS = new Set([
+            '/combat_trigger_conditions/number_of_active_units',
+            '/combat_trigger_conditions/number_of_dead_units',
+            '/combat_trigger_conditions/lowest_hp_percentage',
+        ]);
+        const conditionAllowed = (condHrid, depHrid) => {
+            if (!depMap[depHrid]?.isSingleTarget) return true;
+            const cond = condMap[condHrid];
+            if (typeof cond?.isSingleTarget === 'boolean') return cond.isSingleTarget;
+            return !MULTI_ONLY_CONDITIONS.has(condHrid);
+        };
+        const comparatorsFor = (condHrid) => {
+            const allowed = condMap[condHrid]?.allowedComparatorHrids;
+            return Array.isArray(allowed) && allowed.length ? allowed : compHrids;
+        };
+        const valuelessComparator = (compHrid) =>
+            compHrid === '/combat_trigger_comparators/is_active' ||
+            compHrid === '/combat_trigger_comparators/is_inactive';
+
+        const MAX_TRIGGERS = 4;
+        const toRow = (t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        });
+        const rows = (Array.isArray(slotItem.triggers) ? slotItem.triggers : defaults).map(toRow);
+
+        const newRow = () => {
+            const dep = depMap['/combat_trigger_dependencies/self'] ? '/combat_trigger_dependencies/self' : depHrids[0];
+            const cond = condHrids.find((c) => conditionAllowed(c, dep)) || condHrids[0];
+            const comp = comparatorsFor(cond)[0];
+            return { dependencyHrid: dep, conditionHrid: cond, comparatorHrid: comp, value: 0 };
+        };
+
+        const popup = document.createElement('div');
+        popup.id = 'mwi-csim-trigger-editor';
+        popup.style.cssText =
+            'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:100000;' +
+            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            'width:400px; max-height:440px; display:flex; flex-direction:column;' +
+            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.innerHTML =
+            `<span style="font-weight:700; font-size:13px; color:${ACCENT};">Triggers — ${itemName}</span>` +
+            '<button id="mwi-csim-trigger-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>';
+        popup.appendChild(header);
+
+        const listEl = document.createElement('div');
+        listEl.style.cssText = 'flex:1; overflow-y:auto; padding:8px 14px;';
+        popup.appendChild(listEl);
+
+        const footer = document.createElement('div');
+        footer.style.cssText =
+            'display:flex; align-items:center; gap:6px; padding:8px 14px; border-top:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        footer.innerHTML =
+            `<button id="mwi-csim-trigger-add" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">+ Add</button>` +
+            `<button id="mwi-csim-trigger-default" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Default</button>` +
+            `<button id="mwi-csim-trigger-save" style="margin-left:auto; background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT}; padding:3px 14px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit; font-weight:600;">Save</button>`;
+        popup.appendChild(footer);
+
+        const selectStyle =
+            'flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px; font-family:inherit;';
+
+        const buildOptions = (hrids, selected, labelFor) =>
+            hrids
+                .map((h) => `<option value="${h}"${h === selected ? ' selected' : ''}>${labelFor(h)}</option>`)
+                .join('');
+
+        const renderRows = () => {
+            if (!rows.length) {
+                listEl.innerHTML =
+                    '<div style="color:#888; font-style:italic; padding:10px 0; text-align:center;">No triggers — always activates.</div>';
+            } else {
+                let html = '';
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    const condOptions = condHrids.filter((c) => conditionAllowed(c, row.dependencyHrid));
+                    const compOptions = comparatorsFor(row.conditionHrid);
+                    const hideValue = valuelessComparator(row.comparatorHrid);
+
+                    html += `<div style="border:1px solid #2a2a4e; border-radius:5px; padding:6px; margin-bottom:6px;">`;
+                    html += `<div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">`;
+                    html += `<select data-trig-dep="${i}" style="${selectStyle}">${buildOptions(depHrids, row.dependencyHrid, (h) => displayName(depMap, h))}</select>`;
+                    html += `<select data-trig-cond="${i}" style="${selectStyle}">${buildOptions(condOptions, row.conditionHrid, (h) => displayName(condMap, h))}</select>`;
+                    html += `<button data-trig-remove="${i}" title="Remove trigger" style="background:none; border:none; color:#f44; font-size:15px; cursor:pointer; padding:0 2px; line-height:1; flex-shrink:0;">×</button>`;
+                    html += `</div>`;
+                    html += `<div style="display:flex; gap:4px; align-items:center;">`;
+                    html += `<select data-trig-comp="${i}" style="${selectStyle}">${buildOptions(compOptions, row.comparatorHrid, (h) => displayName(compMap, h))}</select>`;
+                    html += `<input type="number" data-trig-value="${i}" value="${row.value}" min="0"
+                        style="width:70px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px;
+                        padding:2px 4px; font-size:11px; text-align:center; ${hideValue ? 'visibility:hidden;' : ''}">`;
+                    html += `</div></div>`;
+                }
+                listEl.innerHTML = html;
+            }
+
+            const addBtn = footer.querySelector('#mwi-csim-trigger-add');
+            addBtn.disabled = rows.length >= MAX_TRIGGERS;
+            addBtn.style.opacity = addBtn.disabled ? '0.4' : '1';
+            addBtn.style.cursor = addBtn.disabled ? 'default' : 'pointer';
+
+            listEl.querySelectorAll('[data-trig-dep]').forEach((sel) => {
+                sel.addEventListener('change', () => {
+                    const i = parseInt(sel.dataset.trigDep);
+                    rows[i].dependencyHrid = sel.value;
+                    if (!conditionAllowed(rows[i].conditionHrid, sel.value)) {
+                        rows[i].conditionHrid = condHrids.find((c) => conditionAllowed(c, sel.value)) || condHrids[0];
+                    }
+                    const comps = comparatorsFor(rows[i].conditionHrid);
+                    if (!comps.includes(rows[i].comparatorHrid)) {
+                        rows[i].comparatorHrid = comps[0];
+                    }
+                    renderRows();
+                });
+            });
+            listEl.querySelectorAll('[data-trig-cond]').forEach((sel) => {
+                sel.addEventListener('change', () => {
+                    const i = parseInt(sel.dataset.trigCond);
+                    rows[i].conditionHrid = sel.value;
+                    const comps = comparatorsFor(sel.value);
+                    if (!comps.includes(rows[i].comparatorHrid)) {
+                        rows[i].comparatorHrid = comps[0];
+                    }
+                    renderRows();
+                });
+            });
+            listEl.querySelectorAll('[data-trig-comp]').forEach((sel) => {
+                sel.addEventListener('change', () => {
+                    const i = parseInt(sel.dataset.trigComp);
+                    rows[i].comparatorHrid = sel.value;
+                    renderRows();
+                });
+            });
+            listEl.querySelectorAll('[data-trig-value]').forEach((input) => {
+                input.addEventListener('change', () => {
+                    const i = parseInt(input.dataset.trigValue);
+                    const val = Math.max(0, parseInt(input.value) || 0);
+                    input.value = val;
+                    rows[i].value = val;
+                });
+            });
+            listEl.querySelectorAll('[data-trig-remove]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    rows.splice(parseInt(btn.dataset.trigRemove), 1);
+                    renderRows();
+                });
+            });
+        };
+
+        const closeEditor = () => {
+            popup.remove();
+            document.getElementById('mwi-csim-trigger-backdrop')?.remove();
+        };
+
+        footer.querySelector('#mwi-csim-trigger-add').addEventListener('click', () => {
+            if (rows.length >= MAX_TRIGGERS) return;
+            rows.push(newRow());
+            renderRows();
+        });
+        footer.querySelector('#mwi-csim-trigger-default').addEventListener('click', () => {
+            rows.length = 0;
+            for (const t of defaults) rows.push(toRow(t));
+            renderRows();
+        });
+        footer.querySelector('#mwi-csim-trigger-save').addEventListener('click', () => {
+            const normalized = rows.map((r) => ({ ...r, value: Number(r.value) || 0 }));
+            const matchesDefault =
+                normalized.length === defaults.length &&
+                normalized.every((r, i) => {
+                    const d = defaults[i];
+                    return (
+                        r.dependencyHrid === d.dependencyHrid &&
+                        r.conditionHrid === d.conditionHrid &&
+                        r.comparatorHrid === d.comparatorHrid &&
+                        r.value === (Number(d.value) || 0)
+                    );
+                });
+            slotItem.triggers = matchesDefault ? null : normalized;
+            closeEditor();
+            this.renderEditor();
+        });
+        popup.querySelector('#mwi-csim-trigger-close').addEventListener('click', closeEditor);
+
+        const backdrop = document.createElement('div');
+        backdrop.id = 'mwi-csim-trigger-backdrop';
+        backdrop.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; z-index:99999;';
+        backdrop.addEventListener('click', closeEditor);
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(popup);
+        renderRows();
+    }
+
     /** @private */
     _renderSkillLevelsSection(dto) {
         const combatSkills = [
@@ -1291,6 +1585,17 @@ export class SimEditor {
             });
         });
 
+        editorArea.querySelectorAll('[data-trigger-slot]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const key = btn.dataset.triggerSlot;
+                const dashIdx = key.lastIndexOf('-');
+                const slotType = key.slice(0, dashIdx);
+                const slotIndex = parseInt(key.slice(dashIdx + 1));
+                const gameData = buildGameDataPayload();
+                if (gameData) this._openTriggerEditor(slotType, slotIndex, dto, gameData);
+            });
+        });
+
         const resetBtn = editorArea.querySelector('#mwi-csim-reset');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
@@ -1447,6 +1752,13 @@ export class SimEditor {
             } else if (origAb && editAb && origAb.level !== editAb.level) {
                 const name = abilityDetailMap[editAb.hrid]?.name || editAb.hrid.split('/').pop();
                 changes.push(`${name} Lv ${origAb.level}\u2192${editAb.level}`);
+            } else if (
+                origAb &&
+                editAb &&
+                JSON.stringify(origAb.triggers ?? null) !== JSON.stringify(editAb.triggers ?? null)
+            ) {
+                const name = abilityDetailMap[editAb.hrid]?.name || editAb.hrid.split('/').pop();
+                changes.push(`${name} triggers`);
             }
         }
 
@@ -1484,6 +1796,13 @@ export class SimEditor {
                     const origName = origHrid ? itemDetailMap[origHrid]?.name || origHrid.split('/').pop() : 'Empty';
                     const editName = editHrid ? itemDetailMap[editHrid]?.name || editHrid.split('/').pop() : 'Empty';
                     changes.push(`${prefix} ${i + 1}: ${origName}\u2192${editName}`);
+                } else if (
+                    origHrid &&
+                    JSON.stringify(original[slotType][i]?.triggers ?? null) !==
+                        JSON.stringify(edited[slotType][i]?.triggers ?? null)
+                ) {
+                    const name = itemDetailMap[origHrid]?.name || origHrid.split('/').pop();
+                    changes.push(`${name} triggers`);
                 }
             }
         }

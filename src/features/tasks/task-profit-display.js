@@ -825,9 +825,13 @@ class TaskProfitDisplay {
 
                     if (config.getSetting('combatSim_autoEstimate')) {
                         const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
-                        this._simQueue = this._simQueue.then(() =>
-                            this._runCombatSimEstimate(estimateContainer, taskData, defaultLoadout)
-                        );
+                        this._simQueue = this._simQueue
+                            .then(() => this._runCombatSimEstimate(estimateContainer, taskData, defaultLoadout))
+                            .catch((error) => {
+                                // Keep the queue alive — an uncaught rejection would poison
+                                // every subsequent combat estimate
+                                console.error('[TaskProfitDisplay] Combat sim estimate failed:', error);
+                            });
                     } else {
                         this._renderCombatEstimateConfig(estimateContainer, taskData);
                     }

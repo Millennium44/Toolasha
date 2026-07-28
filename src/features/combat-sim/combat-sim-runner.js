@@ -149,6 +149,16 @@ function mergeSimResults(results) {
 
     const merged = structuredClone(results[0]);
 
+    // Close chunk 0's still-open OOM window (later chunks are closed in the loop below)
+    if (merged.playerRanOutOfManaTime) {
+        for (const stat of Object.values(merged.playerRanOutOfManaTime)) {
+            if (stat.isOutOfMana) {
+                stat.totalTimeForOutOfMana += merged.simulatedTime - stat.startTimeForOutOfMana;
+                stat.isOutOfMana = false;
+            }
+        }
+    }
+
     for (let i = 1; i < results.length; i++) {
         const r = results[i];
 

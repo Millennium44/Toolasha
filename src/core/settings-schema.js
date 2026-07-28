@@ -1560,13 +1560,13 @@ export const settingsGroups = {
             },
             labyrinthRecommendSimHours: {
                 id: 'labyrinthRecommendSimHours',
-                label: 'Labyrinth: Recommend sim hours per step',
+                label: 'Labyrinth: Combat sim hours',
                 type: 'number',
-                default: 1,
+                default: 3,
                 min: 1,
                 max: 100,
                 step: 1,
-                help: 'Default hours of combat simulation per binary search step in recommendations',
+                help: 'Hours of combat simulation per labyrinth tile and recommendation calculation (higher = more accurate, slower)',
             },
             labyrinthLiveProgress: {
                 id: 'labyrinthLiveProgress',
@@ -1574,6 +1574,20 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows live clear chance during active labyrinth skilling/enhancing rooms',
+            },
+            labyrinthRoomLogs: {
+                id: 'labyrinthRoomLogs',
+                label: 'Labyrinth: Room action logs',
+                type: 'checkbox',
+                default: true,
+                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms (Logs button in the labyrinth panel)',
+            },
+            labyrinthAutoCalcTiles: {
+                id: 'labyrinthAutoCalcTiles',
+                label: 'Labyrinth: Auto-calc revealed tiles',
+                type: 'checkbox',
+                default: false,
+                help: 'Automatically calculates clear chances for newly revealed labyrinth tiles without clicking Calc Tiles',
             },
             combatBattleCounter: {
                 id: 'combatBattleCounter',

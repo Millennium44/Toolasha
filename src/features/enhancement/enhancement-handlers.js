@@ -21,9 +21,6 @@ export function setupEnhancementHandlers() {
     // Listen for actions_updated to detect new enhancing queues (handles page-load mid-session
     // and sets pending start so the next action_completed creates a session regardless of currentCount)
     webSocketHook.on('actions_updated', handleActionsUpdated);
-
-    // Listen for wildcard to catch all messages for debugging
-    webSocketHook.on('*', handleDebugMessage);
 }
 
 /**
@@ -54,14 +51,6 @@ async function handleActionsUpdated(data) {
             await enhancementTracker.finalizeCurrentSession();
         }
     }
-}
-
-/**
- * Debug handler to log all messages temporarily
- * @param {Object} _data - WebSocket message data
- */
-function handleDebugMessage(_data) {
-    // Debug logging removed
 }
 
 /**
@@ -490,5 +479,4 @@ async function handleEnhancementResult(action, _data) {
 export function cleanupEnhancementHandlers() {
     webSocketHook.off('action_completed', handleActionCompleted);
     webSocketHook.off('actions_updated', handleActionsUpdated);
-    webSocketHook.off('*', handleDebugMessage);
 }
