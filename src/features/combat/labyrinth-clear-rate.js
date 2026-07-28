@@ -1009,7 +1009,7 @@ class LabyrinthClearRate {
 
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-        if (!dto) return { clearChance: 0, expectedSeconds: Infinity };
+        if (!dto) return { clearChance: 0, expectedSeconds: Infinity, failed: true };
 
         const gameData = buildGameDataPayload();
         const crateHrids = this.getCrateHrids();
@@ -1051,11 +1051,16 @@ class LabyrinthClearRate {
                 roomLevel,
             };
 
-            this.combatCache.set(cacheKey, result);
+            // Don't cache 0% results: right after page load the loadout
+            // snapshots may not be loaded yet, so a 0% can come from simming
+            // with the wrong gear. Leaving it uncached lets a retry correct it.
+            if (winRate > 0) {
+                this.combatCache.set(cacheKey, result);
+            }
             return result;
         } catch (error) {
             console.error('[LabyrinthClearRate] Combat sim failed:', error);
-            return { clearChance: 0, expectedSeconds: Infinity };
+            return { clearChance: 0, expectedSeconds: Infinity, failed: true };
         }
     }
 
@@ -1718,6 +1723,7 @@ class LabyrinthClearRate {
         // Manual runs recalculate everything; auto runs only touch new tiles
         if (!auto) {
             this.calculatedTileKeys.clear();
+            this.autoTileRetryCount = 0;
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
         }
 
@@ -1770,17 +1776,42 @@ class LabyrinthClearRate {
                 this.setTileProgress(completed / total);
             }
 
+            let combatRetryNeeded = 0;
             for (const target of combatTargets) {
                 const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
-                if (result && target.cell.isConnected) {
-                    this.appendTileBadge(target.cell, result, target.roomLevel);
-                    this.calculatedTileKeys.add(target.tileKey);
-                }
                 completed++;
                 this.setTileProgress(completed / total);
+
+                if (!result || result.failed) {
+                    // Sim inputs not ready (e.g. loadout snapshots still loading) —
+                    // leave the tile unbadged and unmarked so a retry picks it up
+                    combatRetryNeeded++;
+                    continue;
+                }
+                if (!target.cell.isConnected) continue;
+
+                this.appendTileBadge(target.cell, result, target.roomLevel);
+                if (result.clearChance > 0 || !auto) {
+                    this.calculatedTileKeys.add(target.tileKey);
+                } else {
+                    // A 0% right after load is suspicious — keep the key unmarked
+                    // so the next auto pass re-sims it with loaded snapshots
+                    combatRetryNeeded++;
+                }
             }
 
             this.setTileProgress(1);
+
+            if (auto && combatRetryNeeded > 0 && (this.autoTileRetryCount || 0) < 3) {
+                this.autoTileRetryCount = (this.autoTileRetryCount || 0) + 1;
+                if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
+                this.autoTileTimer = setTimeout(() => {
+                    this.autoTileTimer = null;
+                    this.runTileCalculation({ auto: true });
+                }, 2500);
+            } else if (combatRetryNeeded === 0) {
+                this.autoTileRetryCount = 0;
+            }
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
             this.setTileStatus('Failed');
