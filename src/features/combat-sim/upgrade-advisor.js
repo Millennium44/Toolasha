@@ -25,6 +25,55 @@ const BREAKPOINTS_REFINED = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
 const JEWELRY_SLOTS = new Set(['/equipment_types/earrings', '/equipment_types/ring', '/equipment_types/neck']);
 
+const CHARM_SLOT = '/equipment_types/charm';
+
+/** Combat skills evaluated by the Combat Levels advisor mode */
+const COMBAT_LEVEL_SKILLS = [
+    { key: 'staminaLevel', label: 'Stamina' },
+    { key: 'intelligenceLevel', label: 'Intelligence' },
+    { key: 'attackLevel', label: 'Attack' },
+    { key: 'meleeLevel', label: 'Melee' },
+    { key: 'defenseLevel', label: 'Defense' },
+    { key: 'rangedLevel', label: 'Ranged' },
+    { key: 'magicLevel', label: 'Magic' },
+];
+
+/**
+ * Find the charm to wear while leveling a given combat skill: the equivalent
+ * of the player's current charm attuned to that skill (matched by name tier,
+ * e.g. "Expert Melee Charm" → "Expert Defense Charm"), or the highest-tier
+ * charm for the skill when tiers can't be matched. Keeps the current charm's
+ * enhancement level. Null when no charm for the skill exists.
+ * @param {Object|null} currentCharm - Equipped charm ({hrid, enhancementLevel}) or null
+ * @param {string} skillKey - DTO level key, e.g. "defenseLevel"
+ * @param {Object} gameData - Game data
+ * @returns {Object|null} Charm equipment entry or null
+ */
+function findMatchingCharmForSkill(currentCharm, skillKey, gameData) {
+    const skillName = skillKey.replace('Level', '');
+    const targetFocus = `/skills/${skillName}`;
+    const enhancementLevel = currentCharm?.enhancementLevel || 0;
+
+    const currentDetail = currentCharm ? gameData.itemDetailMap[currentCharm.hrid] : null;
+    if (currentDetail?.equipmentDetail?.combatStats?.focusTraining === targetFocus) {
+        return { ...currentCharm };
+    }
+    const tierPrefix = currentDetail?.name?.split(' ')[0] || null;
+
+    let fallback = null;
+    for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
+        if (detail?.equipmentDetail?.type !== CHARM_SLOT) continue;
+        if (detail.equipmentDetail.combatStats?.focusTraining !== targetFocus) continue;
+        if (tierPrefix && detail.name?.startsWith(`${tierPrefix} `)) {
+            return { hrid, enhancementLevel };
+        }
+        if (!fallback || (detail.itemLevel || 0) > (gameData.itemDetailMap[fallback.hrid]?.itemLevel || 0)) {
+            fallback = { hrid, enhancementLevel };
+        }
+    }
+    return fallback;
+}
+
 /**
  * Get the next ability level target (next multiple of 10) above the current level.
  * Used as fallback when no explicit target level is provided.
@@ -587,7 +636,8 @@ export function generateCandidates(
     mode = 'equipment',
     abilityTargetLevel = 0,
     abilityLevelType = 'increment',
-    skipBackSlot = false
+    skipBackSlot = false,
+    combatLevelTargets = null
 ) {
     const candidates = [];
 
@@ -906,28 +956,26 @@ export function generateCandidates(
     }
 
     if (mode === 'combat_level') {
-        // Simulate a charm of +N levels on each combat skill to rank which
-        // skill is most effective to level next (abilityTargetLevel carries N)
+        // Simulate boosted combat skill levels to rank which skill is most
+        // effective to level next. Uniform boost of +N (abilityTargetLevel
+        // carries N) or explicit per-skill target levels when provided.
         const boost = Math.max(1, Math.floor(abilityTargetLevel) || 5);
-        const combatSkills = [
-            { key: 'staminaLevel', label: 'Stamina' },
-            { key: 'intelligenceLevel', label: 'Intelligence' },
-            { key: 'attackLevel', label: 'Attack' },
-            { key: 'meleeLevel', label: 'Melee' },
-            { key: 'defenseLevel', label: 'Defense' },
-            { key: 'rangedLevel', label: 'Ranged' },
-            { key: 'magicLevel', label: 'Magic' },
-        ];
-        for (const skill of combatSkills) {
+        const targets =
+            combatLevelTargets && typeof combatLevelTargets === 'object' && Object.keys(combatLevelTargets).length > 0
+                ? combatLevelTargets
+                : null;
+        for (const skill of COMBAT_LEVEL_SKILLS) {
             const currentLevel = Math.max(1, Math.floor(playerDTO[skill.key] || 1));
+            const upgradeLevel = targets ? Math.min(200, Math.floor(targets[skill.key] || 0)) : currentLevel + boost;
+            if (upgradeLevel <= currentLevel) continue;
             candidates.push({
                 type: 'combat_level',
                 slot: `combat_level|${skill.key}`,
                 skillKey: skill.key,
                 currentLevel,
-                upgradeLevel: currentLevel + boost,
-                levelBoost: boost,
-                description: `${skill.label} ${currentLevel} → ${currentLevel + boost}`,
+                upgradeLevel,
+                levelBoost: upgradeLevel - currentLevel,
+                description: `${skill.label} ${currentLevel} → ${upgradeLevel}`,
             });
         }
     }
@@ -1125,6 +1173,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityLevelType,
         abilityTargetLevel,
         skipBackSlot,
+        combatLevelTargets,
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1137,14 +1186,23 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // 'combined' runs equipment and ability-level candidates together in one ranked list.
     const candidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
     const candidates = candidateModes.flatMap((mode) =>
-        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
+        generateCandidates(
+            playerDTO,
+            gameData,
+            mode,
+            abilityTargetLevel,
+            abilityLevelType,
+            skipBackSlot,
+            combatLevelTargets
+        )
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
         cost: calculateUpgradeCost(c, gameData),
     }));
 
-    const total = candidatesWithCost.length + 1; // +1 for baseline
+    const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
+    const total = candidatesWithCost.length + combatLevelCount + 1; // +1 baseline, + XP-rate sims
     let current = 0;
 
     // Run baseline sim
@@ -1224,7 +1282,26 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer };
         if (candidate.type === 'combat_level') {
-            row.levelTimeHours = estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid);
+            // Leveling posture: XP rates with the matching charm for this skill
+            // equipped (current levels), since that's what you'd wear to grind it
+            onProgress?.({ current, total, description: `XP rate: ${candidate.description}` });
+            const xpDTOs = JSON.parse(JSON.stringify(playerDTOs));
+            const currentCharm = xpDTOs[playerIndex].equipment[CHARM_SLOT] || null;
+            const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData);
+            xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
+            const xpSimResult = await runSimulation(
+                { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+                null
+            );
+            current++;
+            row.levelTimeHours = estimateCombatLevelTime(candidate, xpSimResult, gameData, playerHrid);
+            row.levelingCharmName = matchingCharm
+                ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
+                : 'no charm';
+            if (abortSignal?.()) {
+                results.push(row);
+                break;
+            }
         }
         results.push(row);
         current++;
