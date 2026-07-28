@@ -23,6 +23,8 @@ const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
+const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
+const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 
 class LabyrinthClearRate {
     constructor() {
@@ -75,6 +77,12 @@ class LabyrinthClearRate {
         );
         this.unregisterHandlers.push(unregister);
 
+        const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () =>
+            this.injectTileControls()
+        );
+        this.unregisterHandlers.push(unregisterTiles);
+        setTimeout(() => this.injectTileControls(), 500);
+
         setTimeout(() => this.injectOverlays(), 500);
 
         this.isInitialized = true;
@@ -104,6 +112,8 @@ class LabyrinthClearRate {
         this.clearLiveProgress();
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
+        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+        document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
 
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
@@ -123,11 +133,16 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
+        const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
         if (roomData) {
             this.roomData = roomData;
             this.injectOverlays();
+            if (previousFloor !== this.currentFloor) {
+                document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+            }
+            this.injectTileControls();
         }
     }
 
@@ -1390,6 +1405,186 @@ class LabyrinthClearRate {
             this.liveProgressTimeout = null;
         }
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-tile clear chances on the active run grid
+    // -------------------------------------------------------------------------
+
+    /**
+     * Find the grid container holding exactly all room cells of the active run
+     */
+    findRoomGridParent(totalCells) {
+        const allCells = Array.from(document.querySelectorAll('div[class*="LabyrinthPanel_roomCell"]'));
+        if (!allCells.length) return null;
+
+        const parentCount = new Map();
+        for (const cell of allCells) {
+            const parent = cell.parentElement;
+            if (!parent) continue;
+            parentCount.set(parent, (parentCount.get(parent) || 0) + 1);
+        }
+        for (const [parent, count] of parentCount.entries()) {
+            if (count === totalCells) return parent;
+        }
+        return null;
+    }
+
+    /**
+     * Get the room cells of the active run in grid order
+     */
+    findRoomGridCells(totalCells) {
+        const parent = this.findRoomGridParent(totalCells);
+        if (!parent) return [];
+        return Array.from(parent.children).filter((el) =>
+            String(el.className || '').includes('LabyrinthPanel_roomCell')
+        );
+    }
+
+    /**
+     * Inject the "Calc Tiles" button above the active run grid
+     */
+    injectTileControls() {
+        if (!this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        if (!flatRooms.length) return;
+
+        const gridParent = this.findRoomGridParent(flatRooms.length);
+        if (!gridParent || !gridParent.parentElement) return;
+
+        const existing = document.querySelector(`.${TILE_CONTROLS_CLASS}`);
+        if (existing && existing.isConnected && existing.nextElementSibling === gridParent) return;
+        if (existing) existing.remove();
+
+        const container = document.createElement('div');
+        container.className = TILE_CONTROLS_CLASS;
+        container.style.cssText = 'display:flex; align-items:center; gap:8px; margin:4px 0; flex-wrap:wrap;';
+
+        const button = document.createElement('button');
+        button.textContent = 'Calc Tiles';
+        button.style.cssText =
+            'padding:2px 10px; cursor:pointer; font-size:0.75rem; border-radius:4px; border:1px solid #555; background:#333; color:#ccc;';
+        button.addEventListener('click', () => this.runTileCalculation());
+
+        const status = document.createElement('span');
+        status.className = `${TILE_CONTROLS_CLASS}-status`;
+        status.style.cssText = 'font-size:0.75rem; color:#888;';
+
+        container.appendChild(button);
+        container.appendChild(status);
+        gridParent.parentElement.insertBefore(container, gridParent);
+    }
+
+    setTileStatus(message) {
+        const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
+        if (status) status.textContent = message || '';
+    }
+
+    /**
+     * Compute and overlay clear chances on every calculable tile of the run grid
+     */
+    async runTileCalculation() {
+        if (this.tileCalcRunning) return;
+        if (!this.roomData) {
+            this.setTileStatus('No labyrinth data');
+            return;
+        }
+
+        const rows = this.roomData;
+        const flatRooms = rows.flat();
+        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (!cols || cells.length !== flatRooms.length) {
+            this.setTileStatus('Grid not found');
+            return;
+        }
+
+        this.tileCalcRunning = true;
+        this.setTileStatus('Calculating...');
+        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => el.remove());
+
+        try {
+            const combatIndexes = [];
+            for (let i = 0; i < flatRooms.length; i++) {
+                const room = flatRooms[i];
+                const cell = cells[i];
+                if (!room || !cell || room.isCleared) continue;
+
+                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+                if (roomLevel <= 0) continue;
+
+                if (room.skillHrid) {
+                    const result =
+                        room.skillHrid === '/skills/enhancing'
+                            ? this.computeEnhancingClear(roomLevel)
+                            : this.computeSkillingClear(room.skillHrid, roomLevel);
+                    if (result) {
+                        this.appendTileBadge(cell, result, roomLevel);
+                    }
+                } else if (room.monsterHrid) {
+                    combatIndexes.push(i);
+                }
+            }
+
+            for (let done = 0; done < combatIndexes.length; done++) {
+                const i = combatIndexes[done];
+                const room = flatRooms[i];
+                const cell = cells[i];
+                const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+                this.setTileStatus(`Combat ${done + 1}/${combatIndexes.length}`);
+
+                const result = await this.computeCombatClear(room.monsterHrid, roomLevel);
+                if (result && cell.isConnected) {
+                    this.appendTileBadge(cell, result, roomLevel);
+                }
+            }
+
+            this.setTileStatus('Done');
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Tile calculation failed:', error);
+            this.setTileStatus('Failed');
+        } finally {
+            this.tileCalcRunning = false;
+        }
+    }
+
+    /**
+     * Overlay a clear-chance badge in the corner of a run grid tile
+     */
+    appendTileBadge(cell, result, roomLevel) {
+        cell.querySelector(`.${TILE_BADGE_CLASS}`)?.remove();
+
+        const badge = document.createElement('div');
+        badge.className = TILE_BADGE_CLASS;
+        const chance = result.clearChance ?? result.winRate ?? 0;
+        badge.style.cssText =
+            'position:absolute; right:1px; bottom:1px; z-index:9; padding:1px 3px; border-radius:3px; ' +
+            'font-size:9px; font-weight:700; line-height:1.1; white-space:nowrap; color:#fff; ' +
+            'text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            `background:${this.getTileBadgeBackground(chance)};`;
+
+        const pct = Math.round(Math.min(1, Math.max(0, chance)) * 100);
+        const expected = result.expectedSeconds ?? result.avgFightSeconds;
+        const timeText = Number.isFinite(expected) ? this.formatTime(expected) : '999+';
+        badge.textContent = `${pct}% ${timeText}`;
+
+        if (result.type === 'skilling' || result.type === 'enhancing') {
+            this.bindPreview(badge, result);
+        } else {
+            badge.title = this.formatTooltip(result, roomLevel);
+        }
+
+        const cellStyle = window.getComputedStyle(cell);
+        if (cellStyle.position === 'static') {
+            cell.style.position = 'relative';
+        }
+        cell.appendChild(badge);
+    }
+
+    getTileBadgeBackground(clearChance) {
+        if (clearChance >= 0.95) return 'rgba(0, 150, 90, 0.85)';
+        if (clearChance >= 0.7) return 'rgba(180, 125, 30, 0.85)';
+        return 'rgba(170, 50, 50, 0.85)';
     }
 
     findRoomByMonsterHrid(monsterHrid) {
