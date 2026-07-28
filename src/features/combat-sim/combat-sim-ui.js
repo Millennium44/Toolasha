@@ -437,10 +437,14 @@ class CombatSimUI {
             </span>
             <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Charm</label>
-                <select id="mwi-csim-charm-select" style="${selectStyle}"></select>
+                <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${selectStyle}"></select>
                 <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
                     background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
                     padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
+                <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
+                    Main time
+                </label>
             </span>
             <label id="mwi-csim-skip-back-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
@@ -475,7 +479,7 @@ class CombatSimUI {
         combatTargets.style.cssText =
             'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
         combatTargets.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the charm boost while open):</span>' +
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
             [
                 ['staminaLevel', 'Stamina'],
                 ['intelligenceLevel', 'Int'],
@@ -578,8 +582,9 @@ class CombatSimUI {
             const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
             const isCombatLevelMode = e.target.value === 'combat_level';
 
-            // Combat Levels: replace Skip Back with a charm selector; the level
-            // input becomes the custom charm size and only shows for "Custom"
+            // Combat Levels: the +Levels input drives the simulated boost; the
+            // charm selector picks which charm family gets swapped in per skill
+            // for the leveling-time estimates
             charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
             skipBackLabel.style.display = isCombatLevelMode ? 'none' : 'flex';
             if (!isCombatLevelMode) {
@@ -587,23 +592,22 @@ class CombatSimUI {
             }
             levelType.style.display = isCombatLevelMode ? 'none' : '';
             levelInput.title = isCombatLevelMode
-                ? 'Levels added to each combat skill (simulated charm)'
+                ? 'Levels added to each combat skill'
                 : 'Number of levels to add to each ability';
 
             if (isCombatLevelMode) {
                 this._populateCharmSelect();
-                const charmSelect = this.panel.querySelector('#mwi-csim-charm-select');
-                levelGroup.style.display = charmSelect.value === 'custom' ? 'inline-flex' : 'none';
+                levelGroup.style.display = 'inline-flex';
+                if (!parseInt(levelInput.value)) {
+                    levelInput.value = '5';
+                    levelInput.placeholder = '+5';
+                }
             } else {
                 levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
             }
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
             }
-        });
-        this.panel.querySelector('#mwi-csim-charm-select').addEventListener('change', (e) => {
-            const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-            levelGroup.style.display = e.target.value === 'custom' ? 'inline-flex' : 'none';
         });
         this.panel.querySelector('#mwi-csim-combat-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-combat-targets');
@@ -3108,78 +3112,55 @@ class CombatSimUI {
      * @private
      */
     /**
-     * Populate the charm selector for Combat Levels mode. Charm items found in
-     * game data with a detectable +level stat become options; generic presets
-     * and a Custom entry (which reveals the number input) are always available.
+     * Populate the charm selector for Combat Levels mode with the charm tiers
+     * found in game data (charm names follow "<Tier> <Skill> Charm"). The
+     * selection controls which charm family gets swapped in per skill when
+     * estimating leveling time: Auto matches the equipped charm's tier, a
+     * named tier forces that family, None estimates without any charm.
      * @private
      */
     _populateCharmSelect() {
         const select = this.panel.querySelector('#mwi-csim-charm-select');
         if (!select || select.options.length > 0) return;
 
-        const options = [];
-        const seen = new Set();
+        const tiers = new Map(); // tier prefix → lowest charm itemLevel (for sorting)
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
         for (const item of Object.values(itemDetailMap)) {
             if (item?.equipmentDetail?.type !== '/equipment_types/charm') continue;
-            const stats = {
-                ...(item.equipmentDetail.combatStats || {}),
-                ...(item.equipmentDetail.noncombatStats || {}),
-            };
-            let boost = 0;
-            for (const [key, value] of Object.entries(stats)) {
-                if (/level/i.test(key) && Number.isFinite(value) && value > 0 && value <= 50) {
-                    boost = Math.max(boost, Math.round(value));
-                }
-            }
-            const dedupeKey = `${item.name}|${boost}`;
-            if (boost > 0 && !seen.has(dedupeKey)) {
-                seen.add(dedupeKey);
-                options.push({ label: `${item.name} (+${boost})`, value: boost });
+            const focus = item.equipmentDetail.combatStats?.focusTraining;
+            if (!focus || !item.name) continue;
+            const skillWord = focus.split('/').pop();
+            const suffix = new RegExp(` ${skillWord} charm$`, 'i');
+            const tier = suffix.test(item.name) ? item.name.replace(suffix, '') : item.name.split(' ')[0];
+            if (!tier) continue;
+            const level = item.itemLevel || 0;
+            if (!tiers.has(tier) || level < tiers.get(tier)) {
+                tiers.set(tier, level);
             }
         }
-        options.sort((a, b) => a.value - b.value);
 
-        if (options.length === 0) {
-            // No charm level stats in game data — offer plain presets
-            options.push(
-                { label: '+3', value: 3 },
-                { label: '+5', value: 5 },
-                { label: '+8', value: 8 },
-                { label: '+10', value: 10 }
-            );
-        }
-
-        for (const opt of options) {
+        const addOption = (value, label) => {
             const el = document.createElement('option');
-            el.value = String(opt.value);
-            el.textContent = opt.label;
+            el.value = value;
+            el.textContent = label;
             select.appendChild(el);
-        }
-        const custom = document.createElement('option');
-        custom.value = 'custom';
-        custom.textContent = 'Custom…';
-        select.appendChild(custom);
+        };
 
-        // Default to +5 when available
-        const five = [...select.options].find((o) => o.value === '5');
-        if (five) select.value = '5';
+        addOption('auto', 'Auto (equipped)');
+        [...tiers.entries()].sort((a, b) => a[1] - b[1]).forEach(([tier]) => addOption(tier, tier));
+        addOption('none', 'No charm');
     }
 
     /**
      * Prefill the per-skill target inputs from the selected player's current
-     * levels plus the selected charm boost.
+     * levels plus the +Levels boost.
      * @private
      */
     _prefillCombatTargets() {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const charmValue = this.panel.querySelector('#mwi-csim-charm-select')?.value;
-        const boost =
-            charmValue && charmValue !== 'custom'
-                ? parseInt(charmValue) || 5
-                : parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 5;
+        const boost = parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 5;
 
         this.panel.querySelectorAll('[data-combat-target]').forEach((input) => {
             const current = Math.max(1, Math.floor(dto?.[input.dataset.combatTarget] || 1));
@@ -3237,11 +3218,11 @@ class CombatSimUI {
             200,
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
+        let charmTier = null;
         if (upgradeMode === 'combat_level') {
-            const charmValue = this.panel.querySelector('#mwi-csim-charm-select')?.value;
-            if (charmValue && charmValue !== 'custom') {
-                abilityTargetLevel = parseInt(charmValue) || 5;
-            }
+            if (!abilityTargetLevel) abilityTargetLevel = 5;
+            charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
+            this._showMainSkillTimes = this.panel.querySelector('#mwi-csim-main-time')?.checked || false;
         }
 
         if (!zoneHrid) {
@@ -3299,6 +3280,7 @@ class CombatSimUI {
                     abilityTargetLevel,
                     skipBackSlot,
                     combatLevelTargets,
+                    charmTier,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -3360,6 +3342,9 @@ class CombatSimUI {
                         return r.candidate.description.toLowerCase();
                     case 'time':
                         return r.levelTimeHours ?? Infinity;
+                    case 'main':
+                        // Focused main skills (no entries) sort first
+                        return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
                     case 'xp':
                         return -(r.metrics.xpPerHour - results.baseline.xpPerHour);
                     case 'profit':
@@ -3401,12 +3386,18 @@ class CombatSimUI {
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
 
         const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
+        const showMainTimes = isCombatLevelMode && this._showMainSkillTimes;
+        const detailColspan = showMainTimes ? 6 : 5;
         let html;
         if (isCombatLevelMode) {
+            const mainTimeHeader = showMainTimes
+                ? `<th style="${thStyle}" data-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
+                : '';
             html = `<table style="${tableStyle}">
             <thead><tr>
                 <th style="${thStyle}" data-sort-key="upgrade">Skill${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-sort-key="time">Level Time${arrow('time')}</th>
+                ${mainTimeHeader}
                 <th style="${thStyle}" data-sort-key="dps">\u0394DPS${arrow('dps')}</th>
                 <th style="${thStyle}" data-sort-key="xp">\u0394EXP/hr${arrow('xp')}</th>
                 <th style="${thStyle}" data-sort-key="profit">\u0394Profit/hr${arrow('profit')}</th>
@@ -3475,9 +3466,27 @@ class CombatSimUI {
                     ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
                     : `No XP accrues in this skill at this zone${charmNote}`;
 
+                let mainTimeCell = '';
+                if (showMainTimes) {
+                    if (r.mainSkillTimes?.length) {
+                        const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
+                        const mainDetail = r.mainSkillTimes
+                            .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
+                            .join(', ');
+                        const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
+                        mainTimeCell = `<td style="${tdStyle}" title="${mainTitle}">${mainText}</td>`;
+                    } else {
+                        const mainTitle = r.isMainSkill
+                            ? 'This is a main training skill of your weapon'
+                            : 'No target set for the main training skill(s)';
+                        mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
+                    }
+                }
+
                 html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
                     <td style="${tdStyle}">${r.candidate.description}</td>
                     <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                    ${mainTimeCell}
                     <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
                     <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
                     <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
@@ -3525,7 +3534,7 @@ class CombatSimUI {
             const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
 
             html += `<tr data-upgrade-detail="${i}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
                     <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
                         <div>
                             <div style="color:#888;">DPS</div>
