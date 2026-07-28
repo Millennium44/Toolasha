@@ -12,10 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Labyrinth path planner: optimal route to the flag
 
-- New **Path** button in the labyrinth tile controls bar computes and highlights the best route from your cleared rooms to the floor exit, using the same per-tile clear chances as the badges (combat tiles sim on demand, cached).
-- **Priorities are lexicographic**: fewest beacons first (a beacon bypasses any tile whose clear chance is below the threshold), then most treasure rooms — every chest reachable without spending an extra beacon is grafted onto the route, even at extra torch cost — then fewest torches (uncleared rooms revealed).
+- New **Path** button in the labyrinth tile controls bar computes and highlights the best route from your cleared rooms (or the entrance on a fresh floor) to the floor exit, using the same per-tile clear chances as the badges (combat tiles sim on demand, cached).
+- **Priorities are lexicographic**: fewest **shrouds** first (a shroud instantly clears a room, spent on any tile whose clear chance is below the threshold), then most treasure rooms — every chest reachable without spending an extra shroud is grafted onto the route, even at extra torch cost — then fewest torches (uncleared rooms revealed).
 - **"Clear ≥" threshold input** next to the button sets what counts as clearable (persisted as its own setting, default 70%, fully separate from the skip recommendation target).
-- Route tiles get colored outlines: green = clearable, red "Beacon" tag = bypass needed, gold = treasure, purple ⚑ = floor exit; the status line summarizes rooms/beacons/chests. Overlays clear on floor change.
+- Route tiles get colored outlines: green = clearable, red "Shroud" tag = instant-clear needed, gold = treasure, purple ⚑ = floor exit; the status line summarizes rooms/shrouds/chests. Overlays clear on floor change. The exit matches any exit-like room type (descend/exit/finish/flag), so the final floor's flag room routes too.
 
 ### Labyrinth sims stop killing each other — recommendations finally survive lab runs
 
