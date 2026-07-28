@@ -420,6 +420,7 @@ class CombatSimUI {
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
+                <option value="combined">Equipment + Abilities</option>
             </select>
             <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-csim-upgrade-level-type" style="
@@ -534,7 +535,7 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-mode').addEventListener('change', (e) => {
             const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-            const isLevelMode = e.target.value === 'ability_level';
+            const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
             levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
@@ -1546,14 +1547,8 @@ class CombatSimUI {
             this._activeDetailIndex = this._simHistory.length - 1;
             this._displayResults(simResult, hours, gameData);
             this._switchTab('results');
-            const modeLabels = {
-                conservative: 'Buy: Ask / Sell: Bid',
-                hybrid: 'Buy: Ask / Sell: Ask',
-                optimistic: 'Buy: Bid / Sell: Ask',
-                patientBuy: 'Buy: Bid / Sell: Bid',
-            };
             const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            const modeLabel = modeLabels[mode] || mode;
+            const modeLabel = config.getPricingModeLabel(mode);
             const missingNote = missingMembers.length
                 ? ` | Missing: ${missingMembers.join(', ')} (open their profiles)`
                 : '';
@@ -3169,17 +3164,53 @@ class CombatSimUI {
             return;
         }
 
+        this._upgradeResultsData = results;
+        if (!this._upgradeSort) {
+            this._upgradeSort = { key: 'dps', asc: true };
+        }
+        const sortKey = this._upgradeSort.key;
+        const sortAsc = this._upgradeSort.asc;
+        const sortValue = (r) => {
+            switch (sortKey) {
+                case 'upgrade':
+                    return r.candidate.description.toLowerCase();
+                case 'cost':
+                    return r.cost == null ? Infinity : r.cost;
+                case 'xp':
+                    return r.goldPer.xp;
+                case 'profit':
+                    return r.goldPer.profit;
+                default:
+                    return r.goldPer.dps;
+            }
+        };
+        const sortedResults = [...results.results].sort((a, b) => {
+            const va = sortValue(a);
+            const vb = sortValue(b);
+            let cmp;
+            if (typeof va === 'string') {
+                cmp = va.localeCompare(vb);
+            } else {
+                const na = va === Infinity ? Number.MAX_VALUE : va;
+                const nb = vb === Infinity ? Number.MAX_VALUE : vb;
+                cmp = na - nb;
+            }
+            return sortAsc ? cmp : -cmp;
+        });
+
         const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
-        const thStyle = 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
 
+        const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
         let html = `<table style="${tableStyle}">
             <thead><tr>
-                <th style="${thStyle}">Upgrade</th>
-                <th style="${thStyle}">Cost</th>
-                <th style="${thStyle}">Gold/0.1% DPS</th>
-                <th style="${thStyle}">Gold/0.1% EXP</th>
-                <th style="${thStyle}">Gold/0.1% Profit</th>
+                <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
+                <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
+                <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
             </tr></thead><tbody>`;
 
         // Find best (lowest non-Infinity) value in each gold/0.1% column
@@ -3192,8 +3223,8 @@ class CombatSimUI {
             if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
         }
 
-        results.results.forEach((r, i) => {
-            const costStr = formatKMB(r.cost);
+        sortedResults.forEach((r, i) => {
+            const costStr = r.cost == null ? '?' : formatKMB(r.cost);
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
 
             const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
@@ -3283,6 +3314,19 @@ class CombatSimUI {
                 if (detail) {
                     detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                 }
+            });
+        });
+
+        // Wire up header click to sort by column (second click flips direction)
+        container.querySelectorAll('[data-sort-key]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const key = th.getAttribute('data-sort-key');
+                if (this._upgradeSort.key === key) {
+                    this._upgradeSort.asc = !this._upgradeSort.asc;
+                } else {
+                    this._upgradeSort = { key, asc: true };
+                }
+                this._renderUpgradeResults(this._upgradeResultsData);
             });
         });
     }

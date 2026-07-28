@@ -31,7 +31,7 @@ export function resolveActionContext(actionTypeHrid) {
         loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 
     // Only include drinks that are actually in stock — slotted-but-empty teas give no buff
-    const inventory = dataManager.getInventory();
+    const inventory = dataManager.getInventory() || [];
     const drinks = (rawDrinks || []).filter(
         (d) => d?.itemHrid && inventory.some((i) => i.itemHrid === d.itemHrid && (i.count || 0) > 0)
     );

@@ -197,13 +197,16 @@ async function calculateGatheringTaskProfit(actionHrid, quantity) {
     let profitData;
     try {
         profitData = await calculateGatheringProfit(actionHrid);
-    } catch {
+    } catch (error) {
+        console.error('[TaskProfitCalculator] Gathering profit calculation failed:', error);
         profitData = null;
     }
 
     if (!profitData) {
+        // Flag as missing so the display shows a warning instead of a confident 0
         return {
             totalValue: 0,
+            hasMissingPrices: true,
             breakdown: {
                 actionHrid,
                 quantity,
@@ -260,13 +263,16 @@ async function calculateProductionTaskProfit(actionHrid, quantity) {
     let profitData;
     try {
         profitData = await calculateProductionProfit(actionHrid);
-    } catch {
+    } catch (error) {
+        console.error('[TaskProfitCalculator] Production profit calculation failed:', error);
         profitData = null;
     }
 
     if (!profitData) {
+        // Flag as missing so the display shows a warning instead of a confident 0
         return {
             totalProfit: 0,
+            hasMissingPrices: true,
             breakdown: {
                 actionHrid,
                 quantity,

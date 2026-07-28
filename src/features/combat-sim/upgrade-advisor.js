@@ -897,7 +897,51 @@ export function generateCandidates(
         }
     }
 
+    candidates.forEach(clampRefinedCandidateToMinLevel);
     return candidates;
+}
+
+/**
+ * Clamp candidates that acquire a refined item to at least +10.
+ * Refined equipment cannot exist below +10, so a refined suggestion carrying a
+ * lower current enhancement level would be an impossible acquisition — instead
+ * of dropping it, suggest the refined item at +10 (cost and sim both use the
+ * clamped level). Enhancement candidates on an already-equipped refined item
+ * are unaffected — their breakpoint table (BREAKPOINTS_REFINED) starts at +10.
+ * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
+ */
+function clampRefinedCandidateToMinLevel(candidate) {
+    const MIN_REFINED_LEVEL = 10;
+    let clamped = false;
+
+    if (
+        candidate.upgradeHrid !== candidate.currentHrid &&
+        candidate.upgradeHrid?.endsWith('_refined') &&
+        candidate.upgradeLevel < MIN_REFINED_LEVEL
+    ) {
+        candidate.upgradeLevel = MIN_REFINED_LEVEL;
+        clamped = true;
+    }
+
+    if (candidate.addedSlots) {
+        for (const added of Object.values(candidate.addedSlots)) {
+            if (added?.hrid?.endsWith('_refined') && (added.enhancementLevel || 0) < MIN_REFINED_LEVEL) {
+                added.enhancementLevel = MIN_REFINED_LEVEL;
+                clamped = true;
+            }
+        }
+    }
+
+    if (clamped) {
+        // Reflect the clamped level(s) in the display text, e.g. "(+4)" → "(+10)",
+        // or "(+4/+10)" when a cross-slot swap mixes refined and non-refined items
+        const levels = candidate.addedSlots
+            ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+            : [candidate.upgradeLevel];
+        const unique = [...new Set(levels)];
+        const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+        candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+    }
 }
 
 /**
@@ -926,12 +970,12 @@ export function calculateUpgradeCost(candidate, gameData) {
 
     if (candidate.type === 'cross_slot') {
         let buyCost = 0;
-        for (const [, item] of Object.entries(candidate.addedSlots)) {
-            const price = resolveItemPrice(item.hrid, {
-                side: 'buy',
-                enhancementLevel: item.enhancementLevel,
-            });
-            buyCost += price.price;
+        for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+            const price = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel, slot, gameData);
+            if (price === null) {
+                return null; // Unknown acquisition cost — don't rank as free
+            }
+            buyCost += price;
         }
         const sellPrice = resolveItemPrice(candidate.currentHrid, {
             side: 'sell',
@@ -960,17 +1004,51 @@ export function calculateUpgradeCost(candidate, gameData) {
         );
     }
 
-    // Tier upgrade: buy new item at same enhancement - sell current item
-    const buyPrice = resolveItemPrice(candidate.upgradeHrid, {
-        side: 'buy',
-        enhancementLevel: candidate.upgradeLevel,
-    }).price;
+    // Tier upgrade: buy new item at target enhancement - sell current item
+    const buyPrice = resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel, candidate.slot, gameData);
+    if (buyPrice === null) {
+        return null; // Unknown acquisition cost — don't rank as free
+    }
     const sellPrice = resolveItemPrice(candidate.currentHrid, {
         side: 'sell',
         enhancementLevel: candidate.currentLevel,
     }).price;
 
     return Math.max(0, buyPrice - sellPrice);
+}
+
+/**
+ * Resolve the buy price of an item at a given enhancement level.
+ * When no price exists at that level (common for refined gear, which rarely
+ * has listings above +0), fall back to the base item price plus the expected
+ * enhancement cost to reach the level. Returns null when no price is known
+ * at all so callers can surface "unknown" instead of a free upgrade.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Target enhancement level
+ * @param {string} slot - Equipment slot HRID (for enhancement cost params)
+ * @param {Object} gameData - Game data payload
+ * @returns {number|null} Buy price in gold, or null when unknown
+ */
+function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
+    if (enhancementLevel > 0) {
+        // Same method as enhancement candidates: use the market only when the
+        // target level has an actual listing. resolveItemPrice cannot be used
+        // here — its production-cost fallback ignores the enhancement level and
+        // would price a +10 item as a +0 craft.
+        const market = getItemPrices(itemHrid, enhancementLevel);
+        if (market?.ask > 0) {
+            return market.ask;
+        }
+
+        // No listing at the target level: base item price + enhancement cost
+        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot });
+        const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
+        return total > 0 ? total : null;
+    }
+
+    const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+    return direct > 0 ? direct : null;
 }
 
 /**
@@ -1000,14 +1078,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const playerDTO = playerDTOs[playerIndex];
     const playerHrid = playerDTO.hrid;
 
-    // Generate candidates and compute costs
-    const candidates = generateCandidates(
-        playerDTO,
-        gameData,
-        upgradeMode,
-        abilityTargetLevel,
-        abilityLevelType,
-        skipBackSlot
+    // Generate candidates and compute costs.
+    // 'combined' runs equipment and ability-level candidates together in one ranked list.
+    const candidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+    const candidates = candidateModes.flatMap((mode) =>
+        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
@@ -1045,11 +1120,31 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         if (candidate.slot.startsWith('ability_')) {
             // Ability upgrade/swap
             const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            modifiedDTOs[playerIndex].abilities[slotIdx] = {
-                hrid: candidate.upgradeHrid,
-                level: candidate.upgradeLevel,
-                triggers: null,
-            };
+            const existingAbility = modifiedDTOs[playerIndex].abilities[slotIdx];
+            if (existingAbility?.hrid === candidate.upgradeHrid) {
+                // Leveling the equipped ability: keep its configured combat
+                // triggers — wiping them made every level-up sim against the
+                // baseline's tuned triggers and read as a regression
+                modifiedDTOs[playerIndex].abilities[slotIdx] = {
+                    ...existingAbility,
+                    level: candidate.upgradeLevel,
+                };
+            } else {
+                modifiedDTOs[playerIndex].abilities[slotIdx] = {
+                    hrid: candidate.upgradeHrid,
+                    level: candidate.upgradeLevel,
+                    triggers: null,
+                };
+            }
+        } else if (candidate.type === 'cross_slot') {
+            // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
+            // clear the replaced slots and equip every added item
+            for (const slot of candidate.clearedSlots) {
+                modifiedDTOs[playerIndex].equipment[slot] = null;
+            }
+            for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+                modifiedDTOs[playerIndex].equipment[slot] = item;
+            }
         } else {
             // Equipment upgrade
             modifiedDTOs[playerIndex].equipment[candidate.slot] = {
@@ -1129,17 +1224,19 @@ function computeDeltas(baseline, upgraded) {
  * Lower = better value.
  */
 function computeGoldPerImprovement(cost, deltas) {
+    // Unknown cost (null) must rank as Infinity, never as free
+    const safeCost = cost == null ? Infinity : cost;
     const goldPer = (pctDelta) => {
         if (pctDelta <= 0) return Infinity;
         // Gold per 0.1% = cost / (pctDelta * 10)
         // pctDelta is already in percent (e.g., 2 = 2%)
-        return cost / (pctDelta * 10);
+        return safeCost / (pctDelta * 10);
     };
 
     // For deaths, fewer is better — use negative delta (reduction)
     const goldPerReduction = (pctDelta) => {
         if (pctDelta >= 0) return Infinity; // Deaths didn't decrease
-        return cost / (Math.abs(pctDelta) * 10);
+        return safeCost / (Math.abs(pctDelta) * 10);
     };
 
     return {
@@ -1359,14 +1456,10 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const zoneHrid =
         Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
-    // Generate equipment candidates
-    const candidates = generateCandidates(
-        playerDTO,
-        gameData,
-        upgradeMode,
-        abilityTargetLevel,
-        abilityLevelType,
-        skipBackSlot
+    // Generate candidates ('combined' runs equipment and ability levels together)
+    const labCandidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+    const candidates = labCandidateModes.flatMap((mode) =>
+        generateCandidates(playerDTO, gameData, mode, abilityTargetLevel, abilityLevelType, skipBackSlot)
     );
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
@@ -1416,11 +1509,20 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         if (candidate.slot.startsWith('ability_')) {
             const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            modifiedDTO.abilities[slotIdx] = {
-                hrid: candidate.upgradeHrid,
-                level: candidate.upgradeLevel,
-                triggers: null,
-            };
+            const existingAbility = modifiedDTO.abilities[slotIdx];
+            if (existingAbility?.hrid === candidate.upgradeHrid) {
+                // Keep configured triggers when leveling the equipped ability
+                modifiedDTO.abilities[slotIdx] = {
+                    ...existingAbility,
+                    level: candidate.upgradeLevel,
+                };
+            } else {
+                modifiedDTO.abilities[slotIdx] = {
+                    hrid: candidate.upgradeHrid,
+                    level: candidate.upgradeLevel,
+                    triggers: null,
+                };
+            }
         } else if (candidate.type === 'cross_slot') {
             for (const slot of candidate.clearedSlots) {
                 modifiedDTO.equipment[slot] = null;
@@ -1460,7 +1562,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             cost: candidate.cost,
             winRate,
             winRateDelta,
-            goldPerWinRate: winRateDelta > 0 ? candidate.cost / (winRateDelta * 100) : Infinity,
+            goldPerWinRate:
+                winRateDelta > 0 && candidate.cost != null ? candidate.cost / (winRateDelta * 100) : Infinity,
             metricType: 'winRate',
         });
         current++;
@@ -1575,10 +1678,29 @@ export function computeSkillingClearRatesFromEditor(
 
     for (const skillHrid of LABYRINTH_SKILLS) {
         const skillId = skillHrid.replace('/skills/', '');
-        const actionTypeHrid = `/action_types/${skillId}`;
+        const skillName = skillId.charAt(0).toUpperCase() + skillId.slice(1);
         const dtoKey = SKILLING_DTO_KEYS[skillHrid];
         const baseLevel = editorDTO[dtoKey] || 1;
 
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) {
+            results.push({
+                clearChance: 0,
+                expectedSeconds: Infinity,
+                skipped: true,
+                roomLevel: 0,
+                baseLevel,
+                effectiveLevel: baseLevel,
+                successChance: 0,
+                attempts: 0,
+                skillHrid,
+                skillId,
+                skillName,
+            });
+            continue;
+        }
+
+        const actionTypeHrid = `/action_types/${skillId}`;
         const editorState = {
             equipment: skillEquipmentMap[skillHrid] || editorDTO.equipment,
             houseRooms: editorDTO.houseRooms,
@@ -1591,13 +1713,14 @@ export function computeSkillingClearRatesFromEditor(
 
         let result;
         if (skillHrid === '/skills/enhancing') {
-            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel);
+            result = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, skillRoomLevel);
         } else {
-            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel);
+            result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
         }
         result.skillHrid = skillHrid;
         result.skillId = skillId;
-        result.skillName = skillId.charAt(0).toUpperCase() + skillId.slice(1);
+        result.skillName = skillName;
+        result.roomLevel = skillRoomLevel;
         results.push(result);
     }
 
@@ -1615,6 +1738,20 @@ export function computeSkillingClearRatesFromEditor(
  * @param {Object} [options.skillEquipmentMap] - Per-skill equipment overrides
  * @returns {number} Average clear rate (0-1)
  */
+/**
+ * Resolve the room level for a skill: roomLevel may be a single number or a
+ * per-skill map { [skillHrid]: level } built from the automation skip levels.
+ * @param {number|Object} roomLevel
+ * @param {string} skillHrid
+ * @returns {number} Room level (0 = skill is skipped)
+ */
+function resolveSkillRoomLevel(roomLevel, skillHrid) {
+    if (roomLevel && typeof roomLevel === 'object') {
+        return Math.max(0, Math.floor(Number(roomLevel[skillHrid]) || 0));
+    }
+    return Math.max(0, Math.floor(Number(roomLevel) || 0));
+}
+
 function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHrids, gameData, options = {}) {
     const { metricOverride = null, skillEquipmentMap = {}, targetSkill = null } = options;
 
@@ -1624,6 +1761,9 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
     const skillsToEval = targetSkill ? [targetSkill] : LABYRINTH_SKILLS;
 
     for (const skillHrid of skillsToEval) {
+        const skillRoomLevel = resolveSkillRoomLevel(roomLevel, skillHrid);
+        if (skillRoomLevel <= 0) continue; // Skill room is skipped
+
         const skillId = skillHrid.replace('/skills/', '');
         const actionTypeHrid = `/action_types/${skillId}`;
         const dtoKey = SKILLING_DTO_KEYS[skillHrid];
@@ -1645,9 +1785,17 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
 
         let clearChance;
         if (skillHrid === '/skills/enhancing') {
-            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+            clearChance = labyrinthClearRate.computeEnhancingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            ).clearChance;
         } else {
-            clearChance = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, roomLevel).clearChance;
+            clearChance = labyrinthClearRate.computeSkillingClearWithParams(
+                metrics,
+                baseLevel,
+                skillRoomLevel
+            ).clearChance;
         }
 
         total += clearChance;
@@ -1834,26 +1982,66 @@ export function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
             }
         }
 
-        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+        const evaluate = (evalCandidate, dto, equipMap) => {
+            const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
+            if (dto.equipment?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
+                dto.equipment[evalCandidate.slot] = payload;
+            }
+            for (const skillEquip of Object.values(equipMap)) {
+                if (skillEquip?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
+                    skillEquip[evalCandidate.slot] = payload;
+                }
+            }
+            return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
+                skillEquipmentMap: equipMap,
+                targetSkill,
+            });
+        };
+
+        let evalCandidate = candidate;
+        let modifiedClearRate = computeAverageSkillingClearRateFromEditor(
             roomLevel,
             modifiedDTO,
             crateHrids,
             gameData,
-            { skillEquipmentMap: modifiedSkillEquipMap, targetSkill }
+            {
+                skillEquipmentMap: modifiedSkillEquipMap,
+                targetSkill,
+            }
         );
-        const clearRateDelta = modifiedClearRate - baselineClearRate;
+        let clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        // A breakpoint jump sometimes lands between improvement thresholds —
+        // keep raising the target one level at a time until the clear rate
+        // actually moves (skip when the baseline is already maxed)
+        const MAX_ENHANCEMENT = 20;
+        while (clearRateDelta <= 1e-9 && baselineClearRate < 0.999999 && evalCandidate.upgradeLevel < MAX_ENHANCEMENT) {
+            if (abortSignal?.()) break;
+            const nextLevel = evalCandidate.upgradeLevel + 1;
+            const bumped = {
+                ...evalCandidate,
+                upgradeLevel: nextLevel,
+                description: evalCandidate.description.replace(/\+\d+$/, `+${nextLevel}`),
+            };
+            bumped.cost = calculateUpgradeCost(bumped, gameData);
+            const freshDTO = JSON.parse(JSON.stringify(editorDTO));
+            const freshEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
+            modifiedClearRate = evaluate(bumped, freshDTO, freshEquipMap);
+            clearRateDelta = modifiedClearRate - baselineClearRate;
+            evalCandidate = bumped;
+        }
 
         results.push({
-            candidate,
+            candidate: evalCandidate,
             costType: 'gold',
-            cost: candidate.cost,
+            cost: evalCandidate.cost,
             clearRate: modifiedClearRate,
             clearRateDelta,
-            goldPerClearRate: clearRateDelta > 0 ? candidate.cost / (clearRateDelta * 100) : Infinity,
+            goldPerClearRate: clearRateDelta > 0 ? evalCandidate.cost / (clearRateDelta * 100) : Infinity,
             metricType: 'clearRate',
         });
         current++;
-        onProgress?.({ current, total, description: candidate.description });
+        onProgress?.({ current, total, description: evalCandidate.description });
     }
 
     results.sort((a, b) => {

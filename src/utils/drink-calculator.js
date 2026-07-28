@@ -33,7 +33,7 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
     const slots = dataManager.getActionDrinkSlots(actionTypeHrid);
     if (!slots?.length) return [];
 
-    const inventory = dataManager.getInventory();
+    const inventory = dataManager.getInventory() || [];
     const { equipment } = resolveActionContext(actionTypeHrid);
     const itemDetailMap = gameData.itemDetailMap || {};
     const concentration = getDrinkConcentration(equipment, itemDetailMap);

@@ -15,7 +15,6 @@ class AlchemyItemDimming {
     constructor() {
         this.unregisterObserver = null; // Unregister function from centralized observer
         this.isActive = false;
-        this.processedDivs = new WeakSet(); // Track already-processed divs
         this.isInitialized = false;
     }
 
@@ -72,11 +71,9 @@ class AlchemyItemDimming {
             'div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6'
         );
 
+        // Always re-evaluate every tile — skipping processed divs would freeze the
+        // dim state and never un-dim items after the player levels up
         for (const div of iconDivs) {
-            if (this.processedDivs.has(div)) {
-                continue;
-            }
-
             // Get the use element inside this div
             const useElement = div.querySelector('use');
             if (!useElement) {
@@ -111,9 +108,6 @@ class AlchemyItemDimming {
                 div.style.opacity = '1';
                 div.classList.remove('mwi-alchemy-dimmed');
             }
-
-            // Mark as processed
-            this.processedDivs.add(div);
         }
     }
 
@@ -158,9 +152,6 @@ class AlchemyItemDimming {
             item.style.opacity = '1';
             item.classList.remove('mwi-alchemy-dimmed');
         }
-
-        // Clear processed tracking
-        this.processedDivs = new WeakSet();
 
         this.isActive = false;
         this.isInitialized = false;

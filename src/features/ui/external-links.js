@@ -100,7 +100,7 @@ class ExternalLinks {
      */
     addLink(container, label, url) {
         const div = document.createElement('div');
-        div.setAttribute('class', 'NavigationBar_minorNavigationLink__31K7Y');
+        div.setAttribute('class', 'NavigationBar_minorNavigationLink__31K7Y mwi-external-link');
         div.style.color = config.COLOR_ACCENT;
         div.style.cursor = 'pointer';
         div.textContent = label;
@@ -122,17 +122,8 @@ class ExternalLinks {
             this.unregisterObserver = null;
         }
 
-        // Remove added links
-        const container = document.querySelector('[class*="NavigationBar_minorNavigationLinks"]');
-        if (container) {
-            const linksToRemove = container.querySelectorAll('[style*="cursor: pointer"]');
-            linksToRemove.forEach((link) => {
-                // Only remove links we added (check if they have our color)
-                if (link.style.color === config.COLOR_ACCENT) {
-                    link.remove();
-                }
-            });
-        }
+        // Remove added links (tagged with our marker class when created)
+        document.querySelectorAll('.mwi-external-link').forEach((link) => link.remove());
 
         // Clear the WeakSet (create new instance)
         this.addedContainers = new WeakSet();

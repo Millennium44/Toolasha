@@ -315,7 +315,7 @@ function registerFeatures() {
             name: 'Loot Log Statistics',
             category: 'Actions',
             module: UI.lootLogStats,
-            async: false,
+            async: true,
         },
         {
             key: 'inventoryCountDisplay',
@@ -430,6 +430,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthRoomLogs',
+            name: 'Labyrinth Room Logs',
+            category: 'Combat',
+            module: Combat.labyrinthRoomLogs,
+            async: true,
+        },
+        {
             key: 'loadoutSnapshot',
             name: 'Loadout Snapshots',
             category: 'Combat',
@@ -509,7 +516,7 @@ function registerFeatures() {
             name: 'Draggable Modals',
             category: 'UI',
             module: UI.draggableModals,
-            async: false,
+            async: true,
         },
         {
             key: 'altClickNavigation',
@@ -534,7 +541,7 @@ function registerFeatures() {
             customCheck: () =>
                 config.isFeatureEnabled('collectionFilters') || config.isFeatureEnabled('collectionFavorites'),
         },
-        { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: false },
+        { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
@@ -609,7 +616,7 @@ function registerFeatures() {
             name: 'House Panel Observer',
             category: 'House',
             module: UI.housePanelObserver,
-            async: false,
+            async: true,
         },
         {
             key: 'transmuteRates',
@@ -721,7 +728,7 @@ function registerFeatures() {
             name: 'Empty Queue Notification',
             category: 'Notifications',
             module: UI.emptyQueueNotification,
-            async: false,
+            async: true,
         },
         {
             key: 'queueMonitor',
@@ -736,15 +743,38 @@ function registerFeatures() {
     const allFeatures = [...marketFeatures, ...actionsFeatures, ...combatFeatures, ...uiFeatures];
 
     // Convert to feature registry format
-    const features = allFeatures.map((feature) => ({
-        key: feature.key,
-        name: feature.name,
-        category: feature.category,
-        initialize: () => feature.module.initialize(),
-        disable: typeof feature.module.disable === 'function' ? () => feature.module.disable() : undefined,
-        async: feature.async,
-        customCheck: feature.customCheck || undefined,
-    }));
+    const features = allFeatures.map((feature) => {
+        // Modules may export either disable() or cleanup() as their teardown;
+        // some cleanup(instance) implementations expect the instance returned by initialize().
+        const teardown =
+            typeof feature.module.disable === 'function'
+                ? (instance) => feature.module.disable(instance)
+                : typeof feature.module.cleanup === 'function'
+                  ? (instance) => feature.module.cleanup(instance)
+                  : undefined;
+        let instance = null;
+        return {
+            key: feature.key,
+            name: feature.name,
+            category: feature.category,
+            initialize: feature.async
+                ? async () => {
+                      instance = await feature.module.initialize();
+                  }
+                : () => {
+                      instance = feature.module.initialize();
+                  },
+            disable: teardown
+                ? () => {
+                      const current = instance;
+                      instance = null;
+                      return teardown(current);
+                  }
+                : undefined,
+            async: feature.async,
+            customCheck: feature.customCheck || undefined,
+        };
+    });
 
     // Replace feature registry's features array
     featureRegistry.replaceFeatures(features);

@@ -235,9 +235,11 @@ class DungeonTracker {
         const checkTimeout = setTimeout(() => this.checkForActiveDungeon(), 1000);
         this.timerRegistry.registerTimeout(checkTimeout);
 
-        dataManager.on('character_switching', () => {
-            this.cleanup();
-        });
+        if (this.characterSwitchingHandler) {
+            dataManager.off('character_switching', this.characterSwitchingHandler);
+        }
+        this.characterSwitchingHandler = () => this.cleanup();
+        dataManager.on('character_switching', this.characterSwitchingHandler);
     }
 
     /**
@@ -553,7 +555,7 @@ class DungeonTracker {
                         };
 
                         // If already tracking (somehow), update immediately
-                        if (this.isTracking && !this.currentRun.dungeonHrid) {
+                        if (this.isTracking && this.currentRun && !this.currentRun.dungeonHrid) {
                             this.currentRun.dungeonHrid = action.actionHrid;
                             this.currentRun.tier = action.difficultyTier;
 
@@ -1010,10 +1012,11 @@ class DungeonTracker {
             this.notifyUpdate();
         }
 
-        // Calculate wave time
+        // Calculate wave time (waveStartTime can be null after restoring an in-progress run)
         const waveEndTime = Date.now();
-        const waveTime = waveEndTime - this.waveStartTime.getTime();
-        this.waveTimes.push(waveTime);
+        if (this.waveStartTime) {
+            this.waveTimes.push(waveEndTime - this.waveStartTime.getTime());
+        }
 
         // Update waves completed
         // BUGFIX: Wave 50 completion sends wave: 0, so use currentWave instead
@@ -1089,10 +1092,13 @@ class DungeonTracker {
         // Use party message duration if available (authoritative), otherwise use tracked duration
         const totalTime = validated ? partyMessageDuration : trackedTotalTime;
 
-        // Calculate statistics
-        const avgWaveTime = completedWaveTimes.reduce((sum, time) => sum + time, 0) / completedWaveTimes.length;
-        const fastestWave = Math.min(...completedWaveTimes);
-        const slowestWave = Math.max(...completedWaveTimes);
+        // Calculate statistics (wave times can be empty when completion came from a chat message)
+        const hasWaveTimes = completedWaveTimes.length > 0;
+        const avgWaveTime = hasWaveTimes
+            ? completedWaveTimes.reduce((sum, time) => sum + time, 0) / completedWaveTimes.length
+            : 0;
+        const fastestWave = hasWaveTimes ? Math.min(...completedWaveTimes) : 0;
+        const slowestWave = hasWaveTimes ? Math.max(...completedWaveTimes) : 0;
 
         // Build complete run object
         const completedRun = {
@@ -1196,7 +1202,7 @@ class DungeonTracker {
         const now = Date.now();
         const runStartTime = this.firstKeyCountTimestamp || this.currentRun.startTime;
         const totalElapsed = now - runStartTime;
-        const currentWaveElapsed = now - this.waveStartTime.getTime();
+        const currentWaveElapsed = this.waveStartTime ? now - this.waveStartTime.getTime() : 0;
 
         // Calculate average wave time so far
         const avgWaveTime =
@@ -1386,9 +1392,14 @@ class DungeonTracker {
                 // Determine format based on separator
                 let month, day;
                 if (separator === '/') {
-                    // MM/DD format
-                    month = part1;
-                    day = part2;
+                    // MM/DD format — but if first part > 12 it must be DD/MM (e.g. "16/07")
+                    if (part1 > 12) {
+                        day = part1;
+                        month = part2;
+                    } else {
+                        month = part1;
+                        day = part2;
+                    }
                 } else {
                     // DD-M format (dash separator)
                     day = part1;

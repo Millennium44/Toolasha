@@ -30,15 +30,19 @@ class NetworthCache {
     generateMarketHash(marketData) {
         if (!marketData || !marketData.marketData) return 'empty';
 
-        // Sample first 10 items for hash (performance vs accuracy tradeoff)
-        const items = Object.entries(marketData.marketData).slice(0, 10);
-        const hashParts = items.map(([hrid, data]) => {
-            const ask = data[0]?.a || 0;
-            const bid = data[0]?.b || 0;
-            return `${hrid}:${ask}:${bid}`;
-        });
+        // Cheap rolling hash over every item so any price change invalidates the
+        // cache (sampling only the first 10 items left stale values behind)
+        let hash = 0;
+        for (const [hrid, data] of Object.entries(marketData.marketData)) {
+            const entry = `${hrid}:${data[0]?.a || 0}:${data[0]?.b || 0}`;
+            let entryHash = 0;
+            for (let i = 0; i < entry.length; i++) {
+                entryHash = (entryHash * 31 + entry.charCodeAt(i)) | 0;
+            }
+            hash = (hash ^ entryHash) | 0;
+        }
 
-        return hashParts.join('|');
+        return String(hash);
     }
 
     /**

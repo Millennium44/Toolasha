@@ -36,7 +36,8 @@ export async function runAllZonesSimulation(params, onProgress) {
     // Cancel any previous run
     cancelAllZonesSimulation();
 
-    const extraBuffs = buildExtraBuffs(communityBuffs);
+    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
+    const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
     const ONE_HOUR_NS = 3600 * 1e9;
     const simulationTimeLimit = hours * ONE_HOUR_NS;
 

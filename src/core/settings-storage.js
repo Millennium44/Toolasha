@@ -332,10 +332,10 @@ class SettingsStorage {
             let imported = 0;
             let skipped = 0;
 
-            const knownCharacters = new Set(await this.getKnownCharacters());
+            const knownCharacters = new Set((await this.getKnownCharacters()).map((character) => character.id));
             if (data[this.knownCharactersKey]) {
-                for (const id of data[this.knownCharactersKey]) {
-                    knownCharacters.add(String(id));
+                for (const character of this._normalizeKnownCharacters(data[this.knownCharactersKey])) {
+                    knownCharacters.add(character.id);
                 }
             }
 

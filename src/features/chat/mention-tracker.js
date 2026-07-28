@@ -28,13 +28,13 @@ class MentionTracker {
             return;
         }
 
-        this.initialized = true;
-
-        // Get character name
+        // Get character name; leave initialized unset so a later retry can succeed
         this.characterName = dataManager.getCurrentCharacterName();
         if (!this.characterName) {
             return;
         }
+
+        this.initialized = true;
 
         // Listen for chat messages
         this.handlers.chatMessage = (data) => this.onChatMessage(data);
