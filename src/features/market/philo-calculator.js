@@ -316,9 +316,21 @@ class PhiloCalculator {
         const philoDropRate = philoDrop.dropRate;
         const philoChance = successRate * philoDropRate;
 
-        // Get item cost (market ask price)
-        const priceData = marketAPI.getPrice(itemHrid, 0);
-        const itemCost = priceData?.ask;
+        // Get item cost (market ask price, falling back to bid on thin markets).
+        // Refined capes are often listed only at low enhancement levels, so scan
+        // those before giving up on a refined item.
+        const resolveCost = (level) => {
+            const priceData = marketAPI.getPrice(itemHrid, level);
+            const ask = priceData?.ask > 0 ? priceData.ask : null;
+            const bid = priceData?.bid > 0 ? priceData.bid : null;
+            return ask ?? bid;
+        };
+        let itemCost = resolveCost(0);
+        if (itemCost === null && itemHrid.endsWith('_refined')) {
+            for (let level = 1; level <= 5 && itemCost === null; level++) {
+                itemCost = resolveCost(level);
+            }
+        }
         if (itemCost === null || itemCost === undefined) return null;
 
         // Catalyst cost per action (consumed only on success)
