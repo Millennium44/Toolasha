@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Zone summary: shared sims, summed duplicate tasks, zone-membership grouping
+
+- **All cards in a zone now agree**: full-zone sims are shared per zone+loadout (3-minute cache) instead of each card rolling its own RNG, so every Gobo Planet card reports the same fights/time.
+- **Duplicate tasks sum**: one kill only progresses one task, so five Boomy tasks need the sum of their remainders — the bottleneck math now aggregates per monster across duplicate tasks and labels it (e.g. `bottleneck: Boomy ×5`).
+- **Grouping by zone membership**: a task joins a zone's summary when its monster actually spawns there (regular or boss spawns), not by first-match zone lookup — shared monsters previously landed in the wrong group.
+
 ### Zone fight estimate counts fights, not kills
 
 - The task zone summary ("~N fights") summed every monster **death** in the sim, but zone encounters spawn several monsters at once — so the fight count was inflated by the average wave size. The sim engine now tracks actual encounters spawned (`zoneEncounters`, bosses and dungeon waves included) and the summary uses that, so "fights" now means what the game means by it.
