@@ -37,6 +37,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays a red badge on chat tabs when someone @mentions you',
             },
+            chat_profileLink: {
+                id: 'chat_profileLink',
+                label: 'Chat: Clickable names in announcements',
+                type: 'checkbox',
+                default: true,
+                help: 'Makes the player name in system announcements (e.g. "Az0r has reached level 150 Magic!") clickable — clicking it fills "/profile name" into the chat input.',
+            },
             chat_popOut: {
                 id: 'chat_popOut',
                 label: 'Enable Pop-out Chat Window button',
@@ -1972,7 +1979,7 @@ export const settingsGroups = {
                 label: 'Task bulk reroll button',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a Reroll Tasks button to the task panel header that rerolls every non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits configured in the 🛡️ protection popup. Tasks at the limit for both categories are deleted. Click again to stop; completed tasks are never touched.',
+                help: 'Adds a stepper button to the task panel header — one server action per click. Each click rerolls the first non-protected task (coins first, then cowbells) that has not hit the per-character reroll limits from the 🛡️ protection popup, or discards it (trash can → Discard Task) once both limits are hit. The label previews the next action; completed tasks are never touched.',
             },
         },
     },

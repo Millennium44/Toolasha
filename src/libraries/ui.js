@@ -22,6 +22,7 @@ import collectionFilters from '../features/collection/collection-filters.js';
 
 // Chat features
 import chatCommands from '../features/chat/chat-commands.js';
+import chatProfileLink from '../features/chat/chat-profile-link.js';
 import mentionTracker from '../features/chat/mention-tracker.js';
 import popOutChat from '../features/chat/pop-out-chat.js';
 import chatBlockList from '../features/chat/chat-block-list.js';
@@ -108,6 +109,7 @@ toolashaRoot.UI = {
     collectionNavigation,
     collectionFilters,
     chatCommands,
+    chatProfileLink,
     mentionTracker,
     popOutChat,
     chatBlockList,
