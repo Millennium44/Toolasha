@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Guild idle list fixed — wired to the real activity signal
+
+- The correct field turned out to be `actionType` in the guild sharable data: it carries the running action's type (e.g. `/action_types/combat`) and is empty when a member has nothing running — the same signal behind the game's Activity column (confirmed by sampling an active member vs. two idle ones). The idle list now uses it and is **re-enabled by default**.
+- Since actions keep running while offline, offline members with an empty queue count as idle too — they're shown dimmed after the online ones. `inactiveTime` turned out to update continuously for online members, confirming it was never usable for this.
+
 ### Guild idle list off by default pending correct data
 
 - Even with the zero-time fix, `inactiveTime` turns out to be a historical "last went inactive" stamp — online members doing actions still carry one, so the list keeps flagging active players. The setting now defaults to **off** until the correct signal is wired up.
