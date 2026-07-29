@@ -1711,22 +1711,30 @@ export default class CustomTabsUI {
     /**
      * Recursively sum a badge value across a tab's own items and all descendant tabs,
      * peeking at tileMap without claiming tiles.
+     * Enhanced tiles are registered under both their base and +N keys (and an hrid can
+     * repeat across parent/child tabs), so each tile is counted once via the seen set —
+     * otherwise the collapsed rollup exceeds the expanded per-section totals.
      * @param {object} tab
      * @param {Map} tileMap
      * @param {string} valueKey - dataset key to sum (e.g. 'askValue', 'bidValue')
+     * @param {Set<HTMLElement>} [seen] - tiles already counted in this rollup
      * @returns {number}
      */
-    _peekTileValue(tab, tileMap, valueKey) {
+    _peekTileValue(tab, tileMap, valueKey, seen = new Set()) {
         let total = 0;
         for (const hrid of tab.items) {
             if (hrid === LINEBREAK_HRID) continue;
             const tiles = tileMap.get(hrid);
             if (tiles) {
-                for (const tile of tiles) total += parseFloat(tile.dataset[valueKey]) || 0;
+                for (const tile of tiles) {
+                    if (seen.has(tile)) continue;
+                    seen.add(tile);
+                    total += parseFloat(tile.dataset[valueKey]) || 0;
+                }
             }
         }
         for (const child of tab.children) {
-            total += this._peekTileValue(child, tileMap, valueKey);
+            total += this._peekTileValue(child, tileMap, valueKey, seen);
         }
         return total;
     }

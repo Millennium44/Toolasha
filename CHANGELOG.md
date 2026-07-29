@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Collapsed tab values match expanded, Bulk Sell remembers its tab
+
+- **Collapsed tab header value no longer overshoots**: enhanced item tiles are indexed under both their base and +N keys (and an item can sit in both a parent and child tab), and the collapsed rollup summed every key it touched — so tabs holding both references counted the same tile twice, showing a different net worth collapsed vs expanded. The rollup now counts each tile once, matching the expanded totals.
+- **Bulk Sell remembers the last tab you sold from** (per character): the dropdown restores your previous selection when the panel opens, falling back to All items if the tab no longer exists.
+
 ### Bulk Sell respects the tabs above the selling tab
 
 - When selling from a specific Toolasha inventory tab, any item that is also assigned to a tab shown **above** the selected one (in the panel's top-to-bottom order, including a child tab's parent) is kept, not sold — higher tabs act as keep-lists. Matching is by exact enhancement level, same as the tab filter itself.
