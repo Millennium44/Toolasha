@@ -545,6 +545,7 @@ class LabyrinthClearRate {
             this.injectTileControls();
             this.pruneClearedTileBadges();
             this.pruneClearedPathOverlays();
+            this.pruneUsedBeaconOverlays();
             this.scheduleAutoTileCalc();
         });
         this.unregisterHandlers.push(unregisterTiles);
@@ -704,6 +705,7 @@ class LabyrinthClearRate {
             this.roomData = roomData;
             this.injectOverlays();
             this.pruneClearedPathOverlays();
+            this.pruneUsedBeaconOverlays();
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
@@ -2820,6 +2822,18 @@ class LabyrinthClearRate {
             if (cell) this.appendBeaconOverlay(cell, true, `B${i + 1}`);
         });
 
+        // Remember what each beacon was planned to reveal so its indicators
+        // can be cleared once those rooms actually get revealed (beacon used)
+        const dist = (a, b) =>
+            Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+        this._beaconPlanCells = {
+            fills: [...plan.covered],
+            centers: plan.beacons.map((idx) => ({
+                idx,
+                watch: [...plan.covered].filter((c) => dist(c, idx) <= BEACON_RADIUS),
+            })),
+        };
+
         const minNote = count === 0 ? ' (min)' : '';
         const routeText = plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route';
         this.setTileStatus(
@@ -2837,6 +2851,7 @@ class LabyrinthClearRate {
         }
         const overlay = document.createElement('div');
         overlay.className = BEACON_OVERLAY_CLASS;
+        if (isCenter) overlay.dataset.beaconCenter = '1';
         overlay.style.cssText = isCenter
             ? 'position:absolute; inset:0; border:2px solid #26d0aa; border-radius:6px; ' +
               'pointer-events:none; z-index:8; box-sizing:border-box;'
@@ -2855,6 +2870,45 @@ class LabyrinthClearRate {
 
     clearBeaconOverlays() {
         document.querySelectorAll(`.${BEACON_OVERLAY_CLASS}`).forEach((el) => el.remove());
+        this._beaconPlanCells = null;
+    }
+
+    /**
+     * Remove beacon plan indicators once their rooms are revealed: coverage
+     * fills clear room by room, and a numbered center marker clears when every
+     * room it was planned to reveal is revealed — i.e. that beacon has been
+     * used (or made redundant by torches/other beacons).
+     */
+    pruneUsedBeaconOverlays() {
+        const state = this._beaconPlanCells;
+        if (!state || !this.roomData) return;
+        const flat = this.roomData.flat();
+        if (!flat.length) return;
+        const cells = this.findRoomGridCells(flat.length);
+        if (cells.length !== flat.length) return;
+
+        const isRevealed = (i) => {
+            const room = flat[i];
+            return !!room && (String(room.roomType || '') !== '' || !!room.isCleared);
+        };
+
+        state.fills = state.fills.filter((i) => {
+            if (!isRevealed(i)) return true;
+            cells[i]
+                ?.querySelectorAll(`.${BEACON_OVERLAY_CLASS}:not([data-beacon-center])`)
+                .forEach((el) => el.remove());
+            return false;
+        });
+        state.centers = state.centers.filter((center) => {
+            if (center.watch.length > 0 && !center.watch.every(isRevealed)) return true;
+            cells[center.idx]
+                ?.querySelectorAll(`.${BEACON_OVERLAY_CLASS}[data-beacon-center]`)
+                .forEach((el) => el.remove());
+            return false;
+        });
+        if (!state.fills.length && !state.centers.length) {
+            this._beaconPlanCells = null;
+        }
     }
 
     /**
