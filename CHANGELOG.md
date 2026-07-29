@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Reroll stepper discard fixed
+
+- The trash can is an icon-only red button with no "trash" hint in its markup, so the discard step never found it. It's now located as the card's icon-only danger button (with icon-only and trash-hint fallbacks), and the confirmation click ("Confirm Discard") is scoped to the card with a retry while the view switches. MooPass Free Rerolls were already preferred over paid ones whenever a card offers them.
+
 ### Reroll stepper: one click per action; clickable names in announcements
 
 - **The Reroll Tasks button is now a stepper** honoring the game's one-click-per-server-action rule: each click performs exactly one reroll (or one discard) on the first task that needs it, and the label previews what the next click will do — `🎲 Reroll 20K💰 (3)`, `🗑 Discard Task (1)`, or `✓ Tasks settled`. Menu-opening and confirm clicks stay UI-only; exactly one action reaches the server per click.
