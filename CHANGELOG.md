@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Merged upstream (Celasha/Toolasha) commits since the fork
+
+- **Guild Overview idle members list** (new setting `guildIdleDisplay`, on by default): shows guild members currently not performing any action.
+- **Seek zone drop lookup includes boss spawns**, so items dropped only by zone bosses resolve correctly.
+- **Task card min-height style is removed when the reroll tracker is disabled** instead of lingering.
+
 ### Bulk Sell off by default, native tab styling
 
 - The **Bulk Sell Assistant setting now defaults to off** — enable it in Settings → Market to get the button back.
