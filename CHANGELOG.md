@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth beacon planner
+
+- New **Beacons** button (with a count input) in the tile controls bar plans optimal beacon placements: the fewest beacons — or exactly the amount you set (0 = minimum) — whose 13-room reveal diamonds chain into a walkable revealed corridor from the entrance to the floor exit, chosen to reveal as many new rooms as possible (beam search over minimal chains; extra beacons go wherever they add the most coverage).
+- Already-revealed rooms count toward the corridor, so mid-run plans build on what's uncovered; if a revealed path already exists it says so, and if the requested count can't cover a path it reports the minimum needed.
+- The plan renders as teal fills over every newly revealed room with outlined, numbered beacon centers (B1, B2, …); the status line reports beacons used and rooms revealed. Overlays clear on floor change.
+
 ### Labyrinth math aligned with the official formulas
 
 - **Skilling success rate floors at 5%**: the game computes `MAX(5%, 0.80 × (1 + LevelBonus + Buffs))`, but every clear-chance calculation clamped at 0% instead — deep-underleveled rooms showed lower clear odds (and skip recommendations) than reality. All eight success-rate sites (tiles, what-ifs, editor-based analysis, enhancing) now use the 5% floor.

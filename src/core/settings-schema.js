@@ -1590,6 +1590,16 @@ export const settingsGroups = {
                 ],
                 help: 'How the labyrinth path planner costs rooms whose contents are not revealed yet',
             },
+            labyrinthBeaconCount: {
+                id: 'labyrinthBeaconCount',
+                label: 'Labyrinth: Beacon plan count',
+                type: 'number',
+                default: 0,
+                min: 0,
+                max: 20,
+                step: 1,
+                help: 'Beacons the beacon planner places — 0 uses the fewest that cover a revealed path to the floor exit',
+            },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
                 label: 'Labyrinth: Autofill skip Edit input',

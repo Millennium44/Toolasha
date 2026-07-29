@@ -20,7 +20,11 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runLabyrinthSimulation: vi.fn() }));
 vi.mock('./loadout-snapshot.js', () => ({ default: {} }));
 
-const { default: labyrinthClearRate, computeLabyrinthPath } = await import('./labyrinth-clear-rate.js');
+const {
+    default: labyrinthClearRate,
+    computeLabyrinthPath,
+    computeBeaconPlan,
+} = await import('./labyrinth-clear-rate.js');
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -241,5 +245,60 @@ describe('computeLabyrinthPath', () => {
     test('returns null when no start or exit exists', () => {
         expect(computeLabyrinthPath(grid(['..F']).tiles, 3)).toBeNull();
         expect(computeLabyrinthPath(grid(['S..']).tiles, 3)).toBeNull();
+    });
+});
+
+describe('computeBeaconPlan', () => {
+    const manhattan = (a, b, cols) =>
+        Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+
+    test('chains the minimum beacons from entrance to exit on a dark floor', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true; // entrance
+        const plan = computeBeaconPlan(revealed, cols, 0);
+
+        expect(plan.feasible).toBe(true);
+        expect(plan.minNeeded).toBe(2);
+        expect(plan.beacons).toHaveLength(2);
+        // First beacon reaches the entrance region, last reaches the exit,
+        // consecutive reveal areas connect
+        expect(manhattan(0, plan.beacons[0], cols)).toBeLessThanOrEqual(3);
+        expect(manhattan(24, plan.beacons[1], cols)).toBeLessThanOrEqual(3);
+        expect(manhattan(plan.beacons[0], plan.beacons[1], cols)).toBeLessThanOrEqual(5);
+        expect(plan.revealedNew).toBeGreaterThan(0);
+    });
+
+    test('needs no beacons when a revealed corridor already exists', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        for (const idx of [0, 1, 2, 3, 4, 9, 14, 19, 24]) revealed[idx] = true;
+        const plan = computeBeaconPlan(revealed, cols, 0);
+
+        expect(plan.feasible).toBe(true);
+        expect(plan.minNeeded).toBe(0);
+        expect(plan.beacons).toHaveLength(0);
+    });
+
+    test('reports infeasible when the configured count is below the minimum', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true;
+        const plan = computeBeaconPlan(revealed, cols, 1);
+
+        expect(plan.feasible).toBe(false);
+        expect(plan.minNeeded).toBe(2);
+    });
+
+    test('spends extra beacons on additional coverage', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true;
+        const minimal = computeBeaconPlan(revealed, cols, 0);
+        const extra = computeBeaconPlan(revealed, cols, 3);
+
+        expect(extra.feasible).toBe(true);
+        expect(extra.beacons).toHaveLength(3);
+        expect(extra.revealedNew).toBeGreaterThan(minimal.revealedNew);
     });
 });
