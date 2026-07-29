@@ -2255,20 +2255,23 @@ class LabyrinthClearRate {
             // grid always starts top-left and exits bottom-right, and
             // unrevealed rooms carry an empty roomType — the exit/treasure
             // types only appear once a room is revealed.
+            // Every cell is a room — the labyrinth has no walls. Unrevealed
+            // rooms appear as null entries (or empty-typed rooms) in roomData
+            // because the server hides their contents, so they are passable
+            // unknowns, never obstacles.
             const tiles = new Array(flat.length).fill(null);
             const combatToSim = [];
             for (let i = 0; i < flat.length; i++) {
                 const room = flat[i];
-                if (!room) continue;
-                const type = String(room.roomType || '');
+                const type = String(room?.roomType || '');
                 const tile = {
                     index: i,
                     room,
-                    cleared: !!room.isCleared,
+                    cleared: !!room?.isCleared,
                     isEntrance: i === 0 || /\/(entrance|start)$/.test(type),
                     isTreasure: type.endsWith('/treasure'),
                     isExit: i === flat.length - 1 || /\/(descend|exit|finish|flag|victory)$/.test(type),
-                    isUnknown: !type && !room.skillHrid && !room.monsterHrid && !room.isCleared,
+                    isUnknown: !room || (!type && !room.skillHrid && !room.monsterHrid && !room.isCleared),
                     clearChance: 1,
                     needsShroud: false,
                 };
