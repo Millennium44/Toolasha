@@ -164,10 +164,16 @@ export async function handleViewCardFromSnapshot(snapshotName) {
             };
         }
 
-        // Build ability level lookup from current character data (levels are character-scoped, not loadout-scoped)
+        // Build ability level lookup from current character data (levels are
+        // character-scoped, not loadout-scoped). characterAbilities holds every
+        // learned ability; combatUnit.combatAbilities only the equipped ones —
+        // using only the latter showed level 1 for any unequipped ability
         const abilityLevelMap = {};
-        for (const ab of characterData.combatUnit?.combatAbilities || []) {
+        for (const ab of characterData.characterAbilities || []) {
             if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
+        }
+        for (const ab of characterData.combatUnit?.combatAbilities || []) {
+            if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || abilityLevelMap[ab.abilityHrid] || 1;
         }
 
         // Map snapshot abilities to the format buildSegmentsFromCharacterData expects

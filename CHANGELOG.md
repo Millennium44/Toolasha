@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Loadout character cards keep your name, outfit, and real ability levels
+
+- **Name and avatar/outfit fixed**: the sheet builder only knew where profile-share data keeps the character identity (`sharableCharacter`); your own character data nests it under `character`, so loadout cards rendered as a default "Player" with the default avatar. The builder now checks both.
+- **Ability levels fixed**: loadout cards looked levels up in the _currently equipped_ ability list, so any loadout ability you don't have equipped right now (e.g. Insanity) showed as Lv 1. Levels now come from the full learned-abilities list, with the equipped list as an overlay.
+
 ### Beacon planner prefers multiple independent routes
 
 - The planner now measures how many **vertex-disjoint routes** to the exit the revealed region offers (exact max-flow, so "2 routes" means no single blocked room can sever the way) and prefers placements with two independent routes: among equal-count minimum chains it picks redundant ones first, and extra beacons buy redundancy before raw coverage. The status line reports it (`… · 2 independent routes`).
