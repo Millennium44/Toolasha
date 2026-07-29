@@ -24,6 +24,7 @@ const {
     default: labyrinthClearRate,
     computeLabyrinthPath,
     computeBeaconPlan,
+    countDisjointRoutes,
 } = await import('./labyrinth-clear-rate.js');
 
 describe('normalizeChance', () => {
@@ -300,5 +301,39 @@ describe('computeBeaconPlan', () => {
         expect(extra.feasible).toBe(true);
         expect(extra.beacons).toHaveLength(3);
         expect(extra.revealedNew).toBeGreaterThan(minimal.revealedNew);
+    });
+});
+
+describe('countDisjointRoutes', () => {
+    test('a single-file corridor is one route', () => {
+        const cols = 5;
+        const passable = new Array(25).fill(false);
+        for (const idx of [0, 1, 2, 3, 4, 9, 14, 19, 24]) passable[idx] = true;
+        expect(countDisjointRoutes(passable, cols)).toBe(1);
+    });
+
+    test('a fully open grid gives two corner-limited routes', () => {
+        const passable = new Array(25).fill(true);
+        expect(countDisjointRoutes(passable, 5)).toBe(2);
+    });
+
+    test('no passable cells means no route', () => {
+        const passable = new Array(25).fill(false);
+        expect(countDisjointRoutes(passable, 5)).toBe(0);
+    });
+});
+
+describe('computeBeaconPlan route redundancy', () => {
+    test('reports the route count and prefers redundant coverage with extras', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true;
+        const minimal = computeBeaconPlan(revealed, cols, 0);
+        expect(minimal.routes).toBeGreaterThanOrEqual(1);
+
+        const extra = computeBeaconPlan(revealed, cols, 4);
+        expect(extra.feasible).toBe(true);
+        expect(extra.routes).toBeGreaterThanOrEqual(minimal.routes);
+        expect(extra.revealedNew).toBeGreaterThanOrEqual(minimal.revealedNew);
     });
 });

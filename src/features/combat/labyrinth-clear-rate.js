@@ -180,6 +180,79 @@ export function computeLabyrinthPath(tiles, cols) {
 }
 
 /**
+ * Count vertex-disjoint entrance→exit routes through passable cells — the
+ * number of independent paths that share no interior room (max-flow with
+ * unit vertex capacities; entrance and exit are uncapped endpoints). Two or
+ * more routes means no single blocked room can sever the way to the exit.
+ * @param {boolean[]} passable - Flat grid of walkable cells (entrance/exit
+ *   are treated as walkable regardless)
+ * @param {number} cols - Grid width
+ * @returns {number} Disjoint route count (capped at 4)
+ */
+export function countDisjointRoutes(passable, cols) {
+    const n = passable.length;
+    if (!n || !cols) return 0;
+    const walkable = (i) => i === 0 || i === n - 1 || !!passable[i];
+    const neighbors = (i) => {
+        const out = [];
+        if (i % cols > 0) out.push(i - 1);
+        if (i % cols < cols - 1) out.push(i + 1);
+        if (i - cols >= 0) out.push(i - cols);
+        if (i + cols < n) out.push(i + cols);
+        return out;
+    };
+
+    // Node splitting: cell i → in-node 2i, out-node 2i+1, capacity 1 through
+    // interior cells so routes can't share a room
+    const cap = new Map();
+    const addEdge = (a, b, c) => {
+        if (!cap.has(a)) cap.set(a, new Map());
+        if (!cap.has(b)) cap.set(b, new Map());
+        cap.get(a).set(b, (cap.get(a).get(b) || 0) + c);
+        if (!cap.get(b).has(a)) cap.get(b).set(a, 0);
+    };
+    for (let i = 0; i < n; i++) {
+        if (!walkable(i)) continue;
+        addEdge(2 * i, 2 * i + 1, i === 0 || i === n - 1 ? 99 : 1);
+        for (const nb of neighbors(i)) {
+            if (walkable(nb)) addEdge(2 * i + 1, 2 * nb, 99);
+        }
+    }
+
+    const source = 1; // entrance out-node
+    const sink = 2 * (n - 1); // exit in-node
+    let flow = 0;
+    while (flow < 4) {
+        const prev = new Map([[source, null]]);
+        const queue = [source];
+        let found = false;
+        while (queue.length && !found) {
+            const u = queue.shift();
+            for (const [v, residual] of cap.get(u) || []) {
+                if (residual > 0 && !prev.has(v)) {
+                    prev.set(v, u);
+                    if (v === sink) {
+                        found = true;
+                        break;
+                    }
+                    queue.push(v);
+                }
+            }
+        }
+        if (!found) break;
+        let v = sink;
+        while (prev.get(v) !== null) {
+            const u = prev.get(v);
+            cap.get(u).set(v, cap.get(u).get(v) - 1);
+            cap.get(v).set(u, (cap.get(v).get(u) || 0) + 1);
+            v = u;
+        }
+        flow++;
+    }
+    return flow;
+}
+
+/**
  * Plan beacon placements that reveal a walkable corridor from the entrance to
  * the floor exit while revealing as many new rooms as possible. Beacons reveal
  * a 13-room diamond (Manhattan radius 2). The corridor requirement: a path
@@ -187,16 +260,18 @@ export function computeLabyrinthPath(tiles, cols) {
  * revealed rooms count, so mid-run the plan builds on what's uncovered).
  *
  * Priorities: use the minimum number of beacons that can cover such a corridor
- * (chained so consecutive reveal areas connect), maximize newly revealed rooms
- * among those chains (beam search), then spend any extra requested beacons
- * greedily wherever they reveal the most.
+ * (chained so consecutive reveal areas connect), prefer placements whose
+ * revealed region offers two independent routes to the exit (no single blocked
+ * room can sever it), maximize newly revealed rooms among those (beam search),
+ * then spend any extra requested beacons where they add redundancy first and
+ * coverage second.
  *
  * Pure function so the planning logic is testable without DOM.
  * @param {boolean[]} revealed - Flat grid of already-revealed rooms
  * @param {number} cols - Grid width
  * @param {number} [beaconCount=0] - Total beacons to place; 0 = minimum needed
  * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
- *   revealedNew, minNeeded } or null on empty input
+ *   revealedNew, minNeeded, routes } or null on empty input
  */
 export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
     const n = revealed.length;
@@ -256,7 +331,14 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         }
     }
     if (connected) {
-        return { feasible: true, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: 0 };
+        return {
+            feasible: true,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded: 0,
+            routes: countDisjointRoutes(revealed, cols),
+        };
     }
 
     // A beacon "touches" a region when its reveal area contains a cell in the
@@ -308,12 +390,20 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         }
     }
     if (!Number.isFinite(minNeeded)) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: Infinity };
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: Infinity, routes: 0 };
     }
     if (beaconCount > 0 && beaconCount < minNeeded) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded };
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
     }
     const targetCount = beaconCount > 0 ? beaconCount : minNeeded;
+
+    // Walkability including a candidate coverage union, for route counting
+    const passableWith = (union) => {
+        const passable = new Array(n);
+        for (let i = 0; i < n; i++) passable[i] = revealed[i] || union.has(i);
+        return passable;
+    };
+    const routesWith = (union) => Math.min(2, countDisjointRoutes(passableWith(union), cols));
 
     // Beam search over minimum-length chains, maximizing newly revealed rooms
     const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
@@ -342,30 +432,47 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
     states = states.filter((s) => distToEnd[s.chain[s.chain.length - 1]] === 0);
     states.sort((a, b) => b.union.size - a.union.size);
     if (!states.length) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded };
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
     }
-    const best = states[0];
 
-    // Extra beacons beyond the corridor go wherever they reveal the most
+    // Among the best chains, prefer ones whose revealed region already offers
+    // two independent routes to the exit, then the most coverage
+    const finalists = states.slice(0, 40).map((s) => ({ ...s, routes: routesWith(s.union) }));
+    finalists.sort((a, b) => b.routes - a.routes || b.union.size - a.union.size);
+    const best = finalists[0];
+
+    // Extra beacons: add redundancy first (up to two independent routes),
+    // then coverage
     const beacons = [...best.chain];
     const covered = new Set(best.union);
+    let routes = best.routes;
     while (beacons.length < targetCount) {
         let bestCenter = -1;
+        let bestRoutes = routes;
         let bestGain = 0;
         for (let c = 0; c < n; c++) {
             if (beacons.includes(c)) continue;
             const gain = newCells(c, covered).length;
-            if (gain > bestGain) {
+            if (gain === 0 && routes >= 2) continue;
+            let candidateRoutes = routes;
+            if (routes < 2 && gain > 0) {
+                const union = new Set(covered);
+                for (const g of newCells(c, covered)) union.add(g);
+                candidateRoutes = routesWith(union);
+            }
+            if (candidateRoutes > bestRoutes || (candidateRoutes === bestRoutes && gain > bestGain)) {
+                bestRoutes = candidateRoutes;
                 bestGain = gain;
                 bestCenter = c;
             }
         }
-        if (bestCenter < 0) break;
+        if (bestCenter < 0 || bestGain === 0) break;
         beacons.push(bestCenter);
         for (const gained of newCells(bestCenter, covered)) covered.add(gained);
+        routes = routes >= 2 ? routes : routesWith(covered);
     }
 
-    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded };
+    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded, routes };
 }
 
 class LabyrinthClearRate {
@@ -2699,7 +2806,8 @@ class LabyrinthClearRate {
             return;
         }
         if (plan.minNeeded === 0) {
-            this.setTileStatus('Path to the exit is already revealed — no beacons needed');
+            const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
+            this.setTileStatus(`Path to the exit is already revealed — no beacons needed${routeNote}`);
             return;
         }
 
@@ -2713,8 +2821,9 @@ class LabyrinthClearRate {
         });
 
         const minNote = count === 0 ? ' (min)' : '';
+        const routeText = plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route';
         this.setTileStatus(
-            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · path covered`
+            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · ${routeText}`
         );
     }
 
