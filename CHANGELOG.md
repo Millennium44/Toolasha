@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Guild idle list no longer flags every online member
+
+- The upstream idle-members feature treated `inactiveTime` as "set = idle", but the game sends Go's zero time (`0001-01-01T00:00:00Z`) — a truthy string — for members who are **not** idle, so every online member landed in the list. The timestamp is now normalized at ingestion (zero time → null), fixing the idle list and any other consumer of the field.
+
 ### Vendor check compares against the path actually taken; button placement
 
 - **Vendor now wins over forced insta-sells**: the vendor comparison used the ask price, but a stack under the minimum listing value takes the insta path and only nets the bid — so e.g. Red Tea Leaf (bid 48 → 47 net vs vendor 48) wrongly insta-sold. The check now predicts the path (below the listing minimum → bid; otherwise → ask) and compares vendor against that.
