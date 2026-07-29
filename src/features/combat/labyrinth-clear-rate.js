@@ -2251,8 +2251,10 @@ class LabyrinthClearRate {
         try {
             // Classify every room and gather clear chances (treasure, the exit,
             // and the entrance are freely enterable; combat needs sims, cached
-            // when possible). The final floor's flag room may use a different
-            // type than /descend, so match any exit-like room type.
+            // when possible). Position is the reliable structural signal: the
+            // grid always starts top-left and exits bottom-right, and
+            // unrevealed rooms carry an empty roomType — the exit/treasure
+            // types only appear once a room is revealed.
             const tiles = new Array(flat.length).fill(null);
             const combatToSim = [];
             for (let i = 0; i < flat.length; i++) {
@@ -2263,14 +2265,15 @@ class LabyrinthClearRate {
                     index: i,
                     room,
                     cleared: !!room.isCleared,
-                    isEntrance: /\/(entrance|start)$/.test(type),
+                    isEntrance: i === 0 || /\/(entrance|start)$/.test(type),
                     isTreasure: type.endsWith('/treasure'),
-                    isExit: /\/(descend|exit|finish|flag|victory)$/.test(type),
+                    isExit: i === flat.length - 1 || /\/(descend|exit|finish|flag|victory)$/.test(type),
+                    isUnknown: !type && !room.skillHrid && !room.monsterHrid && !room.isCleared,
                     clearChance: 1,
                     needsShroud: false,
                 };
                 tiles[i] = tile;
-                if (tile.cleared || tile.isEntrance || tile.isTreasure || tile.isExit) continue;
+                if (tile.cleared || tile.isEntrance || tile.isTreasure || tile.isExit || tile.isUnknown) continue;
 
                 const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
                 if (room.skillHrid && roomLevel > 0) {
@@ -2296,23 +2299,13 @@ class LabyrinthClearRate {
                 }
             }
 
-            if (!tiles.some((t) => t?.isExit)) {
-                const seenTypes = [...new Set(flat.filter(Boolean).map((r) => String(r.roomType || '')))];
-                console.warn('[LabyrinthClearRate] No exit-like room type found. Types on this floor:', seenTypes);
-                this.setTileStatus('No floor exit found in room data');
-                return;
-            }
-            if (!tiles.some((t) => t?.cleared || t?.isEntrance)) {
-                this.setTileStatus('No cleared room or entrance to path from');
-                return;
-            }
-
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
                 this.setTileStatus('No route to the floor exit');
                 return;
             }
 
+            let unknownCount = 0;
             for (const idx of path.route) {
                 const tile = tiles[idx];
                 const cell = cells[idx];
@@ -2327,15 +2320,21 @@ class LabyrinthClearRate {
                 } else if (tile.needsShroud) {
                     color = '#ff5252';
                     label = 'Shroud';
+                } else if (tile.isUnknown) {
+                    // Unrevealed room — routed as clearable; reveal to verify
+                    color = '#8fb4d8';
+                    label = '?';
                 } else {
                     color = '#57d08a';
                 }
+                if (tile.isUnknown && !tile.isExit) unknownCount++;
                 this.appendPathOverlay(cell, color, label);
             }
 
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+            const unknownText = unknownCount ? ` · ${plural(unknownCount, 'unrevealed room')}` : '';
             this.setTileStatus(
-                `Path: ${plural(path.torches, 'room')} · ${plural(path.shrouds, 'shroud')} · ${plural(path.chests.size, 'chest')}`
+                `Path: ${plural(path.torches, 'room')} · ${plural(path.shrouds, 'shroud')} · ${plural(path.chests.size, 'chest')}${unknownText}`
             );
         } catch (error) {
             console.error('[LabyrinthClearRate] Path calculation failed:', error);

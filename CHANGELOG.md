@@ -15,7 +15,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - New **Path** button in the labyrinth tile controls bar computes and highlights the best route from your cleared rooms (or the entrance on a fresh floor) to the floor exit, using the same per-tile clear chances as the badges (combat tiles sim on demand, cached).
 - **Priorities are lexicographic**: fewest **shrouds** first (a shroud instantly clears a room, spent on any tile whose clear chance is below the threshold), then most treasure rooms — every chest reachable without spending an extra shroud is grafted onto the route, even at extra torch cost — then fewest torches (uncleared rooms revealed).
 - **"Clear ≥" threshold input** next to the button sets what counts as clearable (persisted as its own setting, default 70%, fully separate from the skip recommendation target).
-- Route tiles get colored outlines: green = clearable, red "Shroud" tag = instant-clear needed, gold = treasure, purple ⚑ = floor exit; the status line summarizes rooms/shrouds/chests. Overlays clear on floor change. The exit matches any exit-like room type (descend/exit/finish/flag), so the final floor's flag room routes too.
+- Route tiles get colored outlines: green = clearable, red "Shroud" tag = instant-clear needed, gold = treasure, blue "?" = unrevealed (routed as clearable — reveal to verify), purple ⚑ = floor exit; the status line summarizes rooms/shrouds/chests and flags unrevealed rooms on the route. Overlays clear on floor change.
+- **Position anchors the route**: the labyrinth always starts top-left and exits bottom-right, and unrevealed rooms carry an empty room type (the exit/treasure types only appear once revealed) — so the planner keys the entrance and exit off grid position instead of room types and works on fully unrevealed floors.
+- The vendored mathjs bundle no longer points at a missing `math.js.map`, silencing the source map fetch error in the console.
 
 ### Labyrinth sims stop killing each other — recommendations finally survive lab runs
 

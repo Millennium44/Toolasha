@@ -46,7 +46,9 @@ function injectMathJS(headerContent) {
                 return stripped;
             };
 
-            const mathjsUnwrapped = stripIIFE(mathjs);
+            // Drop the sourcemap pointer — math.js.map isn't packaged, so the
+            // browser logs a fetch error for it on every load
+            const mathjsUnwrapped = stripIIFE(mathjs).replace(/^\/\/# sourceMappingURL=.*$/m, '');
 
             // Build complete file: header + mathjs + our code
             return `${headerContent}
