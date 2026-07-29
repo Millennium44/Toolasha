@@ -117,7 +117,19 @@ class BulkSellAssistant {
      * part of the game's tab bar.
      */
     _ensureButton(tabBar) {
-        if (this.toggleBtn && tabBar.contains(this.toggleBtn)) return;
+        if (this.toggleBtn && tabBar.contains(this.toggleBtn)) {
+            // The Market History tab is injected by its own feature and can
+            // land after us — keep our button on its right
+            const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
+            if (
+                historyTab &&
+                historyTab.nextElementSibling !== this.toggleBtn &&
+                historyTab.compareDocumentPosition(this.toggleBtn) & Node.DOCUMENT_POSITION_PRECEDING
+            ) {
+                historyTab.after(this.toggleBtn);
+            }
+            return;
+        }
         if (this.toggleBtn) this.toggleBtn.remove();
 
         const referenceTab = Array.from(tabBar.children).find((btn) => btn.textContent.includes('My Listings'));
@@ -450,9 +462,21 @@ class BulkSellAssistant {
         const vendorPrice = dataManager.getInitClientData()?.itemDetailMap?.[this.current.itemHrid]?.sellPrice || 0;
         if (vendorPrice <= 0) return false;
         const cached = marketAPI.getPrice(this.current.itemHrid, 0);
-        const marketPrice = cached?.ask ?? cached?.bid ?? 0;
-        if (marketPrice <= 0) return false;
-        const marketNet = Math.floor(marketPrice * 0.98);
+        const ask = cached?.ask ?? null;
+        const bid = cached?.bid ?? null;
+        if (ask === null && bid === null) return false;
+
+        // Vendor must beat the market path the decision rules would actually
+        // take: below the minimum listing value the insta path is forced, so
+        // vendor competes with the bid; otherwise with the ask a listing
+        // would target
+        const rawMin = Number(config.getSettingValue('market_bulkSellMinListingValue', 1500000));
+        const minListingValue = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : 1500000;
+        const stackValue = this.current.count * (ask ?? bid);
+        const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
+        const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
+        if (referencePrice <= 0) return false;
+        const marketNet = Math.floor(referencePrice * 0.98);
         if (vendorPrice < marketNet) return false;
         return this._openVendorSell(vendorPrice, marketNet);
     }
