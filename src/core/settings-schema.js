@@ -1053,6 +1053,22 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a "Refresh Next" button next to the Market History tab that cycles through your listings, navigating to each item\'s order book one at a time',
             },
+            market_bulkSellAssistant: {
+                id: 'market_bulkSellAssistant',
+                label: 'Market: Bulk Sell Assistant',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Bulk Sell button to the marketplace that queues every tradable inventory item and opens a prefilled sell modal for each — one confirm click per item, always in the same place. Insta-sells when sell orders outnumber buy orders or the ask queue is older than the configured limit; otherwise posts a sell listing.',
+            },
+            market_bulkSellQueueDays: {
+                id: 'market_bulkSellQueueDays',
+                label: 'Market: Bulk sell insta-sell queue age (days)',
+                type: 'number',
+                default: 2,
+                min: 0,
+                max: 30,
+                help: 'If the oldest sell listing on an item has been waiting longer than this many days, the Bulk Sell Assistant insta-sells to the best bid instead of joining the queue. Default: 2.',
+            },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
                 label: 'Market: Show personal trade history',

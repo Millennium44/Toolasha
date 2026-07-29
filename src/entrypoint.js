@@ -135,6 +135,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'bulkSellAssistant',
+            name: 'Bulk Sell Assistant',
+            category: 'Market',
+            module: Market.bulkSellAssistant,
+            async: false,
+        },
+        {
             key: 'philoCalculator',
             name: 'Philo Calculator',
             category: 'Market',
