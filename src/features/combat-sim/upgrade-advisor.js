@@ -703,7 +703,8 @@ export function generateCandidates(
     abilityTargetLevel = 0,
     abilityLevelType = 'increment',
     skipBackSlot = false,
-    combatLevelTargets = null
+    combatLevelTargets = null,
+    abilityTargets = null
 ) {
     const candidates = [];
 
@@ -962,6 +963,10 @@ export function generateCandidates(
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
+        const abilityTargetsMap =
+            abilityTargets && typeof abilityTargets === 'object' && Object.keys(abilityTargets).length > 0
+                ? abilityTargets
+                : null;
 
         for (let slotIdx = 0; slotIdx < playerDTO.abilities.length; slotIdx++) {
             const ability = playerDTO.abilities[slotIdx];
@@ -972,9 +977,13 @@ export function generateCandidates(
             const abilityName = abilityDetail.name || ability.hrid.split('/').pop();
 
             if (mode === 'ability_level') {
-                // Level upgrade candidate
+                // Level upgrade candidate. Per-ability targets (when set)
+                // replace the uniform increment/target — abilities without an
+                // entry or at/below their current level are skipped
                 let targetLevel;
-                if (abilityLevelType === 'target') {
+                if (abilityTargetsMap) {
+                    targetLevel = Math.floor(abilityTargetsMap[ability.hrid] || 0);
+                } else if (abilityLevelType === 'target') {
                     targetLevel =
                         abilityTargetLevel > ability.level
                             ? abilityTargetLevel
@@ -1243,6 +1252,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityTargetLevel,
         skipBackSlot,
         combatLevelTargets,
+        abilityTargets,
         charmTier,
     } = params;
     const { abortSignal } = options;
@@ -1263,7 +1273,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             abilityTargetLevel,
             abilityLevelType,
             skipBackSlot,
-            combatLevelTargets
+            combatLevelTargets,
+            abilityTargets
         )
     );
     const candidatesWithCost = candidates.map((c) => ({
@@ -1720,6 +1731,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         abilityTargetLevel,
         skipBackSlot,
         combatLevelTargets,
+        abilityTargets,
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1740,7 +1752,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             abilityTargetLevel,
             abilityLevelType,
             skipBackSlot,
-            combatLevelTargets
+            combatLevelTargets,
+            abilityTargets
         )
     );
     const candidatesWithCost = candidates.map((c) => ({

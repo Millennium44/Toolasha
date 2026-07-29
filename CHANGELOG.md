@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Per-ability targets, skilling tab scroll fix, analyzer tooltip
+
+- **Ability Levels gets a Targets grid** in both Combat Sim and Lab Sim (also active in Equipment + Abilities mode), mirroring the Combat Levels one: a Targets button opens a per-ability grid built from the player's equipped abilities, prefilled with current level + the +Levels boost. While open, targets replace the uniform boost; blank or ≤-current entries skip that ability.
+- **Player Setup no longer gets cut off**: the Lab Sim Skilling tab now scrolls as one page instead of clipping expanded sections inside tiny fixed-height scroll areas.
+- **Analyze Upgrades explains itself**: hovering the button describes the tick-up behavior — each equipment piece sims at its next enhancement breakpoint, and when that doesn't move the clear rate the target keeps rising one level at a time until it has a positive impact.
+
 ### Loadout character cards keep your name, outfit, and real ability levels
 
 - **Name and avatar/outfit fixed**: the sheet builder only knew where profile-share data keeps the character identity (`sharableCharacter`); your own character data nests it under `character`, so loadout cards rendered as a default "Player" with the default avatar. The builder now checks both.

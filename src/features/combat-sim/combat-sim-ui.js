@@ -438,6 +438,9 @@ class CombatSimUI {
                     width:55px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                     border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
                     title="Number of levels to add to each ability">
+                <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="
+                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
+                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
             </span>
             <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Charm</label>
@@ -504,6 +507,14 @@ class CombatSimUI {
                 )
                 .join('');
 
+        // Per-ability target levels for Ability Levels / combined modes
+        // (hidden until toggled; inputs built from the player's equipped
+        // abilities when opened)
+        const abilityTargetsGrid = document.createElement('div');
+        abilityTargetsGrid.id = 'mwi-csim-ability-targets';
+        abilityTargetsGrid.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-csim-upgrade-progress';
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
@@ -522,6 +533,7 @@ class CombatSimUI {
 
         upgradeContent.appendChild(upgradeControls);
         upgradeContent.appendChild(combatTargets);
+        upgradeContent.appendChild(abilityTargetsGrid);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -609,8 +621,22 @@ class CombatSimUI {
             } else {
                 levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
             }
+            // Per-ability targets only apply to ability-level candidates
+            const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
+            if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
+            if (!isLevelMode) {
+                this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
+            }
             if (isLevelMode) {
                 this._setDefaultAbilityTargetLevel();
+            }
+        });
+        this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-csim-ability-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) {
+                this._prefillAbilityTargets(grid, '#mwi-csim-upgrade-player', '#mwi-csim-upgrade-target-level');
             }
         });
         this.panel.querySelector('#mwi-csim-combat-targets-toggle').addEventListener('click', () => {
@@ -3201,6 +3227,60 @@ class CombatSimUI {
         return Object.keys(targets).length > 0 ? targets : null;
     }
 
+    /**
+     * Rebuild and prefill the per-ability target inputs from the selected
+     * player's equipped abilities (current level + the +Levels boost).
+     * @private
+     */
+    _prefillAbilityTargets(grid, playerSelector, levelSelector) {
+        const playerIndex = parseInt(this.panel.querySelector(playerSelector)?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const abilities = (dto?.abilities || []).filter(Boolean);
+        const boost = parseInt(this.panel.querySelector(levelSelector)?.value) || 5;
+        const gameData = buildGameDataPayload();
+
+        if (!abilities.length) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
+            abilities
+                .map((ability) => {
+                    const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
+                    const target = Math.min(200, (ability.level || 1) + boost);
+                    return `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
+                    <input type="number" min="1" max="200" data-ability-target="${ability.hrid}" value="${target}" style="
+                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`;
+                })
+                .join('');
+    }
+
+    /**
+     * Read the per-ability target map when the grid is open.
+     * @private
+     * @returns {Object|null} {abilityHrid: targetLevel} or null when not in use
+     */
+    _getAbilityTargets(gridSelector) {
+        const grid = this.panel.querySelector(gridSelector);
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-ability-target]').forEach((input) => {
+            const value = parseInt(input.value);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.abilityTarget] = Math.min(200, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
+    }
+
     _setDefaultAbilityTargetLevel() {
         const typeSelect = this.panel.querySelector('#mwi-csim-upgrade-level-type');
         const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -3282,6 +3362,10 @@ class CombatSimUI {
         try {
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
             const combatLevelTargets = upgradeMode === 'combat_level' ? this._getCombatLevelTargets() : null;
+            const abilityTargets =
+                upgradeMode === 'ability_level' || upgradeMode === 'combined'
+                    ? this._getAbilityTargets('#mwi-csim-ability-targets')
+                    : null;
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -3295,6 +3379,7 @@ class CombatSimUI {
                     abilityTargetLevel,
                     skipBackSlot,
                     combatLevelTargets,
+                    abilityTargets,
                     charmTier,
                 },
                 ({ current, total, description }) => {
