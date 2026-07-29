@@ -16,13 +16,13 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import { loadConfig as loadTabConfig, findTab, collectTabItems } from '../inventory/custom-tabs/custom-tabs-data.js';
 import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 
-const PANEL_SEL = '[class*="MarketplacePanel_marketplacePanel"]';
 const CHIP_ID = 'mwi-bulk-sell-chip';
 const MS_PER_DAY = 86400000;
 
@@ -61,37 +61,54 @@ class BulkSellAssistant {
         );
 
         const ensureChip = () => {
-            const panel = document.querySelector(PANEL_SEL);
-            if (!panel) {
-                if (this.chip && document.body.contains(this.chip)) {
+            const tabBar = this._findMarketTabBar();
+            if (!tabBar) {
+                if (this.chip) {
                     this.chip.remove();
                     this.chip = null;
                 }
                 return;
             }
-            if (this.chip && !document.body.contains(this.chip)) this.chip = null;
+            if (this.chip && !tabBar.contains(this.chip)) {
+                this.chip.remove();
+                this.chip = null;
+            }
             if (this.chip) return;
-            this._buildChip();
+            this._buildChip(tabBar);
         };
         this.watcher = createMutationWatcher(document.body, ensureChip, { childList: true, subtree: true });
         ensureChip();
     }
 
     /**
-     * Fixed-position control so the click target never moves between
-     * marketplace subviews or items.
+     * The marketplace top tab bar (Market Listings / My Listings / …), which
+     * stays put across every subview — so the button never moves during a run.
      */
-    _buildChip() {
+    _findMarketTabBar() {
+        for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+            const hasMarketTabs = Array.from(tabBar.children).some((btn) =>
+                btn.textContent.includes('Market Listings')
+            );
+            if (hasMarketTabs) return tabBar;
+        }
+        return null;
+    }
+
+    /**
+     * Inline control living in the marketplace tab bar, next to the Market
+     * History tab when present.
+     */
+    _buildChip(tabBar) {
         const chip = document.createElement('div');
         chip.id = CHIP_ID;
         chip.style.cssText =
-            'position:fixed; top:70px; right:24px; z-index:9000; display:flex; align-items:center; gap:6px; ' +
-            'padding:5px 9px; border-radius:7px; background:rgba(12,16,30,0.94); border:1px solid rgba(74,158,255,0.45); ' +
-            'color:#e0e0e0; font-size:12px; font-family:inherit; box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
+            'display:inline-flex; align-items:center; gap:6px; align-self:center; margin:0 6px; padding:3px 8px; ' +
+            'border-radius:7px; background:rgba(12,16,30,0.6); border:1px solid rgba(74,158,255,0.45); ' +
+            'color:#e0e0e0; font-size:12px; font-family:inherit; user-select:none; white-space:nowrap;';
 
         const status = document.createElement('span');
         status.className = `${CHIP_ID}-status`;
-        status.style.cssText = 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        status.style.cssText = 'max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
@@ -124,7 +141,18 @@ class BulkSellAssistant {
         chip.appendChild(tabSel);
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
-        document.body.appendChild(chip);
+
+        const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
+        const firstCustomTab = Array.from(tabBar.children).find(
+            (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
+        );
+        if (historyTab) {
+            historyTab.after(chip);
+        } else if (firstCustomTab) {
+            firstCustomTab.before(chip);
+        } else {
+            tabBar.appendChild(chip);
+        }
         this.chip = chip;
         this._render();
         this._populateTabSelect();
@@ -187,7 +215,7 @@ class BulkSellAssistant {
             tabSel.style.display = this._hasTabs ? '' : 'none';
             mainBtn.textContent = '▶ Bulk Sell';
             mainBtn.title =
-                'Queue every tradable inventory item (or only the selected Toolasha tab). Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
+                'Queue every tradable inventory item (or only the selected Toolasha tab), most expensive first. Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
             stopBtn.style.display = 'none';
             return;
         }
@@ -256,14 +284,23 @@ class BulkSellAssistant {
             }
             return true;
         });
+        // Most expensive first, by cached market unit price (ask, else bid)
         this.queue = items
-            .map((item) => ({
-                itemHrid: item.itemHrid,
-                enhancementLevel: item.enhancementLevel || 0,
-                count: item.count,
-                name: clientData.itemDetailMap[item.itemHrid]?.name || item.itemHrid.split('/').pop(),
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name) || a.enhancementLevel - b.enhancementLevel);
+            .map((item) => {
+                const enhancementLevel = item.enhancementLevel || 0;
+                const price = marketAPI.getPrice(item.itemHrid, enhancementLevel);
+                return {
+                    itemHrid: item.itemHrid,
+                    enhancementLevel,
+                    count: item.count,
+                    name: clientData.itemDetailMap[item.itemHrid]?.name || item.itemHrid.split('/').pop(),
+                    unitPrice: price?.ask ?? price?.bid ?? 0,
+                };
+            })
+            .sort(
+                (a, b) =>
+                    b.unitPrice - a.unitPrice || a.name.localeCompare(b.name) || a.enhancementLevel - b.enhancementLevel
+            );
 
         if (!this.queue.length) {
             this.statusNote = tabItems ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';

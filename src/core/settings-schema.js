@@ -1058,7 +1058,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk Sell Assistant',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a Bulk Sell button to the marketplace that queues every tradable inventory item and opens a prefilled sell modal for each — one confirm click per item, always in the same place. Insta-sells when sell orders outnumber buy orders or the ask queue is older than the configured limit; otherwise posts a sell listing.',
+                help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that queues every tradable inventory item — most expensive first, optionally limited to one Toolasha inventory tab — and opens a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells when sell orders outnumber buy orders or the ask queue is older than the configured limit; otherwise posts a sell listing.',
             },
             market_bulkSellQueueDays: {
                 id: 'market_bulkSellQueueDays',

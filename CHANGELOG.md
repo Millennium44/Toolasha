@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell moves into the tab bar, sells most expensive first
+
+- The Bulk Sell controls now live in the marketplace tab bar right next to Market History (falling back to the end of the bar when the Market History viewer is off) instead of floating over the panel — same spot across every subview, so the flow stays one-click-per-item.
+- The queue is ordered by cached market unit price (ask, else bid) descending, so the most valuable items in the selection sell first; unpriced items go last, alphabetically.
+- Fixed a latent crash in the Refresh Next button's cleanup path (it called `.disconnect()` on a watcher that is a plain unwatch function).
+
 ### Bulk sell a single Toolasha inventory tab
 
 - The Bulk Sell chip gains a tab filter (shown whenever you have Toolasha custom inventory tabs): pick a tab and Start queues only the tradable items assigned to it — a parent tab includes its child tabs, and enhanced items match at their exact enhancement level, the same way tabs track them. "All items" keeps the original whole-inventory behavior. The list refreshes when you open the dropdown, so tabs edited mid-session show up.
