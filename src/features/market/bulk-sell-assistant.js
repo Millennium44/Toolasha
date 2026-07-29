@@ -2,7 +2,8 @@
  * Bulk Sell Assistant
  *
  * Sells the whole inventory through the market one item at a time with one
- * game action per click. Start builds a queue of tradable inventory items;
+ * game action per click. Start builds a queue of tradable inventory items —
+ * optionally limited to one Toolasha custom inventory tab (children included);
  * for each item it navigates to its order book, decides between insta-selling
  * (ask supply exceeds bid demand, or the front of the ask queue is older than
  * the configured threshold — the queue isn't moving) and posting a sell
@@ -15,10 +16,11 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { loadConfig as loadTabConfig, findTab, collectTabItems } from '../inventory/custom-tabs/custom-tabs-data.js';
+import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
-import marketplaceShortcuts from './marketplace-shortcuts.js';
 
 const PANEL_SEL = '[class*="MarketplacePanel_marketplacePanel"]';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -42,6 +44,8 @@ class BulkSellAssistant {
         this.bookTimeout = null;
         this.advanceTimeout = null;
         this.modalPoll = null;
+        this.selectedTabId = 'all';
+        this._hasTabs = false;
     }
 
     initialize() {
@@ -89,6 +93,17 @@ class BulkSellAssistant {
         status.className = `${CHIP_ID}-status`;
         status.style.cssText = 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
 
+        const tabSel = document.createElement('select');
+        tabSel.className = `${CHIP_ID}-tab`;
+        tabSel.title = 'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs)';
+        tabSel.style.cssText =
+            'display:none; border:1px solid rgba(74,158,255,0.35); border-radius:5px; background:rgba(20,26,44,0.95); ' +
+            'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';
+        tabSel.addEventListener('change', () => {
+            this.selectedTabId = tabSel.value;
+        });
+        tabSel.addEventListener('focus', () => this._populateTabSelect());
+
         const mainBtn = document.createElement('button');
         mainBtn.className = `${CHIP_ID}-main`;
         mainBtn.style.cssText =
@@ -106,16 +121,62 @@ class BulkSellAssistant {
         stopBtn.addEventListener('click', () => this._stop('Stopped'));
 
         chip.appendChild(status);
+        chip.appendChild(tabSel);
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
         document.body.appendChild(chip);
         this.chip = chip;
+        this._render();
+        this._populateTabSelect();
+    }
+
+    /**
+     * Fill the tab filter with the character's Toolasha inventory tabs.
+     * Hidden entirely when no custom tabs exist. Options refresh on focus so
+     * tab edits made mid-session show up; the rebuild is skipped when nothing
+     * changed to avoid closing an open dropdown.
+     */
+    async _populateTabSelect() {
+        const sel = this.chip?.querySelector(`.${CHIP_ID}-tab`);
+        if (!sel) return;
+        let tabs = [];
+        try {
+            const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
+            tabs = tabConfig.tabs || [];
+        } catch (error) {
+            console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
+        }
+
+        const options = [{ value: 'all', label: 'All items' }];
+        const walk = (nodes, depth) => {
+            for (const node of nodes) {
+                options.push({ value: node.id, label: `${'\u00A0\u00A0'.repeat(depth)}${node.name}` });
+                if (node.children?.length) walk(node.children, depth + 1);
+            }
+        };
+        walk(tabs, 0);
+
+        this._hasTabs = tabs.length > 0;
+        const signature = JSON.stringify(options);
+        if (sel.dataset.signature !== signature) {
+            sel.dataset.signature = signature;
+            sel.textContent = '';
+            for (const opt of options) {
+                const o = document.createElement('option');
+                o.value = opt.value;
+                o.textContent = opt.label;
+                sel.appendChild(o);
+            }
+        }
+        sel.value = options.some((o) => o.value === this.selectedTabId) ? this.selectedTabId : 'all';
+        this.selectedTabId = sel.value;
         this._render();
     }
 
     _render() {
         if (!this.chip) return;
         const status = this.chip.querySelector(`.${CHIP_ID}-status`);
+        const tabSel = this.chip.querySelector(`.${CHIP_ID}-tab`);
         const mainBtn = this.chip.querySelector(`.${CHIP_ID}-main`);
         const stopBtn = this.chip.querySelector(`.${CHIP_ID}-stop`);
         const progress = this.queue.length ? `${Math.min(this.index + 1, this.queue.length)}/${this.queue.length}` : '';
@@ -123,14 +184,16 @@ class BulkSellAssistant {
         if (this.state === 'idle' || this.state === 'done') {
             status.textContent = this.statusNote || 'Sell every tradable inventory item, one confirm per item';
             status.style.display = this.statusNote || this.state === 'done' ? '' : 'none';
+            tabSel.style.display = this._hasTabs ? '' : 'none';
             mainBtn.textContent = '▶ Bulk Sell';
             mainBtn.title =
-                'Queue every tradable inventory item. Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
+                'Queue every tradable inventory item (or only the selected Toolasha tab). Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
             stopBtn.style.display = 'none';
             return;
         }
 
         status.style.display = '';
+        tabSel.style.display = 'none';
         stopBtn.style.display = '';
         if (this.state === 'preparing') {
             status.textContent = `${progress} · checking ${this.current?.name || ''}${this.statusNote ? ` (${this.statusNote})` : ''}…`;
@@ -153,15 +216,46 @@ class BulkSellAssistant {
         }
     }
 
-    _start() {
+    async _start() {
+        // Resolve the tab filter first: a Toolasha inventory tab stores plain
+        // hrids for +0 items and "hrid+level" for enhanced ones
+        let tabItems = null;
+        let tabName = '';
+        if (this.selectedTabId && this.selectedTabId !== 'all') {
+            try {
+                const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
+                const found = findTab(tabConfig, this.selectedTabId);
+                if (!found) {
+                    this.statusNote = 'Selected tab no longer exists';
+                    this.state = 'idle';
+                    this._render();
+                    this._populateTabSelect();
+                    return;
+                }
+                tabItems = collectTabItems(found.tab);
+                tabName = found.tab.name;
+            } catch (error) {
+                console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
+                this.statusNote = 'Could not load tab config';
+                this.state = 'idle';
+                this._render();
+                return;
+            }
+        }
+
         const clientData = dataManager.getInitClientData();
-        const items = (dataManager.characterItems || []).filter(
-            (item) =>
-                item.itemLocationHrid === '/item_locations/inventory' &&
-                (item.count || 0) > 0 &&
-                item.itemHrid !== '/items/coin' &&
-                clientData?.itemDetailMap?.[item.itemHrid]?.isTradable
-        );
+        const items = (dataManager.characterItems || []).filter((item) => {
+            if (item.itemLocationHrid !== '/item_locations/inventory') return false;
+            if ((item.count || 0) <= 0) return false;
+            if (item.itemHrid === '/items/coin') return false;
+            if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
+            if (tabItems) {
+                const level = item.enhancementLevel || 0;
+                const key = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
+                if (!tabItems.has(key)) return false;
+            }
+            return true;
+        });
         this.queue = items
             .map((item) => ({
                 itemHrid: item.itemHrid,
@@ -172,7 +266,7 @@ class BulkSellAssistant {
             .sort((a, b) => a.name.localeCompare(b.name) || a.enhancementLevel - b.enhancementLevel);
 
         if (!this.queue.length) {
-            this.statusNote = 'No tradable items in inventory';
+            this.statusNote = tabItems ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';
             this.state = 'idle';
             this._render();
             return;
