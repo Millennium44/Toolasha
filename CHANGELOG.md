@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Solo/Zone estimate choice is remembered
+
+- The Solo/Zone toggle on task estimate cards is now a persisted preference: new cards start on your last-used mode instead of resetting to Solo, and **auto-estimates use it too** — previously the auto-estimate path always simmed Solo regardless of the toggle.
+
 ### Task estimates pick the zone your tasks share
 
 - Monsters that spawn in more than one zone (e.g. Boomy in both its dedicated action and Gobo Planet) now resolve to the zone covering the **most of your active Defeat tasks**, so all co-located task cards sim the same zone and show one consistent summary. With no overlapping tasks, the dedicated zone still wins — it's the faster farm for that monster alone.

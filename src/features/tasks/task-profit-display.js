@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
@@ -405,6 +406,7 @@ class TaskProfitDisplay {
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
         this._zoneSimCache = new Map(); // zoneHrid|loadout → {promise, t} shared full-zone sims
+        this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         this._simQueue = Promise.resolve();
     }
@@ -475,6 +477,10 @@ class TaskProfitDisplay {
         if (this.isInitialized) {
             return;
         }
+
+        // Restore the last-used Solo/Zone estimate mode (fire and forget —
+        // worst case an early card renders with the default before this lands)
+        this._loadEstimateMode();
 
         if (
             !config.getSetting('taskProfitCalculator') &&
@@ -847,7 +853,14 @@ class TaskProfitDisplay {
                     if (config.getSetting('combatSim_autoEstimate')) {
                         const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
                         this._simQueue = this._simQueue
-                            .then(() => this._runCombatSimEstimate(estimateContainer, taskData, defaultLoadout))
+                            .then(() =>
+                                this._runCombatSimEstimate(
+                                    estimateContainer,
+                                    taskData,
+                                    defaultLoadout,
+                                    this._estimateMode
+                                )
+                            )
                             .catch((error) => {
                                 // Keep the queue alive — an uncaught rejection would poison
                                 // every subsequent combat estimate
@@ -986,6 +999,19 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Restore the persisted Solo/Zone estimate mode preference.
+     * @private
+     */
+    async _loadEstimateMode() {
+        try {
+            const mode = await storage.get('taskEstimateMode', 'settings', 'solo');
+            if (mode === 'solo' || mode === 'zone') this._estimateMode = mode;
+        } catch (error) {
+            console.error('[TaskProfitDisplay] Failed to load estimate mode:', error);
+        }
+    }
+
+    /**
      * Count active "Defeat" tasks per monster from the task list DOM.
      * @returns {Map<string, number>} monsterHrid → number of tasks
      * @private
@@ -1073,8 +1099,8 @@ class TaskProfitDisplay {
             html += `<option value="${s.name}"${selected}>${s.name}</option>`;
         }
         html += '</select>';
-        html +=
-            '<button class="mwi-combat-est-mode" data-mode="solo" title="Solo: simulate only target monster. Zone: simulate full zone spawn table." style="font-size:11px; padding:2px 6px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; cursor:pointer;">Solo</button>';
+        const startZone = this._estimateMode === 'zone';
+        html += `<button class="mwi-combat-est-mode" data-mode="${startZone ? 'zone' : 'solo'}" title="Solo: simulate only target monster. Zone: simulate full zone spawn table." style="font-size:11px; padding:2px 6px; background:#1a1a1a; color:${startZone ? '#aaddff' : '#ccc'}; border:1px solid ${startZone ? '#4a9eff44' : '#444'}; border-radius:3px; cursor:pointer;">${startZone ? 'Zone' : 'Solo'}</button>`;
         html +=
             '<button class="mwi-combat-est-btn" style="font-size:11px; padding:2px 8px; background:#1a3a5c; color:#4a9eff; border:1px solid #4a9eff44; border-radius:3px; cursor:pointer;">⚔ Estimate</button>';
         html += '</div>';
@@ -1094,6 +1120,9 @@ class TaskProfitDisplay {
                 modeBtn.style.color = '#ccc';
                 modeBtn.style.borderColor = '#444';
             }
+            // Remember the choice for future cards and auto-estimates
+            this._estimateMode = modeBtn.dataset.mode;
+            storage.set('taskEstimateMode', this._estimateMode, 'settings');
         });
 
         container.querySelector('.mwi-combat-est-btn').addEventListener('click', () => {
