@@ -986,6 +986,70 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Count active "Defeat" tasks per monster from the task list DOM.
+     * @returns {Map<string, number>} monsterHrid → number of tasks
+     * @private
+     */
+    _getActiveDefeatMonsters() {
+        const map = new Map();
+        const taskListNode = document.querySelector(GAME.TASK_LIST);
+        const allTaskInfos = taskListNode ? taskListNode.querySelectorAll(GAME.TASK_INFO) : [];
+        for (const node of allTaskInfos) {
+            const td = this.parseTaskData(node);
+            if (!td) continue;
+            const m = td.description.match(/^Defeat\s*-\s*(.+)$/i);
+            if (!m) continue;
+            const hrid = dataManager.getMonsterHridFromName(m[1].trim());
+            if (!hrid) continue;
+            map.set(hrid, (map.get(hrid) || 0) + 1);
+        }
+        return map;
+    }
+
+    /**
+     * Pick the estimate zone for a monster. When it spawns in several zones
+     * (e.g. a dedicated boss action AND a planet), prefer the zone covering
+     * the most active Defeat tasks, so cards for co-located tasks agree on
+     * one farming spot. With no other tasks in play, the dedicated zone wins
+     * naturally by being the only candidate scoring its own task.
+     * @param {string} monsterHrid
+     * @returns {string|null} Zone action HRID
+     * @private
+     */
+    _pickZoneForMonster(monsterHrid) {
+        const actionMap = dataManager.getInitClientData()?.actionDetailMap;
+        if (!actionMap) return null;
+
+        const candidates = [];
+        for (const [zoneHrid, action] of Object.entries(actionMap)) {
+            if (action.type !== '/action_types/combat' || action.combatZoneInfo?.isDungeon) continue;
+            const spawns = action.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
+            const bosses = action.combatZoneInfo?.fightInfo?.bossSpawns || [];
+            const zoneMonsters = [...spawns, ...bosses].map((s) => s.combatMonsterHrid);
+            if (zoneMonsters.includes(monsterHrid)) {
+                candidates.push({ zoneHrid, zoneMonsters: new Set(zoneMonsters) });
+            }
+        }
+        if (candidates.length === 0) return null;
+        if (candidates.length === 1) return candidates[0].zoneHrid;
+
+        const taskMonsters = this._getActiveDefeatMonsters();
+        let best = candidates[0];
+        let bestScore = -1;
+        for (const c of candidates) {
+            let score = 0;
+            for (const [mHrid, count] of taskMonsters) {
+                if (c.zoneMonsters.has(mHrid)) score += count;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+        return best.zoneHrid;
+    }
+
+    /**
      * Render the pre-run config state for the combat task estimate.
      * Shows a loadout dropdown and an "Estimate" button.
      * @param {Element} container - Container element to render into
@@ -1077,7 +1141,7 @@ class TaskProfitDisplay {
             return;
         }
 
-        const zoneHrid = dataManager.getCombatZoneForMonster(monsterHrid);
+        const zoneHrid = this._pickZoneForMonster(monsterHrid) || dataManager.getCombatZoneForMonster(monsterHrid);
         if (!zoneHrid) {
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">No zone found for monster.</span>';
             return;
