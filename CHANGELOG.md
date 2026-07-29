@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell off by default, native tab styling
+
+- The **Bulk Sell Assistant setting now defaults to off** — enable it in Settings → Market to get the button back.
+- The Bulk Sell tab-bar button is now a **clone of a native tab** (same approach as the Market History tab) instead of a gradient chip, so it matches Market Listings / My Listings / Market History; while the panel is open the tab shows a blue underline.
+
 ### Userscript renamed to "Toolasha (Millennium44)"
 
 - The `@name` in the release entrypoint and the dev standalone headers now carries the fork owner, so the Greasy Fork listing and Tampermonkey entry are distinguishable from the upstream "Toolasha". Note: Tampermonkey treats the renamed script as new — remove/disable the old "Toolasha" entry after installing the renamed build so they don't both run.
