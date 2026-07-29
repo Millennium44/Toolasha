@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### All Fights analysis defaults to skip levels
+
+- "Combat Levels — All Fights" gains a **Use Skip Levels** checkbox (on by default): fights sim at their automation skip level (effective combat level + skip − 1) instead of the current run's live room levels, which mid-run could be far above the skip thresholds and drown the analysis in 0% fights. Uncheck it to analyze the active run's actual rooms.
+
 ### Beacon indicators clear themselves once used
 
 - Coverage fills disappear room by room as rooms get revealed, and a numbered center marker (B1, B2, …) disappears once every room that beacon was planned to reveal is revealed — whether by using the beacon or by torches/other beacons making it redundant. Markers on already-revealed rooms are safe: clearing is keyed to each beacon's planned reveals, not the room under the marker.

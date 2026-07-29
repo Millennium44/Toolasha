@@ -1446,8 +1446,20 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Compute target room level for a combat room.
-     * Uses the player's effective combat level as the base (same as the game).
+     * Room level a combat room would be fought at per the automation skip
+     * threshold (effective combat level + skip − 1), ignoring any live run.
+     */
+    getCombatSkipRoomLevel(monsterHrid) {
+        const skipThreshold = this.getCombatSkipThreshold(monsterHrid);
+        if (skipThreshold <= 0) return 0;
+
+        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
+        return Math.floor(effectiveCombatLevel + skipThreshold - 1);
+    }
+
+    /**
+     * Compute target room level for a combat room: the live room's level while
+     * a run is active, otherwise the skip-derived level.
      */
     getCombatRoomLevel(monsterHrid) {
         if (this.roomData) {
@@ -1457,11 +1469,7 @@ class LabyrinthClearRate {
             }
         }
 
-        const skipThreshold = this.getCombatSkipThreshold(monsterHrid);
-        if (skipThreshold <= 0) return 0;
-
-        const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
-        return Math.floor(effectiveCombatLevel + skipThreshold - 1);
+        return this.getCombatSkipRoomLevel(monsterHrid);
     }
 
     /**

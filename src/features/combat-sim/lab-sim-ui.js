@@ -337,6 +337,11 @@ class LabSimUI {
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
                 display:none; background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
                 padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
+            <label id="mwi-labsim-allfights-useskip-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                title="Sim each fight at its automation skip level (effective combat level + skip − 1) instead of the current run's live room levels">
+                <input type="checkbox" id="mwi-labsim-allfights-useskip" checked style="margin:0; cursor:pointer;">
+                Use Skip Levels
+            </label>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto;
                 background: ${ACCENT_BTN_BG};
@@ -672,6 +677,8 @@ class LabSimUI {
             if (!isLevelMode) {
                 this.panel.querySelector('#mwi-labsim-ability-targets').style.display = 'none';
             }
+            const useSkipLabel = this.panel.querySelector('#mwi-labsim-allfights-useskip-label');
+            if (useSkipLabel) useSkipLabel.style.display = e.target.value === 'combat_level_all' ? 'flex' : 'none';
         });
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
@@ -1175,7 +1182,8 @@ class LabSimUI {
 
         if (isAllFights) {
             try {
-                const fights = this._collectLabyrinthFights();
+                const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+                const fights = this._collectLabyrinthFights(useSkipLevels);
                 if (!fights.length) {
                     this._setStatus(
                         'No labyrinth fights found — set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
@@ -1360,16 +1368,20 @@ class LabSimUI {
 
     /**
      * Collect every labyrinth combat fight: each monster with a resolvable
-     * room level (live room while in a run, otherwise effective combat level +
-     * skip threshold − 1) paired with the player DTO wearing its assigned
-     * labyrinth loadout.
+     * room level paired with the player DTO wearing its assigned labyrinth
+     * loadout. Room levels come from the automation skip thresholds
+     * (effective combat level + skip − 1) unless useSkipLevels is false, in
+     * which case an active run's live room levels take precedence.
      * @private
+     * @param {boolean} [useSkipLevels=true]
      * @returns {Array<{monsterHrid: string, monsterName: string, roomLevel: number, dto: Object, loadoutName: string}>}
      */
-    _collectLabyrinthFights() {
+    _collectLabyrinthFights(useSkipLevels = true) {
         const fights = [];
         for (const monster of getLabyrinthMonsters()) {
-            const roomLevel = labyrinthClearRate.getCombatRoomLevel(monster.hrid);
+            const roomLevel = useSkipLevels
+                ? labyrinthClearRate.getCombatSkipRoomLevel(monster.hrid)
+                : labyrinthClearRate.getCombatRoomLevel(monster.hrid);
             if (!roomLevel) continue; // no skip threshold configured for this monster
             const loadoutId = labyrinthClearRate.getLabyrinthLoadoutId(monster.hrid);
             const dto = labyrinthClearRate.buildLabyrinthPlayerDTO(loadoutId);
