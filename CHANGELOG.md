@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Task estimates pick the zone your tasks share
+
+- Monsters that spawn in more than one zone (e.g. Boomy in both its dedicated action and Gobo Planet) now resolve to the zone covering the **most of your active Defeat tasks**, so all co-located task cards sim the same zone and show one consistent summary. With no overlapping tasks, the dedicated zone still wins — it's the faster farm for that monster alone.
+
 ### Zone summary: shared sims, summed duplicate tasks, zone-membership grouping
 
 - **All cards in a zone now agree**: full-zone sims are shared per zone+loadout (3-minute cache) instead of each card rolling its own RNG, so every Gobo Planet card reports the same fights/time.
