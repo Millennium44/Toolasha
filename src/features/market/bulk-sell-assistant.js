@@ -427,9 +427,34 @@ class BulkSellAssistant {
         this.state = 'preparing';
         this._render();
 
+        // Vendor check runs BEFORE any marketplace navigation: the item action
+        // menu must be the only thing touching the UI, or the navigation's
+        // trailing clicks/re-renders dismiss it right after it opens
+        if (this._tryVendorSell()) return;
+
         navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
         // No order book within the timeout → item isn't marketable right now
         this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
+    }
+
+    /**
+     * Vendor beats the market when its flat price matches or exceeds the
+     * cached market price net of the 2% tax (e.g. ask 49 → 48 net = 48
+     * vendor). Cached prices are plenty accurate for this comparison and let
+     * the decision happen without navigating the marketplace.
+     * @returns {boolean} True when the vendor flow was opened
+     */
+    _tryVendorSell() {
+        if (!config.getSetting('market_bulkSellVendorCheck')) return false;
+        if (this.current.enhancementLevel !== 0) return false;
+        const vendorPrice = dataManager.getInitClientData()?.itemDetailMap?.[this.current.itemHrid]?.sellPrice || 0;
+        if (vendorPrice <= 0) return false;
+        const cached = marketAPI.getPrice(this.current.itemHrid, 0);
+        const marketPrice = cached?.ask ?? cached?.bid ?? 0;
+        if (marketPrice <= 0) return false;
+        const marketNet = Math.floor(marketPrice * 0.98);
+        if (vendorPrice < marketNet) return false;
+        return this._openVendorSell(vendorPrice, marketNet);
     }
 
     _onOrderBook(data) {
@@ -491,21 +516,6 @@ class BulkSellAssistant {
         const insta = (supplyTriggered || ageTriggered || valueTriggered) && bids.length > 0;
         const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
 
-        // Vendor beats the market when its flat price matches or exceeds the
-        // market price net of the 2% tax (e.g. ask 49 → 48 net = 48 vendor)
-        if (config.getSetting('market_bulkSellVendorCheck') && this.current.enhancementLevel === 0) {
-            const vendorPrice = dataManager.getInitClientData()?.itemDetailMap?.[this.current.itemHrid]?.sellPrice || 0;
-            const marketNet = Math.floor(price * 0.98);
-            if (
-                vendorPrice > 0 &&
-                price > 0 &&
-                vendorPrice >= marketNet &&
-                this._openVendorSell(vendorPrice, marketNet)
-            ) {
-                return;
-            }
-        }
-
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
             ? supplyTriggered
@@ -556,11 +566,20 @@ class BulkSellAssistant {
             new MouseEvent('click', { bubbles: true, cancelable: true })
         );
 
-        setTimeout(() => {
+        // Wait for the menu, retrying once — clicking the tile again reopens
+        // it if something dismissed the first attempt
+        const awaitMenu = (attempt) => {
             if (this.state !== 'preparing') return;
             const menu = document.querySelector('[class*="Item_actionMenu"]');
             if (!menu) {
-                this._skip('item menu did not open');
+                if (attempt < 2) {
+                    (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
+                        new MouseEvent('click', { bubbles: true, cancelable: true })
+                    );
+                    setTimeout(() => awaitMenu(attempt + 1), 400);
+                } else {
+                    this._skip('item menu did not open');
+                }
                 return;
             }
             const allBtn = Array.from(menu.querySelectorAll('button')).find((b) => b.textContent.trim() === 'All');
@@ -574,7 +593,8 @@ class BulkSellAssistant {
             this.state = 'awaiting_confirm';
             this._render();
             this._watchClose('[class*="Item_actionMenu"]');
-        }, 350);
+        };
+        setTimeout(() => awaitMenu(1), 350);
         return true;
     }
 
