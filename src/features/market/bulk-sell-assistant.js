@@ -322,8 +322,9 @@ class BulkSellAssistant {
             mainBtn.title = 'Skip this item';
         } else if (this.state === 'awaiting_confirm') {
             const d = this.decision;
-            const verb = d?.insta ? 'Insta-sell' : 'List';
-            status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatKMB(d?.price || 0)} (${d?.reason}) — confirm in modal`;
+            const verb = d?.vendor ? 'Vendor-sell' : d?.insta ? 'Insta-sell' : 'List';
+            const confirmHint = d?.vendor ? 'click Sell For in the item menu' : 'confirm in modal';
+            status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatKMB(d?.price || 0)} (${d?.reason}) — ${confirmHint}`;
             mainBtn.textContent = '⏭ Skip';
             mainBtn.title = 'Close the modal and skip this item';
         }
@@ -489,6 +490,22 @@ class BulkSellAssistant {
         const valueTriggered = minListingValue > 0 && stackValue < minListingValue;
         const insta = (supplyTriggered || ageTriggered || valueTriggered) && bids.length > 0;
         const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
+
+        // Vendor beats the market when its flat price matches or exceeds the
+        // market price net of the 2% tax (e.g. ask 49 → 48 net = 48 vendor)
+        if (config.getSetting('market_bulkSellVendorCheck') && this.current.enhancementLevel === 0) {
+            const vendorPrice = dataManager.getInitClientData()?.itemDetailMap?.[this.current.itemHrid]?.sellPrice || 0;
+            const marketNet = Math.floor(price * 0.98);
+            if (
+                vendorPrice > 0 &&
+                price > 0 &&
+                vendorPrice >= marketNet &&
+                this._openVendorSell(vendorPrice, marketNet)
+            ) {
+                return;
+            }
+        }
+
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
             ? supplyTriggered
@@ -506,8 +523,59 @@ class BulkSellAssistant {
             if (this.state !== 'preparing') return;
             this.state = 'awaiting_confirm';
             this._render();
-            this._watchModalClose();
+            this._watchClose();
         }).catch(() => this._skip('sell button not found'));
+    }
+
+    /**
+     * Vendor path: open the item's inventory action menu, click "All" so the
+     * whole stack is entered, and wait for the user's click on the game's
+     * "Sell For … Coins" button (the one server action). Falls back to the
+     * normal market flow when the inventory tile or menu can't be found.
+     * @param {number} vendorPrice - Per-item vendor price
+     * @param {number} marketNet - Per-item market price net of the 2% tax
+     * @returns {boolean} Whether the vendor flow was opened
+     */
+    _openVendorSell(vendorPrice, marketNet) {
+        const iconName = this.current.itemHrid.split('/').pop();
+        const tiles = document.querySelectorAll('[class*="Inventory_items"] [class*="Item_itemContainer"]');
+        let tile = null;
+        for (const container of tiles) {
+            const href = container.querySelector('svg use')?.getAttribute('href') || '';
+            if (!href.endsWith(`#${iconName}`)) continue;
+            // Vendor path only runs for +0 items — skip enhanced variants
+            if (container.querySelector('[class*="Item_enhancementLevel"]')) continue;
+            tile = container;
+            break;
+        }
+        // Tile not visible (inventory panel closed / filtered) — let the
+        // caller fall back to the normal market flow
+        if (!tile) return false;
+
+        (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+
+        setTimeout(() => {
+            if (this.state !== 'preparing') return;
+            const menu = document.querySelector('[class*="Item_actionMenu"]');
+            if (!menu) {
+                this._skip('item menu did not open');
+                return;
+            }
+            const allBtn = Array.from(menu.querySelectorAll('button')).find((b) => b.textContent.trim() === 'All');
+            allBtn?.click();
+            this.decision = {
+                insta: false,
+                vendor: true,
+                price: vendorPrice,
+                reason: `vendor ${formatKMB(vendorPrice)} ≥ market net ${formatKMB(marketNet)}`,
+            };
+            this.state = 'awaiting_confirm';
+            this._render();
+            this._watchClose('[class*="Item_actionMenu"]');
+        }, 350);
+        return true;
     }
 
     /** Prefill the quantity when the sell modal opens during a run */
@@ -528,10 +596,11 @@ class BulkSellAssistant {
     }
 
     /**
-     * Advance to the next item when the modal closes — confirmed or dismissed,
-     * either way this item is dealt with.
+     * Advance to the next item when the given element closes — confirmed or
+     * dismissed, either way this item is dealt with.
+     * @param {string} [selector] - Element whose disappearance means done
      */
-    _watchModalClose() {
+    _watchClose(selector = '[class*="Modal_modalContainer"]') {
         let seen = false;
         this.modalPoll = setInterval(() => {
             if (this.state !== 'awaiting_confirm') {
@@ -539,7 +608,7 @@ class BulkSellAssistant {
                 this.modalPoll = null;
                 return;
             }
-            const open = !!document.querySelector('[class*="Modal_modalContainer"]');
+            const open = !!document.querySelector(selector);
             if (open) {
                 seen = true;
             } else if (seen) {
@@ -555,6 +624,20 @@ class BulkSellAssistant {
         this._clearTransient();
         // Close any modal the run opened so it can't linger over the next item
         document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+        // Dismiss an open item action menu (vendor path) the same way the
+        // game does — via Escape
+        if (document.querySelector('[class*="Item_actionMenu"]')) {
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+        }
         this.statusNote = note || '';
         this.index++;
         this.state = 'preparing';
