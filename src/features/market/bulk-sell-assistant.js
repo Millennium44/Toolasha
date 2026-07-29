@@ -19,7 +19,12 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
-import { loadConfig as loadTabConfig, findTab, collectTabItems } from '../inventory/custom-tabs/custom-tabs-data.js';
+import {
+    loadConfig as loadTabConfig,
+    findTab,
+    collectTabItems,
+    collectItemsAboveTab,
+} from '../inventory/custom-tabs/custom-tabs-data.js';
 import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -179,7 +184,9 @@ class BulkSellAssistant {
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
-        tabSel.title = 'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs)';
+        tabSel.title =
+            'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs). ' +
+            'Items also assigned to a tab above the selected one are kept, not sold.';
         tabSel.style.cssText =
             'display:none; border:1px solid rgba(74,158,255,0.35); border-radius:5px; background:rgba(20,26,44,0.95); ' +
             'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';
@@ -305,6 +312,7 @@ class BulkSellAssistant {
         // Resolve the tab filter first: a Toolasha inventory tab stores plain
         // hrids for +0 items and "hrid+level" for enhanced ones
         let tabItems = null;
+        let aboveItems = null;
         let tabName = '';
         if (this.selectedTabId && this.selectedTabId !== 'all') {
             try {
@@ -318,6 +326,9 @@ class BulkSellAssistant {
                     return;
                 }
                 tabItems = collectTabItems(found.tab);
+                // Tabs above the selected one act as keep-lists: an item also
+                // assigned to any of them is never sold
+                aboveItems = collectItemsAboveTab(tabConfig, this.selectedTabId);
                 tabName = found.tab.name;
             } catch (error) {
                 console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
@@ -338,6 +349,7 @@ class BulkSellAssistant {
                 const level = item.enhancementLevel || 0;
                 const key = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
                 if (!tabItems.has(key)) return false;
+                if (aboveItems.has(key)) return false;
             }
             return true;
         });

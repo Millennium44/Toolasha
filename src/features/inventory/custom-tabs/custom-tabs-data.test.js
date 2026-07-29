@@ -6,7 +6,8 @@ import { describe, test, expect, vi } from 'vitest';
 
 vi.mock('../../../core/storage.js', () => ({ default: {} }));
 
-const { syncLoadoutBinding, cleanOrphanedBindings, getBaseHrid } = await import('./custom-tabs-data.js');
+const { syncLoadoutBinding, cleanOrphanedBindings, getBaseHrid, collectItemsAboveTab, LINEBREAK_HRID } =
+    await import('./custom-tabs-data.js');
 
 function buildConfig(tab) {
     return {
@@ -23,6 +24,41 @@ describe('getBaseHrid', () => {
 
     test('leaves plain hrids untouched', () => {
         expect(getBaseHrid('/items/sword')).toBe('/items/sword');
+    });
+});
+
+describe('collectItemsAboveTab', () => {
+    const config = {
+        version: 1,
+        selectedTabId: null,
+        tabs: [
+            { id: 'currency', items: ['/items/token', LINEBREAK_HRID], children: [] },
+            {
+                id: 'loot',
+                items: ['/items/hat'],
+                children: [{ id: 'loot-child', items: ['/items/ring+5'], children: [] }],
+            },
+            { id: 'resources', items: ['/items/log'], children: [] },
+            { id: 'junk', items: ['/items/scrap'], children: [] },
+        ],
+    };
+
+    test('collects items from every tab above, not the tab itself or tabs below', () => {
+        const above = collectItemsAboveTab(config, 'resources');
+        expect(above).toEqual(new Set(['/items/token', '/items/hat', '/items/ring+5']));
+    });
+
+    test('a child tab sees its parent and earlier tabs as above', () => {
+        const above = collectItemsAboveTab(config, 'loot-child');
+        expect(above).toEqual(new Set(['/items/token', '/items/hat']));
+    });
+
+    test('the first tab has nothing above it', () => {
+        expect(collectItemsAboveTab(config, 'currency').size).toBe(0);
+    });
+
+    test('excludes line break sentinels', () => {
+        expect(collectItemsAboveTab(config, 'loot').has(LINEBREAK_HRID)).toBe(false);
     });
 });
 
