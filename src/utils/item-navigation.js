@@ -65,6 +65,24 @@ export function findActionForItem(itemHrid) {
 }
 
 /**
+ * Open the game's Item Dictionary for an item.
+ * @param {string} itemHrid - Item HRID to open
+ * @returns {boolean} True if the dictionary was opened
+ */
+export function openItemDictionary(itemHrid) {
+    const game = getGameObject();
+    if (!game?.handleOpenItemDictionary) {
+        return false;
+    }
+    // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
+    if (!dataManager.getItemDetails(itemHrid)) {
+        return false;
+    }
+    game.handleOpenItemDictionary(itemHrid);
+    return true;
+}
+
+/**
  * Navigate to the action page for an item, or item dictionary if no action found
  * @param {string} itemHrid - Item HRID to navigate to
  * @returns {boolean} True if navigation was attempted, false if game API unavailable

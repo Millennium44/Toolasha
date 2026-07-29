@@ -1546,6 +1546,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays equipped abilities, consumables, and their combat triggers below the profile',
             },
+            abilities_dictionaryButton: {
+                id: 'abilities_dictionaryButton',
+                label: 'Abilities: Add Open Item Dictionary to ability menus',
+                type: 'checkbox',
+                default: true,
+                help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, opening that ability's book entry.",
+            },
             characterCard: {
                 id: 'characterCard',
                 label: 'Profile panel: Show View Card button',

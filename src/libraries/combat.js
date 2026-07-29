@@ -32,6 +32,7 @@ import combatStats from '../features/combat-stats/combat-stats.js';
 
 // Abilities
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
+import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
 
 // Profile (combat score)
 import combatScore from '../features/profile/combat-score.js';
@@ -68,6 +69,7 @@ toolashaRoot.Combat = {
     },
     combatStats,
     abilityBookCalculator,
+    abilityDictionaryButton,
     combatScore,
     characterCardButton,
     combatSim,

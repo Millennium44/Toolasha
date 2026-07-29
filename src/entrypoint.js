@@ -356,6 +356,13 @@ function registerFeatures() {
             module: Combat.abilityBookCalculator,
             async: false,
         },
+        {
+            key: 'abilityDictionaryButton',
+            name: 'Ability Dictionary Button',
+            category: 'Combat',
+            module: Combat.abilityDictionaryButton,
+            async: false,
+        },
         { key: 'zoneIndices', name: 'Zone Indices', category: 'Combat', module: Combat.zoneIndices, async: false },
         { key: 'combatScore', name: 'Combat Score', category: 'Profile', module: Combat.combatScore, async: false },
         {
