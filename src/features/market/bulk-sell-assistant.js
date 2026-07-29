@@ -18,6 +18,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import {
     loadConfig as loadTabConfig,
@@ -54,8 +55,15 @@ class BulkSellAssistant {
         this.modalPoll = null;
         this.selectedTabId = 'all';
         this._hasTabs = false;
+        this._tabPrefLoaded = false;
         this.toggleBtn = null;
         this.panelVisible = false;
+    }
+
+    /** Character-scoped storage key for the remembered tab selection */
+    _tabPrefKey() {
+        const charId = dataManager.getCurrentCharacterId();
+        return charId ? `${charId}_bulkSell_lastTab` : null;
     }
 
     initialize() {
@@ -192,6 +200,8 @@ class BulkSellAssistant {
             'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';
         tabSel.addEventListener('change', () => {
             this.selectedTabId = tabSel.value;
+            const prefKey = this._tabPrefKey();
+            if (prefKey) storage.set(prefKey, tabSel.value, 'settings');
         });
         tabSel.addEventListener('focus', () => this._populateTabSelect());
 
@@ -233,6 +243,12 @@ class BulkSellAssistant {
         if (!sel) return;
         let tabs = [];
         try {
+            if (!this._tabPrefLoaded) {
+                this._tabPrefLoaded = true;
+                const prefKey = this._tabPrefKey();
+                const saved = prefKey ? await storage.get(prefKey, 'settings', null) : null;
+                if (saved) this.selectedTabId = saved;
+            }
             const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
             tabs = tabConfig.tabs || [];
         } catch (error) {
