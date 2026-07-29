@@ -5,8 +5,8 @@
  * performs exactly one action on the first task that needs one:
  * - a reroll (coins first, then cowbells) on a non-protected task that hasn't
  *   hit the per-character reroll limits from the reroll-protection popup, or
- * - a discard (Back if the reroll view is open → trash can icon → "Discard
- *   Task" confirm) once a task is at the limit for both categories.
+ * - a discard (Back if the reroll view is open → trash can icon → "Confirm
+ *   Discard") once a task is at the limit for both categories.
  * The button label always previews the next action. Tasks that land on a
  * protected target and completed tasks (Claim Reward showing) are left alone.
  *
@@ -238,18 +238,27 @@ class TaskBulkReroll {
     /**
      * Discard a task at the limit for both categories. The full flow is
      * Back (when the card is on the reroll options view, which hides the
-     * trash can) → trash can icon → "Discard Task" confirmation. All three
-     * clicks run off the one button press; only the confirmation is the
-     * server action.
+     * trash can) → trash can icon → "Confirm Discard". All three clicks run
+     * off the one button press; only the confirmation is the server action.
      */
     async _discardCard(card) {
+        // The trash can is an icon-only red (danger) button in the card's
+        // default view, next to Reroll/Go which always carry text
         const findTrash = () => {
+            const dangerBtn = Array.from(card.querySelectorAll('button[class*="danger" i]')).find(
+                (b) => !b.textContent.trim()
+            );
+            if (dangerBtn) return dangerBtn;
+            const iconOnlyBtn = Array.from(card.querySelectorAll('button')).find(
+                (b) => !b.textContent.trim() && b.querySelector('svg')
+            );
+            if (iconOnlyBtn) return iconOnlyBtn;
             const trashTarget =
-                card.querySelector('use[href*="trash" i]') ||
-                card.querySelector('svg[class*="trash" i]') ||
-                card.querySelector('[class*="trash" i]');
-            return trashTarget?.closest('button, [role="button"], svg') || trashTarget;
+                card.querySelector('use[href*="trash" i]') || card.querySelector('svg[class*="trash" i]');
+            return trashTarget?.closest('button, [role="button"], svg') || trashTarget || null;
         };
+        const findConfirm = () =>
+            Array.from(card.querySelectorAll('button')).find((b) => /discard/i.test(b.textContent));
 
         let trashBtn = findTrash();
         if (!trashBtn) {
@@ -268,7 +277,11 @@ class TaskBulkReroll {
         trashBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
         await sleep(300);
-        const discardBtn = Array.from(document.querySelectorAll('button')).find((b) => /discard/i.test(b.textContent));
+        let discardBtn = findConfirm();
+        if (!discardBtn) {
+            await sleep(400);
+            discardBtn = findConfirm();
+        }
         if (!discardBtn) return false;
         discardBtn.click();
         return true;
