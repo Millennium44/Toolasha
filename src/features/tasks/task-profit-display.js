@@ -1381,7 +1381,12 @@ class TaskProfitDisplay {
             if (zoneTasks.length > 1) {
                 const bottleneck = zoneTasks.reduce((a, b) => (a.hoursNeeded > b.hoursNeeded ? a : b));
                 const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
-                const totalFightsPerHour = Object.values(simResult.deaths).reduce((s, v) => s + v, 0);
+                // Fights = encounters, not kills — encounters spawn several
+                // monsters, so summing deaths overcounts (older-engine fallback)
+                const totalFightsPerHour =
+                    (simResult.zoneEncounters ?? 0) > 0
+                        ? simResult.zoneEncounters / 1 // SIM_HOURS = 1
+                        : Object.values(simResult.deaths).reduce((s, v) => s + v, 0);
                 const fightsNeeded = Math.round(totalFightsPerHour * bottleneck.hoursNeeded);
 
                 const summary = document.createElement('div');
