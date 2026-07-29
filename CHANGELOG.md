@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell button opens the floating panel; decision rules configurable
+
+- The tab bar now holds just a **Bulk Sell** button (styled like the Lab Sim button, next to Market History) that shows/hides the original floating panel with all the controls. Hiding the panel mid-run doesn't stop the run — reopening shows live progress.
+- The insta-sell decision is now configurable: the existing **queue age** setting gains "0 = off", and a new **supply ratio** setting controls the supply rule — insta-sell when sell-order supply exceeds buy-order demand × ratio (1 = whenever supply outnumbers demand, 2 = only at double, 0 = off).
+- Removed the order-book-wait and advance-delay pacing settings added in the previous change (fixed sensible values instead), along with the floating-chip placement toggle the new button supersedes.
+
 ### Bulk Sell placement toggle, stack-value ordering, timing settings
 
 - New **Bulk Sell as floating chip** setting (off by default): switches the controls back to the original fixed chip near the top-right of the screen; off keeps them inline in the marketplace tab bar. Flipping it takes effect immediately, no reload needed.
