@@ -382,6 +382,34 @@ export function collectTabItems(tab) {
     return set;
 }
 
+/**
+ * Collect itemHrids from every tab that appears above a tab in the panel's
+ * top-to-bottom display order (depth-first pre-order). The tab itself, its
+ * descendants, and everything below it are not included.
+ * @param {Object} config
+ * @param {string} tabId
+ * @returns {Set<string>}
+ */
+export function collectItemsAboveTab(config, tabId) {
+    const set = new Set();
+    let found = false;
+    const walk = (tabs) => {
+        for (const tab of tabs) {
+            if (found) return;
+            if (tab.id === tabId) {
+                found = true;
+                return;
+            }
+            for (const hrid of tab.items) {
+                if (hrid !== LINEBREAK_HRID) set.add(hrid);
+            }
+            if (tab.children.length > 0) walk(tab.children);
+        }
+    };
+    walk(config.tabs);
+    return set;
+}
+
 // ---------------------------------------------------------------------------
 // Loadout binding helpers
 // ---------------------------------------------------------------------------

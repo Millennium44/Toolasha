@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell respects the tabs above the selling tab
+
+- When selling from a specific Toolasha inventory tab, any item that is also assigned to a tab shown **above** the selected one (in the panel's top-to-bottom order, including a child tab's parent) is kept, not sold — higher tabs act as keep-lists. Matching is by exact enhancement level, same as the tab filter itself.
+
 ### Bulk Sell button opens the floating panel; decision rules configurable
 
 - The tab bar now holds just a **Bulk Sell** button (styled like the Lab Sim button, next to Market History) that shows/hides the original floating panel with all the controls. Hiding the panel mid-run doesn't stop the run — reopening shows live progress.
