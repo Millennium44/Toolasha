@@ -276,6 +276,42 @@ describe('generateCandidates combat_level mode', () => {
     });
 });
 
+describe('generateCandidates ability_level targets', () => {
+    test('per-ability target levels override the uniform increment', () => {
+        const gameData = buildGameData();
+        gameData.abilityDetailMap = {
+            '/abilities/cleave': { name: 'Cleave' },
+            '/abilities/insanity': { name: 'Insanity' },
+        };
+        const player = {
+            equipment: {},
+            abilities: [
+                { hrid: '/abilities/cleave', level: 60 },
+                { hrid: '/abilities/insanity', level: 20 },
+            ],
+        };
+        const targets = { '/abilities/insanity': 25 };
+        const candidates = generateCandidates(player, gameData, 'ability_level', 5, 'increment', false, null, targets);
+
+        // Only the targeted ability produces a candidate, at its target level;
+        // Cleave has no entry and is skipped
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0].upgradeHrid).toBe('/abilities/insanity');
+        expect(candidates[0].upgradeLevel).toBe(25);
+        expect(candidates[0].description).toBe('Insanity Lv20 → Lv25');
+    });
+
+    test('a target at or below the current level skips the ability', () => {
+        const gameData = buildGameData();
+        gameData.abilityDetailMap = { '/abilities/cleave': { name: 'Cleave' } };
+        const player = { equipment: {}, abilities: [{ hrid: '/abilities/cleave', level: 60 }] };
+        const candidates = generateCandidates(player, gameData, 'ability_level', 5, 'increment', false, null, {
+            '/abilities/cleave': 55,
+        });
+        expect(candidates).toHaveLength(0);
+    });
+});
+
 describe('findMatchingCharmForSkill', () => {
     const CHARM = '/equipment_types/charm';
     function charmGameData() {
