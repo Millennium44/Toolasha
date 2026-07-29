@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Guild idle list off by default pending correct data
+
+- Even with the zero-time fix, `inactiveTime` turns out to be a historical "last went inactive" stamp — online members doing actions still carry one, so the list keeps flagging active players. The setting now defaults to **off** until the correct signal is wired up.
+- New console helper `Toolasha.guild.memberSample('Name')` dumps a guild member's raw sharable data so the real activity field the game's own Activity column uses can be identified.
+
 ### Guild idle list no longer flags every online member
 
 - The upstream idle-members feature treated `inactiveTime` as "set = idle", but the game sends Go's zero time (`0001-01-01T00:00:00Z`) — a truthy string — for members who are **not** idle, so every online member landed in the list. The timestamp is now normalized at ingestion (zero time → null), fixing the idle list and any other consumer of the field.

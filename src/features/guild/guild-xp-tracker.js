@@ -292,6 +292,7 @@ class GuildXPTracker {
         // Extract guild ID and member metadata
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
+        this.rawSharableMap = sharableMap;
 
         const charIds = Object.keys(guildCharacterMap);
         if (charIds.length > 0) {
@@ -376,6 +377,7 @@ class GuildXPTracker {
     async _onMembersUpdated(data) {
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
+        this.rawSharableMap = sharableMap;
 
         // Detect guild change (same character, different guild)
         const charIds = Object.keys(guildCharacterMap);
@@ -542,6 +544,20 @@ class GuildXPTracker {
             characterID: charId,
             ...meta,
         }));
+    }
+
+    /**
+     * Get the raw sharable-data entry for a guild member, for inspecting the
+     * fields the game actually sends (console: Toolasha.guild.memberSample()).
+     * @param {string} [name] - Member name; first member when omitted
+     * @returns {Object|null}
+     */
+    getRawMemberSample(name) {
+        const map = this.rawSharableMap || {};
+        const entries = Object.values(map);
+        if (!entries.length) return null;
+        if (!name) return entries[0];
+        return entries.find((e) => e?.name === name) || null;
     }
 
     /**

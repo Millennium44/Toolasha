@@ -931,6 +931,7 @@ if (isCombatSimulatorPage()) {
     // Guild XP data management
     targetWindow.Toolasha.guild = {
         resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
+        memberSample: (name) => UI.guildXPTracker.getRawMemberSample(name),
     };
 
     // Debug utilities (for diagnosing issues via console)
