@@ -1578,6 +1578,18 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Clear chance at or above which the labyrinth path planner treats a tile as clearable without a shroud (separate from the skip recommendation target)',
             },
+            labyrinthPathUnknownMode: {
+                id: 'labyrinthPathUnknownMode',
+                label: 'Labyrinth: Path treats unrevealed rooms as',
+                type: 'select',
+                default: 'clearable',
+                options: [
+                    { value: 'clearable', label: 'Clearable (optimistic)' },
+                    { value: 'shroud', label: 'Needing a shroud (pessimistic)' },
+                    { value: 'avoid', label: 'Impassable (route revealed rooms only)' },
+                ],
+                help: 'How the labyrinth path planner costs rooms whose contents are not revealed yet',
+            },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
                 label: 'Labyrinth: Autofill skip Edit input',

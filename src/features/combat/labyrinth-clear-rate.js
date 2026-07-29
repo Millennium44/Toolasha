@@ -1999,6 +1999,28 @@ class LabyrinthClearRate {
         });
         container.appendChild(pathInput);
 
+        const unknownSelect = document.createElement('select');
+        unknownSelect.className = `${TILE_CONTROLS_CLASS}-path-unknown`;
+        unknownSelect.title = 'How the path treats unrevealed rooms';
+        unknownSelect.style.cssText =
+            'height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
+            'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; outline:none; cursor:pointer;';
+        for (const [value, label] of [
+            ['clearable', '? clear'],
+            ['shroud', '? shroud'],
+            ['avoid', '? avoid'],
+        ]) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = label;
+            unknownSelect.appendChild(opt);
+        }
+        unknownSelect.value = config.getSettingValue('labyrinthPathUnknownMode', 'clearable');
+        unknownSelect.addEventListener('change', () => {
+            config.setSettingValue('labyrinthPathUnknownMode', unknownSelect.value);
+        });
+        container.appendChild(unknownSelect);
+
         if (config.getSetting('labyrinthRoomLogs')) {
             const logsButton = document.createElement('button');
             logsButton.textContent = 'Logs';
@@ -2244,6 +2266,9 @@ class LabyrinthClearRate {
         config.setSettingValue('labyrinthPathClearThreshold', thresholdPct);
         const threshold = thresholdPct / 100;
 
+        const unknownSelect = document.querySelector(`.${TILE_CONTROLS_CLASS}-path-unknown`);
+        const unknownMode = unknownSelect?.value || config.getSettingValue('labyrinthPathUnknownMode', 'clearable');
+
         this.clearPathOverlays();
         this.pathCalcRunning = true;
         this.setPathButtonRunning(true);
@@ -2297,14 +2322,31 @@ class LabyrinthClearRate {
                 tile.clearChance = result && !result.failed ? result.clearChance : 0;
             }
             for (const tile of tiles) {
-                if (tile && !tile.cleared && !tile.isEntrance && !tile.isTreasure && !tile.isExit) {
+                if (tile && !tile.cleared && !tile.isEntrance && !tile.isTreasure && !tile.isExit && !tile.isUnknown) {
                     tile.needsShroud = tile.clearChance < threshold;
+                }
+            }
+
+            // Unrevealed-room posture: optimistic (clearable, default),
+            // pessimistic (each costs a shroud), or avoid (impassable — route
+            // through revealed rooms only; entrance/exit always stay passable)
+            for (let i = 0; i < tiles.length; i++) {
+                const tile = tiles[i];
+                if (!tile?.isUnknown || tile.cleared || tile.isEntrance || tile.isExit) continue;
+                if (unknownMode === 'shroud') {
+                    tile.needsShroud = true;
+                } else if (unknownMode === 'avoid') {
+                    tiles[i] = null;
                 }
             }
 
             const path = computeLabyrinthPath(tiles, cols);
             if (!path) {
-                this.setTileStatus('No route to the floor exit');
+                this.setTileStatus(
+                    unknownMode === 'avoid'
+                        ? 'No route through revealed rooms — reveal more or change the ? mode'
+                        : 'No route to the floor exit'
+                );
                 return;
             }
 
@@ -2322,7 +2364,7 @@ class LabyrinthClearRate {
                     color = '#ffd54f';
                 } else if (tile.needsShroud) {
                     color = '#ff5252';
-                    label = 'Shroud';
+                    label = tile.isUnknown ? 'Shroud?' : 'Shroud';
                 } else if (tile.isUnknown) {
                     // Unrevealed room — routed as clearable; reveal to verify
                     color = '#8fb4d8';
