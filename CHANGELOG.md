@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Fork installs no longer auto-update to the upstream Greasy Fork listing
+
+- Removed the upstream `@downloadURL`/`@updateURL` (Greasy Fork script 562662) from the userscript and entrypoint headers — Tampermonkey could otherwise silently replace an installed fork build with the upstream listing's release. Fork releases go through the repo's own Release Please pipeline instead.
+
 ### Reroll stepper sunset
 
 - The Reroll Tasks stepper button is disabled for now (unregistered, setting removed) — the discard flow wasn't reliable in practice. The source stays in the repo for a later revival. The per-character reroll limits and the zero-limit glow rule in reroll protection remain active.
