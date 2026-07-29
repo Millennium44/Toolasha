@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Userscript renamed to "Toolasha (Millennium44)"
+
+- The `@name` in the release entrypoint and the dev standalone headers now carries the fork owner, so the Greasy Fork listing and Tampermonkey entry are distinguishable from the upstream "Toolasha". Note: Tampermonkey treats the renamed script as new — remove/disable the old "Toolasha" entry after installing the renamed build so they don't both run.
+
 ### Fork installs no longer auto-update to the upstream Greasy Fork listing
 
 - Removed the upstream `@downloadURL`/`@updateURL` (Greasy Fork script 562662) from the userscript and entrypoint headers — Tampermonkey could otherwise silently replace an installed fork build with the upstream listing's release. Fork releases go through the repo's own Release Please pipeline instead.
