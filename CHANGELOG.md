@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Vendor check compares against the path actually taken; button placement
+
+- **Vendor now wins over forced insta-sells**: the vendor comparison used the ask price, but a stack under the minimum listing value takes the insta path and only nets the bid — so e.g. Red Tea Leaf (bid 48 → 47 net vs vendor 48) wrongly insta-sold. The check now predicts the path (below the listing minimum → bid; otherwise → ask) and compares vendor against that.
+- **Bulk Sell button stays to the right of Market History**: the Market History tab is injected by its own feature and could land after our button; the button now repositions itself to its right whenever that happens.
+
 ### Vendor check runs before marketplace navigation
 
 - Fixed the vendor-sell item menu opening and instantly closing: the vendor decision now runs **before** any marketplace navigation (using the cached market price for the vendor-vs-net comparison), so the navigation's trailing clicks can no longer dismiss the menu. The menu open also retries once if something still closes it.
