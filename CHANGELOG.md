@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Beacon planner prefers multiple independent routes
+
+- The planner now measures how many **vertex-disjoint routes** to the exit the revealed region offers (exact max-flow, so "2 routes" means no single blocked room can sever the way) and prefers placements with two independent routes: among equal-count minimum chains it picks redundant ones first, and extra beacons buy redundancy before raw coverage. The status line reports it (`… · 2 independent routes`).
+
 ### Labyrinth beacon planner
 
 - New **Beacons** button (with a count input) in the tile controls bar plans optimal beacon placements: the fewest beacons — or exactly the amount you set (0 = minimum) — whose 13-room reveal diamonds chain into a walkable revealed corridor from the entrance to the floor exit, chosen to reveal as many new rooms as possible (beam search over minimal chains; extra beacons go wherever they add the most coverage).
