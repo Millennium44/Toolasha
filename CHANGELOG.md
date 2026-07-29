@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell placement toggle, stack-value ordering, timing settings
+
+- New **Bulk Sell as floating chip** setting (off by default): switches the controls back to the original fixed chip near the top-right of the screen; off keeps them inline in the marketplace tab bar. Flipping it takes effect immediately, no reload needed.
+- Queue order now uses **stack value** (cached unit price × count) instead of unit price alone, so the most valuable stack sells first — 30K arrows at 20 gold now beat a single 100K sword.
+- New timing settings: **order book wait** (seconds before an item is skipped as having no market data, default 3 — raise on a slow connection) and **advance delay** (pause in ms after a sale confirms before moving to the next item, default 400).
+
 ### Bulk Sell moves into the tab bar, sells most expensive first
 
 - The Bulk Sell controls now live in the marketplace tab bar right next to Market History (falling back to the end of the bar when the Market History viewer is off) instead of floating over the panel — same spot across every subview, so the flow stays one-click-per-item.

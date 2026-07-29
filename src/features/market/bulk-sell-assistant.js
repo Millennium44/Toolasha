@@ -23,6 +23,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 
+const PANEL_SEL = '[class*="MarketplacePanel_marketplacePanel"]';
 const CHIP_ID = 'mwi-bulk-sell-chip';
 const MS_PER_DAY = 86400000;
 
@@ -61,20 +62,25 @@ class BulkSellAssistant {
         );
 
         const ensureChip = () => {
-            const tabBar = this._findMarketTabBar();
-            if (!tabBar) {
+            const floating = !!config.getSetting('market_bulkSellFloating');
+            const anchor = floating ? document.querySelector(PANEL_SEL) : this._findMarketTabBar();
+            if (!anchor) {
                 if (this.chip) {
                     this.chip.remove();
                     this.chip = null;
                 }
                 return;
             }
-            if (this.chip && !tabBar.contains(this.chip)) {
+            // Rebuild when the placement setting flipped or the chip fell out
+            // of its home (e.g. the tab bar re-rendered)
+            const placement = floating ? 'floating' : 'tabbar';
+            const attached = floating ? document.body.contains(this.chip) : anchor.contains(this.chip);
+            if (this.chip && (this.chip.dataset.placement !== placement || !attached)) {
                 this.chip.remove();
                 this.chip = null;
             }
             if (this.chip) return;
-            this._buildChip(tabBar);
+            this._buildChip(floating ? null : anchor);
         };
         this.watcher = createMutationWatcher(document.body, ensureChip, { childList: true, subtree: true });
         ensureChip();
@@ -95,20 +101,26 @@ class BulkSellAssistant {
     }
 
     /**
-     * Inline control living in the marketplace tab bar, next to the Market
-     * History tab when present.
+     * Build the control either inline in the marketplace tab bar (next to the
+     * Market History tab when present) or, with the floating setting on, as a
+     * fixed chip near the top-right of the screen.
+     * @param {HTMLElement|null} tabBar - Tab bar to insert into; null = floating
      */
     _buildChip(tabBar) {
         const chip = document.createElement('div');
         chip.id = CHIP_ID;
-        chip.style.cssText =
-            'display:inline-flex; align-items:center; gap:6px; align-self:center; margin:0 6px; padding:3px 8px; ' +
-            'border-radius:7px; background:rgba(12,16,30,0.6); border:1px solid rgba(74,158,255,0.45); ' +
-            'color:#e0e0e0; font-size:12px; font-family:inherit; user-select:none; white-space:nowrap;';
+        chip.dataset.placement = tabBar ? 'tabbar' : 'floating';
+        chip.style.cssText = tabBar
+            ? 'display:inline-flex; align-items:center; gap:6px; align-self:center; margin:0 6px; padding:3px 8px; ' +
+              'border-radius:7px; background:rgba(12,16,30,0.6); border:1px solid rgba(74,158,255,0.45); ' +
+              'color:#e0e0e0; font-size:12px; font-family:inherit; user-select:none; white-space:nowrap;'
+            : 'position:fixed; top:70px; right:24px; z-index:9000; display:flex; align-items:center; gap:6px; ' +
+              'padding:5px 9px; border-radius:7px; background:rgba(12,16,30,0.94); border:1px solid rgba(74,158,255,0.45); ' +
+              'color:#e0e0e0; font-size:12px; font-family:inherit; box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
 
         const status = document.createElement('span');
         status.className = `${CHIP_ID}-status`;
-        status.style.cssText = 'max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        status.style.cssText = `max-width:${tabBar ? 260 : 340}px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
@@ -142,16 +154,20 @@ class BulkSellAssistant {
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
 
-        const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
-        const firstCustomTab = Array.from(tabBar.children).find(
-            (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-        );
-        if (historyTab) {
-            historyTab.after(chip);
-        } else if (firstCustomTab) {
-            firstCustomTab.before(chip);
+        if (!tabBar) {
+            document.body.appendChild(chip);
         } else {
-            tabBar.appendChild(chip);
+            const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
+            const firstCustomTab = Array.from(tabBar.children).find(
+                (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
+            );
+            if (historyTab) {
+                historyTab.after(chip);
+            } else if (firstCustomTab) {
+                firstCustomTab.before(chip);
+            } else {
+                tabBar.appendChild(chip);
+            }
         }
         this.chip = chip;
         this._render();
@@ -215,7 +231,7 @@ class BulkSellAssistant {
             tabSel.style.display = this._hasTabs ? '' : 'none';
             mainBtn.textContent = '▶ Bulk Sell';
             mainBtn.title =
-                'Queue every tradable inventory item (or only the selected Toolasha tab), most expensive first. Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
+                'Queue every tradable inventory item (or only the selected Toolasha tab), most valuable stack first. Each item opens a prefilled sell modal — oversupplied or slow-queue items insta-sell to the best bid, others list at the ask. Confirming the modal advances to the next item.';
             stopBtn.style.display = 'none';
             return;
         }
@@ -284,7 +300,7 @@ class BulkSellAssistant {
             }
             return true;
         });
-        // Most expensive first, by cached market unit price (ask, else bid)
+        // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
                 const enhancementLevel = item.enhancementLevel || 0;
@@ -294,12 +310,14 @@ class BulkSellAssistant {
                     enhancementLevel,
                     count: item.count,
                     name: clientData.itemDetailMap[item.itemHrid]?.name || item.itemHrid.split('/').pop(),
-                    unitPrice: price?.ask ?? price?.bid ?? 0,
+                    stackValue: (price?.ask ?? price?.bid ?? 0) * item.count,
                 };
             })
             .sort(
                 (a, b) =>
-                    b.unitPrice - a.unitPrice || a.name.localeCompare(b.name) || a.enhancementLevel - b.enhancementLevel
+                    b.stackValue - a.stackValue ||
+                    a.name.localeCompare(b.name) ||
+                    a.enhancementLevel - b.enhancementLevel
             );
 
         if (!this.queue.length) {
@@ -328,7 +346,17 @@ class BulkSellAssistant {
 
         navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
         // No order book within the timeout → item isn't marketable right now
-        this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
+        const bookWaitSec = Math.min(
+            30,
+            Math.max(1, Number(config.getSettingValue('market_bulkSellBookTimeout', 3)) || 3)
+        );
+        this.bookTimeout = setTimeout(() => this._skip('no market data'), bookWaitSec * 1000);
+    }
+
+    /** Pause between finishing one item and preparing the next */
+    _advanceDelayMs() {
+        const raw = Number(config.getSettingValue('market_bulkSellAdvanceMs', 400));
+        return Math.min(5000, Math.max(0, Number.isFinite(raw) ? raw : 400));
     }
 
     _onOrderBook(data) {
@@ -430,7 +458,7 @@ class BulkSellAssistant {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
                 this.index++;
-                this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 400);
+                this.advanceTimeout = setTimeout(() => this._prepareCurrent(), this._advanceDelayMs());
             }
         }, 200);
     }
@@ -443,7 +471,8 @@ class BulkSellAssistant {
         this.index++;
         this.state = 'preparing';
         this._render();
-        this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 600);
+        // Extra floor so a just-closed modal has time to leave the DOM
+        this.advanceTimeout = setTimeout(() => this._prepareCurrent(), Math.max(600, this._advanceDelayMs()));
     }
 
     _stop(note) {
