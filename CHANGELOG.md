@@ -17,6 +17,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **"Clear ≥" threshold input** next to the button sets what counts as clearable (persisted as its own setting, default 70%, fully separate from the skip recommendation target).
 - Route tiles get colored outlines: green = clearable, red "Shroud" tag = instant-clear needed, gold = treasure, blue "?" = unrevealed (routed as clearable — reveal to verify), purple ⚑ = floor exit; the status line summarizes rooms/shrouds/chests and flags unrevealed rooms on the route. Overlays clear on floor change.
 - **Position anchors the route**: the labyrinth always starts top-left and exits bottom-right, and unrevealed rooms carry an empty room type (the exit/treasure types only appear once revealed) — so the planner keys the entrance and exit off grid position instead of room types and works on fully unrevealed floors.
+- **No walls**: every cell is a room, so unrevealed rooms that appear as null entries in the room data are passable unknowns, never obstacles — previously they blocked the search and produced "No route to the floor exit" on partially revealed floors.
 - The vendored mathjs bundle no longer points at a missing `math.js.map`, silencing the source map fetch error in the console.
 
 ### Labyrinth sims stop killing each other — recommendations finally survive lab runs
