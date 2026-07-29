@@ -189,8 +189,9 @@ export function buildSegmentsFromCharacterData(characterData, clientData, consum
     // Use consumablesData if provided, otherwise try characterData
     const dataForConsumables = consumablesData || characterData;
 
-    // Extract general info
-    const character = characterData.sharableCharacter || characterData;
+    // Extract general info. profile_shared data carries sharableCharacter;
+    // own character data keeps name/avatar/outfit on the nested character object
+    const character = characterData.sharableCharacter || characterData.character || characterData;
     const name = character.name || 'Player';
 
     // Avatar/outfit/icon - extract from sharableCharacter first, then fall back to items
