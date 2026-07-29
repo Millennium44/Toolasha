@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Task bulk reroller, per-character reroll limits, smarter cap glow
+
+- New **🎲 Reroll Tasks** button in the task panel header (next to the Claim Reward collector): one click rerolls every non-protected task — coins first, then cowbells — until it lands on a protected task or hits the reroll limits, and **deletes tasks at the limit for both categories**. Free rerolls are used when offered, completed tasks are never touched, and clicking again stops the pass mid-run. Progress shows on the button.
+- **Reroll limits are now per character**: the cap-protection toggle and both thresholds in the 🛡️ popup save per character (existing global values carry over as the starting point for each character).
+- **Cap glow respects zero-reroll categories**: a category whose limit allows zero rerolls (threshold at the minimum 10K/1) no longer lights the orange at-cap glow by itself — the card only glows once the other category's limit is actually hit.
+
 ### Collapsed tab values match expanded, Bulk Sell remembers its tab
 
 - **Collapsed tab header value no longer overshoots**: enhanced item tiles are indexed under both their base and +N keys (and an item can sit in both a parent and child tab), and the collapsed rollup summed every key it touched — so tabs holding both references counted the same tile twice, showing a different net worth collapsed vs expanded. The rollup now counts each tile once, matching the expanded totals.

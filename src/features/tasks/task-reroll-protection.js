@@ -46,9 +46,18 @@ class TaskRerollProtection {
         const saved = await storage.getJSON(getStorageKey(), 'settings', []);
         this.protectedHrids = new Set(saved);
 
-        this.capProtectionEnabled = await storage.get('taskCapProtection', 'settings', false);
-        this.coinThreshold = await storage.get('taskCapCoinThreshold', 'settings', 320000);
-        this.cowbellThreshold = await storage.get('taskCapCowbellThreshold', 'settings', 32);
+        // Cap settings are per character, falling back to the legacy global
+        // values so existing users keep their configuration
+        const charId = dataManager.getCurrentCharacterId() || 'default';
+        this.capProtectionEnabled =
+            (await storage.get(`taskCapProtection_${charId}`, 'settings', null)) ??
+            (await storage.get('taskCapProtection', 'settings', false));
+        this.coinThreshold =
+            (await storage.get(`taskCapCoinThreshold_${charId}`, 'settings', null)) ??
+            (await storage.get('taskCapCoinThreshold', 'settings', 320000));
+        this.cowbellThreshold =
+            (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
+            (await storage.get('taskCapCowbellThreshold', 'settings', 32));
 
         // Watch for task cards appearing
         const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
@@ -161,6 +170,9 @@ class TaskRerollProtection {
      * Returns true if the task card's reroll cost meets or exceeds the configured threshold.
      * Coin progression: 10K → 20K → 40K → 80K → 160K → 320K (hard cap)
      * Cowbell progression: 1 → 2 → 4 → 8 → 16 → 32 (hard cap)
+     * A category whose limit allows zero rerolls (threshold at the minimum) is
+     * trivially "at cap" from the start, so it never triggers the glow on its
+     * own — only once the other category's limit is actually hit.
      * @param {HTMLElement} taskCard
      * @returns {boolean}
      * @private
@@ -170,7 +182,13 @@ class TaskRerollProtection {
         if (!quest) return false;
         const coinCost = Math.min(10000 * Math.pow(2, quest.coinRerollCount), 320000);
         const cowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount), 32);
-        return coinCost >= this.coinThreshold || cowbellCost >= this.cowbellThreshold;
+        const coinAtCap = coinCost >= this.coinThreshold;
+        const cowbellAtCap = cowbellCost >= this.cowbellThreshold;
+        const coinZero = this.coinThreshold <= 10000;
+        const cowbellZero = this.cowbellThreshold <= 1;
+        if (coinZero && !cowbellZero) return cowbellAtCap;
+        if (cowbellZero && !coinZero) return coinAtCap;
+        return coinAtCap || cowbellAtCap;
     }
 
     /**
@@ -441,13 +459,14 @@ class TaskRerollProtection {
     }
 
     /**
-     * Persist cap protection toggle and thresholds.
+     * Persist cap protection toggle and thresholds (per character).
      * @private
      */
     async _saveCapProtection() {
-        await storage.set('taskCapProtection', this.capProtectionEnabled, 'settings');
-        await storage.set('taskCapCoinThreshold', this.coinThreshold, 'settings');
-        await storage.set('taskCapCowbellThreshold', this.cowbellThreshold, 'settings');
+        const charId = dataManager.getCurrentCharacterId() || 'default';
+        await storage.set(`taskCapProtection_${charId}`, this.capProtectionEnabled, 'settings');
+        await storage.set(`taskCapCoinThreshold_${charId}`, this.coinThreshold, 'settings');
+        await storage.set(`taskCapCowbellThreshold_${charId}`, this.cowbellThreshold, 'settings');
     }
 
     /**
