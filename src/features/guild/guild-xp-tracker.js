@@ -49,6 +49,19 @@ const LEVEL_EXPERIENCE_TABLE = [
 // Same compaction rules as src/features/skills/xp-tracker.js
 
 /**
+ * Normalize a member's inactiveTime from guild sharable data.
+ * The game sends Go's zero time (0001-01-01T00:00:00Z) for members who are
+ * NOT idle — a truthy string that must not count as a real timestamp.
+ * @param {string|null|undefined} value
+ * @returns {string|null} The timestamp, or null when the member isn't idle
+ */
+export function parseInactiveTime(value) {
+    if (!value) return null;
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) && t > 0 ? value : null;
+}
+
+/**
  * Append an XP data point to a history array, compacting as needed.
  * @param {Array} arr - Existing history array (mutated in place)
  * @param {{t: number, xp: number}} d - New data point
@@ -295,7 +308,7 @@ class GuildXPTracker {
                 gameMode: sharableData.gameMode,
                 joinTime: guildChar?.joinTime || null,
                 invitedBy: sharableMap[inviterId]?.name || null,
-                inactiveTime: sharableData.inactiveTime || null,
+                inactiveTime: parseInactiveTime(sharableData.inactiveTime),
                 isOnline: sharableData.isOnline || false,
                 hideOnlineStatus: sharableData.hideOnlineStatus || false,
                 signedUpSkillingTrialHrid: guildChar?.signedUpSkillingTrialHrid || '',
@@ -387,7 +400,7 @@ class GuildXPTracker {
                 gameMode: sharableData.gameMode,
                 joinTime: guildChar?.joinTime || null,
                 invitedBy: sharableMap[inviterId]?.name || null,
-                inactiveTime: sharableData.inactiveTime || null,
+                inactiveTime: parseInactiveTime(sharableData.inactiveTime),
                 isOnline: sharableData.isOnline || false,
                 hideOnlineStatus: sharableData.hideOnlineStatus || false,
                 signedUpSkillingTrialHrid: guildChar?.signedUpSkillingTrialHrid || '',
