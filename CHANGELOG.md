@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Zone fight estimate counts fights, not kills
+
+- The task zone summary ("~N fights") summed every monster **death** in the sim, but zone encounters spawn several monsters at once — so the fight count was inflated by the average wave size. The sim engine now tracks actual encounters spawned (`zoneEncounters`, bosses and dungeon waves included) and the summary uses that, so "fights" now means what the game means by it.
+
 ### Guild idle list includes hidden-status members
 
 - Members hiding their online status now appear in the idle list when their action queue is empty — what matters is whether the character is doing an action, not their presence. Their entry never states online/offline (dimmed color, neutral tooltip), so the privacy setting still conceals what it's meant to conceal.
