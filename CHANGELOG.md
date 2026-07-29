@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk sell a single Toolasha inventory tab
+
+- The Bulk Sell chip gains a tab filter (shown whenever you have Toolasha custom inventory tabs): pick a tab and Start queues only the tradable items assigned to it — a parent tab includes its child tabs, and enhanced items match at their exact enhancement level, the same way tabs track them. "All items" keeps the original whole-inventory behavior. The list refreshes when you open the dropdown, so tabs edited mid-session show up.
+
 ### Bulk Sell Assistant
 
 - New **Bulk Sell** button (fixed chip near the top-right of the marketplace) sells the whole inventory one item per click: Start queues every tradable inventory item, then for each item it opens its order book, decides insta-sell vs. sell listing, opens the matching modal with the full quantity prefilled, and waits — one click on the game's confirm button (always in the same place) completes the item and auto-advances to the next.
