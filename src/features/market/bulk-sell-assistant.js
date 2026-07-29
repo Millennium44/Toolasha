@@ -447,9 +447,10 @@ class BulkSellAssistant {
     /**
      * Decide insta-sell vs listing per the order book, then open the matching
      * game modal (the quantity is prefilled when it appears).
-     * Two configurable insta-sell rules (either one triggers, 0 disables it):
-     * ask supply exceeds bid demand × the supply ratio, or the front ask
-     * listing has waited longer than the queue-age limit (queue isn't moving).
+     * Three configurable insta-sell rules (any one triggers, 0 disables it):
+     * ask supply exceeds bid demand × the supply ratio, the front ask listing
+     * has waited longer than the queue-age limit (queue isn't moving), or the
+     * stack is worth less than the minimum listing value (not worth a slot).
      */
     _decideAndOpen(book) {
         const asks = book?.asks || [];
@@ -473,6 +474,7 @@ class BulkSellAssistant {
         };
         const queueDaysLimit = readNumberSetting('market_bulkSellQueueDays', 2);
         const supplyRatio = readNumberSetting('market_bulkSellSupplyRatio', 1);
+        const minListingValue = readNumberSetting('market_bulkSellMinListingValue', 1500000);
 
         let frontAskDays = 0;
         const created = asks[0]?.createdTimestamp;
@@ -480,15 +482,20 @@ class BulkSellAssistant {
             frontAskDays = Math.max(0, (Date.now() - new Date(created).getTime()) / MS_PER_DAY);
         }
 
+        // Value the stack at the ask (what a listing would target)
+        const stackValue = this.current.count * (asks[0]?.price ?? bids[0]?.price ?? 0);
         const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
         const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
-        const insta = (supplyTriggered || ageTriggered) && bids.length > 0;
+        const valueTriggered = minListingValue > 0 && stackValue < minListingValue;
+        const insta = (supplyTriggered || ageTriggered || valueTriggered) && bids.length > 0;
         const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
             ? supplyTriggered
                 ? `supply ${formatKMB(askQty)} > demand ${formatKMB(bidQty)}${ratioLabel}`
-                : `ask queue ~${frontAskDays.toFixed(1)}d`
+                : ageTriggered
+                  ? `ask queue ~${frontAskDays.toFixed(1)}d`
+                  : `stack ${formatKMB(stackValue)} < ${formatKMB(minListingValue)} min`
             : 'queue ok';
         this.decision = { insta, price, reason };
 

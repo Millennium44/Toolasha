@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell: minimum value for a sell listing
+
+- New **minimum stack value for a sell listing** setting (default 1.5M): stacks worth less than this at the ask price get insta-sold to the best bid instead of occupying one of your limited sell listing slots. 0 turns the rule off. The panel's status line shows when it fires (e.g. `stack 840K < 1.5M min`).
+
 ### Merged upstream (Celasha/Toolasha) commits since the fork
 
 - **Guild Overview idle members list** (new setting `guildIdleDisplay`, on by default): shows guild members currently not performing any action.
