@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Vendor check runs before marketplace navigation
+
+- Fixed the vendor-sell item menu opening and instantly closing: the vendor decision now runs **before** any marketplace navigation (using the cached market price for the vendor-vs-net comparison), so the navigation's trailing clicks can no longer dismiss the menu. The menu open also retries once if something still closes it.
+
 ### Bulk Sell: vendor when the market is no better
 
 - New **vendor check** (on by default): if the game vendor pays at least as much per item as the chosen market path would net after the 2% tax — e.g. Red Tea Leaf, vendor 48 vs ask 49 → 48 net — the assistant opens the item's inventory action menu with **All** preselected instead of a market modal, so one click on the game's "Sell For … Coins" button vendors the whole stack. The status line shows the comparison (`vendor 48 ≥ market net 48`). Unenhanced items only; falls back to the market flow if the inventory tile isn't visible.
