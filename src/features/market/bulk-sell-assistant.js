@@ -2,7 +2,9 @@
  * Bulk Sell Assistant
  *
  * Sells the whole inventory through the market one item at a time with one
- * game action per click. Start builds a queue of tradable inventory items —
+ * game action per click. A Bulk Sell button in the marketplace tab bar (next
+ * to Market History) shows/hides the floating control panel.
+ * Start builds a queue of tradable inventory items —
  * optionally limited to one Toolasha custom inventory tab (children included);
  * for each item it navigates to its order book, decides between insta-selling
  * (ask supply exceeds bid demand, or the front of the ask queue is older than
@@ -23,7 +25,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 
-const PANEL_SEL = '[class*="MarketplacePanel_marketplacePanel"]';
+const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
 const MS_PER_DAY = 86400000;
 
@@ -47,6 +49,8 @@ class BulkSellAssistant {
         this.modalPoll = null;
         this.selectedTabId = 'all';
         this._hasTabs = false;
+        this.toggleBtn = null;
+        this.panelVisible = false;
     }
 
     initialize() {
@@ -61,29 +65,23 @@ class BulkSellAssistant {
             this._onModal(modal)
         );
 
-        const ensureChip = () => {
-            const floating = !!config.getSetting('market_bulkSellFloating');
-            const anchor = floating ? document.querySelector(PANEL_SEL) : this._findMarketTabBar();
-            if (!anchor) {
-                if (this.chip) {
-                    this.chip.remove();
-                    this.chip = null;
-                }
+        const ensureUI = () => {
+            const tabBar = this._findMarketTabBar();
+            if (!tabBar) {
+                this._removeButton();
+                this._removePanel();
                 return;
             }
-            // Rebuild when the placement setting flipped or the chip fell out
-            // of its home (e.g. the tab bar re-rendered)
-            const placement = floating ? 'floating' : 'tabbar';
-            const attached = floating ? document.body.contains(this.chip) : anchor.contains(this.chip);
-            if (this.chip && (this.chip.dataset.placement !== placement || !attached)) {
-                this.chip.remove();
-                this.chip = null;
+            this._ensureButton(tabBar);
+            if (this.panelVisible) {
+                if (this.chip && !document.body.contains(this.chip)) this.chip = null;
+                if (!this.chip) this._buildPanel();
+            } else {
+                this._removePanel();
             }
-            if (this.chip) return;
-            this._buildChip(floating ? null : anchor);
         };
-        this.watcher = createMutationWatcher(document.body, ensureChip, { childList: true, subtree: true });
-        ensureChip();
+        this.watcher = createMutationWatcher(document.body, ensureUI, { childList: true, subtree: true });
+        ensureUI();
     }
 
     /**
@@ -101,26 +99,83 @@ class BulkSellAssistant {
     }
 
     /**
-     * Build the control either inline in the marketplace tab bar (next to the
-     * Market History tab when present) or, with the floating setting on, as a
-     * fixed chip near the top-right of the screen.
-     * @param {HTMLElement|null} tabBar - Tab bar to insert into; null = floating
+     * Tab-bar toggle button (Lab Sim style) that shows/hides the floating
+     * panel, next to the Market History tab when present.
      */
-    _buildChip(tabBar) {
+    _ensureButton(tabBar) {
+        if (this.toggleBtn && tabBar.contains(this.toggleBtn)) return;
+        if (this.toggleBtn) this.toggleBtn.remove();
+
+        const button = document.createElement('div');
+        button.id = BUTTON_ID;
+        button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-1q2h7u5';
+        button.textContent = 'Bulk Sell';
+        button.title = 'Show / hide the Bulk Sell panel';
+        button.style.cssText =
+            'cursor:pointer; background:linear-gradient(135deg, #3a7bd5, #5f3dc4); color:#fff; border-radius:4px; ' +
+            'padding:4px 10px; font-size:12px; white-space:nowrap; align-self:center; margin:0 4px;';
+        button.addEventListener('click', () => this._togglePanel());
+
+        const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
+        const firstCustomTab = Array.from(tabBar.children).find(
+            (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
+        );
+        if (historyTab) {
+            historyTab.after(button);
+        } else if (firstCustomTab) {
+            firstCustomTab.before(button);
+        } else {
+            tabBar.appendChild(button);
+        }
+        this.toggleBtn = button;
+        this._syncButton();
+    }
+
+    /** Hiding the panel never stops a run — reopening shows live progress */
+    _togglePanel() {
+        this.panelVisible = !this.panelVisible;
+        if (this.panelVisible) {
+            if (!this.chip || !document.body.contains(this.chip)) this._buildPanel();
+        } else {
+            this._removePanel();
+        }
+        this._syncButton();
+    }
+
+    _syncButton() {
+        if (!this.toggleBtn) return;
+        this.toggleBtn.style.outline = this.panelVisible ? '1px solid #9ec4ff' : '';
+    }
+
+    _removeButton() {
+        if (this.toggleBtn) {
+            this.toggleBtn.remove();
+            this.toggleBtn = null;
+        }
+    }
+
+    _removePanel() {
+        if (this.chip) {
+            this.chip.remove();
+            this.chip = null;
+        }
+    }
+
+    /**
+     * Floating control panel, fixed near the top-right so the click targets
+     * never move between marketplace subviews or items.
+     */
+    _buildPanel() {
         const chip = document.createElement('div');
         chip.id = CHIP_ID;
-        chip.dataset.placement = tabBar ? 'tabbar' : 'floating';
-        chip.style.cssText = tabBar
-            ? 'display:inline-flex; align-items:center; gap:6px; align-self:center; margin:0 6px; padding:3px 8px; ' +
-              'border-radius:7px; background:rgba(12,16,30,0.6); border:1px solid rgba(74,158,255,0.45); ' +
-              'color:#e0e0e0; font-size:12px; font-family:inherit; user-select:none; white-space:nowrap;'
-            : 'position:fixed; top:70px; right:24px; z-index:9000; display:flex; align-items:center; gap:6px; ' +
-              'padding:5px 9px; border-radius:7px; background:rgba(12,16,30,0.94); border:1px solid rgba(74,158,255,0.45); ' +
-              'color:#e0e0e0; font-size:12px; font-family:inherit; box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
+        chip.style.cssText =
+            'position:fixed; top:70px; right:24px; z-index:9000; display:flex; align-items:center; gap:6px; ' +
+            'padding:5px 9px; border-radius:7px; background:rgba(12,16,30,0.94); border:1px solid rgba(74,158,255,0.45); ' +
+            'color:#e0e0e0; font-size:12px; font-family:inherit; box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
 
         const status = document.createElement('span');
         status.className = `${CHIP_ID}-status`;
-        status.style.cssText = `max-width:${tabBar ? 260 : 340}px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+        status.style.cssText = 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
@@ -154,21 +209,7 @@ class BulkSellAssistant {
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
 
-        if (!tabBar) {
-            document.body.appendChild(chip);
-        } else {
-            const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
-            const firstCustomTab = Array.from(tabBar.children).find(
-                (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-            );
-            if (historyTab) {
-                historyTab.after(chip);
-            } else if (firstCustomTab) {
-                firstCustomTab.before(chip);
-            } else {
-                tabBar.appendChild(chip);
-            }
-        }
+        document.body.appendChild(chip);
         this.chip = chip;
         this._render();
         this._populateTabSelect();
@@ -346,17 +387,7 @@ class BulkSellAssistant {
 
         navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
         // No order book within the timeout → item isn't marketable right now
-        const bookWaitSec = Math.min(
-            30,
-            Math.max(1, Number(config.getSettingValue('market_bulkSellBookTimeout', 3)) || 3)
-        );
-        this.bookTimeout = setTimeout(() => this._skip('no market data'), bookWaitSec * 1000);
-    }
-
-    /** Pause between finishing one item and preparing the next */
-    _advanceDelayMs() {
-        const raw = Number(config.getSettingValue('market_bulkSellAdvanceMs', 400));
-        return Math.min(5000, Math.max(0, Number.isFinite(raw) ? raw : 400));
+        this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
     }
 
     _onOrderBook(data) {
@@ -375,8 +406,9 @@ class BulkSellAssistant {
     /**
      * Decide insta-sell vs listing per the order book, then open the matching
      * game modal (the quantity is prefilled when it appears).
-     * Insta-sell when ask supply exceeds bid demand, or the front ask listing
-     * has been waiting longer than the threshold (the queue isn't moving).
+     * Two configurable insta-sell rules (either one triggers, 0 disables it):
+     * ask supply exceeds bid demand × the supply ratio, or the front ask
+     * listing has waited longer than the queue-age limit (queue isn't moving).
      */
     _decideAndOpen(book) {
         const asks = book?.asks || [];
@@ -394,19 +426,27 @@ class BulkSellAssistant {
         const askQty = remaining(asks);
         const bidQty = remaining(bids);
 
-        const queueDaysLimit = Math.max(0, Number(config.getSettingValue('market_bulkSellQueueDays', 2)) || 2);
+        const readNumberSetting = (key, fallback) => {
+            const raw = Number(config.getSettingValue(key, fallback));
+            return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+        };
+        const queueDaysLimit = readNumberSetting('market_bulkSellQueueDays', 2);
+        const supplyRatio = readNumberSetting('market_bulkSellSupplyRatio', 1);
+
         let frontAskDays = 0;
         const created = asks[0]?.createdTimestamp;
         if (created) {
             frontAskDays = Math.max(0, (Date.now() - new Date(created).getTime()) / MS_PER_DAY);
         }
 
-        const instaWanted = askQty > bidQty || frontAskDays > queueDaysLimit;
-        const insta = instaWanted && bids.length > 0;
+        const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
+        const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
+        const insta = (supplyTriggered || ageTriggered) && bids.length > 0;
         const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
+        const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
-            ? askQty > bidQty
-                ? `supply ${formatKMB(askQty)} > demand ${formatKMB(bidQty)}`
+            ? supplyTriggered
+                ? `supply ${formatKMB(askQty)} > demand ${formatKMB(bidQty)}${ratioLabel}`
                 : `ask queue ~${frontAskDays.toFixed(1)}d`
             : 'queue ok';
         this.decision = { insta, price, reason };
@@ -458,7 +498,7 @@ class BulkSellAssistant {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
                 this.index++;
-                this.advanceTimeout = setTimeout(() => this._prepareCurrent(), this._advanceDelayMs());
+                this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 400);
             }
         }, 200);
     }
@@ -471,8 +511,7 @@ class BulkSellAssistant {
         this.index++;
         this.state = 'preparing';
         this._render();
-        // Extra floor so a just-closed modal has time to leave the DOM
-        this.advanceTimeout = setTimeout(() => this._prepareCurrent(), Math.max(600, this._advanceDelayMs()));
+        this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 600);
     }
 
     _stop(note) {
@@ -516,10 +555,9 @@ class BulkSellAssistant {
             this.modalUnregister();
             this.modalUnregister = null;
         }
-        if (this.chip) {
-            this.chip.remove();
-            this.chip = null;
-        }
+        this._removeButton();
+        this._removePanel();
+        this.panelVisible = false;
         this.isInitialized = false;
     }
 
