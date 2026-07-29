@@ -1085,6 +1085,14 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
             },
+            market_bulkSellMinListingValue: {
+                id: 'market_bulkSellMinListingValue',
+                label: 'Market: Bulk sell minimum stack value for a sell listing',
+                type: 'number',
+                default: 1500000,
+                min: 0,
+                help: 'Stacks worth less than this (count × ask price) are insta-sold to the best bid instead of using up a sell listing slot. 0 turns this rule off. Default: 1,500,000.',
+            },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
                 label: 'Market: Show personal trade history',
