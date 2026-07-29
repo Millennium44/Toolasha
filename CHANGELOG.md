@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Labyrinth math aligned with the official formulas
+
+- **Skilling success rate floors at 5%**: the game computes `MAX(5%, 0.80 × (1 + LevelBonus + Buffs))`, but every clear-chance calculation clamped at 0% instead — deep-underleveled rooms showed lower clear odds (and skip recommendations) than reality. All eight success-rate sites (tiles, what-ifs, editor-based analysis, enhancing) now use the 5% floor.
+- **Gourmet no longer counts toward lab double progress**: the official formula is Crate + Gathering (Milking/Foraging/Woodcutting only) + Upgrade; cooking/brewing rooms were incorrectly crediting the gourmet buff as double-progress chance.
+- Everything else audited against the published combat/lab formulas matches: HP/MP, attack interval, cast time, ability cooldown haste, accuracy/damage/evasion ratings, bulwark smash, hit chance (^1.4), ranged bonus crit, armor/resistance and damage-taken ratios (including the negative branch), thorns, retaliation (incl. the 5× premitigated cap), status tenacity scaling, threat targeting, labyrinth monster level/armor scaling, work power, room XP, and all reward expectations.
+
 ### Battle counter: labyrinth fights always show Attempt #, zones always show Battle
 
 - The counter's labyrinth detection relied on state flags and an action HRID guess, and both go stale in opposite directions — a labyrinth run stays "active" between entries while you fight regular zones, and stale labyrinth messages arrive right after exiting — which is why every previous fix flipped the bug from one side to the other. The render decision now comes from the header title itself (labyrinth fights are titled "Labyrinth - <Monster>"), so lab fights show `· Attempt #N` (or nothing until the attempt count arrives — never `Battle #`), and regular zones/dungeons show `Battle #`/`Wave · Battle #` regardless of lingering labyrinth state.
