@@ -1,12 +1,14 @@
 /**
  * Task Bulk Reroller
- * Adds a "Reroll Tasks" button to the task panel header (next to the Claim
- * Reward collector button). One click runs a pass over every task card:
- * non-protected tasks are rerolled — coins first, then cowbells — until they
- * land on a protected task or hit the per-character reroll limits from the
- * reroll-protection popup; a task at the limit for both categories is deleted.
- * Completed tasks (Claim Reward showing) are never touched. Clicking the
- * button again stops the pass.
+ * Adds a stepper button to the task panel header (next to the Claim Reward
+ * collector). The game allows one server action per user click, so each click
+ * performs exactly one action on the first task that needs one:
+ * - a reroll (coins first, then cowbells) on a non-protected task that hasn't
+ *   hit the per-character reroll limits from the reroll-protection popup, or
+ * - a discard (trash can icon → "Discard Task" confirm) once a task is at the
+ *   limit for both categories.
+ * The button label always previews the next action. Tasks that land on a
+ * protected target and completed tasks (Claim Reward showing) are left alone.
  *
  * Limit semantics match cap protection: a category's rerolls are spent while
  * the next reroll's cost is below the configured threshold, so the minimum
@@ -18,9 +20,9 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { formatKMB } from '../../utils/formatters.js';
 
 const BTN_ID = 'mwi-bulk-reroll-btn';
-const MAX_ACTIONS_PER_RUN = 150;
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,11 +31,10 @@ function sleep(ms) {
 class TaskBulkReroll {
     constructor() {
         this.isInitialized = false;
-        this.unregisterObserver = null;
+        this.unregisterHandlers = [];
         this.button = null;
-        this.running = false;
-        this.actionsDone = 0;
-        this.lastNote = '';
+        this.busy = false;
+        this.noDeleteIds = new Set(); // questIds whose trash/discard buttons weren't found
     }
 
     initialize() {
@@ -41,9 +42,19 @@ class TaskBulkReroll {
         if (!config.getSetting('taskBulkReroll')) return;
         this.isInitialized = true;
 
-        this.unregisterObserver = domObserver.onClass('TaskBulkReroll', 'TasksPanel_taskSlotCount', (headerElement) =>
-            this._ensureButton(headerElement)
-        );
+        const unregisterPanel = domObserver.onClass('TaskBulkReroll', 'TasksPanel_taskSlotCount', (headerElement) => {
+            this._ensureButton(headerElement);
+            this._refreshLabel();
+        });
+        this.unregisterHandlers.push(unregisterPanel);
+
+        // Re-evaluate the next action whenever the server confirms task changes
+        const questHandler = () => {
+            this.noDeleteIds.clear();
+            setTimeout(() => this._refreshLabel(), 400);
+        };
+        webSocketHook.on('quests_updated', questHandler);
+        this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
     }
 
     _ensureButton(headerElement) {
@@ -53,6 +64,9 @@ class TaskBulkReroll {
         btn.id = BTN_ID;
         btn.className = 'Button_button__1Fe9z Button_small__3fqC7';
         btn.style.cssText = 'margin-left: 8px;';
+        btn.textContent = '🎲 Reroll Next';
+        btn.title =
+            'Each click performs one action on the first task that needs one: reroll a non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once both limits are hit. Completed tasks are never touched.';
         btn.addEventListener('click', () => this._onClick());
 
         const claimBtn = headerElement.querySelector('#mwi-claim-proxy-btn');
@@ -65,78 +79,56 @@ class TaskBulkReroll {
             headerElement.appendChild(btn);
         }
         this.button = btn;
-        this._updateButton();
     }
 
-    _updateButton() {
-        if (!this.button) return;
-        if (this.running) {
-            this.button.textContent = `⏹ Stop (${this.actionsDone})`;
-            this.button.title = 'Stop the bulk reroll pass';
-        } else {
-            this.button.textContent = '🎲 Reroll Tasks';
-            this.button.title =
-                'Reroll every non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup; tasks at the limit for both categories are deleted. Completed tasks are never touched.' +
-                (this.lastNote ? `\nLast run: ${this.lastNote}` : '');
-        }
-    }
-
-    _onClick() {
-        if (this.running) {
-            this.running = false;
-            this._updateButton();
-            return;
-        }
-        this._run();
-    }
-
-    async _run() {
-        this.running = true;
-        this.actionsDone = 0;
-        this.lastNote = '';
-        this._updateButton();
-        let deletes = 0;
-        let rerolls = 0;
+    /** Update the button label to preview the next pending action */
+    async _refreshLabel() {
+        if (!this.button || this.busy) return;
         try {
             const limits = await this._loadLimits();
             const protectedHrids = await this._loadProtectedHrids();
-            const cardState = new Map(); // questId → { stalled, noDelete }
-
-            while (this.running && this.actionsDone < MAX_ACTIONS_PER_RUN) {
-                const next = this._findNextAction(protectedHrids, limits, cardState);
-                if (!next) break;
-
-                const acted = await this._actOnCard(next.card, next.mode);
-                if (!acted) {
-                    // Button not found — remember so this card can't loop forever
-                    const state = cardState.get(next.questId) || {};
-                    if (next.mode === 'delete') state.noDelete = true;
-                    else state.stalled = true;
-                    cardState.set(next.questId, state);
-                    continue;
-                }
-
-                this.actionsDone++;
-                if (next.mode === 'delete') deletes++;
-                else rerolls++;
-                this._updateButton();
-
-                const updated = await this._waitForQuestsUpdate();
-                if (!updated) {
-                    // Server never confirmed — don't retry this card blindly
-                    const state = cardState.get(next.questId) || {};
-                    state.stalled = true;
-                    cardState.set(next.questId, state);
-                }
-                // Let React re-render the task list before the next evaluation
-                await sleep(500);
+            const pending = this._collectPending(protectedHrids, limits);
+            const next = pending[0] || null;
+            if (!next) {
+                this.button.textContent = '✓ Tasks settled';
+            } else if (next.mode === 'delete') {
+                this.button.textContent = `🗑 Discard Task (${pending.length})`;
+            } else {
+                const costLabel = next.mode === 'coin' ? `${formatKMB(next.cost)}💰` : `${next.cost}🔔`;
+                this.button.textContent = `🎲 Reroll ${costLabel} (${pending.length})`;
             }
         } catch (error) {
-            console.error('[TaskBulkReroll] Run failed:', error);
+            console.error('[TaskBulkReroll] Failed to refresh label:', error);
         }
-        this.running = false;
-        this.lastNote = `${rerolls} rerolls, ${deletes} deletes`;
-        this._updateButton();
+    }
+
+    /** One click = one server action on the first pending task */
+    async _onClick() {
+        if (this.busy) return;
+        this.busy = true;
+        if (this.button) this.button.textContent = '…';
+        try {
+            const limits = await this._loadLimits();
+            const protectedHrids = await this._loadProtectedHrids();
+            const next = this._collectPending(protectedHrids, limits)[0];
+            if (next) {
+                const acted = await this._actOnCard(next.card, next.mode);
+                if (acted) {
+                    // Wait for the server to confirm before previewing the next action
+                    await this._waitForQuestsUpdate();
+                    await sleep(400);
+                } else if (next.mode === 'delete') {
+                    // Trash/discard buttons not found — skip this card so the
+                    // next click moves on instead of retrying forever
+                    this.noDeleteIds.add(next.questId);
+                    console.warn('[TaskBulkReroll] Discard buttons not found on task card');
+                }
+            }
+        } catch (error) {
+            console.error('[TaskBulkReroll] Action failed:', error);
+        }
+        this.busy = false;
+        this._refreshLabel();
     }
 
     /**
@@ -162,11 +154,13 @@ class TaskBulkReroll {
     }
 
     /**
-     * Pick the next card to act on and how.
+     * Collect every card that still needs an action, in task-list order.
      * Coin rerolls are spent before cowbell rerolls; a card below neither
-     * limit is deleted (at the limit for both categories).
+     * limit is discarded (at the limit for both categories).
+     * @returns {Array<{card: HTMLElement, questId: number, mode: string, cost: number}>}
      */
-    _findNextAction(protectedHrids, limits, cardState) {
+    _collectPending(protectedHrids, limits) {
+        const pending = [];
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
         for (const card of cards) {
             // Completed task — claimable, leave it alone
@@ -177,25 +171,27 @@ class TaskBulkReroll {
             const hrid = quest.actionHrid || quest.monsterHrid || '';
             if (hrid && protectedHrids.has(hrid)) continue;
 
-            const state = cardState.get(quest.id) || {};
-            if (state.stalled) continue;
-
             const nextCoinCost = Math.min(10000 * Math.pow(2, quest.coinRerollCount || 0), 320000);
             const nextCowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount || 0), 32);
-            if (nextCoinCost < limits.coin) return { card, questId: quest.id, mode: 'coin' };
-            if (nextCowbellCost < limits.cowbell) return { card, questId: quest.id, mode: 'cowbell' };
-            if (!state.noDelete) return { card, questId: quest.id, mode: 'delete' };
+            if (nextCoinCost < limits.coin) {
+                pending.push({ card, questId: quest.id, mode: 'coin', cost: nextCoinCost });
+            } else if (nextCowbellCost < limits.cowbell) {
+                pending.push({ card, questId: quest.id, mode: 'cowbell', cost: nextCowbellCost });
+            } else if (!this.noDeleteIds.has(quest.id)) {
+                pending.push({ card, questId: quest.id, mode: 'delete', cost: 0 });
+            }
         }
-        return null;
+        return pending;
     }
 
     /**
-     * Perform one action on a card: a coin/cowbell reroll (free reroll
-     * preferred when offered) or a delete. Returns false if the needed
-     * button couldn't be found.
+     * Perform one server action on a card: a coin/cowbell reroll (free reroll
+     * preferred when offered) or a discard. Expanding menus and confirm
+     * dialogs are UI-only clicks — exactly one click reaches the server.
+     * Returns false if the needed button couldn't be found.
      */
     async _actOnCard(card, mode) {
-        if (mode === 'delete') return this._deleteCard(card);
+        if (mode === 'delete') return this._discardCard(card);
 
         let payButtons = this._findPayButtons(card);
         if (!payButtons.length) {
@@ -240,41 +236,26 @@ class TaskBulkReroll {
     }
 
     /**
-     * Delete a task that is at the limit for both categories. Looks for the
-     * game's delete button on the card (expanding the reroll options if
-     * needed) and confirms any dialog that appears.
+     * Discard a task at the limit for both categories: click the card's trash
+     * can icon, then the "Discard Task" confirmation (the server action).
      */
-    async _deleteCard(card) {
-        const findDelete = () =>
-            Array.from(card.querySelectorAll('button')).find((b) => /delete|discard|abandon/i.test(b.textContent));
+    async _discardCard(card) {
+        const trashTarget =
+            card.querySelector('use[href*="trash" i]') ||
+            card.querySelector('svg[class*="trash" i]') ||
+            card.querySelector('[class*="trash" i]');
+        const trashBtn = trashTarget?.closest('button, [role="button"], svg') || trashTarget;
+        if (!trashBtn) return false;
+        trashBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-        let deleteBtn = findDelete();
-        if (!deleteBtn) {
-            const expandBtn = Array.from(card.querySelectorAll('button')).find(
-                (b) => b.textContent.trim().toLowerCase() === 'reroll'
-            );
-            if (expandBtn) {
-                expandBtn.click();
-                await sleep(300);
-                deleteBtn = findDelete();
-            }
-        }
-        if (!deleteBtn) return false;
-        deleteBtn.click();
-
-        // Confirm dialog, if the game asks
         await sleep(300);
-        const modal = document.querySelector('[class*="Modal_modalContainer"]');
-        if (modal) {
-            const confirmBtn = Array.from(modal.querySelectorAll('button')).find((b) =>
-                /delete|confirm|yes/i.test(b.textContent)
-            );
-            confirmBtn?.click();
-        }
+        const discardBtn = Array.from(document.querySelectorAll('button')).find((b) => /discard/i.test(b.textContent));
+        if (!discardBtn) return false;
+        discardBtn.click();
         return true;
     }
 
-    /** Resolve until the server confirms the task change (or time out) */
+    /** Resolve once the server confirms the task change (or time out) */
     _waitForQuestsUpdate(timeoutMs = 3500) {
         return new Promise((resolve) => {
             let settled = false;
@@ -337,15 +318,16 @@ class TaskBulkReroll {
     }
 
     disable() {
-        this.running = false;
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        for (const unregister of this.unregisterHandlers) {
+            unregister();
         }
+        this.unregisterHandlers = [];
         if (this.button) {
             this.button.remove();
             this.button = null;
         }
+        this.busy = false;
+        this.noDeleteIds.clear();
         this.isInitialized = false;
     }
 }

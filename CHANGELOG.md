@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Reroll stepper: one click per action; clickable names in announcements
+
+- **The Reroll Tasks button is now a stepper** honoring the game's one-click-per-server-action rule: each click performs exactly one reroll (or one discard) on the first task that needs it, and the label previews what the next click will do — `🎲 Reroll 20K💰 (3)`, `🗑 Discard Task (1)`, or `✓ Tasks settled`. Menu-opening and confirm clicks stay UI-only; exactly one action reaches the server per click.
+- **Discarding uses the real flow**: trash can icon on the card, then the "Discard Task" confirmation.
+- **New: clickable names in chat announcements** — the player name in messages like "Az0r has reached level 150 Magic!" becomes a link that fills `/profile Az0r` into the chat input (setting: "Chat: Clickable names in announcements"). Regular messages keep the game's own name menu.
+
 ### Task bulk reroller, per-character reroll limits, smarter cap glow
 
 - New **🎲 Reroll Tasks** button in the task panel header (next to the Claim Reward collector): one click rerolls every non-protected task — coins first, then cowbells — until it lands on a protected task or hits the reroll limits, and **deletes tasks at the limit for both categories**. Free rerolls are used when offered, completed tasks are never touched, and clicking again stops the pass mid-run. Progress shows on the button.

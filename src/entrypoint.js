@@ -549,6 +549,13 @@ function registerFeatures() {
                 config.isFeatureEnabled('collectionFilters') || config.isFeatureEnabled('collectionFavorites'),
         },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
+        {
+            key: 'chatProfileLink',
+            name: 'Chat Profile Link',
+            category: 'Chat',
+            module: UI.chatProfileLink,
+            async: false,
+        },
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
         { key: 'chatBlockList', name: 'Chat Block List', category: 'Chat', module: UI.chatBlockList, async: false },
