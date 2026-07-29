@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Guild idle list includes hidden-status members
+
+- Members hiding their online status now appear in the idle list when their action queue is empty — what matters is whether the character is doing an action, not their presence. Their entry never states online/offline (dimmed color, neutral tooltip), so the privacy setting still conceals what it's meant to conceal.
+
 ### Guild idle list fixed — wired to the real activity signal
 
 - The correct field turned out to be `actionType` in the guild sharable data: it carries the running action's type (e.g. `/action_types/combat`) and is empty when a member has nothing running — the same signal behind the game's Activity column (confirmed by sampling an active member vs. two idle ones). The idle list now uses it and is **re-enabled by default**.

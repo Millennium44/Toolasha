@@ -347,19 +347,23 @@ class GuildXPDisplay {
 
         // Idle = no action running (actionType empty) — the same signal the
         // game's Activity column uses. Actions keep running while offline, so
-        // offline members without one are idle too (shown dimmed).
+        // online status doesn't matter; hidden-status members are included
+        // too since only their action state is shown, not their presence.
         const idleMembers = memberList
-            .filter((m) => !m.hideOnlineStatus && !m.actionType)
+            .filter((m) => !m.actionType)
             .sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0) || a.name.localeCompare(b.name));
 
         const namesStr =
             idleMembers.length === 0
                 ? '<span style="color: var(--color-success);">None</span>'
                 : idleMembers
-                      .map(
-                          (m) =>
-                              `<span style="color: ${m.isOnline ? '#f0a830' : '#8a90a5'};" title="${m.isOnline ? 'Online' : 'Offline'}, no action running">${m.name}</span>`
-                      )
+                      .map((m) => {
+                          const online = m.isOnline && !m.hideOnlineStatus;
+                          const title = m.hideOnlineStatus
+                              ? 'No action running'
+                              : `${m.isOnline ? 'Online' : 'Offline'}, no action running`;
+                          return `<span style="color: ${online ? '#f0a830' : '#8a90a5'};" title="${title}">${m.name}</span>`;
+                      })
                       .join(', ');
 
         return `
