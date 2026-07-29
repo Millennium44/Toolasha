@@ -30,6 +30,10 @@ const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
+
+/** Beacon reveal radius: Manhattan distance 2 — a 13-room diamond */
+const BEACON_RADIUS = 2;
 
 /** Lexicographic weight: one shroud outweighs any number of torches */
 const PATH_SHROUD_WEIGHT = 1e6;
@@ -173,6 +177,195 @@ export function computeLabyrinthPath(tiles, cols) {
     }
 
     return { route: routeSet, chests, shrouds, torches, target: targetIdx };
+}
+
+/**
+ * Plan beacon placements that reveal a walkable corridor from the entrance to
+ * the floor exit while revealing as many new rooms as possible. Beacons reveal
+ * a 13-room diamond (Manhattan radius 2). The corridor requirement: a path
+ * from the entrance to the exit where every interior room is revealed (already
+ * revealed rooms count, so mid-run the plan builds on what's uncovered).
+ *
+ * Priorities: use the minimum number of beacons that can cover such a corridor
+ * (chained so consecutive reveal areas connect), maximize newly revealed rooms
+ * among those chains (beam search), then spend any extra requested beacons
+ * greedily wherever they reveal the most.
+ *
+ * Pure function so the planning logic is testable without DOM.
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} cols - Grid width
+ * @param {number} [beaconCount=0] - Total beacons to place; 0 = minimum needed
+ * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
+ *   revealedNew, minNeeded } or null on empty input
+ */
+export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+    const n = revealed.length;
+    if (!n || !cols) return null;
+    const entranceIdx = 0;
+    const exitIdx = n - 1;
+    const x = (i) => i % cols;
+    const y = (i) => Math.floor(i / cols);
+    const manhattan = (a, b) => Math.abs(x(a) - x(b)) + Math.abs(y(a) - y(b));
+
+    const neighbors = (i) => {
+        const out = [];
+        if (x(i) > 0) out.push(i - 1);
+        if (x(i) < cols - 1) out.push(i + 1);
+        if (i - cols >= 0) out.push(i - cols);
+        if (i + cols < n) out.push(i + cols);
+        return out;
+    };
+
+    const diamondCache = new Map();
+    const diamond = (c) => {
+        let cells = diamondCache.get(c);
+        if (!cells) {
+            cells = [];
+            for (let i = 0; i < n; i++) {
+                if (manhattan(c, i) <= BEACON_RADIUS) cells.push(i);
+            }
+            diamondCache.set(c, cells);
+        }
+        return cells;
+    };
+
+    // Revealed regions walkable from the entrance and from the exit
+    const bfsRegion = (start) => {
+        const seen = new Set([start]);
+        const queue = [start];
+        while (queue.length) {
+            const cur = queue.shift();
+            for (const nb of neighbors(cur)) {
+                if (!seen.has(nb) && revealed[nb]) {
+                    seen.add(nb);
+                    queue.push(nb);
+                }
+            }
+        }
+        return seen;
+    };
+    const startRegion = bfsRegion(entranceIdx);
+    const endRegion = bfsRegion(exitIdx);
+
+    // Already connected without any beacons?
+    let connected = false;
+    for (const i of startRegion) {
+        if (endRegion.has(i) || neighbors(i).some((nb) => endRegion.has(nb))) {
+            connected = true;
+            break;
+        }
+    }
+    if (connected) {
+        return { feasible: true, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: 0 };
+    }
+
+    // A beacon "touches" a region when its reveal area contains a cell in the
+    // region or adjacent to it — a path can step between them
+    const touchesRegion = (c, region) => {
+        for (const d of diamond(c)) {
+            if (region.has(d)) return true;
+            for (const nb of neighbors(d)) {
+                if (region.has(nb)) return true;
+            }
+        }
+        return false;
+    };
+    const startOK = [];
+    const endOK = [];
+    for (let c = 0; c < n; c++) {
+        startOK[c] = touchesRegion(c, startRegion);
+        endOK[c] = touchesRegion(c, endRegion);
+    }
+
+    // Two beacons chain when their diamonds intersect or touch (centers within
+    // Manhattan distance 5). distToEnd[c] = beacons still needed after c.
+    const CHAIN_DIST = 2 * BEACON_RADIUS + 1;
+    const distToEnd = new Array(n).fill(Infinity);
+    let frontier = [];
+    for (let c = 0; c < n; c++) {
+        if (endOK[c]) {
+            distToEnd[c] = 0;
+            frontier.push(c);
+        }
+    }
+    while (frontier.length) {
+        const next = [];
+        for (const c of frontier) {
+            for (let other = 0; other < n; other++) {
+                if (distToEnd[other] === Infinity && manhattan(c, other) <= CHAIN_DIST) {
+                    distToEnd[other] = distToEnd[c] + 1;
+                    next.push(other);
+                }
+            }
+        }
+        frontier = next;
+    }
+
+    let minNeeded = Infinity;
+    for (let c = 0; c < n; c++) {
+        if (startOK[c] && Number.isFinite(distToEnd[c])) {
+            minNeeded = Math.min(minNeeded, distToEnd[c] + 1);
+        }
+    }
+    if (!Number.isFinite(minNeeded)) {
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: Infinity };
+    }
+    if (beaconCount > 0 && beaconCount < minNeeded) {
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded };
+    }
+    const targetCount = beaconCount > 0 ? beaconCount : minNeeded;
+
+    // Beam search over minimum-length chains, maximizing newly revealed rooms
+    const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
+    const BEAM_WIDTH = 300;
+    let states = [];
+    for (let c = 0; c < n; c++) {
+        if (!startOK[c] || distToEnd[c] > minNeeded - 1) continue;
+        states.push({ chain: [c], union: new Set(newCells(c, new Set())) });
+    }
+    for (let depth = 1; depth < minNeeded; depth++) {
+        const expanded = [];
+        for (const state of states) {
+            const last = state.chain[state.chain.length - 1];
+            for (let c = 0; c < n; c++) {
+                if (manhattan(c, last) > CHAIN_DIST) continue;
+                if (state.chain.includes(c)) continue;
+                if (distToEnd[c] > minNeeded - depth - 1) continue;
+                const union = new Set(state.union);
+                for (const gained of newCells(c, state.union)) union.add(gained);
+                expanded.push({ chain: [...state.chain, c], union });
+            }
+        }
+        expanded.sort((a, b) => b.union.size - a.union.size);
+        states = expanded.slice(0, BEAM_WIDTH);
+    }
+    states = states.filter((s) => distToEnd[s.chain[s.chain.length - 1]] === 0);
+    states.sort((a, b) => b.union.size - a.union.size);
+    if (!states.length) {
+        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded };
+    }
+    const best = states[0];
+
+    // Extra beacons beyond the corridor go wherever they reveal the most
+    const beacons = [...best.chain];
+    const covered = new Set(best.union);
+    while (beacons.length < targetCount) {
+        let bestCenter = -1;
+        let bestGain = 0;
+        for (let c = 0; c < n; c++) {
+            if (beacons.includes(c)) continue;
+            const gain = newCells(c, covered).length;
+            if (gain > bestGain) {
+                bestGain = gain;
+                bestCenter = c;
+            }
+        }
+        if (bestCenter < 0) break;
+        beacons.push(bestCenter);
+        for (const gained of newCells(bestCenter, covered)) covered.add(gained);
+    }
+
+    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded };
 }
 
 class LabyrinthClearRate {
@@ -372,6 +565,7 @@ class LabyrinthClearRate {
         document.querySelectorAll(`.${RECOMMEND_CONTROLS_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
         this.clearPathOverlays();
+        this.clearBeaconOverlays();
         this.pathCalcRunning = false;
         pruneEmptyAnnotationContainers();
 
@@ -405,6 +599,7 @@ class LabyrinthClearRate {
             this.pruneClearedPathOverlays();
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
+                this.clearBeaconOverlays();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
             }
@@ -2034,6 +2229,33 @@ class LabyrinthClearRate {
         });
         container.appendChild(unknownSelect);
 
+        const beaconButton = document.createElement('button');
+        beaconButton.className = `${TILE_CONTROLS_CLASS}-beacon-button`;
+        beaconButton.textContent = 'Beacons';
+        beaconButton.title =
+            'Plan beacon placements: fewest beacons (or the set amount) whose reveal areas cover a walkable path to the exit, revealing as many rooms as possible';
+        beaconButton.style.cssText =
+            'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#1d9e83; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        beaconButton.addEventListener('click', () => this.runBeaconCalculation());
+        container.appendChild(beaconButton);
+
+        const beaconInput = document.createElement('input');
+        beaconInput.className = `${TILE_CONTROLS_CLASS}-beacon-count`;
+        beaconInput.type = 'number';
+        beaconInput.min = '0';
+        beaconInput.max = '20';
+        beaconInput.step = '1';
+        beaconInput.value = String(config.getSettingValue('labyrinthBeaconCount', 0));
+        beaconInput.title = 'Beacons to place — 0 uses the fewest that cover a path to the exit';
+        beaconInput.style.cssText = hoursInput.style.cssText;
+        beaconInput.addEventListener('change', () => {
+            const n = Math.min(20, Math.max(0, Math.floor(Number(beaconInput.value) || 0)));
+            beaconInput.value = String(n);
+            config.setSettingValue('labyrinthBeaconCount', n);
+        });
+        container.appendChild(beaconInput);
+
         if (config.getSetting('labyrinthRoomLogs')) {
             const logsButton = document.createElement('button');
             logsButton.textContent = 'Logs';
@@ -2429,6 +2651,101 @@ class LabyrinthClearRate {
 
     clearPathOverlays() {
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Compute and highlight optimal beacon placements: the fewest beacons (or
+     * the configured count) whose reveal areas cover a walkable corridor to
+     * the floor exit, revealing as many new rooms as possible.
+     */
+    runBeaconCalculation() {
+        if (!this.roomData) {
+            this.setTileStatus('No labyrinth data');
+            return;
+        }
+
+        const rows = this.roomData;
+        const flat = rows.flat();
+        const cols = Array.isArray(rows[0]) ? rows[0].length : 0;
+        const cells = this.findRoomGridCells(flat.length);
+        if (!cols || cells.length !== flat.length) {
+            this.setTileStatus('Grid not found');
+            return;
+        }
+
+        const countInput = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-count`);
+        const count = Math.min(20, Math.max(0, Math.floor(Number(countInput?.value) || 0)));
+        if (countInput) countInput.value = String(count);
+        config.setSettingValue('labyrinthBeaconCount', count);
+
+        // A room is revealed when its contents are known (typed room or cleared);
+        // the entrance always is
+        const revealed = flat.map(
+            (room, i) => i === 0 || (!!room && (String(room.roomType || '') !== '' || !!room.isCleared))
+        );
+
+        this.clearBeaconOverlays();
+        const plan = computeBeaconPlan(revealed, cols, count);
+        if (!plan) {
+            this.setTileStatus('Beacon planning failed');
+            return;
+        }
+        if (!plan.feasible) {
+            this.setTileStatus(
+                Number.isFinite(plan.minNeeded)
+                    ? `Need at least ${plan.minNeeded} beacons for a covered path`
+                    : 'No beacon chain can reach the exit'
+            );
+            return;
+        }
+        if (plan.minNeeded === 0) {
+            this.setTileStatus('Path to the exit is already revealed — no beacons needed');
+            return;
+        }
+
+        for (const idx of plan.covered) {
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, false, '');
+        }
+        plan.beacons.forEach((idx, i) => {
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, true, `B${i + 1}`);
+        });
+
+        const minNote = count === 0 ? ' (min)' : '';
+        this.setTileStatus(
+            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · path covered`
+        );
+    }
+
+    /**
+     * Highlight a tile as beacon coverage (fill) or a beacon center (outline + label)
+     */
+    appendBeaconOverlay(cell, isCenter, label) {
+        const cellStyle = window.getComputedStyle(cell);
+        if (cellStyle.position === 'static') {
+            cell.style.position = 'relative';
+        }
+        const overlay = document.createElement('div');
+        overlay.className = BEACON_OVERLAY_CLASS;
+        overlay.style.cssText = isCenter
+            ? 'position:absolute; inset:0; border:2px solid #26d0aa; border-radius:6px; ' +
+              'pointer-events:none; z-index:8; box-sizing:border-box;'
+            : 'position:absolute; inset:0; background:rgba(38,166,154,0.22); border:1px solid rgba(38,166,154,0.45); ' +
+              'border-radius:6px; pointer-events:none; z-index:7; box-sizing:border-box;';
+        if (label) {
+            const tag = document.createElement('div');
+            tag.style.cssText =
+                'position:absolute; top:1px; right:1px; padding:0 3px; border-radius:3px; background:#26d0aa; ' +
+                'color:#04263f; font-size:8px; font-weight:700; line-height:1.4;';
+            tag.textContent = label;
+            overlay.appendChild(tag);
+        }
+        cell.appendChild(overlay);
+    }
+
+    clearBeaconOverlays() {
+        document.querySelectorAll(`.${BEACON_OVERLAY_CLASS}`).forEach((el) => el.remove());
     }
 
     /**
