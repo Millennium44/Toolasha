@@ -404,6 +404,7 @@ class TaskProfitDisplay {
         this.eventListeners = new WeakMap(); // Store listeners for cleanup
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
+        this._zoneSimCache = new Map(); // zoneHrid|loadout → {promise, t} shared full-zone sims
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         this._simQueue = Promise.resolve();
     }
@@ -1136,14 +1137,43 @@ class TaskProfitDisplay {
             }
 
             const SIM_HOURS = 1;
-            const simResult = await runSimulation({
-                gameData: simGameData,
-                playerDTOs: players,
-                zoneHrid,
-                difficultyTier: 0,
-                hours: SIM_HOURS,
-                communityBuffs: getCommunityBuffs(),
-            });
+            // Full-zone sims (zone mode / boss targets) are shared across all
+            // task cards for the same zone+loadout, so every card in a zone
+            // reports identical numbers instead of independent RNG rolls
+            const sharedZoneSim = mode === 'zone' || isBossTarget;
+            let simResult;
+            if (sharedZoneSim) {
+                const cacheKey = `${zoneHrid}|${loadoutName || ''}`;
+                const cached = this._zoneSimCache.get(cacheKey);
+                if (cached && Date.now() - cached.t < 3 * 60 * 1000) {
+                    simResult = await cached.promise;
+                } else {
+                    const promise = runSimulation({
+                        gameData: simGameData,
+                        playerDTOs: players,
+                        zoneHrid,
+                        difficultyTier: 0,
+                        hours: SIM_HOURS,
+                        communityBuffs: getCommunityBuffs(),
+                    });
+                    this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
+                    try {
+                        simResult = await promise;
+                    } catch (error) {
+                        this._zoneSimCache.delete(cacheKey);
+                        throw error;
+                    }
+                }
+            } else {
+                simResult = await runSimulation({
+                    gameData: simGameData,
+                    playerDTOs: players,
+                    zoneHrid,
+                    difficultyTier: 0,
+                    hours: SIM_HOURS,
+                    communityBuffs: getCommunityBuffs(),
+                });
+            }
 
             const kills = simResult.deaths?.[monsterHrid] ?? 0;
             const killsPerHour = Math.round(kills / SIM_HOURS);
@@ -1358,7 +1388,22 @@ class TaskProfitDisplay {
         if (mode === 'zone' && simResult && zoneHrid) {
             const taskListNode = document.querySelector(GAME.TASK_LIST);
             const allTaskInfos = taskListNode ? taskListNode.querySelectorAll(GAME.TASK_INFO) : [];
-            const zoneTasks = [];
+
+            // A task belongs to this summary when its monster can be killed in
+            // the simmed zone (regular or boss spawn) — not by first-match
+            // zone lookup, which can pick a different zone for shared monsters
+            const zoneAct = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid];
+            const zoneMonsterHrids = new Set(
+                [
+                    ...(zoneAct?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || []),
+                    ...(zoneAct?.combatZoneInfo?.fightInfo?.bossSpawns || []),
+                ].map((s) => s.combatMonsterHrid)
+            );
+
+            // Duplicate tasks for the same monster sum: each kill progresses
+            // only one task at a time
+            const perMonster = new Map();
+            let zoneTaskCount = 0;
 
             for (const node of allTaskInfos) {
                 const td = this.parseTaskData(node);
@@ -1367,33 +1412,44 @@ class TaskProfitDisplay {
                 if (!m) continue;
                 const mName = m[1].trim();
                 const mHrid = dataManager.getMonsterHridFromName(mName);
-                if (!mHrid) continue;
-                const mZone = dataManager.getCombatZoneForMonster(mHrid);
-                if (mZone !== zoneHrid) continue;
+                if (!mHrid || !zoneMonsterHrids.has(mHrid)) continue;
 
                 const rem = Math.max((td.quantity ?? 0) - (td.currentProgress ?? 0), 0);
-                const mKills = simResult.deaths?.[mHrid] ?? 0;
-                const mKillsPerHour = mKills / 1; // SIM_HOURS = 1
-                const hoursNeeded = mKillsPerHour > 0 ? rem / mKillsPerHour : Infinity;
-                zoneTasks.push({ name: mName, remaining: rem, killsPerHour: mKillsPerHour, hoursNeeded });
+                const entry = perMonster.get(mHrid) || { name: mName, remaining: 0, taskCount: 0 };
+                entry.remaining += rem;
+                entry.taskCount += 1;
+                perMonster.set(mHrid, entry);
+                zoneTaskCount++;
             }
 
-            if (zoneTasks.length > 1) {
-                const bottleneck = zoneTasks.reduce((a, b) => (a.hoursNeeded > b.hoursNeeded ? a : b));
-                const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
+            if (zoneTaskCount > 1) {
+                let bottleneck = null;
+                for (const [mHrid, entry] of perMonster) {
+                    const mKillsPerHour = (simResult.deaths?.[mHrid] ?? 0) / 1; // SIM_HOURS = 1
+                    entry.hoursNeeded = mKillsPerHour > 0 ? entry.remaining / mKillsPerHour : Infinity;
+                    if (!bottleneck || entry.hoursNeeded > bottleneck.hoursNeeded) bottleneck = entry;
+                }
+
                 // Fights = encounters, not kills — encounters spawn several
                 // monsters, so summing deaths overcounts (older-engine fallback)
                 const totalFightsPerHour =
                     (simResult.zoneEncounters ?? 0) > 0
                         ? simResult.zoneEncounters / 1 // SIM_HOURS = 1
                         : Object.values(simResult.deaths).reduce((s, v) => s + v, 0);
-                const fightsNeeded = Math.round(totalFightsPerHour * bottleneck.hoursNeeded);
 
                 const summary = document.createElement('div');
                 summary.style.cssText =
                     'margin-top: 4px; font-size: 0.7rem; color: #aaddff; border-top: 1px solid #333; padding-top: 4px;';
                 const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name || 'Zone';
-                summary.textContent = `${zoneName}: ~${formatKMB(fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneck.name})`;
+                const bottleneckLabel =
+                    bottleneck.taskCount > 1 ? `${bottleneck.name} ×${bottleneck.taskCount}` : bottleneck.name;
+                if (Number.isFinite(bottleneck.hoursNeeded)) {
+                    const totalSeconds = Math.round(bottleneck.hoursNeeded * 3600);
+                    const fightsNeeded = Math.round(totalFightsPerHour * bottleneck.hoursNeeded);
+                    summary.textContent = `${zoneName}: ~${formatKMB(fightsNeeded)} fights | ${timeReadable(totalSeconds)} (bottleneck: ${bottleneckLabel})`;
+                } else {
+                    summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
+                }
                 container.appendChild(summary);
             }
         }
