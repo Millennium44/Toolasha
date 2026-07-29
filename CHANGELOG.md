@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Open Item Dictionary from ability menus
+
+- Clicking an ability (Abilities panel, Loadouts, anywhere the "Lv.N Name / Link to Chat" popup appears) now offers **Open Item Dictionary**, jumping straight to that ability's book entry. Menus are matched by their heading content rather than a hardcoded class, so it survives the game's class-name churn, and item menus are left alone since they already have the button.
+
 ### Solo/Zone estimate choice is remembered
 
 - The Solo/Zone toggle on task estimate cards is now a persisted preference: new cards start on your last-used mode instead of resetting to Solo, and **auto-estimates use it too** — previously the auto-estimate path always simmed Solo regardless of the toggle.
