@@ -112,22 +112,34 @@ class BulkSellAssistant {
     }
 
     /**
-     * Tab-bar toggle button (Lab Sim style) that shows/hides the floating
-     * panel, next to the Market History tab when present.
+     * Tab-bar toggle that shows/hides the floating panel. Cloned from a
+     * native tab (same approach as the Market History tab) so it looks like
+     * part of the game's tab bar.
      */
     _ensureButton(tabBar) {
         if (this.toggleBtn && tabBar.contains(this.toggleBtn)) return;
         if (this.toggleBtn) this.toggleBtn.remove();
 
-        const button = document.createElement('div');
+        const referenceTab = Array.from(tabBar.children).find((btn) => btn.textContent.includes('My Listings'));
+        if (!referenceTab) return;
+
+        const button = referenceTab.cloneNode(true);
         button.id = BUTTON_ID;
-        button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-1q2h7u5';
-        button.textContent = 'Bulk Sell';
         button.title = 'Show / hide the Bulk Sell panel';
-        button.style.cssText =
-            'cursor:pointer; background:linear-gradient(135deg, #3a7bd5, #5f3dc4); color:#fff; border-radius:4px; ' +
-            'padding:4px 10px; font-size:12px; white-space:nowrap; align-self:center; margin:0 4px;';
-        button.addEventListener('click', () => this._togglePanel());
+        const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) {
+            badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
+        } else {
+            button.textContent = 'Bulk Sell';
+        }
+        button.classList.remove('Mui-selected');
+        button.setAttribute('aria-selected', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._togglePanel();
+        });
 
         const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
         const firstCustomTab = Array.from(tabBar.children).find(
@@ -155,9 +167,10 @@ class BulkSellAssistant {
         this._syncButton();
     }
 
+    /** Underline the tab while the panel is open, like an active tab */
     _syncButton() {
         if (!this.toggleBtn) return;
-        this.toggleBtn.style.outline = this.panelVisible ? '1px solid #9ec4ff' : '';
+        this.toggleBtn.style.boxShadow = this.panelVisible ? 'inset 0 -2px 0 0 #4a9eff' : '';
     }
 
     _removeButton() {

@@ -1064,7 +1064,7 @@ export const settingsGroups = {
                 id: 'market_bulkSellAssistant',
                 label: 'Market: Bulk Sell Assistant',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling every tradable inventory item — most valuable stack first, optionally limited to one Toolasha inventory tab — via a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells per the queue-age and supply-ratio rules below; otherwise posts a sell listing.',
             },
             market_bulkSellQueueDays: {
