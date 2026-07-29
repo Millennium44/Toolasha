@@ -1974,13 +1974,6 @@ export const settingsGroups = {
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
             },
-            taskBulkReroll: {
-                id: 'taskBulkReroll',
-                label: 'Task bulk reroll button',
-                type: 'checkbox',
-                default: true,
-                help: 'Adds a stepper button to the task panel header — one server action per click. Each click rerolls the first non-protected task (coins first, then cowbells) that has not hit the per-character reroll limits from the 🛡️ protection popup, or discards it (trash can → Discard Task) once both limits are hit. The label previews the next action; completed tasks are never touched.',
-            },
         },
     },
 

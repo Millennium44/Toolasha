@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Reroll stepper sunset
+
+- The Reroll Tasks stepper button is disabled for now (unregistered, setting removed) — the discard flow wasn't reliable in practice. The source stays in the repo for a later revival. The per-character reroll limits and the zero-limit glow rule in reroll protection remain active.
+
 ### Reroll stepper discard fixed
 
 - The trash can is an icon-only red button with no "trash" hint in its markup, so the discard step never found it. It's now located as the card's icon-only danger button (with icon-only and trash-hint fallbacks), and the confirmation click ("Confirm Discard") is scoped to the card with a retry while the view switches. MooPass Free Rerolls were already preferred over paid ones whenever a card offers them.
