@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Bulk Sell Assistant
+
+- New **Bulk Sell** button (fixed chip near the top-right of the marketplace) sells the whole inventory one item per click: Start queues every tradable inventory item, then for each item it opens its order book, decides insta-sell vs. sell listing, opens the matching modal with the full quantity prefilled, and waits — one click on the game's confirm button (always in the same place) completes the item and auto-advances to the next.
+- **Decision rule**: insta-sell to the best bid when sell-order supply exceeds buy-order demand, or when the oldest ask has been queued longer than the configurable limit (`Market: Bulk sell insta-sell queue age`, default 2 days — the queue isn't moving); otherwise it posts a sell listing at the going ask.
+- The chip shows progress, the chosen action/price/reason for the current item, plus Skip and Stop controls. Items with no market data or no orders are skipped automatically. The assistant never confirms a sale itself — every server action is your click.
+
 ### All Fights analysis defaults to skip levels
 
 - "Combat Levels — All Fights" gains a **Use Skip Levels** checkbox (on by default): fights sim at their automation skip level (effective combat level + skip − 1) instead of the current run's live room levels, which mid-run could be far above the skip thresholds and drown the analysis in 0% fights. Uncheck it to analyze the active run's actual rooms.
