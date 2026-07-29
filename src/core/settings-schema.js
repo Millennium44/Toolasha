@@ -1085,6 +1085,13 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
             },
+            market_bulkSellVendorCheck: {
+                id: 'market_bulkSellVendorCheck',
+                label: 'Market: Bulk sell to vendor when market is no better',
+                type: 'checkbox',
+                default: true,
+                help: 'When the game vendor pays at least as much per item as the market would net after the 2% tax (e.g. vendor 48 vs ask 49 → 48 net), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+            },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
                 label: 'Market: Bulk sell minimum stack value for a sell listing',
