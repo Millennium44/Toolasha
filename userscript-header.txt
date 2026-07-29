@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Toolasha
+// @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
 // @version      2.84.0
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
