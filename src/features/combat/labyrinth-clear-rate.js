@@ -35,6 +35,16 @@ const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const PATH_SHROUD_WEIGHT = 1e6;
 
 /**
+ * Clamp a labyrinth skilling/enhancing success rate to the game's bounds:
+ * SkillingSuccessRate = MAX(5%, 0.80 * (1 + LevelBonus + Buffs)), capped at 100%
+ * @param {number} v - Raw success rate
+ * @returns {number}
+ */
+function clampSuccessChance(v) {
+    return Math.min(1, Math.max(0.05, v));
+}
+
+/**
  * Compute the cheapest route from the cleared region (or the entrance) to the
  * floor exit over a flat labyrinth grid. Priorities, lexicographic: fewest
  * shrouds (a shroud instantly clears a room, spent on uncleared tiles below
@@ -647,10 +657,11 @@ class LabyrinthClearRate {
         } else if (typeHrid === '/buff_types/wisdom') {
             metrics.experienceBonus += amount;
         } else if (
-            (typeHrid === '/buff_types/gathering' &&
-                (skillId === 'milking' || skillId === 'foraging' || skillId === 'woodcutting')) ||
-            (typeHrid === '/buff_types/gourmet' && (skillId === 'cooking' || skillId === 'brewing'))
+            typeHrid === '/buff_types/gathering' &&
+            (skillId === 'milking' || skillId === 'foraging' || skillId === 'woodcutting')
         ) {
+            // Official formula: DoubleProgress = Crate + Gathering (the three
+            // gathering skills only) + Upgrade — gourmet does not apply in the lab
             metrics.gatheringBonus += amount;
         }
     }
@@ -670,7 +681,7 @@ class LabyrinthClearRate {
         const effectiveLevel = baseLevel + metrics.skillLevelBonus;
         const levelDelta = effectiveLevel - roomLevel;
         const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
-        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const successChance = clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus));
         const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus + (metrics.gatheringBonus || 0)));
 
         const workPower = effectiveLevel * (1 + metrics.efficiencyBonus);
@@ -737,7 +748,7 @@ class LabyrinthClearRate {
         const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
         result.nextLevelClearChance = this.computeNonEnhancingClearStats(
             attempts,
-            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            clampSuccessChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
             doubleChance,
             Math.max(0, Math.floor(nextLevel * (1 + metrics.efficiencyBonus))),
             targetProgress
@@ -780,7 +791,7 @@ class LabyrinthClearRate {
             upgrades.success < UPGRADE_MAX_LEVEL
                 ? this.computeNonEnhancingClearStats(
                       attempts,
-                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
                       doubleChance,
                       progressPerSuccess,
                       targetProgress
@@ -818,7 +829,7 @@ class LabyrinthClearRate {
         const effectiveLevel = baseLevel + metrics.skillLevelBonus;
         const levelDelta = effectiveLevel - roomLevel;
         const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
-        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const successChance = clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus));
         const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus));
 
         const actionSeconds = BASE_ENHANCING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
@@ -862,7 +873,7 @@ class LabyrinthClearRate {
         const nextLevelBonus = nextLevelDelta >= 0 ? nextLevelDelta * 0.005 : nextLevelDelta * 0.01;
         result.nextLevelClearChance = this.computeEnhancingClearStats(
             attempts,
-            clampChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
+            clampSuccessChance(0.8 * (1 + nextLevelBonus + metrics.successBonus)),
             doubleChance,
             targetLevel
         ).clearChance;
@@ -882,7 +893,7 @@ class LabyrinthClearRate {
             upgrades.success < UPGRADE_MAX_LEVEL
                 ? this.computeEnhancingClearStats(
                       attempts,
-                      clampChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
+                      clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus + UPGRADE_SUCCESS_STEP)),
                       doubleChance,
                       targetLevel
                   ).clearChance
@@ -3087,7 +3098,7 @@ class LabyrinthClearRate {
         const effectiveLevel = baseLevel + metrics.skillLevelBonus;
         const levelDelta = effectiveLevel - roomLevel;
         const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
-        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const successChance = clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus));
         const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus + (metrics.gatheringBonus || 0)));
 
         const workPower = effectiveLevel * (1 + metrics.efficiencyBonus);
@@ -3131,7 +3142,7 @@ class LabyrinthClearRate {
         const effectiveLevel = baseLevel + metrics.skillLevelBonus;
         const levelDelta = effectiveLevel - roomLevel;
         const levelBonus = levelDelta >= 0 ? levelDelta * 0.005 : levelDelta * 0.01;
-        const successChance = Math.min(1, Math.max(0, 0.8 * (1 + levelBonus + metrics.successBonus)));
+        const successChance = clampSuccessChance(0.8 * (1 + levelBonus + metrics.successBonus));
         const doubleChance = Math.min(1, Math.max(0, metrics.doubleProgressBonus));
 
         const actionSeconds = BASE_ENHANCING_TIME / Math.max(0.05, 1 + metrics.actionSpeedBonus);
