@@ -345,20 +345,27 @@ class GuildXPDisplay {
         const memberList = guildXPTracker.getMemberList();
         if (memberList.length === 0) return '';
 
-        const idleNames = memberList
-            .filter((m) => m.isOnline && m.inactiveTime !== null && !m.hideOnlineStatus)
-            .map((m) => m.name)
-            .sort((a, b) => a.localeCompare(b));
+        // Idle = no action running (actionType empty) — the same signal the
+        // game's Activity column uses. Actions keep running while offline, so
+        // offline members without one are idle too (shown dimmed).
+        const idleMembers = memberList
+            .filter((m) => !m.hideOnlineStatus && !m.actionType)
+            .sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0) || a.name.localeCompare(b.name));
 
         const namesStr =
-            idleNames.length === 0
+            idleMembers.length === 0
                 ? '<span style="color: var(--color-success);">None</span>'
-                : idleNames.map((n) => `<span style="color: #f0a830;">${n}</span>`).join(', ');
+                : idleMembers
+                      .map(
+                          (m) =>
+                              `<span style="color: ${m.isOnline ? '#f0a830' : '#8a90a5'};" title="${m.isOnline ? 'Online' : 'Offline'}, no action running">${m.name}</span>`
+                      )
+                      .join(', ');
 
         return `
             <div class="GuildPanel_dataBlockGroup__1d2rR ${CSS_PREFIX}" style="grid-column: 1 / 3; max-width: none;">
                 <div class="GuildPanel_dataBlock__3qVhK" style="padding: 8px 12px; height: auto; min-height: 0;">
-                    <div class="GuildPanel_label__-A63g">Idle members (${idleNames.length})</div>
+                    <div class="GuildPanel_label__-A63g">Idle members (${idleMembers.length})</div>
                     <div style="font-size: 13px; line-height: 1.6; max-height: 120px; overflow-y: auto;">${namesStr}</div>
                 </div>
             </div>`;

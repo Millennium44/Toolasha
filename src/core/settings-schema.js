@@ -2116,8 +2116,8 @@ export const settingsGroups = {
                 id: 'guildIdleDisplay',
                 label: 'Guild Overview: Show idle members list',
                 type: 'checkbox',
-                default: false,
-                help: "Displays a list of guild members who are currently idle on the Guild Overview tab. Off by default: the game data field this relies on doesn't reliably indicate idleness yet, so the list can flag active members.",
+                default: true,
+                help: 'Displays a list of guild members with no action running on the Guild Overview tab (actions keep running while offline, so offline members without one count too — shown dimmed). Members hiding their online status are excluded.',
             },
             guildTrialSignupDisplay: {
                 id: 'guildTrialSignupDisplay',
