@@ -234,6 +234,7 @@ class LabyrinthClearRate {
             this.seedFromCharacterData();
             this.injectTileControls();
             this.pruneClearedTileBadges();
+            this.pruneClearedPathOverlays();
             this.scheduleAutoTileCalc();
         });
         this.unregisterHandlers.push(unregisterTiles);
@@ -391,6 +392,7 @@ class LabyrinthClearRate {
         if (roomData) {
             this.roomData = roomData;
             this.injectOverlays();
+            this.pruneClearedPathOverlays();
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
@@ -2006,9 +2008,9 @@ class LabyrinthClearRate {
             'height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
             'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; outline:none; cursor:pointer;';
         for (const [value, label] of [
-            ['clearable', '? clear'],
-            ['shroud', '? shroud'],
-            ['avoid', '? avoid'],
+            ['clearable', '? Clear'],
+            ['shroud', '? Shroud'],
+            ['avoid', '? Avoid'],
         ]) {
             const opt = document.createElement('option');
             opt.value = value;
@@ -2416,6 +2418,23 @@ class LabyrinthClearRate {
 
     clearPathOverlays() {
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Remove path outlines from rooms that have been cleared since the route
+     * was computed, so the highlight tracks remaining progress
+     */
+    pruneClearedPathOverlays() {
+        if (!this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        if (!flatRooms.length) return;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (cells.length !== flatRooms.length) return;
+
+        for (let i = 0; i < flatRooms.length; i++) {
+            if (!flatRooms[i]?.isCleared) continue;
+            cells[i]?.querySelector(`.${PATH_OVERLAY_CLASS}`)?.remove();
+        }
     }
 
     setPathButtonRunning(running) {
