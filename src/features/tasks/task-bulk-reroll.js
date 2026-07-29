@@ -5,8 +5,8 @@
  * performs exactly one action on the first task that needs one:
  * - a reroll (coins first, then cowbells) on a non-protected task that hasn't
  *   hit the per-character reroll limits from the reroll-protection popup, or
- * - a discard (trash can icon → "Discard Task" confirm) once a task is at the
- *   limit for both categories.
+ * - a discard (Back if the reroll view is open → trash can icon → "Discard
+ *   Task" confirm) once a task is at the limit for both categories.
  * The button label always previews the next action. Tasks that land on a
  * protected target and completed tasks (Claim Reward showing) are left alone.
  *
@@ -236,15 +236,34 @@ class TaskBulkReroll {
     }
 
     /**
-     * Discard a task at the limit for both categories: click the card's trash
-     * can icon, then the "Discard Task" confirmation (the server action).
+     * Discard a task at the limit for both categories. The full flow is
+     * Back (when the card is on the reroll options view, which hides the
+     * trash can) → trash can icon → "Discard Task" confirmation. All three
+     * clicks run off the one button press; only the confirmation is the
+     * server action.
      */
     async _discardCard(card) {
-        const trashTarget =
-            card.querySelector('use[href*="trash" i]') ||
-            card.querySelector('svg[class*="trash" i]') ||
-            card.querySelector('[class*="trash" i]');
-        const trashBtn = trashTarget?.closest('button, [role="button"], svg') || trashTarget;
+        const findTrash = () => {
+            const trashTarget =
+                card.querySelector('use[href*="trash" i]') ||
+                card.querySelector('svg[class*="trash" i]') ||
+                card.querySelector('[class*="trash" i]');
+            return trashTarget?.closest('button, [role="button"], svg') || trashTarget;
+        };
+
+        let trashBtn = findTrash();
+        if (!trashBtn) {
+            // Reroll options view is open (a prior reroll left it expanded) —
+            // click Back to return to the card view with the trash can
+            const backBtn = Array.from(card.querySelectorAll('button')).find(
+                (b) => b.textContent.trim().toLowerCase() === 'back'
+            );
+            if (backBtn) {
+                backBtn.click();
+                await sleep(300);
+                trashBtn = findTrash();
+            }
+        }
         if (!trashBtn) return false;
         trashBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
