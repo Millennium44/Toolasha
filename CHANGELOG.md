@@ -1,6 +1,6 @@
 # Changelog
 
-## Fork Changelog (MHipp/Toolasha)
+## Fork Changelog (Millennium44/Toolasha)
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
@@ -18,7 +18,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Route tiles get colored outlines: green = clearable, red "Shroud" tag = instant-clear needed, gold = treasure, blue "?" = unrevealed (routed as clearable — reveal to verify), purple ⚑ = floor exit; the status line summarizes rooms/shrouds/chests and flags unrevealed rooms on the route. Overlays clear on floor change.
 - **Position anchors the route**: the labyrinth always starts top-left and exits bottom-right, and unrevealed rooms carry an empty room type (the exit/treasure types only appear once revealed) — so the planner keys the entrance and exit off grid position instead of room types and works on fully unrevealed floors.
 - **No walls**: every cell is a room, so unrevealed rooms that appear as null entries in the room data are passable unknowns, never obstacles — previously they blocked the search and produced "No route to the floor exit" on partially revealed floors.
-- **Unrevealed-room mode selector** next to the threshold input (persisted setting): `? clear` routes through unknowns as clearable (optimistic, default), `? shroud` costs each unknown a shroud so the route prefers revealed rooms and unknowns show a red "Shroud?" tag, `? avoid` treats them as impassable and routes through revealed rooms only.
+- **Unrevealed-room mode selector** next to the threshold input (persisted setting): `? Clear` routes through unknowns as clearable (optimistic, default), `? Shroud` costs each unknown a shroud so the route prefers revealed rooms and unknowns show a red "Shroud?" tag, `? Avoid` treats them as impassable and routes through revealed rooms only.
+- **Route outlines disappear as you clear rooms**, so the highlight always shows what's left of the plan instead of lingering on finished tiles.
+- Repository references updated from MHipp/Toolasha to Millennium44/Toolasha after the GitHub username change.
 - The vendored mathjs bundle no longer points at a missing `math.js.map`, silencing the source map fetch error in the console.
 
 ### Labyrinth sims stop killing each other — recommendations finally survive lab runs
@@ -253,7 +255,7 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 - Calculate bar docks correctly when the game's Upgrade button shares the Entries/Max Path row (marker detection reads own text nodes, not only leaf nodes).
 - Custom-tab loadout sync keeps items still referenced by another loadout bound to the same tab when a loadout replaces an item or changes enhancement level; no duplicate entries. New test suite.
 
-## Merged to main — PR [#1](https://github.com/MHipp/Toolasha/pull/1) (`05c7a9f`, 2026-07-28)
+## Merged to main — PR [#1](https://github.com/Millennium44/Toolasha/pull/1) (`05c7a9f`, 2026-07-28)
 
 ### `1d6b014` — Combat trigger editor in the sim loadout editor
 
