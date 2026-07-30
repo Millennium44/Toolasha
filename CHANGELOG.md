@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Recommender audit: unknown costs no longer rank as the best upgrade
+
+- **Unpriceable enhancement paths reported as free.** `calculateEnhancementCost` returned `0` when an item had no enhancement recipe, and also when every protection strategy failed to compute — and `0` cost means gold-per-improvement `0`, i.e. the **top-ranked, best-value upgrade in the list**, highlighted as best. It now returns "unknown", which the ranking already maps to last place (Combat Sim shows `?`, Lab Sim shows `—`). This is the same rule the code states elsewhere: "unknown cost must rank as Infinity, never as free".
+- **Enhanced-item buy prices no longer understate.** When a tier swap at +N has no market listing, the fallback is base price + enhance path; an unknown enhance path silently contributed `0`, pricing a +12 item as a bare +0 craft. That now reports unknown too.
+- **Skilling analysis gold-per-clear-rate** divided by a `null` cost (JS coerces to `0`), producing a `0` = free reading for unpriceable upgrades. Now guarded (value is currently computed but not displayed).
+
 ### Philosopher's accessories recommended at +5
 
 - Combat Sim and Lab Sim (combat **and** skilling analysis) now always offer the Philosopher's necklace / ring / earrings at **+5** for jewelry slots, no matter how enhanced the worn accessory is. Previously the tier path only ever proposed a swap at the _current_ enhancement level — so wearing +12 jewelry hid the cheap entry point behind a +12 rebuy. When a same-slot philo swap at a higher level is also generated, the +5 version supersedes it.

@@ -38,6 +38,9 @@ const {
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
+const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
+const { getCheapestProtectionPrice } = await import('../enhancement/tooltip-enhancement.js');
+const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
@@ -557,7 +560,48 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
         expect(cost).toBe(199_000_000);
     });
 
-    test('falls back to base price when the target enhancement level has no listing', () => {
+    test('falls back to base price plus enhancement cost when the level has no listing', () => {
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/enhance_mat' ? { ask: 100_000, bid: 90_000 } : null
+        );
+        resolveItemPrice.mockImplementation((hrid, { enhancementLevel, side }) => {
+            if (side === 'sell') return { price: 1_000_000 };
+            if (enhancementLevel === 10) return { price: 0 };
+            return { price: 5_000_000 };
+        });
+        calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
+        getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        getEnhancingParams.mockReturnValue({
+            enhancingLevel: 100,
+            toolBonus: 0,
+            speedBonus: 0,
+            teas: {},
+            guzzlingBonus: 1,
+        });
+
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/regal_sword_refined'].enhancementCosts = [
+            { itemHrid: '/items/enhance_mat', count: 1 },
+        ];
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'tier',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 10,
+                upgradeHrid: '/items/regal_sword_refined',
+                upgradeLevel: 10,
+            },
+            gameData
+        );
+
+        // Base price (5M) + enhancement path cost - sell current (1M); the exact
+        // enhance cost depends on the mocked attempt count, so just assert the shape
+        expect(cost).toBeGreaterThan(4_000_000);
+    });
+
+    test('reports unknown (null) instead of free when the item has no enhancement recipe', () => {
         getItemPrices.mockReturnValue(null);
         resolveItemPrice.mockImplementation((hrid, { enhancementLevel, side }) => {
             if (side === 'sell') return { price: 1_000_000 };
@@ -565,6 +609,8 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
             return { price: 5_000_000 };
         });
 
+        // buildGameData()'s items carry no enhancementCosts — pricing a +10 buy
+        // is impossible, and reporting 0 would rank this as the best-value upgrade
         const cost = calculateUpgradeCost(
             {
                 type: 'tier',
@@ -577,8 +623,26 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
             buildGameData()
         );
 
-        // Base price (5M) + enhancement cost (0, no enhancementCosts data) - sell current (1M)
-        expect(cost).toBe(4_000_000);
+        expect(cost).toBeNull();
+    });
+
+    test('enhancement candidates report unknown when the enhance path cannot be priced', () => {
+        getItemPrices.mockReturnValue(null);
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+
+        const cost = calculateUpgradeCost(
+            {
+                type: 'enhancement',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 5,
+                upgradeHrid: '/items/fine_sword',
+                upgradeLevel: 10,
+            },
+            buildGameData()
+        );
+
+        expect(cost).toBeNull();
     });
 
     test('returns null instead of 0 when no price is known at all', () => {
