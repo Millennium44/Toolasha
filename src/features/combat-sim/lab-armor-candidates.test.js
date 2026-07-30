@@ -537,3 +537,107 @@ describe('elemental weapon swaps', () => {
         expect(candidates.some((c) => c.addedSlots['/equipment_types/main_hand'])).toBe(false);
     });
 });
+
+describe('cape options', () => {
+    const BACK = '/equipment_types/back';
+
+    function capeGameData() {
+        return {
+            itemDetailMap: {
+                '/items/sinister_cape': armor('Sinister Cape', BACK, 95, {
+                    slashDamage: 0.05,
+                    armor: 40,
+                    evasion: 20,
+                }),
+                '/items/enchanted_cloak': armor('Enchanted Cloak', BACK, 95, { magicDamage: 0.08 }),
+                '/items/chimerical_quiver': armor('Chimerical Quiver', BACK, 95, { rangedDamage: 0.08 }),
+                '/items/old_cape': armor('Old Cape', BACK, 60, { slashDamage: 0.2 }),
+                '/items/staff': armor('Staff', '/equipment_types/main_hand', 95, { magicDamage: 1 }),
+                '/items/bow': armor('Bow', '/equipment_types/two_hand', 95, { rangedDamage: 1 }),
+                '/items/sword': armor('Sword', '/equipment_types/main_hand', 95, { slashDamage: 1 }),
+            },
+        };
+    }
+
+    const capesIn = (candidates) =>
+        candidates
+            .filter((c) => Object.keys(c.addedSlots).length === 1 && c.addedSlots[BACK])
+            .map((c) => c.addedSlots[BACK]);
+
+    test('a magic loadout is offered both its own cloak and the melee cape', () => {
+        const dto = {
+            equipment: { '/equipment_types/main_hand': { hrid: '/items/staff' } },
+            abilities: [],
+        };
+        const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
+
+        expect(hrids).toContain('/items/enchanted_cloak');
+        expect(hrids).toContain('/items/sinister_cape');
+        expect(hrids).not.toContain('/items/chimerical_quiver');
+    });
+
+    test('a ranged loadout is offered its quiver and the melee cape', () => {
+        const dto = { equipment: { '/equipment_types/two_hand': { hrid: '/items/bow' } }, abilities: [] };
+        const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
+
+        expect(hrids).toContain('/items/chimerical_quiver');
+        expect(hrids).toContain('/items/sinister_cape');
+    });
+
+    test('the reverse holds: wearing the melee cape still offers the style cape', () => {
+        const dto = {
+            equipment: {
+                '/equipment_types/main_hand': { hrid: '/items/staff' },
+                [BACK]: { hrid: '/items/sinister_cape', enhancementLevel: 5 },
+            },
+            abilities: [],
+        };
+        const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), []));
+
+        // The equipped cape is skipped as a no-op; its counterpart is offered
+        expect(capes.map((c) => c.hrid)).toEqual(['/items/enchanted_cloak']);
+    });
+
+    test('compares capes at the level of the one currently worn', () => {
+        const dto = {
+            equipment: {
+                '/equipment_types/main_hand': { hrid: '/items/staff' },
+                [BACK]: { hrid: '/items/sinister_cape', enhancementLevel: 5 },
+            },
+            abilities: [],
+        };
+        const inventory = [
+            {
+                itemHrid: '/items/enchanted_cloak',
+                enhancementLevel: 10,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), inventory));
+
+        // Owning a +10 cloak must not decide a +5-vs-+10 comparison
+        expect(capes[0].enhancementLevel).toBe(5);
+    });
+
+    test('falls back to the usual level rule with no cape equipped', () => {
+        const dto = { equipment: { '/equipment_types/main_hand': { hrid: '/items/staff' } }, abilities: [] };
+        const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), []));
+
+        for (const cape of capes) expect(cape.enhancementLevel).toBe(DEFAULT_ARMOR_ENHANCEMENT);
+    });
+
+    test('a melee loadout gets one cape, not a duplicate', () => {
+        const dto = { equipment: { '/equipment_types/main_hand': { hrid: '/items/sword' } }, abilities: [] };
+        const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
+
+        expect(hrids).toEqual(['/items/sinister_cape']);
+    });
+
+    test('never drops a tier for a cape with bigger stats', () => {
+        const dto = { equipment: { '/equipment_types/main_hand': { hrid: '/items/sword' } }, abilities: [] };
+        const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
+
+        expect(hrids).not.toContain('/items/old_cape');
+    });
+});

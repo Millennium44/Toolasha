@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Cape swaps go both ways, compared at equal enhancement
+
+- The melee cape trades offence for defence, which on a labyrinth run can be worth more to a ranged or magic loadout than its own style's cape. Every loadout is now offered **both** the cape matching its style and the melee cape — so a magic run sees Sinister Cape alongside Enchanted Cloak, and a ranged run sees it alongside the quiver.
+- The reverse holds too: a magic run **already wearing** Sinister Cape is offered Enchanted Cloak, rather than the swap only being visible in one direction. Whichever cape is equipped is skipped as a no-op and its counterpart is simmed.
+- Both are simmed at **the enhancement level of the cape currently worn**, so the result reflects the cape and not its enhancement — owning a +10 cloak no longer settles a comparison against a +5 equipped cape. With no cape equipped, the usual equipped → owned → +7 rule applies.
+- A melee loadout gets one cape rather than the same one twice, and a lower-tier cape is never picked over the top tier no matter how large its stats.
+
 ### Sim the weapon in your spells' element too
 
 - When the spells cast an element the weapon doesn't deal — a Nature trident casting Fireball — the weapon's own element is dead weight. The Lab Sim now also sims **that element's weapon**, both on its own and wearing that element's robes, since the matched weapon and robes are the build those spells belong to.
