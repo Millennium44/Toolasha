@@ -24,6 +24,7 @@ import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
 import { runUpgradeAnalysis, getStyleExcludedSkills } from './upgrade-advisor.js';
 import { SimEditor } from './sim-editor.js';
+import storage from '../../core/storage.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
 const ACCENT = '#4a9eff';
@@ -31,6 +32,42 @@ const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
 const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+
+/** Storage key for the remembered Upgrade-tab candidate sets */
+const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
+
+/**
+ * Candidate sets the Upgrade tab can include. Each is independent, so several can
+ * run in one analysis and land in one ranked list.
+ */
+const UPGRADE_MODES = [
+    {
+        key: 'equipment',
+        label: 'Equipment',
+        defaultOn: true,
+        title: 'Enhancement breakpoints and tier swaps for every combat slot',
+    },
+    {
+        key: 'ability_level',
+        label: 'Ability Lv',
+        defaultOn: true,
+        title: 'Leveling the abilities you already have equipped',
+    },
+    { key: 'ability_swap', label: 'Ability Swaps', defaultOn: false, title: 'Replacing an equipped ability' },
+    {
+        key: 'combat_level',
+        label: 'Combat Lv',
+        defaultOn: false,
+        title: 'Raising combat skill levels — these cost grind time, not gold, so check this one on its own for level-time estimates',
+    },
+    { key: 'house', label: 'House', defaultOn: false, title: 'One level on each combat-relevant house room' },
+    {
+        key: 'food',
+        label: 'Food',
+        defaultOn: false,
+        title: 'Search for the cheapest food that still avoids deaths and running out of mana',
+    },
+];
 
 /**
  * Format elapsed seconds as "Xs" or "Xm Ys".
@@ -419,14 +456,16 @@ class CombatSimUI {
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
             <select id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
-            <label style="color:#888; font-size:12px;">Mode</label>
-            <select id="mwi-csim-upgrade-mode" style="${upgradeSelectStyle}">
-                <option value="equipment">Equipment</option>
-                <option value="ability_level">Ability Levels</option>
-                <option value="ability_swap">Ability Swaps</option>
-                <option value="combined">Equipment + Abilities</option>
-                <option value="combat_level">Combat Levels</option>
-            </select>
+            <label style="color:#888; font-size:12px;">Include</label>
+            ${UPGRADE_MODES.map(
+                (mode) => `
+            <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
+                    mode.defaultOn ? ' checked' : ''
+                }>
+                ${mode.label}
+            </label>`
+            ).join('')}
             <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
                 <select id="mwi-csim-upgrade-level-type" style="
                     background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
@@ -589,48 +628,13 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
         });
-        this.panel.querySelector('#mwi-csim-upgrade-mode').addEventListener('change', (e) => {
-            const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-            const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
-            const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
-            const charmGroup = this.panel.querySelector('#mwi-csim-charm-group');
-            const skipBackLabel = this.panel.querySelector('#mwi-csim-skip-back-label');
-            const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-            const isCombatLevelMode = e.target.value === 'combat_level';
-
-            // Combat Levels: the +Levels input drives the simulated boost; the
-            // charm selector picks which charm family gets swapped in per skill
-            // for the leveling-time estimates
-            charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
-            skipBackLabel.style.display = isCombatLevelMode ? 'none' : 'flex';
-            if (!isCombatLevelMode) {
-                this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
-            }
-            levelType.style.display = isCombatLevelMode ? 'none' : '';
-            levelInput.title = isCombatLevelMode
-                ? 'Levels added to each combat skill'
-                : 'Number of levels to add to each ability';
-
-            if (isCombatLevelMode) {
-                this._populateCharmSelect();
-                levelGroup.style.display = 'inline-flex';
-                if (!parseInt(levelInput.value)) {
-                    levelInput.value = '5';
-                    levelInput.placeholder = '+5';
-                }
-            } else {
-                levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
-            }
-            // Per-ability targets only apply to ability-level candidates
-            const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
-            if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
-            if (!isLevelMode) {
-                this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
-            }
-            if (isLevelMode) {
-                this._setDefaultAbilityTargetLevel();
-            }
+        this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.addEventListener('change', () => {
+                this._onUpgradeModesChanged();
+                this._saveUpgradeModes();
+            });
         });
+        this._restoreUpgradeModes();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -3292,6 +3296,101 @@ class CombatSimUI {
     }
 
     /**
+     * Candidate sets currently checked on the Upgrade tab.
+     * @returns {string[]}
+     * @private
+     */
+    _getUpgradeModes() {
+        return [...this.panel.querySelectorAll('[data-upgrade-mode]')]
+            .filter((box) => box.checked)
+            .map((box) => box.getAttribute('data-upgrade-mode'));
+    }
+
+    /**
+     * Show only the controls the checked candidate sets actually use.
+     * @private
+     */
+    _onUpgradeModesChanged() {
+        const modes = new Set(this._getUpgradeModes());
+        const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
+        const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
+        const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
+        const charmGroup = this.panel.querySelector('#mwi-csim-charm-group');
+        const skipBackLabel = this.panel.querySelector('#mwi-csim-skip-back-label');
+
+        const isLevelMode = modes.has('ability_level');
+        const isCombatLevelMode = modes.has('combat_level');
+
+        // Combat Levels: the +Levels input drives the simulated boost; the charm
+        // selector picks which charm family gets swapped in per skill for the
+        // leveling-time estimates
+        charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
+        skipBackLabel.style.display = modes.has('equipment') ? 'flex' : 'none';
+        if (!isCombatLevelMode) {
+            this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
+        } else {
+            this._populateCharmSelect();
+        }
+
+        // The one +Levels box feeds both ability levels and combat levels; the
+        // type selector (increment vs target) only means something for abilities
+        levelType.style.display = isLevelMode ? '' : 'none';
+        levelInput.title =
+            isLevelMode && isCombatLevelMode
+                ? 'Levels added to each ability and each combat skill'
+                : isCombatLevelMode
+                  ? 'Levels added to each combat skill'
+                  : 'Number of levels to add to each ability';
+
+        levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+        if (isCombatLevelMode && !parseInt(levelInput.value)) {
+            levelInput.value = '5';
+            levelInput.placeholder = '+5';
+        }
+
+        // Per-ability targets only apply to ability-level candidates
+        const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
+        if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
+        if (!isLevelMode) {
+            this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
+        } else {
+            this._setDefaultAbilityTargetLevel();
+        }
+    }
+
+    /**
+     * Persist the checked candidate sets so the next Analyze starts where you left off.
+     * @private
+     */
+    async _saveUpgradeModes() {
+        try {
+            await storage.set(UPGRADE_MODES_KEY, this._getUpgradeModes());
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save upgrade modes:', error);
+        }
+    }
+
+    /**
+     * Restore the remembered candidate sets, leaving the defaults in place when
+     * nothing has been saved yet.
+     * @private
+     */
+    async _restoreUpgradeModes() {
+        try {
+            const saved = await storage.get(UPGRADE_MODES_KEY, 'settings', null);
+            if (Array.isArray(saved) && saved.length > 0) {
+                const wanted = new Set(saved);
+                this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+                    box.checked = wanted.has(box.getAttribute('data-upgrade-mode'));
+                });
+            }
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore upgrade modes:', error);
+        }
+        this._onUpgradeModesChanged();
+    }
+
+    /**
      * Run upgrade analysis when Analyze button is clicked.
      * @private
      */
@@ -3307,17 +3406,22 @@ class CombatSimUI {
             )
         );
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
-        const upgradeMode = this.panel.querySelector('#mwi-csim-upgrade-mode')?.value || 'equipment';
+        const upgradeModes = this._getUpgradeModes();
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
         let abilityTargetLevel = Math.min(
             200,
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
         let charmTier = null;
-        if (upgradeMode === 'combat_level') {
+        if (upgradeModes.includes('combat_level')) {
             if (!abilityTargetLevel) abilityTargetLevel = 5;
             charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
             this._showMainSkillTimes = this.panel.querySelector('#mwi-csim-main-time')?.checked || false;
+        }
+
+        if (!upgradeModes.length) {
+            this._setStatus('Check at least one upgrade type to include.');
+            return;
         }
 
         if (!zoneHrid) {
@@ -3361,11 +3465,10 @@ class CombatSimUI {
 
         try {
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
-            const combatLevelTargets = upgradeMode === 'combat_level' ? this._getCombatLevelTargets() : null;
-            const abilityTargets =
-                upgradeMode === 'ability_level' || upgradeMode === 'combined'
-                    ? this._getAbilityTargets('#mwi-csim-ability-targets')
-                    : null;
+            const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
+            const abilityTargets = upgradeModes.includes('ability_level')
+                ? this._getAbilityTargets('#mwi-csim-ability-targets')
+                : null;
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -3374,7 +3477,8 @@ class CombatSimUI {
                     difficultyTier,
                     hours,
                     communityBuffs,
-                    upgradeMode,
+                    upgradeModes,
+                    optimizeFood: upgradeModes.includes('food'),
                     abilityLevelType,
                     abilityTargetLevel,
                     skipBackSlot,
@@ -3386,7 +3490,8 @@ class CombatSimUI {
                     if (this._upgradeAborted) return;
                     const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
                     const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
-                    const pct = Math.round((current / total) * 100);
+                    // The food search's sim count is an estimate, so cap the bar
+                    const pct = Math.min(100, Math.round((current / total) * 100));
                     if (fill) fill.style.width = pct + '%';
                     if (text) text.textContent = `${current} / ${total}`;
                     this._setStatus(description);
@@ -3398,7 +3503,8 @@ class CombatSimUI {
                 this._setStatus('Analysis cancelled.');
             } else {
                 this._renderUpgradeResults(results);
-                this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.`);
+                const foodNote = results.food ? ' Food search complete.' : '';
+                this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.${foodNote}`);
             }
         } catch (error) {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
@@ -3411,6 +3517,65 @@ class CombatSimUI {
     }
 
     /**
+     * Render the cheapest-viable-food card.
+     * Food isn't a ranked upgrade — it's a spend floor at fixed survival — so it
+     * gets its own block above the table instead of a gold-per-improvement row.
+     * @param {Object} food - Result from runFoodOptimization
+     * @returns {string} HTML
+     * @private
+     */
+    _renderFoodRecommendation(food) {
+        const rec = food.recommendation;
+        const current = food.current;
+        const pct = (fraction) => `${((fraction || 0) * 100).toFixed(1)}%`;
+
+        const picks = [];
+        if (rec.hp) picks.push(`${rec.hp.name} <span style="color:#666;">(${formatKMB(rec.hp.restore)} HP)</span>`);
+        if (rec.mp) picks.push(`${rec.mp.name} <span style="color:#666;">(${formatKMB(rec.mp.restore)} MP)</span>`);
+        const picksText = picks.length ? picks.join(' + ') : 'nothing — you survive this zone without food';
+
+        const savings = current.costPerHour != null ? current.costPerHour - rec.costPerHour : null;
+        let savingsText = '';
+        if (savings != null) {
+            if (savings > 1) {
+                savingsText = `<span style="color:#4caf50;">saves ${formatKMB(savings)}/hr</span>`;
+            } else if (savings < -1) {
+                savingsText = `<span style="color:#f44336;">costs ${formatKMB(-savings)}/hr more</span>`;
+            } else {
+                savingsText = '<span style="color:#888;">same spend as your current food</span>';
+            }
+        }
+
+        const currentLine =
+            current.items.length > 0
+                ? `Current: ${current.items.join(' + ')} — ${
+                      current.costPerHour != null ? formatKMB(current.costPerHour) + '/hr' : 'cost unknown'
+                  }, ${(current.deathsPerHour ?? 0).toFixed(2)} deaths/hr, ${pct(current.oomFraction)} out of mana`
+                : 'Current: no food equipped';
+
+        const caveat = food.ceilingDies
+            ? `<div style="color:#ff9800; font-size:10px; margin-top:4px;">No food setup reaches zero deaths here — the target was relaxed to the best achievable (${food.deathTarget.toFixed(2)} deaths/hr).</div>`
+            : '';
+
+        return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">Cheapest viable food</div>
+            <div style="color:#e0e0e0; font-size:12px;">${picksText}</div>
+            <div style="color:#aaa; font-size:11px; margin-top:4px;">
+                ${formatKMB(rec.costPerHour)}/hr in consumables ${savingsText ? '— ' + savingsText : ''}
+                <span style="color:#666;">
+                    · ${rec.deathsPerHour.toFixed(2)} deaths/hr · ${pct(rec.oomFraction)} out of mana
+                </span>
+            </div>
+            <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
+            <div style="color:#666; font-size:10px; margin-top:2px;">
+                ${food.simCount} sims searched. Buff drinks are left as configured, and only one HP and one MP item are
+                considered — mixing an instant with an over-time food isn't searched.
+            </div>
+            ${caveat}
+        </div>`;
+    }
+
+    /**
      * Render upgrade analysis results as an expandable table.
      * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
      * @private
@@ -3419,8 +3584,11 @@ class CombatSimUI {
         const container = this.panel.querySelector('#mwi-csim-upgrade-results');
         if (!container) return;
 
+        const foodHtml = results.food ? this._renderFoodRecommendation(results.food) : '';
+
         if (!results.results.length) {
             container.innerHTML =
+                foodHtml ||
                 '<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.</div>';
             return;
         }
@@ -3594,7 +3762,14 @@ class CombatSimUI {
                     <td style="${nowrapTd} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
                 </tr>`;
             } else {
-                const costStr = r.cost == null ? '?' : formatKMB(r.cost);
+                // Combat levels cost grind time rather than gold; say so instead of
+                // showing an unknown-cost '?' next to real prices
+                const isLevelRow = r.candidate?.type === 'combat_level';
+                const costStr = isLevelRow
+                    ? '<span title="Combat levels cost grind time, not gold — check only Combat Lv to see level-time estimates" style="color:#666;">levels</span>'
+                    : r.cost == null
+                      ? '?'
+                      : formatKMB(r.cost);
                 const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
                 const dpsGoldStr = fmtGoldPer(r.goldPer.dps);
                 const xpGoldStr = fmtGoldPer(r.goldPer.xp);
@@ -3672,7 +3847,7 @@ class CombatSimUI {
         });
 
         html += '</tbody></table>';
-        container.innerHTML = html;
+        container.innerHTML = foodHtml + html;
 
         // Wire up row click to expand/collapse
         container.querySelectorAll('[data-upgrade-row]').forEach((row) => {

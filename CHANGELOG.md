@@ -6,6 +6,28 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Upgrade tab: pick several candidate sets at once, plus house and food
+
+- **Mode dropdown → checkboxes.** The Upgrade tab's single-choice Mode select is now a row of **Include** checkboxes (Equipment, Ability Lv, Ability Swaps, Combat Lv, House, Food), so several candidate sets sim together and land in one ranked list instead of forcing one analysis per set. The old "Equipment + Abilities" option is gone — it's just both boxes checked. The selection is remembered between sessions.
+    - Combat levels have no gold cost, so in a mixed list their Cost cell reads "levels" with a tooltip pointing at the dedicated view. Checking only **Combat Lv** still gives the level-time table exactly as before.
+    - Lab Sim keeps its own Mode dropdown: one of its options (all-fights) runs a different analysis entirely, so it isn't a set that can be unioned with the others.
+- **House room upgrades.** Checking **House** adds one level of every combat-relevant house room as a candidate, costed at coin face value plus the market price of each material (unpriced material → unknown cost, which ranks last rather than as free). Rooms identify themselves as combat-relevant through the game's own per-buff action-type map, so a game update that adds a room doesn't need a code change.
+- **Cheapest viable food.** Checking **Food** searches for the cheapest food-slot setup that still avoids deaths and running out of mana, shown as its own card above the table with the gold/hr saved against your current food. Rather than pricing every combination, it uses the fact that more restore per eat never makes survival worse: a binary search over restore amount finds the tier actually needed, then cost decides among everything at or above it, and a confirmation sim validates the pick (falling back to the best available setup if the cheaper equivalent doesn't hold up). Buff-only food you already had stays equipped, and the card is explicit about what isn't searched — buff drinks, and mixing an instant with an over-time food.
+    - If no food setup reaches zero deaths at the zone, the target relaxes to the best achievable and the card says so instead of silently recommending the most expensive option.
+
+### Seeded sim RNG is now a setting
+
+- **Combat Simulator: Shared random seed for upgrade comparisons** (on by default) controls the common-random-numbers behavior below. Turning it off returns every sim to independent randomness. It's a setting because sharing a seed cuts the noise in a comparison but also freezes one sample's luck into the absolute numbers.
+
+### Seeded sim RNG so upgrade comparisons stop measuring noise
+
+- The engine drew every roll from `Math.random()`, so a baseline sim and a candidate sim were two **independent random samples**. An upgrade's reported delta was its real effect plus the gap between those samples, which is why near-zero upgrades (a +5 level on a long-cooldown ability) came back at −0.06% DPS and flipped sign between runs.
+- Sims now draw from a seeded PRNG, and every sim inside one upgrade analysis shares a seed — **common random numbers**, so the shared randomness cancels out of the delta. A fresh seed is drawn per analysis, so re-running still resamples rather than reprinting.
+- Draws are split into independent streams by purpose: monster spawn composition, per-encounter monster setup, and combat rolls. The spawn stream takes no player-dependent draws, so compared runs fight the **same monster sequence** even after their combat rolls diverge.
+- The combat and setup streams restart at the top of every encounter, so encounter N begins from the same random state in both runs regardless of how encounter N-1 went — divergence can't compound across a whole sim.
+- Applies to the Combat Sim Upgrade tab, the Lab Sim Upgrade tab, and the labyrinth all-fights analysis (per-fight seeds, matched across candidates). Plain Calculate runs, all-zones, and the task zone estimate pass no seed and stay on `Math.random()` — unchanged behavior.
+- Expect more exact `0.00%` rows where a change genuinely does nothing. Note that shared seeds cut the noise in a comparison but don't remove sampling error from the absolute numbers, so sim hours still matter.
+
 ### Experience buff removed from the labyrinth upgrade comparison
 
 - The **Experience** labyrinth buff was listed alongside real upgrades in Lab Sim's Upgrade tab, ranked by a token-cost-per-percent figure derived from a flat XP formula rather than a sim. Since XP gain does not affect labyrinth combat outcomes, it competed for a "best value" slot it can't earn on that metric. It's now excluded from the comparison (the buff itself is untouched and still editable in the token upgrade editor).

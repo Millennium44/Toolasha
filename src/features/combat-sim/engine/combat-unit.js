@@ -1,3 +1,5 @@
+import { randomSetup } from './rng.js';
+
 class CombatUnit {
     isPlayer;
     isStunned = false;
@@ -598,7 +600,7 @@ class CombatUnit {
                     ability.lastUsed =
                         currentTime -
                         Math.floor(cooldownDuration * 0.5) +
-                        Math.floor(Math.random() * cooldownDuration * 0.5);
+                        Math.floor(randomSetup() * cooldownDuration * 0.5);
                 }
             });
     }

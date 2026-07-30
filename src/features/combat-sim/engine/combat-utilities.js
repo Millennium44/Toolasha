@@ -1,3 +1,5 @@
+import { random } from './rng.js';
+
 class CombatUtilities {
     static getTarget(enemies) {
         if (!enemies) {
@@ -19,7 +21,7 @@ class CombatUtilities {
         const maxFloor = Math.floor(max);
 
         if (Math.floor(min) === maxFloor) {
-            return Math.floor((min + max) / 2 + Math.random());
+            return Math.floor((min + max) / 2 + random());
         }
 
         const minTail = -1 * (min - minCeil);
@@ -31,7 +33,7 @@ class CombatUtilities {
         const extraTailWeight = (balancedWeight * (average - balancedAverage)) / (maxFloor + 1 - average);
         const extraTailChance = Math.abs(extraTailWeight / (extraTailWeight + balancedWeight));
 
-        if (Math.random() < extraTailChance) {
+        if (random() < extraTailChance) {
             if (maxTail > minTail) {
                 return Math.floor(maxFloor + 1);
             } else {
@@ -40,9 +42,9 @@ class CombatUtilities {
         }
 
         if (maxTail > minTail) {
-            return Math.floor(min + Math.random() * (maxFloor + minTail - min + 1));
+            return Math.floor(min + random() * (maxFloor + minTail - min + 1));
         } else {
-            return Math.floor(minCeil - maxTail + Math.random() * (max - (minCeil - maxTail) + 1));
+            return Math.floor(minCeil - maxTail + random() * (max - (minCeil - maxTail) + 1));
         }
     }
 
@@ -167,7 +169,7 @@ class CombatUtilities {
             sourceDamageMultiplier *
             (baseDamageRatio * sourceAutoAttackMaxDamage + baseDamageFlat + armorDamageRatioFlat);
 
-        if (Math.random() < critChance) {
+        if (random() < critChance) {
             sourceMaxDamage = sourceMaxDamage * (1 + bonusCritDamage);
             sourceMinDamage = sourceMaxDamage;
             isCrit = true;
@@ -187,7 +189,7 @@ class CombatUtilities {
         let thornDamageDone = 0;
 
         let didHit = false;
-        if (Math.random() < hitChance) {
+        if (random() < hitChance) {
             didHit = true;
             let penetratedTargetResistance = targetResistance;
 
@@ -242,7 +244,7 @@ class CombatUtilities {
                 (Math.pow(target.combatDetails.smashAccuracyRating, 1.4) +
                     Math.pow(source.combatDetails.smashEvasionRating, 1.4));
 
-            if (retaliationHitChance > Math.random()) {
+            if (retaliationHitChance > random()) {
                 let sourceEffectiveArmor = source.combatDetails.totalArmor;
                 if (sourceEffectiveArmor > 0) {
                     sourceEffectiveArmor =

@@ -5,9 +5,12 @@
  * and runs simulations to rank them by "Gold per 0.01% improvement".
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
+import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
+import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -30,6 +33,20 @@ const PHILO_START_LEVEL = 5;
 const PHILO_HRID_PREFIX = '/items/philosophers_';
 
 const CHARM_SLOT = '/equipment_types/charm';
+
+/** Highest level a house room can reach */
+const MAX_HOUSE_LEVEL = 8;
+
+/**
+ * Seed for one analysis run, or null to leave every sim on independent randomness.
+ * Sharing a seed across the baseline and all candidates cancels the shared random
+ * draws out of each delta; the setting exists because it also freezes the luck of
+ * one particular sample into the absolute numbers.
+ * @returns {number|null} Analysis seed
+ */
+function analysisSeed() {
+    return config.getSettingValue('combatSim_sharedSeed', true) ? randomSeed() : null;
+}
 
 /** Combat skills evaluated by the Combat Levels advisor mode */
 const COMBAT_LEVEL_SKILLS = [
@@ -1157,8 +1174,81 @@ export function generateCandidates(
         }
     }
 
+    if (mode === 'house') {
+        candidates.push(...generateHouseCandidates(playerDTO, gameData));
+    }
+
     candidates.forEach(clampRefinedCandidateToMinLevel);
     return candidates;
+}
+
+/**
+ * Does this house room buff combat at all?
+ * The game tags each buff with the action types it applies to, so combat rooms
+ * identify themselves — no need to hardcode a room list that a game update could
+ * outdate. Rooms that only help skilling are skipped rather than burning a sim.
+ * @param {Object} roomDetail - Entry from houseRoomDetailMap
+ * @returns {boolean}
+ */
+function houseRoomAffectsCombat(roomDetail) {
+    const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+    return buffs.some((buff) => buff?.usableInActionTypeMap?.['/action_types/combat']);
+}
+
+/**
+ * Generate one-level house room upgrade candidates for every combat-relevant room.
+ * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
+ * @param {Object} gameData - Game data payload (houseRoomDetailMap)
+ * @returns {Array<Object>} Candidates of type 'house'
+ */
+export function generateHouseCandidates(playerDTO, gameData) {
+    const roomMap = gameData?.houseRoomDetailMap;
+    if (!roomMap) return [];
+
+    const candidates = [];
+    for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
+        if (!houseRoomAffectsCombat(roomDetail)) continue;
+
+        const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
+        if (currentLevel >= MAX_HOUSE_LEVEL) continue;
+
+        const upgradeLevel = currentLevel + 1;
+        const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
+        candidates.push({
+            type: 'house',
+            slot: `house|${roomHrid}`,
+            roomHrid,
+            currentLevel,
+            upgradeLevel,
+            description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
+        });
+    }
+    return candidates;
+}
+
+/**
+ * Market cost of one house room level: coins plus the buy price of every material.
+ * @param {Object} candidate - House candidate
+ * @param {Object} gameData - Game data payload
+ * @returns {number|null} Total cost, or null when a material has no price
+ */
+function calculateHouseUpgradeCost(candidate, gameData) {
+    const costs = gameData?.houseRoomDetailMap?.[candidate.roomHrid]?.upgradeCostsMap?.[candidate.upgradeLevel];
+    if (!Array.isArray(costs) || costs.length === 0) return null;
+
+    let total = 0;
+    for (const entry of costs) {
+        const count = Number(entry?.count) || 0;
+        if (!entry?.itemHrid || count <= 0) continue;
+        if (entry.itemHrid === '/items/coin') {
+            total += count;
+            continue;
+        }
+        const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
+        if (!price || price <= 0) return null; // Unknown material cost must not rank as free
+        total += price * count;
+    }
+    return total > 0 ? total : null;
 }
 
 /**
@@ -1223,6 +1313,10 @@ export function calculateUpgradeCost(candidate, gameData) {
     // Combat skill levels cost XP and time, not gold
     if (candidate.type === 'combat_level') {
         return null;
+    }
+
+    if (candidate.type === 'house') {
+        return calculateHouseUpgradeCost(candidate, gameData);
     }
 
     if (candidate.type === 'ability_level') {
@@ -1337,12 +1431,29 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
 }
 
 /**
+ * Resolve the candidate sets to generate. The Upgrade tab passes a list of
+ * checked sets; older single-mode callers pass one mode string ('combined' being
+ * shorthand for equipment plus ability levels).
+ * @param {string[]|undefined} upgradeModes - Checked candidate sets
+ * @param {string|undefined} upgradeMode - Legacy single mode
+ * @returns {string[]} Modes to generate candidates for
+ */
+export function resolveCandidateModes(upgradeModes, upgradeMode) {
+    if (Array.isArray(upgradeModes) && upgradeModes.length > 0) {
+        // 'food' is a separate optimizer, not a ranked candidate set
+        return [...new Set(upgradeModes.filter((mode) => mode !== 'food'))];
+    }
+    if (upgradeMode === 'combined') return ['equipment', 'ability_level'];
+    return upgradeMode ? [upgradeMode] : ['equipment'];
+}
+
+/**
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
- * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeMode,
- *   abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier }
+ * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
+ *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier, optimizeFood }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
- * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
+ * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
  */
 export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const {
@@ -1352,6 +1463,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         difficultyTier,
         hours,
         communityBuffs,
+        upgradeModes,
         upgradeMode,
         abilityLevelType,
         abilityTargetLevel,
@@ -1359,6 +1471,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         combatLevelTargets,
         abilityTargets,
         charmTier,
+        optimizeFood = false,
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1367,9 +1480,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const playerDTO = playerDTOs[playerIndex];
     const playerHrid = playerDTO.hrid;
 
-    // Generate candidates and compute costs.
-    // 'combined' runs equipment and ability-level candidates together in one ranked list.
-    const candidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+    // One seed for the whole analysis: baseline and every candidate draw the same
+    // random numbers, so a delta reflects the upgrade rather than the gap between
+    // two independent samples. A fresh seed per analysis keeps re-runs resampling.
+    const simSeed = analysisSeed();
+
+    const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
     const candidates = candidateModes.flatMap((mode) =>
         generateCandidates(
             playerDTO,
@@ -1388,13 +1504,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     }));
 
     const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
-    const total = candidatesWithCost.length + combatLevelCount + 1; // +1 baseline, + XP-rate sims
+    const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData) : 0;
+    // +1 baseline, + XP-rate sims for combat levels, + the food search
+    const total = candidatesWithCost.length + combatLevelCount + foodSimCount + 1;
     let current = 0;
 
     // Run baseline sim
     onProgress?.({ current: 0, total, description: 'Running baseline...' });
     const baselineResult = await runSimulation(
-        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
         null
     );
     current++;
@@ -1438,6 +1556,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         } else if (candidate.type === 'combat_level') {
             // Combat skill level boost (simulated charm)
             modifiedDTOs[playerIndex][candidate.skillKey] = candidate.upgradeLevel;
+        } else if (candidate.type === 'house') {
+            // House room level (a room at level 0 isn't in the map yet)
+            if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
+            modifiedDTOs[playerIndex].houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -1456,7 +1578,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         }
 
         const simResult = await runSimulation(
-            { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+            { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
             null
         );
 
@@ -1476,7 +1598,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData, charmTier);
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
             const xpSimResult = await runSimulation(
-                { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+                { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
                 null
             );
             current++;
@@ -1534,7 +1656,35 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         return aVal - bVal;
     });
 
-    return { baseline: baselineMetrics, results };
+    // Food is not a ranked upgrade — it is a cost floor at fixed survival, so it
+    // gets its own search and its own result shape
+    let food = null;
+    if (optimizeFood && !abortSignal?.()) {
+        try {
+            food = await runFoodOptimization(
+                {
+                    gameData,
+                    playerDTOs,
+                    playerIndex,
+                    zoneHrid,
+                    difficultyTier,
+                    hours,
+                    communityBuffs,
+                    seed: simSeed,
+                    baselineResult,
+                },
+                ({ description }) => {
+                    current++;
+                    onProgress?.({ current, total, description });
+                },
+                { abortSignal }
+            );
+        } catch (error) {
+            console.error('[UpgradeAdvisor] Food optimization failed:', error);
+        }
+    }
+
+    return { baseline: baselineMetrics, results, food };
 }
 
 /**
@@ -1844,6 +1994,10 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
     const playerDTO = playerDTOs[playerIndex];
 
+    // Shared across baseline and every candidate so win-rate deltas measure the
+    // upgrade, not the gap between two independent random samples
+    const simSeed = analysisSeed();
+
     const zoneHrid =
         Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
@@ -1885,6 +2039,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         hours,
         communityBuffs,
         labyrinthCombatBuffs,
+        seed: simSeed,
     });
     current++;
 
@@ -1949,6 +2104,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             hours,
             communityBuffs,
             labyrinthCombatBuffs,
+            seed: simSeed,
         });
 
         if (abortSignal?.()) break;
@@ -1989,6 +2145,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             hours,
             communityBuffs,
             labyrinthCombatBuffs: modifiedBuffs,
+            seed: simSeed,
         });
 
         if (abortSignal?.()) break;
@@ -2095,7 +2252,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const total = fights.length * (candidates.length + 1);
     let current = 0;
 
-    const simFightWinRate = async (fight, dtoOverride) => {
+    // Per-fight seeds derived from one analysis seed: fight N is simmed with the
+    // same random draws in the baseline pass and in every candidate pass, so a
+    // win-rate delta is the level boost rather than two independent samples
+    const simSeed = analysisSeed();
+    const fightSeed = (fightIndex) => deriveSeed(simSeed, fightIndex);
+
+    const simFightWinRate = async (fight, dtoOverride, seed) => {
         const simResult = await runLabyrinthSimulation({
             gameData,
             playerDTOs: [dtoOverride || fight.dto],
@@ -2106,6 +2269,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             hours,
             communityBuffs,
             labyrinthCombatBuffs,
+            seed,
         });
         const attempts = simResult.labyAttemptCount || 1;
         return (simResult.encounters || 0) / attempts;
@@ -2120,10 +2284,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
 
     // Baseline pass: every fight with its current levels
     const baselineFights = [];
-    for (const fight of fights) {
+    for (let i = 0; i < fights.length; i++) {
+        const fight = fights[i];
         if (abortSignal?.()) return { baseline: null, results: [] };
         onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-        const winRate = await simFightWinRate(fight);
+        const winRate = await simFightWinRate(fight, null, fightSeed(i));
         baselineFights.push({ ...fightMeta(fight), winRate });
         current++;
     }
@@ -2143,7 +2308,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
             const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
             boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
-            const winRate = await simFightWinRate(fights[i], boostedDTO);
+            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i));
             fightResults.push({
                 ...fightMeta(fights[i]),
                 winRate,

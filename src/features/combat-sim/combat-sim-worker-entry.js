@@ -10,6 +10,7 @@ import { setGameData } from './engine/game-data.js';
 import CombatSimulator from './engine/combat-simulator.js';
 import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
+import { seedSimRng } from './engine/rng.js';
 import Zone from './engine/zone.js';
 
 onmessage = function (event) {
@@ -26,10 +27,16 @@ onmessage = function (event) {
             simulationTimeLimit,
             extraBuffs,
             labyrinth: labyrinthData,
+            seed,
         } = event.data;
 
         // Set game data for the engine singleton
         setGameData(gameData);
+
+        // Seed this worker's RNG streams. Runs compared against each other pass
+        // the same seed so their shared random draws cancel out of the delta;
+        // with no seed the engine stays on Math.random().
+        seedSimRng(seed);
 
         // Create Zone (used as fallback even in labyrinth mode for SimResult constructor)
         const zone = new Zone(zoneHrid, difficultyTier);

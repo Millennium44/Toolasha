@@ -10,6 +10,7 @@
 // The ?worker suffix is handled by rollup's workerBundlePlugin at build time
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import config from '../../core/config.js';
+import { deriveSeed } from './engine/rng.js';
 
 let workerBlobURL = null;
 let activeWorkers = [];
@@ -324,11 +325,14 @@ function mergeSimResults(results) {
  * @param {number} params.difficultyTier - Difficulty tier (0+)
  * @param {number} params.hours - Hours to simulate
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+ * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
+ *   random numbers, so comparing them measures the change instead of sampling
+ *   noise. Omit for an independent random sample (the default).
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
 export async function runSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs } = params;
+    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
 
     const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
     const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
@@ -372,6 +376,10 @@ export async function runSimulation(params, onProgress) {
             difficultyTier,
             simulationTimeLimit: chunkHours * ONE_HOUR_NS,
             extraBuffs,
+            // Each chunk needs its own stream or all four would replay the same
+            // fights, but chunk N must match across compared runs — so the
+            // per-chunk seed is derived from (seed, index), not randomized.
+            seed: deriveSeed(seed, i),
         };
 
         return runWorkerChunk(message, (percent) => {
@@ -419,6 +427,8 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @param {string[]} params.crates - Crate item HRIDs
  * @param {number} params.hours - Hours to simulate
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+ * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
+ *   an independent random sample (the default).
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} SimResult with labyrinth fields
  */
@@ -433,6 +443,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         hours,
         communityBuffs,
         labyrinthCombatBuffs,
+        seed,
     } = params;
 
     const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
@@ -459,6 +470,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
             roomLevel,
             crates: crates || [],
         },
+        seed: deriveSeed(seed, 0),
     };
 
     const result = await runWorkerChunk(message, onProgress);

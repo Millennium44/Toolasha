@@ -1782,6 +1782,13 @@ export const settingsGroups = {
                 max: 32,
                 help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
             },
+            combatSim_sharedSeed: {
+                id: 'combatSim_sharedSeed',
+                label: 'Combat Simulator: Shared random seed for upgrade comparisons',
+                type: 'checkbox',
+                default: true,
+                help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
+            },
             combatStats: {
                 id: 'combatStats',
                 label: 'Combat Statistics: Show Statistics tab in Combat panel',
