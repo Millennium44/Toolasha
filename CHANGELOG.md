@@ -660,22 +660,20 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.87.0](https://github.com/Millennium44/Toolasha/compare/v2.86.0...v2.87.0) (2026-07-30)
 
-
 ### Features
 
-* add a Clear button for the labyrinth path and beacon overlays ([e23efae](https://github.com/Millennium44/Toolasha/commit/e23efaea6effd374a0b91e23c847f0c3532c455d))
-* always sim Anchorbound and style-matched top-tier armor in Lab Sim ([0439b52](https://github.com/Millennium44/Toolasha/commit/0439b5238bc9075edcfcf1193a7ab9c4ab1bce03))
-* cape swaps take the better level and include refined variants ([9197ff2](https://github.com/Millennium44/Toolasha/commit/9197ff209a50d6658d13b7d44f23dc3d4fc67559))
-* expandable lab cost breakdown; price forced swaps as additions ([248e095](https://github.com/Millennium44/Toolasha/commit/248e095bc7f99f0538d4d4003c3c1502d3b8a3ba))
-* offer both the style cape and the melee cape, at equal enhancement ([986be4f](https://github.com/Millennium44/Toolasha/commit/986be4f320d8f0f213d2f39ae2c0d826ea128a65))
-* pick magic armor per element from the weapon and the spells ([68a4ab5](https://github.com/Millennium44/Toolasha/commit/68a4ab5f2786cbe41895154f0f22f93b2dfc0a00))
-* remember panel sizes dragged with the game's dividers ([b20b182](https://github.com/Millennium44/Toolasha/commit/b20b1820ae848e092bbf52f294e54323ba644cb4))
-* sim the weapon in the spells' element alongside its robes ([74410a1](https://github.com/Millennium44/Toolasha/commit/74410a1e56187eca2c772172c83014498a45849b))
-
+- add a Clear button for the labyrinth path and beacon overlays ([e23efae](https://github.com/Millennium44/Toolasha/commit/e23efaea6effd374a0b91e23c847f0c3532c455d))
+- always sim Anchorbound and style-matched top-tier armor in Lab Sim ([0439b52](https://github.com/Millennium44/Toolasha/commit/0439b5238bc9075edcfcf1193a7ab9c4ab1bce03))
+- cape swaps take the better level and include refined variants ([9197ff2](https://github.com/Millennium44/Toolasha/commit/9197ff209a50d6658d13b7d44f23dc3d4fc67559))
+- expandable lab cost breakdown; price forced swaps as additions ([248e095](https://github.com/Millennium44/Toolasha/commit/248e095bc7f99f0538d4d4003c3c1502d3b8a3ba))
+- offer both the style cape and the melee cape, at equal enhancement ([986be4f](https://github.com/Millennium44/Toolasha/commit/986be4f320d8f0f213d2f39ae2c0d826ea128a65))
+- pick magic armor per element from the weapon and the spells ([68a4ab5](https://github.com/Millennium44/Toolasha/commit/68a4ab5f2786cbe41895154f0f22f93b2dfc0a00))
+- remember panel sizes dragged with the game's dividers ([b20b182](https://github.com/Millennium44/Toolasha/commit/b20b1820ae848e092bbf52f294e54323ba644cb4))
+- sim the weapon in the spells' element alongside its robes ([74410a1](https://github.com/Millennium44/Toolasha/commit/74410a1e56187eca2c772172c83014498a45849b))
 
 ### Bug Fixes
 
-* armor pairs were deduplicated away; single swaps duplicated ([7d868a3](https://github.com/Millennium44/Toolasha/commit/7d868a3fc926ca9733891b9f0d6fa49cdb3e459f))
+- armor pairs were deduplicated away; single swaps duplicated ([7d868a3](https://github.com/Millennium44/Toolasha/commit/7d868a3fc926ca9733891b9f0d6fa49cdb3e459f))
 
 ## [2.86.0](https://github.com/Millennium44/Toolasha/compare/v2.85.0...v2.86.0) (2026-07-30)
 
