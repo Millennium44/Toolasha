@@ -598,6 +598,45 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.86.0](https://github.com/Millennium44/Toolasha/compare/v2.85.0...v2.86.0) (2026-07-30)
+
+### Features
+
+- add Open Item Dictionary to ability action menus ([386b282](https://github.com/Millennium44/Toolasha/commit/386b28229dc40ede128f3363b1b6774884184511))
+- always offer Philosopher's accessories at +5 in upgrade advisors ([aa3d07e](https://github.com/Millennium44/Toolasha/commit/aa3d07e4e6b6aa4d6006a51fc6ae6bcb44eb26a7))
+- anchor the food search at equipped tiers and step down ([70fff27](https://github.com/Millennium44/Toolasha/commit/70fff27047f5ab087d7442ad117fb216e73a1491))
+- bulk sell defaults off, tab-bar button styled as native tab ([82b4e36](https://github.com/Millennium44/Toolasha/commit/82b4e365deb38064046842c03c481733a51fa6b7))
+- bulk sell minimum stack value for a sell listing ([3f8113c](https://github.com/Millennium44/Toolasha/commit/3f8113cc4cb326bd7197640d400f3285128c29b2))
+- bulk sell vendors stacks when market nets no more than vendor ([4f3789f](https://github.com/Millennium44/Toolasha/commit/4f3789f672fadb645d2875fa4d5add9ae6c73e80))
+- include hidden-status members in the guild idle list ([aa093eb](https://github.com/Millennium44/Toolasha/commit/aa093eb4aa1dc7dd87781f9e08d90f3dc8a51f12))
+- multi-select upgrade sets, house and food candidates, seed toggle ([62ad44b](https://github.com/Millennium44/Toolasha/commit/62ad44bde6b14df2039c0d7cda84cbebdc53c981))
+- per-room house targets; group controls with their checkbox ([08789a9](https://github.com/Millennium44/Toolasha/commit/08789a99346117bb5487fe936275a8b289a4b15f))
+- remember the Solo/Zone estimate mode and honor it everywhere ([4266659](https://github.com/Millennium44/Toolasha/commit/42666598b2367bc32b0db82cc8a8c8bc17c0ac93))
+- separate combat level results; warn about Ability Swaps ([ecb1bb0](https://github.com/Millennium44/Toolasha/commit/ecb1bb037514c0f6724ee63fac1358a9e5bee4c0))
+
+### Bug Fixes
+
+- count encounters, not kills, in the task zone fight estimate ([bf39a11](https://github.com/Millennium44/Toolasha/commit/bf39a1177c2684e5c94a4c8a7dcc8b6e4c2c89de))
+- default guild idle list off, add raw member data sampler ([11d7f1e](https://github.com/Millennium44/Toolasha/commit/11d7f1eb7a655d1b7cd4941d60ea01470c94c9d8))
+- detect ability menus without relying on class names ([1e93f32](https://github.com/Millennium44/Toolasha/commit/1e93f3209b23aeb318ce8b5cfd2559999f62c1ae))
+- drop experience buff from labyrinth upgrade comparison ([1f9df60](https://github.com/Millennium44/Toolasha/commit/1f9df60d30a0d8a2e9fc64118d97702b6c17ccb6))
+- expose getRawMemberSample on the guild tracker feature wrapper ([79e09a4](https://github.com/Millennium44/Toolasha/commit/79e09a4a93421eea54b4e18c74dd99a4e360bbc5))
+- food search keeps food types per slot and treats mana as a hard rule ([fe174ee](https://github.com/Millennium44/Toolasha/commit/fe174eecfe00aa80078da3b78f36f352f2f829f9))
+- house upgrades produced no candidates; add a target level ([cc82ace](https://github.com/Millennium44/Toolasha/commit/cc82ace034d598760b166ae02f50bf06b7fae10b))
+- minimize food slots sequentially so shared mana budgets hold ([e330030](https://github.com/Millennium44/Toolasha/commit/e330030dc7fe4a904f969404b0c59d5b4e557ba5))
+- normalize Go zero-time inactiveTime in guild member data ([53797d2](https://github.com/Millennium44/Toolasha/commit/53797d21000800916a5347904446fa46dff5d754))
+- pick the estimate zone shared by the most active tasks ([d550cd6](https://github.com/Millennium44/Toolasha/commit/d550cd6b8e0568f87ca5d3540c2eb41f7e989918))
+- run vendor check before marketplace navigation ([bb6a16e](https://github.com/Millennium44/Toolasha/commit/bb6a16ea37504334a0170705e92c11755e90f06a))
+- skip same-tier sidegrades; drop duplicate encounter counter ([7bdb4da](https://github.com/Millennium44/Toolasha/commit/7bdb4dab420ae4fb41ec800bc5b2f44d372bcdb4))
+- unknown upgrade costs no longer rank as the best-value upgrade ([43430bc](https://github.com/Millennium44/Toolasha/commit/43430bc7106d7aa7a0c0c23f548aee39bbcf1902))
+- vendor check uses the market path the rules would take ([9dcf957](https://github.com/Millennium44/Toolasha/commit/9dcf95760288b272b313b8e3bc2cc02b916c2f3a))
+- wire guild idle list to actionType, re-enable by default ([4cf46c0](https://github.com/Millennium44/Toolasha/commit/4cf46c0b194f7d4087d67e3332f62fd3d5828a76))
+- zone summary shares sims, sums duplicate tasks, groups by spawns ([eed3401](https://github.com/Millennium44/Toolasha/commit/eed3401284a57b39da73eb5c2e34c0bf3d2a7d4c))
+
+### Miscellaneous Chores
+
+- merge upstream Celasha/Toolasha (guild idle list, drop fixes) ([3ff45d5](https://github.com/Millennium44/Toolasha/commit/3ff45d5b91454e6c4a52c514d00a7c1252b17a3a))
+
 ## [2.85.0](https://github.com/Millennium44/Toolasha/compare/v2.84.0...v2.85.0) (2026-07-29)
 
 ### Features
