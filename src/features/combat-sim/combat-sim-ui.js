@@ -481,6 +481,13 @@ class CombatSimUI {
                     background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
                     padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
             </span>
+            <span id="mwi-csim-house-group" style="display:none; align-items:center; gap:4px;">
+                <label style="color:#888; font-size:12px;">House Lv</label>
+                <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
+                    width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
+                    title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
+            </span>
             <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
                 <label style="color:#888; font-size:12px;">Charm</label>
                 <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${upgradeSelectStyle}"></select>
@@ -3321,6 +3328,9 @@ class CombatSimUI {
         const isLevelMode = modes.has('ability_level');
         const isCombatLevelMode = modes.has('combat_level');
 
+        const houseGroup = this.panel.querySelector('#mwi-csim-house-group');
+        if (houseGroup) houseGroup.style.display = modes.has('house') ? 'inline-flex' : 'none';
+
         // Combat Levels: the +Levels input drives the simulated boost; the charm
         // selector picks which charm family gets swapped in per skill for the
         // leveling-time estimates
@@ -3465,6 +3475,12 @@ class CombatSimUI {
 
         try {
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
+            const houseTargetLevel = upgradeModes.includes('house')
+                ? Math.min(
+                      8,
+                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
+                  )
+                : 0;
             const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
@@ -3485,6 +3501,7 @@ class CombatSimUI {
                     combatLevelTargets,
                     abilityTargets,
                     charmTier,
+                    houseTargetLevel,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -3514,6 +3531,27 @@ class CombatSimUI {
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
         }
+    }
+
+    /**
+     * Explain an empty House result: whether the game data was readable, whether
+     * any room looked combat-relevant, and whether they're simply all maxed.
+     * @param {Object|null} scan - houseScan from the analysis
+     * @returns {string} HTML fragment, empty when House wasn't part of the run
+     * @private
+     */
+    _houseScanNote(scan) {
+        if (!scan) return '';
+        if (scan.rooms === 0) {
+            return '<br><span style="font-size:11px;">House: no house room data available.</span>';
+        }
+        if (scan.combatRelevant === 0) {
+            return `<br><span style="font-size:11px;">House: none of ${scan.rooms} rooms (${scan.withBuffs} with buffs) look combat-relevant — the game's buff data may have changed shape.</span>`;
+        }
+        if (scan.belowCap === 0) {
+            return `<br><span style="font-size:11px;">House: all ${scan.combatRelevant} combat rooms are already at max level.</span>`;
+        }
+        return '';
     }
 
     /**
@@ -3620,7 +3658,7 @@ class CombatSimUI {
         if (!results.results.length) {
             container.innerHTML =
                 foodHtml ||
-                '<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.</div>';
+                `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
             return;
         }
 

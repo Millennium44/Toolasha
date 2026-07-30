@@ -36,6 +36,8 @@ const {
     runLabyrinthAllFightsAnalysis,
     generateSkillingEquipmentCandidates,
     generateHouseCandidates,
+    houseRoomAffectsCombat,
+    describeHouseScan,
     resolveCandidateModes,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
@@ -816,20 +818,26 @@ describe('resolveCandidateModes', () => {
 });
 
 describe('house upgrade candidates', () => {
-    const COMBAT_BUFF = { usableInActionTypeMap: { '/action_types/combat': true } };
-    const SKILL_BUFF = { usableInActionTypeMap: { '/action_types/brewing': true } };
+    const ROOM_TAGGED = { usableInActionTypeMap: { '/action_types/combat': true } };
+    const BUFF_TAGGED = { typeHrid: '/buff_types/mystery', usableInActionTypeMap: { '/action_types/combat': true } };
+    const COMBAT_TYPE_BUFF = { typeHrid: '/buff_types/armor' };
+    const SKILL_BUFF = {
+        typeHrid: '/buff_types/action_speed',
+        usableInActionTypeMap: { '/action_types/brewing': true },
+    };
 
     function houseGameData() {
         return {
             houseRoomDetailMap: {
                 '/house_rooms/dojo': {
                     name: 'Dojo',
-                    actionBuffs: [COMBAT_BUFF],
+                    actionBuffs: [COMBAT_TYPE_BUFF],
                     upgradeCostsMap: {
                         4: [
                             { itemHrid: '/items/coin', count: 1_000_000 },
                             { itemHrid: '/items/lumber', count: 10 },
                         ],
+                        5: [{ itemHrid: '/items/coin', count: 2_000_000 }],
                     },
                 },
                 '/house_rooms/brewery': {
@@ -839,12 +847,35 @@ describe('house upgrade candidates', () => {
                 },
                 '/house_rooms/gym': {
                     name: 'Gym',
-                    globalBuffs: [COMBAT_BUFF],
+                    globalBuffs: [COMBAT_TYPE_BUFF],
                     upgradeCostsMap: {},
                 },
             },
         };
     }
+
+    describe('combat relevance', () => {
+        test('accepts a room tagged for combat on the room itself', () => {
+            expect(houseRoomAffectsCombat({ ...ROOM_TAGGED, actionBuffs: [SKILL_BUFF] })).toBe(true);
+        });
+
+        test('accepts a room whose buff is tagged for combat', () => {
+            expect(houseRoomAffectsCombat({ actionBuffs: [BUFF_TAGGED] })).toBe(true);
+        });
+
+        test('accepts a room whose buff type the combat engine reads', () => {
+            expect(houseRoomAffectsCombat({ globalBuffs: [COMBAT_TYPE_BUFF] })).toBe(true);
+        });
+
+        test('rejects a skilling-only room', () => {
+            expect(houseRoomAffectsCombat({ actionBuffs: [SKILL_BUFF] })).toBe(false);
+        });
+
+        test('rejects a room with no buffs at all', () => {
+            expect(houseRoomAffectsCombat({ name: 'Empty' })).toBe(false);
+            expect(houseRoomAffectsCombat(null)).toBe(false);
+        });
+    });
 
     test('offers one level per combat-relevant room and skips skilling rooms', () => {
         const candidates = generateHouseCandidates(
@@ -864,6 +895,24 @@ describe('house upgrade candidates', () => {
         expect(candidates.some((c) => c.roomHrid === '/house_rooms/dojo')).toBe(false);
     });
 
+    test('jumps straight to a target level when one is given', () => {
+        const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 3 } }, houseGameData(), 6);
+        const dojo = candidates.find((c) => c.roomHrid === '/house_rooms/dojo');
+
+        expect(dojo.upgradeLevel).toBe(6);
+        expect(dojo.description).toBe('Dojo Lv3 → Lv6');
+    });
+
+    test('skips rooms already at or above the target level', () => {
+        const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 6 } }, houseGameData(), 6);
+        expect(candidates.some((c) => c.roomHrid === '/house_rooms/dojo')).toBe(false);
+    });
+
+    test('clamps a target level above the cap', () => {
+        const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 3 } }, houseGameData(), 99);
+        expect(candidates.find((c) => c.roomHrid === '/house_rooms/dojo').upgradeLevel).toBe(8);
+    });
+
     test('costs coins at face value plus the market price of each material', () => {
         resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 2_000 : 0 }));
 
@@ -873,6 +922,17 @@ describe('house upgrade candidates', () => {
         );
 
         expect(cost).toBe(1_000_000 + 10 * 2_000);
+    });
+
+    test('sums every level when jumping more than one', () => {
+        resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 2_000 : 0 }));
+
+        const cost = calculateUpgradeCost(
+            { type: 'house', roomHrid: '/house_rooms/dojo', currentLevel: 3, upgradeLevel: 5 },
+            houseGameData()
+        );
+
+        expect(cost).toBe(1_000_000 + 10 * 2_000 + 2_000_000);
     });
 
     test('reports unknown when a material has no price', () => {
@@ -886,6 +946,18 @@ describe('house upgrade candidates', () => {
         expect(cost).toBe(null);
     });
 
+    test('reports unknown when any level in the span has no cost recipe', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 2_000 }));
+
+        const cost = calculateUpgradeCost(
+            // Level 6 has no recipe in the fixture
+            { type: 'house', roomHrid: '/house_rooms/dojo', currentLevel: 3, upgradeLevel: 6 },
+            houseGameData()
+        );
+
+        expect(cost).toBe(null);
+    });
+
     test('reports unknown when the level has no cost recipe', () => {
         const cost = calculateUpgradeCost(
             { type: 'house', roomHrid: '/house_rooms/gym', currentLevel: 0, upgradeLevel: 1 },
@@ -893,5 +965,17 @@ describe('house upgrade candidates', () => {
         );
 
         expect(cost).toBe(null);
+    });
+
+    describe('describeHouseScan', () => {
+        test('counts rooms, buffed rooms, combat rooms and upgradable rooms', () => {
+            const scan = describeHouseScan({ houseRooms: { '/house_rooms/dojo': 8 } }, houseGameData());
+
+            expect(scan).toEqual({ rooms: 3, withBuffs: 3, combatRelevant: 2, belowCap: 1 });
+        });
+
+        test('reports zeroes with no house data', () => {
+            expect(describeHouseScan({}, {})).toEqual({ rooms: 0, withBuffs: 0, combatRelevant: 0, belowCap: 0 });
+        });
     });
 });

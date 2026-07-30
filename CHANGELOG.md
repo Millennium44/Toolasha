@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### House upgrades: fixed the empty list, added a target level
+
+- **House produced no candidates at all.** The combat-relevance test read `usableInActionTypeMap` off each buff, one of several places the game exposes that tag — and not the one live data uses, so every room was filtered out and the tab reported "0 upgrades evaluated". Relevance now accepts **any** of three independent signals: the tag on the room, the tag on a buff, or a buff `typeHrid` the combat engine actually reads. Over-including a room only costs a sim that comes back at 0.00%; under-including hid the whole feature.
+- **New House Lv input** (appears when House is checked): set a target level and every combat room below it is simmed at that level in one jump — "Dojo Lv3 → Lv6" — with the cost summed across every level in the span. Leave it blank for the previous behavior of one level up from wherever each room sits. A level above the cap clamps to 8, and rooms already at or above the target are skipped.
+- An empty House result now **explains itself** instead of reading as "no upgrades available": it reports whether the house data was readable, whether any room looked combat-relevant, or whether the rooms are simply all maxed. A silent zero can't recur unnoticed.
+
 ### Food search now starts from your equipped tiers and steps down
 
 - Instead of binary-searching each slot's whole pool from the bottom up, the search is **anchored at what you have equipped**: if your current setup survives, each slot walks down one tier at a time within its type until survival breaks, then settles on the last tier that held. The first trial is free — the analysis baseline already simmed your exact food on the same seed.
