@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Experience buff removed from the labyrinth upgrade comparison
+
+- The **Experience** labyrinth buff was listed alongside real upgrades in Lab Sim's Upgrade tab, ranked by a token-cost-per-percent figure derived from a flat XP formula rather than a sim. Since XP gain does not affect labyrinth combat outcomes, it competed for a "best value" slot it can't earn on that metric. It's now excluded from the comparison (the buff itself is untouched and still editable in the token upgrade editor).
+
 ### No more paid sidegrade recommendations
 
 - The "next tier" equipment candidate took the next entry in an item-level-sorted list without checking the level actually went **up** — so a same-tier sibling in the same slot and role was recommended as an upgrade, costing gold for no gain. It now walks forward to the first genuinely better item. A refined variant sharing its base item's level still counts as an upgrade (better stats); refined → another refined at the same level does not.

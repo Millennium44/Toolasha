@@ -1508,10 +1508,6 @@ class LabSimUI {
                 rateVal = (r.clearRate || 0) * 100;
                 deltaVal = (r.clearRateDelta || 0) * 100;
                 rateStr = rateVal.toFixed(1) + '%';
-            } else if (r.metricType === 'experience') {
-                rateVal = 0;
-                deltaVal = r.xpDeltaPct || 0;
-                rateStr = 'XP';
             } else {
                 rateVal = (r.winRate || 0) * 100;
                 deltaVal = (r.winRateDelta || 0) * 100;
