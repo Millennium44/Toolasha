@@ -362,9 +362,16 @@ function isAbilityCompatible(abilityStyle, weaponStyle) {
  * @returns {number} Expected gold cost
  */
 function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, options = {}) {
-    const itemDetails = gameData.itemDetailMap[itemHrid];
-    if (!itemDetails?.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+    // Genuine no-op: nothing to enhance
+    if (targetLevel <= startLevel) {
         return 0;
+    }
+
+    const itemDetails = gameData.itemDetailMap[itemHrid];
+    // No enhancement recipe: cost is unknown, not free. Reporting 0 here would
+    // rank the upgrade as the best value in the list (gold-per-improvement 0).
+    if (!itemDetails?.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+        return null;
     }
 
     // Back items are non-tradeable, always use player's actual enhancing stats
@@ -441,7 +448,11 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
             }
         }
 
-        fullCost[level] = bestCost === Infinity ? 0 : bestCost;
+        // Every protection strategy failed for this level — unknown, not free
+        if (bestCost === Infinity) {
+            return null;
+        }
+        fullCost[level] = bestCost;
     }
 
     // Incremental cost = cost to reach targetLevel - cost to reach startLevel
@@ -1292,6 +1303,11 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
         // No listing at the target level: base item price + enhancement cost
         const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
         const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot });
+        // Unknown enhancement cost must stay unknown — pricing the item as a
+        // bare +0 craft would understate an enhanced buy by the whole enhance path
+        if (enhanceCost == null) {
+            return null;
+        }
         const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
         return total > 0 ? total : null;
     }
@@ -2578,7 +2594,11 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
             cost: evalCandidate.cost,
             clearRate: modifiedClearRate,
             clearRateDelta,
-            goldPerClearRate: clearRateDelta > 0 ? evalCandidate.cost / (clearRateDelta * 100) : Infinity,
+            // Unknown cost (null) must rank as Infinity, never as free
+            goldPerClearRate:
+                clearRateDelta > 0 && evalCandidate.cost != null
+                    ? evalCandidate.cost / (clearRateDelta * 100)
+                    : Infinity,
             metricType: 'clearRate',
         });
         current++;
