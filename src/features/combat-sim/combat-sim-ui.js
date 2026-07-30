@@ -3598,8 +3598,9 @@ class CombatSimUI {
             ${statsLine}
             <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
             <div style="color:#666; font-size:10px; margin-top:2px;">
-                ${food.simCount} sims searched. Each slot keeps its current food type — an HP food is only compared
-                against other HP foods of the same kind — and buff foods stay equipped.
+                ${food.simCount} sims searched. Starting from your equipped foods, each slot steps down a tier at a
+                time within its own food type until survival breaks (or climbs until it holds). Buff foods stay
+                equipped.
             </div>
             ${caveat}
         </div>`;

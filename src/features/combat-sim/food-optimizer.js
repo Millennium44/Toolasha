@@ -8,18 +8,20 @@
  * buff-only foods are never touched. The search varies the tier within each
  * type, so the slot structure that made your current setup work is preserved.
  *
- * Rather than pricing every combination (a full sim each), it leans on a
- * monotonic fact: within one food type, a higher tier never makes you die more
- * or run dry sooner. That turns "which tier does this slot actually need" into a
- * binary search over restore amount, run slot by slot — each slot is fixed at
- * its proven minimum before the next is searched, so slots that feed the same
- * budget (two mana sources) are minimized against each other, not against a
- * top-tier partner they won't actually have. The final combination is one the
- * search itself simmed and passed. Only then does cost enter: within a type,
- * anything restoring at least the proven amount is equally survivable, so the
- * cheapest per point wins, with one confirming sim guarding the swap. The final
- * answer is never worse than simply keeping what you have: if your current food
- * is viable and cheaper, the recommendation is to keep it.
+ * The search is anchored at what you have equipped. If the current setup
+ * survives, each slot walks DOWN one tier at a time within its type until
+ * survival breaks, then settles on the last tier that held — so the answer is
+ * always a downgrade path from your own setup, never a rebuild from scratch. If
+ * the current setup does not survive, the failing dimension's slots (HP slots
+ * for deaths, mana slots for running dry) climb a tier at a time until it does;
+ * only when even the top tiers can't meet the bar do the targets relax to the
+ * best achievable. Slots are walked in order, each fixed before the next moves,
+ * so slots feeding the same budget (two mana sources) are measured against each
+ * other's real choices. The final combination is one the search itself simmed
+ * and passed. Cost gets one final say: within a type, anything restoring at
+ * least the settled amount is equally survivable, so the cheapest per point
+ * wins, with a confirming sim guarding the swap. And keeping your current food
+ * always competes — if it's viable and no more expensive, that's the answer.
  *
  * Shares the analysis seed with the rest of the upgrade run, so a tier that
  * looks survivable did not merely get a lucky sample.
@@ -190,18 +192,24 @@ function toSlot(entry) {
 }
 
 /**
- * How many sims the food search will need, for progress accounting: a ceiling
- * probe, a binary search per equipped restore slot (with an extra "empty slot"
- * rung), and a confirmation.
+ * How many sims the food search will need, for progress accounting: the descent
+ * from each equipped tier (worst case: every rung below it, plus the empty
+ * rung), with slack for the repair climb and the price-swap confirmation.
  * @param {Object} gameData - Game data payload
  * @param {Array<Object|null>} [playerFood] - The player's configured food slots
  * @returns {number} Estimated sim count
  */
 export function estimateFoodSimCount(gameData, playerFood = []) {
+    const itemDetailMap = gameData?.itemDetailMap || {};
     const pools = buildConsumablePools(gameData);
-    const slots = buildSearchSlots(playerFood, gameData?.itemDetailMap || {}, pools);
-    const searchSteps = slots.reduce((sum, slot) => sum + Math.ceil(Math.log2(slot.pool.length + 2)), 0);
-    return 2 + searchSteps;
+    const slots = buildSearchSlots(playerFood, itemDetailMap, pools);
+    const descentSteps = slots.reduce((sum, slot) => {
+        const detail = itemDetailMap[slot.currentHrid]?.consumableDetail;
+        const equippedRestore = (Number(detail?.hitpointRestore) || 0) + (Number(detail?.manapointRestore) || 0);
+        const below = slot.pool.filter((entry) => entry.totalRestore < equippedRestore).length;
+        return sum + below + 1;
+    }, 0);
+    return 2 + descentSteps;
 }
 
 /**
@@ -263,119 +271,159 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
     };
 
     /**
-     * Choice map with every slot at its pool's top tier.
-     * @returns {Map<number, Object|null>}
+     * The equipped item as a pool entry — the real entry when it's priced, or a
+     * pseudo-entry (infinite price per point) when it isn't, so the search can
+     * still anchor on it and any priced same-type equivalent wins the price pass.
+     * @param {Object} slot - Search slot
+     * @returns {Object} Entry for the equipped item
      */
-    const ceilingChoices = () => {
-        const choices = new Map();
-        for (const slot of searchSlots) {
-            choices.set(slot.index, slot.pool[slot.pool.length - 1]);
-        }
-        return choices;
+    const equippedEntry = (slot) => {
+        const inPool = slot.pool.find((entry) => entry.hrid === slot.currentHrid);
+        if (inPool) return inPool;
+        const detail = itemDetailMap[slot.currentHrid]?.consumableDetail || {};
+        const hpRestore = Number(detail.hitpointRestore) || 0;
+        const mpRestore = Number(detail.manapointRestore) || 0;
+        return {
+            hrid: slot.currentHrid,
+            name: itemDetailMap[slot.currentHrid]?.name || slot.currentHrid.split('/').pop().replace(/_/g, ' '),
+            signature: slot.signature,
+            hpRestore,
+            mpRestore,
+            totalRestore: hpRestore + mpRestore,
+            price: null,
+            pricePerPoint: Infinity,
+            triggers: detail.defaultCombatTriggers || null,
+        };
     };
 
-    // Ceiling probe: every slot at the top tier of its own type. This is the best
-    // the player's structure can do — if it still dies or runs dry, no tier choice
-    // fixes the zone and the targets relax to "no worse than this".
-    const ceiling = await trial(ceilingChoices(), 'best tiers of your food types');
-    if (!ceiling) return null;
+    // Anchor: every slot starts at exactly what's equipped
+    const choices = new Map();
+    for (const slot of searchSlots) choices.set(slot.index, equippedEntry(slot));
 
-    const deathTarget = Math.max(DEATH_TOLERANCE, ceiling.deathsPerHour);
-    const oomTarget = Math.max(OOM_TOLERANCE, ceiling.oomFraction);
+    let deathTarget = DEATH_TOLERANCE;
+    let oomTarget = OOM_TOLERANCE;
     const viable = (record) => record.deathsPerHour <= deathTarget && record.oomFraction <= oomTarget;
 
-    const trials = [ceiling];
+    // Trial 0 is the current setup — free when the analysis baseline is available,
+    // since the baseline sim ran this exact food on the same seed
+    let record;
+    if (baselineResult) {
+        const viability = readViability(baselineResult, playerHrid);
+        record = {
+            label: 'current food',
+            deathsPerHour: viability.deathsPerHour,
+            oomFraction: viability.oomFraction,
+            costPerHour: consumableCostPerHour(baselineResult, playerHrid, priceCache),
+        };
+    } else {
+        record = await trial(choices, 'current food');
+        if (!record) return null;
+    }
+    const currentRecord = record;
+    const trials = [record];
 
-    // Sequential per-slot minimization. Slots are searched in order, and each
-    // slot is FIXED at its proven minimum before the next slot is searched —
-    // never left at ceiling. This matters when two slots feed the same budget
-    // (a gummy and a yogurt both supplying mana): minimizing each against a
-    // top-tier partner would prove two minima that fail together, and the old
-    // fallback then jumped to top tiers of everything. Searched sequentially,
-    // every passing trial contains all the already-fixed choices, so the last
-    // slot's passing trial IS the final combination, already proven.
-    const finalChoices = ceilingChoices();
-    let finalRecord = null; // trial record matching finalChoices exactly, when one exists
-    for (const slot of searchSlots) {
-        if (abortSignal?.()) break;
-        const rungs = [null, ...slot.pool];
-        let low = 0;
-        let high = rungs.length - 1;
-        let foundRung = null;
-        let foundRecord = null;
-        while (low <= high) {
-            if (abortSignal?.()) break;
-            const mid = Math.floor((low + high) / 2);
-            const entry = rungs[mid];
-            const candidate = new Map(finalChoices);
-            candidate.set(slot.index, entry);
-            const record = await trial(
-                candidate,
-                entry ? `${entry.name} in slot ${slot.index + 1}` : `slot ${slot.index + 1} empty`
-            );
-            if (!record) break;
-            trials.push(record);
-            if (viable(record)) {
-                foundRung = mid;
-                foundRecord = record;
-                high = mid - 1;
-            } else {
-                low = mid + 1;
+    // Repair climb: if the current setup fails, raise the failing dimension's
+    // slots (HP types for deaths, mana types for running dry) one tier at a time
+    // until it holds. Only when nothing is left to raise do the targets relax to
+    // the best this food structure can do.
+    let ceilingDies = false;
+    let ceilingOoms = false;
+    while (!viable(record)) {
+        if (abortSignal?.()) return null;
+        const needHp = record.deathsPerHour > deathTarget;
+        const needMp = record.oomFraction > oomTarget;
+        let raised = false;
+        for (const slot of searchSlots) {
+            if (!((needHp && slot.signature.includes('hp')) || (needMp && slot.signature.includes('mp')))) continue;
+            const current = choices.get(slot.index);
+            const next = slot.pool.find((entry) => entry.totalRestore > (current?.totalRestore ?? 0));
+            if (next) {
+                choices.set(slot.index, next);
+                raised = true;
             }
         }
+        if (!raised) {
+            ceilingDies = record.deathsPerHour > DEATH_TOLERANCE;
+            ceilingOoms = record.oomFraction > OOM_TOLERANCE;
+            deathTarget = Math.max(deathTarget, record.deathsPerHour);
+            oomTarget = Math.max(oomTarget, record.oomFraction);
+            break;
+        }
+        record = await trial(choices, 'raising tiers to survive');
+        if (!record) return null;
+        trials.push(record);
+    }
+    let finalRecord = record;
 
-        if (foundRung === null) {
-            // Nothing passed below (or at) the top; the slot stays at ceiling and
-            // the running combination is no longer a simmed one
-            finalRecord = null;
-        } else {
-            finalChoices.set(slot.index, foundRung === 0 ? null : rungs[foundRung]);
-            finalRecord = foundRecord;
+    // Descent: slot by slot, step down one tier at a time (ending at empty) until
+    // survival breaks, then settle on the last tier that held. Slots are walked in
+    // order and fixed as they settle, so a shared budget like mana is always
+    // measured against the other slots' real choices — and every accepted step is
+    // a combination that was actually simmed.
+    for (const slot of searchSlots) {
+        if (abortSignal?.()) break;
+        const start = choices.get(slot.index);
+        const ladder = [
+            ...slot.pool.filter((entry) => entry.totalRestore < (start?.totalRestore ?? 0)).reverse(),
+            null,
+        ];
+        for (const entry of ladder) {
+            if (abortSignal?.()) break;
+            const candidate = new Map(choices);
+            candidate.set(slot.index, entry);
+            const stepRecord = await trial(candidate, entry ? `trying ${entry.name}` : `slot ${slot.index + 1} empty`);
+            if (!stepRecord) break;
+            trials.push(stepRecord);
+            if (!viable(stepRecord)) break;
+            choices.set(slot.index, entry);
+            finalRecord = stepRecord;
         }
     }
     if (abortSignal?.()) return null;
 
-    // Price pass: within each slot's type, anything restoring at least the proven
+    // Price pass: within each slot's type, anything restoring at least the settled
     // amount is equally survivable — swap to the cheapest per point. Swaps leave
     // the proven combination, so they get one confirming sim; if that fails
-    // (noise), revert to the proven tiers rather than escalating.
-    const provenChoices = new Map(finalChoices);
+    // (noise), revert to the tiers the descent actually proved.
+    const provenChoices = new Map(choices);
     let swapped = false;
     for (const slot of searchSlots) {
-        const entry = finalChoices.get(slot.index);
+        const entry = choices.get(slot.index);
         if (!entry) continue;
         const cheaper = cheapestAtLeast(slot.pool, entry);
         if (cheaper.hrid !== entry.hrid) {
-            finalChoices.set(slot.index, cheaper);
+            choices.set(slot.index, cheaper);
             swapped = true;
         }
     }
 
     let final = finalRecord;
-    if (swapped || !final) {
-        final = await trial(finalChoices, 'cheapest viable combination');
-        if (final) trials.push(final);
-        if (final && !viable(final) && finalRecord) {
-            // The cheaper same-or-better swap didn't hold up — keep the tiers the
-            // search actually proved
-            for (const [index, entry] of provenChoices) finalChoices.set(index, entry);
-            final = finalRecord;
+    if (swapped) {
+        const confirm = await trial(choices, 'cheapest viable combination');
+        if (!confirm && abortSignal?.()) return null;
+        if (confirm) {
+            trials.push(confirm);
+            if (viable(confirm)) {
+                final = confirm;
+            } else {
+                // The cheaper same-or-better swap didn't hold up — keep the tiers
+                // the descent actually proved
+                for (const [index, entry] of provenChoices) choices.set(index, entry);
+            }
         }
     }
     if (!final) return null;
+    const finalChoices = choices;
 
     const slotName = (hrid) => itemDetailMap[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     const currentItems = originalFood.filter(Boolean).map((slot) => slotName(slot.hrid));
-    const currentViability = baselineResult ? readViability(baselineResult, playerHrid) : null;
-    const currentCost = baselineResult ? consumableCostPerHour(baselineResult, playerHrid, priceCache) : null;
 
     // Keeping the current food is always a candidate: if it's viable and no more
     // expensive than the searched pick, recommend leaving things alone.
-    const currentViable =
-        currentViability !== null &&
-        currentViability.deathsPerHour <= deathTarget &&
-        currentViability.oomFraction <= oomTarget;
-    const keepCurrent = currentViable && currentCost !== null && currentCost <= final.costPerHour;
+    const keepCurrent =
+        currentRecord.deathsPerHour <= deathTarget &&
+        currentRecord.oomFraction <= oomTarget &&
+        currentRecord.costPerHour <= final.costPerHour;
 
     const slots = searchSlots.map((slot) => {
         const choice = finalChoices.get(slot.index) ?? null;
@@ -395,8 +443,8 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
         simCount,
         deathTarget,
         oomTarget,
-        ceilingDies: ceiling.deathsPerHour > DEATH_TOLERANCE,
-        ceilingOoms: ceiling.oomFraction > OOM_TOLERANCE,
+        ceilingDies,
+        ceilingOoms,
         keepCurrent,
         recommendation: {
             slots,
@@ -406,9 +454,9 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
         },
         current: {
             items: currentItems,
-            costPerHour: currentCost,
-            deathsPerHour: currentViability?.deathsPerHour ?? null,
-            oomFraction: currentViability?.oomFraction ?? null,
+            costPerHour: currentRecord.costPerHour,
+            deathsPerHour: currentRecord.deathsPerHour,
+            oomFraction: currentRecord.oomFraction,
         },
         trials,
     };

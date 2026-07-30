@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Food search now starts from your equipped tiers and steps down
+
+- Instead of binary-searching each slot's whole pool from the bottom up, the search is **anchored at what you have equipped**: if your current setup survives, each slot walks down one tier at a time within its type until survival breaks, then settles on the last tier that held. The first trial is free — the analysis baseline already simmed your exact food on the same seed.
+- If your current setup does _not_ survive, the failing dimension's slots climb instead: deaths raise the HP-type slots, running dry raises the mana-type slots, one tier at a time until it holds. Targets only relax when even the top tiers can't get there, same as before.
+- This keeps recommendations local to your setup — a one-tier downgrade like "Star Fruit Gummy → Plum Gummy" — and makes the sim count proportional to how far your tiers can actually drop, not to the size of the food catalog.
+
 ### Food search minimizes slots sequentially so shared mana budgets hold
 
 - The per-slot searches each ran with the _other_ slots held at their top tier. With two mana sources (a gummy and a yogurt), each got minimized against a top-tier partner it wasn't actually going to have — the two proven minima failed together, the confirming sim caught it, and the fallback then recommended the **top tier of every type at once** (the "upgrade all three, +90K/hr" card).
