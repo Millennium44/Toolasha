@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Payback, repay time and a Score column in the upgrade advisor
+
+- **Payback** is how long you grind at your current profit rate to afford an upgrade; **Repay** is how long its extra profit takes to earn that cost back. Gold per 0.1% ranks upgrades by efficiency, which is a different question from whether one is worth buying at all — an upgrade with a great gold-per-DPS figure and a nine-month repay is still a poor purchase while your bankroll is the constraint.
+- Both are derived from the averaged profit figures rather than a single run. A profit delta thin enough to be noise would otherwise send the repay period asymptotic, and a cell reading "412 years" off RNG looks like a measurement when it isn't. An upgrade that doesn't raise profit shows a blank rather than ∞ — it never repays, which says nothing against it if you bought it for DPS.
+- **Score** awards points for placing in the top 5 of each value metric (gold per 0.1% DPS, EXP and Profit, plus repay time) and sums them, surfacing all-rounders that never top any single column. Expanding a row lists exactly which placings made up its score. The scoring is ordinal — winning a metric narrowly counts the same as winning it outright — so it sorts on request rather than by default.
+- Payback is deliberately left out of the score: it follows from cost alone, so scoring it would count the Cost column twice under another name. Combat levels are excluded too, having no gold cost to rank. Ties share a placing rather than being split by list order.
+
 ### Credit jigglymoose for JIGS
 
 - The README's credits now thank jigglymoose, author of [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator), for several of the ideas behind the upgrade advisor and the wider combat-sim tooling, and link to the script. The acknowledgement sits alongside the existing MWITools credit.

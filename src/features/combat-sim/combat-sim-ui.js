@@ -22,7 +22,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
-import { runUpgradeAnalysis, getStyleExcludedSkills, houseRoomAffectsCombat } from './upgrade-advisor.js';
+import { runUpgradeAnalysis, getStyleExcludedSkills, houseRoomAffectsCombat, RANK_PLACES } from './upgrade-advisor.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
 
@@ -3862,7 +3862,28 @@ class CombatSimUI {
             </div>
             <div style="margin-top:6px; color:#666; font-size:10px;">
                 Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit ${formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
-            </div>`;
+            </div>
+            ${this._renderUpgradeScoreBreakdown(r)}`;
+    }
+
+    /**
+     * Where a row's Score came from, so the number is auditable rather than magic.
+     * @param {Object} r - Upgrade result row
+     * @returns {string} HTML, empty when the row scored nothing
+     * @private
+     */
+    _renderUpgradeScoreBreakdown(r) {
+        const entries = Object.values(r.rankPoints || {});
+        if (!entries.length) return '';
+
+        const parts = entries
+            .sort((a, b) => b.points - a.points)
+            .map((e) => `${e.label} #${e.place} (+${e.points})`)
+            .join(' &nbsp;·&nbsp; ');
+
+        return `<div style="margin-top:4px; color:#666; font-size:10px;">
+            Score ${r.score}: ${parts}
+        </div>`;
     }
 
     /**
@@ -3886,6 +3907,13 @@ class CombatSimUI {
                     return r.goldPer.xp;
                 case 'profit':
                     return r.goldPer.profit;
+                case 'payback':
+                    return r.economics?.paybackHours ?? Infinity;
+                case 'repay':
+                    return r.economics?.repayHours ?? Infinity;
+                case 'score':
+                    // Negated so the shared ascending sort still puts best first
+                    return -(r.score ?? 0);
                 default:
                     return r.goldPer.dps;
             }
@@ -3896,23 +3924,51 @@ class CombatSimUI {
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        // Never-repays shows blank rather than ∞: the column is a duration, and
+        // "infinite hours" reads as a measurement when it is really an absence
+        const fmtHours = (h) => {
+            if (!Number.isFinite(h)) return '—';
+            if (h <= 0) return 'free';
+            if (h < 24) return `${h.toFixed(1)}h`;
+            const days = h / 24;
+            return days < 90 ? `${days.toFixed(1)}d` : `${(days / 30.44).toFixed(1)}mo`;
+        };
 
         let bestDps = Infinity;
         let bestXp = Infinity;
         let bestProfit = Infinity;
+        let bestRepay = Infinity;
+        let bestScore = 0;
         for (const r of rows) {
             if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
             if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
             if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
+            const repay = r.economics?.repayHours ?? Infinity;
+            if (repay < bestRepay) bestRepay = repay;
+            if ((r.score ?? 0) > bestScore) bestScore = r.score ?? 0;
         }
+
+        const paybackTitle =
+            'How long you grind at your current profit rate to afford this. A property of your ' +
+            'bankroll, not of the upgrade.';
+        const repayTitle =
+            'How long the extra profit takes to earn the cost back. Blank means the upgrade does not ' +
+            'raise profit, so it never repays — which does not make it a bad buy if you bought it for DPS.';
+        const scoreTitle =
+            `Points for placing in the top ${RANK_PLACES} of each value metric — gold per 0.1% DPS, EXP ` +
+            'and Profit, plus repay time. Finds all-rounders that never top a single column. Ordinal, so ' +
+            'winning a metric narrowly scores the same as winning it outright.';
 
         let html = `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
+                <th style="${thStyle}" data-sort-key="payback" title="${paybackTitle}">Payback${arrow('payback')}</th>
+                <th style="${thStyle}" data-sort-key="repay" title="${repayTitle}">Repay${arrow('repay')}</th>
                 <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
                 <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
                 <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
+                <th style="${thStyle}" data-sort-key="score" title="${scoreTitle}">Score${arrow('score')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
@@ -3921,15 +3977,23 @@ class CombatSimUI {
             const bestStyle = (val, best) =>
                 val === best && best !== Infinity ? 'color:#4caf50; font-weight:700;' : '';
 
+            const payback = r.economics?.paybackHours ?? Infinity;
+            const repay = r.economics?.repayHours ?? Infinity;
+            const score = r.score ?? 0;
+            const scoreStyle = score > 0 && score === bestScore ? 'color:#4caf50; font-weight:700;' : '';
+
             html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
                 <td style="${tdStyle}">${r.candidate.description}</td>
                 <td style="${tdStyle}">${r.cost == null ? '?' : formatKMB(r.cost)}</td>
+                <td style="${tdStyle}" title="${paybackTitle}">${fmtHours(payback)}</td>
+                <td style="${tdStyle} ${bestStyle(repay, bestRepay)}" title="${repayTitle}">${fmtHours(repay)}</td>
                 <td style="${tdStyle} ${bestStyle(r.goldPer.dps, bestDps)}">${fmtGoldPer(r.goldPer.dps)}</td>
                 <td style="${tdStyle} ${bestStyle(r.goldPer.xp, bestXp)}">${fmtGoldPer(r.goldPer.xp)}</td>
                 <td style="${tdStyle} ${bestStyle(r.goldPer.profit, bestProfit)}">${fmtGoldPer(r.goldPer.profit)}</td>
+                <td style="${tdStyle} ${scoreStyle}" title="${scoreTitle}">${score || '—'}</td>
             </tr>
             <tr data-upgrade-detail="${i}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                <td colspan="8" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;

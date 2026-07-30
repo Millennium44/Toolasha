@@ -1775,7 +1775,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
-        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer };
+        const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
+
+        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer, economics };
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
@@ -1835,6 +1837,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         current++;
         onProgress?.({ current, total, description: candidate.description });
     }
+
+    // Score only what can actually be bought — combat levels have no gold cost,
+    // so ranking them alongside gear would seed the ladders with non-purchases
+    assignRankScores(results.filter((r) => r.candidate.type !== 'combat_level'));
 
     // Sort by best value (lowest gold per 0.01% DPS improvement)
     results.sort((a, b) => {
@@ -1978,6 +1984,95 @@ function computeGoldPerImprovement(cost, deltas) {
         encounters: goldPer(deltas.encounters),
         deaths: goldPerReduction(deltas.deaths),
     };
+}
+
+/**
+ * How long the upgrade takes to afford, and how long it takes to pay for itself.
+ *
+ * Gold per 0.1% answers "which upgrade is the most efficient". These answer a
+ * different question — "is it worth buying at all" — and the two often disagree.
+ * An upgrade with an excellent gold-per-DPS figure and a nine-month payback is
+ * still a bad purchase for anyone whose bankroll is the binding constraint.
+ *
+ * Both are derived from the averaged profit figures rather than any single run.
+ * A profit delta thin enough to be RNG would otherwise send the repay period
+ * asymptotic, and a table cell reading "412 years" from noise is worse than
+ * useless — it looks like a measurement.
+ *
+ * @param {number|null} cost - Gold cost; null means unknown, never free
+ * @param {Object} baseline - Baseline metrics ({ profitPerHour })
+ * @param {Object} upgraded - Upgraded metrics ({ profitPerHour })
+ * @returns {Object} { profitGainPerHour, paybackHours, repayHours } — hours are
+ *   Infinity when the cost is unknown, or when the relevant profit is not positive
+ */
+export function computeEconomics(cost, baseline, upgraded) {
+    const safeCost = cost == null ? Infinity : cost;
+    const profitGainPerHour = (upgraded?.profitPerHour ?? 0) - (baseline?.profitPerHour ?? 0);
+
+    // Free is free: nothing to save up for and nothing to earn back
+    if (safeCost <= 0) return { profitGainPerHour, paybackHours: 0, repayHours: 0 };
+
+    const basePerHour = baseline?.profitPerHour ?? 0;
+    return {
+        profitGainPerHour,
+        paybackHours: basePerHour > 0 ? safeCost / basePerHour : Infinity,
+        repayHours: profitGainPerHour > 0 ? safeCost / profitGainPerHour : Infinity,
+    };
+}
+
+/** Placings that earn points in the rank score, best first. */
+export const RANK_PLACES = 5;
+
+/**
+ * Score every candidate by how often it places well across the value metrics.
+ *
+ * Sorting by one column answers only that column's question, and a candidate
+ * that is second-best at everything never surfaces. Ranking within each metric
+ * and summing the placings finds those all-rounders.
+ *
+ * The scoring is deliberately ordinal, and that is also its limitation: winning
+ * a metric by a mile scores exactly what winning it by a hair scores. It is a
+ * shortlisting aid, not a verdict, which is why it is not the default sort.
+ *
+ * Payback is excluded on purpose. It is a function of cost alone, so scoring it
+ * would count the Cost column twice under another name. Ties share a placing,
+ * so two candidates that measure identically cannot be separated by list order.
+ *
+ * Mutates and returns the rows, adding `score` and a `rankPoints` breakdown.
+ *
+ * @param {Array<Object>} results - Rows carrying `goldPer` and `economics`
+ * @param {number} [places=RANK_PLACES] - How many placings earn points
+ * @returns {Array<Object>} The same rows
+ */
+export function assignRankScores(results, places = RANK_PLACES) {
+    // Every metric here is lower-is-better, so one ladder direction serves all
+    const metrics = [
+        { key: 'dps', label: 'Gold/0.1% DPS', value: (r) => r.goldPer?.dps },
+        { key: 'xp', label: 'Gold/0.1% EXP', value: (r) => r.goldPer?.xp },
+        { key: 'profit', label: 'Gold/0.1% Profit', value: (r) => r.goldPer?.profit },
+        { key: 'repay', label: 'Repay time', value: (r) => r.economics?.repayHours },
+    ];
+
+    for (const row of results) {
+        row.rankPoints = {};
+        row.score = 0;
+    }
+
+    for (const metric of metrics) {
+        const ladder = [...new Set(results.map(metric.value).filter((v) => Number.isFinite(v)))]
+            .sort((a, b) => a - b)
+            .slice(0, places);
+        if (!ladder.length) continue;
+
+        for (const row of results) {
+            const index = ladder.indexOf(metric.value(row));
+            if (index === -1) continue;
+            row.rankPoints[metric.key] = { label: metric.label, place: index + 1, points: places - index };
+            row.score += places - index;
+        }
+    }
+
+    return results;
 }
 
 // ─── Labyrinth Buff Upgrade Candidates ──────────────────────────────────────
