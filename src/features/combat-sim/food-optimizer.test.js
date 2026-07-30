@@ -346,6 +346,74 @@ describe('runFoodOptimization', () => {
         expect(await runFoodOptimization(p, null, {})).toBe(null);
     });
 
+    test('walks down from the equipped tier and settles on the last one that holds', async () => {
+        // Equipped: Star Fruit Gummy (280 MP). Mana holds at 100+, so the descent
+        // steps down to Plum Gummy, fails on the empty rung, and settles there.
+        const manaData = {
+            itemDetailMap: {
+                '/items/plum_gummy': {
+                    name: 'Plum Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 100, recoveryDuration: 10 },
+                },
+                '/items/star_fruit_gummy': {
+                    name: 'Star Fruit Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 280, recoveryDuration: 10 },
+                },
+            },
+        };
+        resolveItemPrice.mockImplementation(
+            (hrid) =>
+                ({
+                    '/items/plum_gummy': { price: 200 },
+                    '/items/star_fruit_gummy': { price: 2_000 },
+                })[hrid] || { price: 0 }
+        );
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => {
+            const food = playerDTOs[0].food.filter(Boolean);
+            const totalMp = food.reduce(
+                (sum, slot) => sum + (manaData.itemDetailMap[slot.hrid]?.consumableDetail?.manapointRestore || 0),
+                0
+            );
+            const simulatedTime = hours * HOUR_NS;
+            return {
+                simulatedTime,
+                deaths: { player1: 0 },
+                playerRanOutOfManaTime: {
+                    player1: {
+                        isOutOfMana: false,
+                        startTimeForOutOfMana: 0,
+                        totalTimeForOutOfMana: totalMp >= 100 ? 0 : simulatedTime * 0.49,
+                    },
+                },
+                consumablesUsed: { player1: Object.fromEntries(food.map((slot) => [slot.hrid, 100 * hours])) },
+            };
+        });
+
+        const result = await runFoodOptimization(
+            {
+                gameData: manaData,
+                playerDTOs: [{ hrid: 'player1', food: [{ hrid: '/items/star_fruit_gummy' }, null, null] }],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/x',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                seed: 1,
+                baselineResult: null,
+            },
+            null,
+            {}
+        );
+
+        const gummy = result.recommendation.slots.find((s) => s.index === 0);
+        expect(gummy.hrid).toBe('/items/plum_gummy');
+        expect(gummy.changed).toBe(true);
+        expect(result.keepCurrent).toBe(false);
+        expect(result.recommendation.oomFraction).toBeLessThanOrEqual(result.oomTarget);
+    });
+
     test('minimizes shared-mana slots against each other, not a top-tier partner', async () => {
         // Two slots both feed mana: a gummy (over-time) and a yogurt (instant).
         // Mana holds only when their combined restore reaches 450. Minimizing each
@@ -444,14 +512,15 @@ describe('runFoodOptimization', () => {
 });
 
 describe('estimateFoodSimCount', () => {
-    test('scales with a binary search per equipped restore slot', () => {
-        // Slot pools: hp_instant (2 items → 2 rungs + empty = ceil(log2(4)) = 2 sims)
-        // and mp_instant (2 items → 2 sims); plus ceiling and confirmation probes
+    test('scales with the descent below each equipped tier', () => {
+        // Marsberry Cake (240 HP): one hp_instant tier below (cheese) + the empty
+        // rung = 2 steps; Donut (60 MP): nothing below + empty = 1 step; plus the
+        // fixed probes
         const count = estimateFoodSimCount(foodGameData(), [
             { hrid: '/items/marsberry_cake' },
             { hrid: '/items/donut' },
         ]);
-        expect(count).toBe(2 + 2 + 2);
+        expect(count).toBe(2 + 2 + 1);
     });
 
     test('counts only the fixed probes with no searchable slots', () => {
