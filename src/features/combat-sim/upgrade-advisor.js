@@ -1573,6 +1573,63 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
 }
 
 /**
+ * Itemised cost for a candidate: what gets bought, at what price, and what the
+ * gear it replaces would fetch. Purely for display — the ranking still uses
+ * calculateUpgradeCost — so a row showing a blank cost can say which item has no
+ * price instead of leaving the reader guessing.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} { buys, credits, gross, credit, net, unpriced }
+ */
+export function explainUpgradeCost(candidate, gameData) {
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
+
+    const buys = [];
+    if (candidate.addedSlots) {
+        for (const [slot, item] of Object.entries(candidate.addedSlots)) {
+            buys.push({
+                hrid: item.hrid,
+                name: nameOf(item.hrid),
+                enhancementLevel: item.enhancementLevel || 0,
+                price: resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel || 0, slot, gameData),
+            });
+        }
+    } else if (candidate.upgradeHrid) {
+        buys.push({
+            hrid: candidate.upgradeHrid,
+            name: nameOf(candidate.upgradeHrid),
+            enhancementLevel: candidate.upgradeLevel || 0,
+            price: resolveUpgradeBuyPrice(candidate.upgradeHrid, candidate.upgradeLevel || 0, candidate.slot, gameData),
+        });
+    }
+
+    const removed =
+        candidate.removedItems ||
+        (candidate.currentHrid ? [{ hrid: candidate.currentHrid, enhancementLevel: candidate.currentLevel || 0 }] : []);
+    const credits = removed.map((item) => ({
+        hrid: item.hrid,
+        name: nameOf(item.hrid),
+        enhancementLevel: item.enhancementLevel || 0,
+        price: resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
+    }));
+
+    const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
+    const gross = unpriced.length > 0 ? null : buys.reduce((sum, buy) => sum + buy.price, 0);
+    const credit = credits.reduce((sum, entry) => sum + entry.price, 0);
+
+    return {
+        buys,
+        credits,
+        gross,
+        credit,
+        net: gross === null ? null : Math.max(0, gross - credit),
+        unpriced,
+        // Set by the lab analysis when replaced gear is kept rather than sold
+        creditApplied: credits.length > 0,
+    };
+}
+
+/**
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
@@ -2090,6 +2147,28 @@ function buildModifiedCombatBuffs(baseBuffs, candidate) {
 }
 
 /**
+ * Cost breakdown for a lab candidate, noting resale that was deliberately not
+ * credited because the replaced gear is being kept for other floors.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} Breakdown from explainUpgradeCost plus kept-gear detail
+ */
+function explainLabCandidateCost(candidate, gameData) {
+    const detail = explainUpgradeCost(candidate, gameData);
+    if (!candidate.keptItems?.length) return detail;
+
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+    detail.kept = candidate.keptItems.map((item) => ({
+        hrid: item.hrid,
+        name: nameOf(item.hrid),
+        enhancementLevel: item.enhancementLevel || 0,
+        price: resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0,
+    }));
+    detail.keptValue = detail.kept.reduce((sum, entry) => sum + entry.price, 0);
+    return detail;
+}
+
+/**
  * Run labyrinth upgrade analysis: baseline sim + equipment sims + buff sims.
  * Ranks upgrades by win rate / clear rate delta, grouped by cost type (token vs gold).
  * @param {Object} params
@@ -2157,11 +2236,19 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // progression only ever steps one rung from what's worn and would hide them
     if (labCandidateModes.includes('equipment')) {
         const forced = generateLabArmorCandidates(playerDTO, gameData, dataManager.getInventory());
+        // The labyrinth needs every element set, so these swaps are usually an
+        // added purchase rather than a trade-in — pricing them net of selling the
+        // piece they replace would understate what they actually cost
+        const keepReplaced = config.getSettingValue('labSim_keepReplacedGear', true);
         const seen = new Set(candidates.map(candidateAssignmentKey));
         for (const candidate of forced) {
             const key = candidateAssignmentKey(candidate);
             if (seen.has(key)) continue;
             seen.add(key);
+            if (keepReplaced) {
+                candidate.keptItems = candidate.removedItems;
+                candidate.removedItems = [];
+            }
             candidates.push(candidate);
         }
     }
@@ -2267,6 +2354,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         results.push({
             candidate,
+            costDetail: explainLabCandidateCost(candidate, gameData),
             costType: 'gold',
             cost: candidate.cost,
             winRate,

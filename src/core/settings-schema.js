@@ -1782,6 +1782,13 @@ export const settingsGroups = {
                 max: 32,
                 help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
             },
+            labSim_keepReplacedGear: {
+                id: 'labSim_keepReplacedGear',
+                label: 'Lab Simulator: Keep gear the forced armor swaps replace',
+                type: 'checkbox',
+                default: true,
+                help: 'The labyrinth needs every element set, so the Anchorbound / elemental robe / weapon swaps price as an added purchase with no resale credit for the gear they replace. Turn off to price them as a straight swap that sells the old piece.',
+            },
             combatSim_sharedSeed: {
                 id: 'combatSim_sharedSeed',
                 label: 'Combat Simulator: Shared random seed for upgrade comparisons',

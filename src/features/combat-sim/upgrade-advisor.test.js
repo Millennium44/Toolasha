@@ -40,6 +40,7 @@ const {
     describeHouseScan,
     resolveCandidateModes,
     candidateAssignmentKey,
+    explainUpgradeCost,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -1101,5 +1102,78 @@ describe('candidateAssignmentKey', () => {
         expect(new Set(keys).size).toBe(3);
         expect(keys[0]).toContain('house');
         expect(keys[1]).toContain('combat_level');
+    });
+});
+
+describe('explainUpgradeCost', () => {
+    const BODY = '/equipment_types/body';
+    const LEGS = '/equipment_types/legs';
+
+    function costGameData() {
+        return {
+            itemDetailMap: {
+                '/items/fire_top': { name: 'Fire Top', equipmentDetail: { type: BODY } },
+                '/items/fire_bottoms': { name: 'Fire Bottoms', equipmentDetail: { type: LEGS } },
+                '/items/nature_top': { name: 'Nature Top', equipmentDetail: { type: BODY } },
+            },
+        };
+    }
+
+    test('itemises every purchase in a multi-slot swap', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: {
+                    [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 },
+                    [LEGS]: { hrid: '/items/fire_bottoms', enhancementLevel: 7 },
+                },
+                removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+            },
+            costGameData()
+        );
+
+        expect(detail.buys.map((b) => b.name)).toEqual(['Fire Top', 'Fire Bottoms']);
+        expect(detail.credits.map((c) => c.name)).toEqual(['Nature Top']);
+        expect(detail.credit).toBe(1_000_000);
+    });
+
+    test('names the unpriced item that makes a cost unknown', () => {
+        // No listing at +7 and no enhancement recipe leaves the buy price unknown
+        getItemPrices.mockReturnValue({ ask: 0, bid: 0 });
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [],
+            },
+            costGameData()
+        );
+
+        expect(detail.unpriced).toEqual(['Fire Top']);
+        expect(detail.gross).toBe(null);
+        expect(detail.net).toBe(null);
+    });
+
+    test('reports no credit when nothing is replaced', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+        getItemPrices.mockReturnValue({ ask: 3_000_000, bid: 2_000_000 });
+
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [],
+            },
+            costGameData()
+        );
+
+        expect(detail.credits).toEqual([]);
+        expect(detail.credit).toBe(0);
+        expect(detail.net).toBe(detail.gross);
     });
 });
