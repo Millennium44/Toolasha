@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Upgrade tab controls are grouped with the checkbox they belong to
+
+- Each candidate set is now a bordered chip holding its own options, so it's visible which checkbox an option modifies: **Skip Back** sits inside Equipment, the **+Levels / Target Lv / Targets** controls inside Ability Lv, **Charm / Targets / Main time** inside Combat Lv, and **Lv / Targets** inside House. A checked set lights its chip and reveals its options; unchecked sets dim and collapse.
+- The pop-out target grids now carry an accent stripe and name their owner ("**Ability Lv** target levels…", "**Combat Lv** target levels…", "**House** target levels…") so a grid can't be mistaken for belonging to another set.
+- The +Levels box still feeds both Ability Lv and Combat Lv — one number drives both — so it stays visible when either is checked, and its tooltip says which sets it's currently driving.
+
+### Per-room house target levels
+
+- **House now has a Targets button**, mirroring Ability Lv and Combat Lv: it opens a grid with one input per combat-relevant house room, labelled with the room's current level, prefilled from the uniform Lv value. Set different targets per room and each is simmed to its own level, with cost summed across every level in its span.
+- Per-room targets take precedence over the uniform Lv value while the grid is open, and — matching the ability and combat grids — a room left blank is skipped rather than falling back to +1. Rooms already at level 8 are shown disabled.
+
 ### House upgrades: fixed the empty list, added a target level
 
 - **House produced no candidates at all.** The combat-relevance test read `usableInActionTypeMap` off each buff, one of several places the game exposes that tag — and not the one live data uses, so every room was filtered out and the tab reported "0 upgrades evaluated". Relevance now accepts **any** of three independent signals: the tag on the room, the tag on a buff, or a buff `typeHrid` the combat engine actually reads. Over-including a room only costs a sim that comes back at 0.00%; under-including hid the whole feature.

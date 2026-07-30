@@ -908,6 +908,27 @@ describe('house upgrade candidates', () => {
         expect(candidates.some((c) => c.roomHrid === '/house_rooms/dojo')).toBe(false);
     });
 
+    test('per-room targets take precedence over the uniform target', () => {
+        const candidates = generateHouseCandidates(
+            { houseRooms: { '/house_rooms/dojo': 3, '/house_rooms/gym': 0 } },
+            houseGameData(),
+            5,
+            { '/house_rooms/dojo': 7 }
+        );
+
+        // Dojo follows its own target; Gym was left blank in the grid, so it's skipped
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0].roomHrid).toBe('/house_rooms/dojo');
+        expect(candidates[0].upgradeLevel).toBe(7);
+    });
+
+    test('per-room target at or below the current level skips the room', () => {
+        const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 5 } }, houseGameData(), 0, {
+            '/house_rooms/dojo': 5,
+        });
+        expect(candidates).toHaveLength(0);
+    });
+
     test('clamps a target level above the cap', () => {
         const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 3 } }, houseGameData(), 99);
         expect(candidates.find((c) => c.roomHrid === '/house_rooms/dojo').upgradeLevel).toBe(8);

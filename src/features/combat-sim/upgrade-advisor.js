@@ -800,7 +800,8 @@ export function generateCandidates(
     skipBackSlot = false,
     combatLevelTargets = null,
     abilityTargets = null,
-    houseTargetLevel = 0
+    houseTargetLevel = 0,
+    houseTargets = null
 ) {
     const candidates = [];
 
@@ -1176,7 +1177,7 @@ export function generateCandidates(
     }
 
     if (mode === 'house') {
-        candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel));
+        candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets));
     }
 
     candidates.forEach(clampRefinedCandidateToMinLevel);
@@ -1275,14 +1276,17 @@ export function describeHouseScan(playerDTO, gameData) {
  * Generate house room upgrade candidates for every combat-relevant room.
  * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
  * @param {Object} gameData - Game data payload (houseRoomDetailMap)
- * @param {number} [targetLevel] - Level to sim each room at; 0/unset means one level up
+ * @param {number} [targetLevel] - Level to sim every room at; 0/unset means one level up
+ * @param {Object|null} [perRoomTargets] - roomHrid → target level; takes precedence
+ *   over targetLevel, and a room absent from it is skipped (blank means skip)
  * @returns {Array<Object>} Candidates of type 'house'
  */
-export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0) {
+export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null) {
     const roomMap = gameData?.houseRoomDetailMap;
     if (!roomMap) return [];
 
     const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
+    const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
 
     const candidates = [];
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
@@ -1291,8 +1295,14 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0) {
         const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
         if (currentLevel >= MAX_HOUSE_LEVEL) continue;
 
-        // With a target set, jump straight to it; rooms already there are done
-        const upgradeLevel = target > 0 ? target : currentLevel + 1;
+        // Per-room target wins; then the uniform target; otherwise one level up.
+        // With per-room targets open, a room left blank is deliberately skipped.
+        let upgradeLevel;
+        if (explicit) {
+            upgradeLevel = Math.min(MAX_HOUSE_LEVEL, Math.floor(Number(explicit[roomHrid]) || 0));
+        } else {
+            upgradeLevel = target > 0 ? target : currentLevel + 1;
+        }
         if (upgradeLevel <= currentLevel) continue;
 
         const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
@@ -1539,7 +1549,7 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, optimizeFood }
+ *   houseTargetLevel, houseTargets, optimizeFood }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -1561,6 +1571,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityTargets,
         charmTier,
         houseTargetLevel = 0,
+        houseTargets = null,
         optimizeFood = false,
     } = params;
     const { abortSignal } = options;
@@ -1586,7 +1597,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             skipBackSlot,
             combatLevelTargets,
             abilityTargets,
-            houseTargetLevel
+            houseTargetLevel,
+            houseTargets
         )
     );
     const candidatesWithCost = candidates.map((c) => ({
