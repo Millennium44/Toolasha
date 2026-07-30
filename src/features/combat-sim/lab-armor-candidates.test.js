@@ -552,6 +552,11 @@ describe('cape options', () => {
                 '/items/enchanted_cloak': armor('Enchanted Cloak', BACK, 95, { magicDamage: 0.08 }),
                 '/items/chimerical_quiver': armor('Chimerical Quiver', BACK, 95, { rangedDamage: 0.08 }),
                 '/items/old_cape': armor('Old Cape', BACK, 60, { slashDamage: 0.2 }),
+                '/items/sinister_cape_refined': armor('Sinister Cape (R)', BACK, 95, {
+                    slashDamage: 0.07,
+                    armor: 55,
+                }),
+                '/items/enchanted_cloak_refined': armor('Enchanted Cloak (R)', BACK, 95, { magicDamage: 0.11 }),
                 '/items/staff': armor('Staff', '/equipment_types/main_hand', 95, { magicDamage: 1 }),
                 '/items/bow': armor('Bow', '/equipment_types/two_hand', 95, { rangedDamage: 1 }),
                 '/items/sword': armor('Sword', '/equipment_types/main_hand', 95, { slashDamage: 1 }),
@@ -595,10 +600,34 @@ describe('cape options', () => {
         const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), []));
 
         // The equipped cape is skipped as a no-op; its counterpart is offered
-        expect(capes.map((c) => c.hrid)).toEqual(['/items/enchanted_cloak']);
+        expect(capes.map((c) => c.hrid)).not.toContain('/items/sinister_cape');
+        expect(capes.map((c) => c.hrid)).toContain('/items/enchanted_cloak');
     });
 
-    test('compares capes at the level of the one currently worn', () => {
+    test('matches the worn level when the alternative is not owned better', () => {
+        const dto = {
+            equipment: {
+                '/equipment_types/main_hand': { hrid: '/items/staff' },
+                [BACK]: { hrid: '/items/sinister_cape', enhancementLevel: 5 },
+            },
+            abilities: [],
+        };
+        const inventory = [
+            {
+                itemHrid: '/items/enchanted_cloak',
+                enhancementLevel: 2,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), inventory));
+        const cloak = capes.find((c) => c.hrid === '/items/enchanted_cloak');
+
+        // Owning a worse copy shouldn't drag the comparison below the worn cape
+        expect(cloak.enhancementLevel).toBe(5);
+    });
+
+    test('uses a better owned copy over the worn level', () => {
         const dto = {
             equipment: {
                 '/equipment_types/main_hand': { hrid: '/items/staff' },
@@ -615,9 +644,57 @@ describe('cape options', () => {
             },
         ];
         const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), inventory));
+        const cloak = capes.find((c) => c.hrid === '/items/enchanted_cloak');
 
-        // Owning a +10 cloak must not decide a +5-vs-+10 comparison
-        expect(capes[0].enhancementLevel).toBe(5);
+        // A +10 cloak in the bank is what would actually be worn
+        expect(cloak.enhancementLevel).toBe(10);
+    });
+
+    test('offers the refined variant of each cape alongside the plain one', () => {
+        const dto = {
+            equipment: {
+                '/equipment_types/main_hand': { hrid: '/items/staff' },
+                [BACK]: { hrid: '/items/sinister_cape', enhancementLevel: 5 },
+            },
+            abilities: [],
+        };
+        const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
+
+        expect(hrids).toContain('/items/sinister_cape_refined');
+        expect(hrids).toContain('/items/enchanted_cloak');
+        expect(hrids).toContain('/items/enchanted_cloak_refined');
+    });
+
+    test('refined capes follow the same level rule', () => {
+        const dto = {
+            equipment: {
+                '/equipment_types/main_hand': { hrid: '/items/staff' },
+                [BACK]: { hrid: '/items/sinister_cape', enhancementLevel: 5 },
+            },
+            abilities: [],
+        };
+        const inventory = [
+            {
+                itemHrid: '/items/sinister_cape_refined',
+                enhancementLevel: 8,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const capes = capesIn(generateLabArmorCandidates(dto, capeGameData(), inventory));
+
+        expect(capes.find((c) => c.hrid === '/items/sinister_cape_refined').enhancementLevel).toBe(8);
+        expect(capes.find((c) => c.hrid === '/items/enchanted_cloak').enhancementLevel).toBe(5);
+    });
+
+    test('skips a refined variant the game does not have', () => {
+        const data = capeGameData();
+        delete data.itemDetailMap['/items/enchanted_cloak_refined'];
+        const dto = { equipment: { '/equipment_types/main_hand': { hrid: '/items/staff' } }, abilities: [] };
+        const hrids = capesIn(generateLabArmorCandidates(dto, data, [])).map((c) => c.hrid);
+
+        expect(hrids).toContain('/items/enchanted_cloak');
+        expect(hrids).not.toContain('/items/enchanted_cloak_refined');
     });
 
     test('falls back to the usual level rule with no cape equipped', () => {
@@ -627,11 +704,11 @@ describe('cape options', () => {
         for (const cape of capes) expect(cape.enhancementLevel).toBe(DEFAULT_ARMOR_ENHANCEMENT);
     });
 
-    test('a melee loadout gets one cape, not a duplicate', () => {
+    test('a melee loadout gets one cape family, not a duplicate', () => {
         const dto = { equipment: { '/equipment_types/main_hand': { hrid: '/items/sword' } }, abilities: [] };
         const hrids = capesIn(generateLabArmorCandidates(dto, capeGameData(), [])).map((c) => c.hrid);
 
-        expect(hrids).toEqual(['/items/sinister_cape']);
+        expect(hrids).toEqual(['/items/sinister_cape', '/items/sinister_cape_refined']);
     });
 
     test('never drops a tier for a cape with bigger stats', () => {
