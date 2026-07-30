@@ -1552,6 +1552,7 @@ class LabSimUI {
                 deltaColor,
                 goldPerPct,
                 goldPerPctStr: delta > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                detailHtml: this._renderUpgradeCostDetail(r, analysisResult?.baseline),
             };
         });
 
@@ -1618,15 +1619,20 @@ class LabSimUI {
                 ${th('Gold/1%', 'goldPerPct', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of goldRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+            goldRows.forEach((row, i) => {
+                html += `<tr data-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;" title="Click for the cost breakdown">
                     <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.winRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
+                </tr>
+                <tr data-gold-detail="${i}" style="display:none;">
+                    <td colspan="5" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                        ${row.detailHtml}
+                    </td>
                 </tr>`;
-            }
+            });
             html += '</tbody></table>';
             return html;
         };
@@ -1648,6 +1654,12 @@ class LabSimUI {
             container.removeEventListener('click', this._upgradeSortHandler);
         }
         this._upgradeSortHandler = (e) => {
+            const expandable = e.target.closest('tr[data-gold-row]');
+            if (expandable) {
+                const detail = container.querySelector(`[data-gold-detail="${expandable.dataset.goldRow}"]`);
+                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                return;
+            }
             const th = e.target.closest('th[data-sort-key]');
             if (!th) return;
             const table = th.dataset.table;
@@ -1664,6 +1676,83 @@ class LabSimUI {
         container.addEventListener('click', this._upgradeSortHandler);
 
         this._setStatus(`${results.length} upgrade candidates analyzed.`);
+    }
+
+    /**
+     * Cost breakdown shown when a gold-upgrade row is expanded: what gets bought
+     * at what price, what the swap credits or keeps, and — when the Cost column
+     * reads as a dash — which item has no price behind it.
+     * @param {Object} result - Analysis result row
+     * @param {Object} [baseline] - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUpgradeCostDetail(result, baseline) {
+        const detail = result.costDetail;
+        const money = (value) => formatWithSeparator(Math.round(value));
+        const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
+
+        const parts = [];
+
+        const baseWinRate = baseline?.winRate != null ? (baseline.winRate * 100).toFixed(2) + '%' : null;
+        parts.push(
+            line(
+                `Win rate ${((result.winRate || 0) * 100).toFixed(2)}%` +
+                    (baseWinRate ? ` vs ${baseWinRate} baseline` : '') +
+                    ` · ${(result.winRateDelta || 0) >= 0 ? '+' : ''}${((result.winRateDelta || 0) * 100).toFixed(2)}%`,
+                '#ccc'
+            )
+        );
+
+        if (!detail) {
+            parts.push(line('No cost breakdown available for this candidate.', '#666'));
+            return parts.join('');
+        }
+
+        for (const buy of detail.buys) {
+            const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
+            parts.push(line(`Buy ${buy.name} +${buy.enhancementLevel} — ${price}`));
+        }
+
+        if (detail.unpriced.length > 0) {
+            parts.push(
+                line(
+                    `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing at that ` +
+                        'enhancement and no priced path to reach it. The win-rate delta is still accurate.',
+                    '#ff9800'
+                )
+            );
+        }
+
+        if (detail.kept?.length) {
+            parts.push(
+                line(
+                    `Keeping ${detail.kept.map((k) => `${k.name} +${k.enhancementLevel}`).join(', ')} ` +
+                        `— resale of ${money(detail.keptValue)} deliberately not credited, since the labyrinth ` +
+                        'needs every set. Turn off "Keep gear the forced armor swaps replace" in settings to ' +
+                        'price these as straight swaps.',
+                    '#8ab4f8'
+                )
+            );
+        } else if (detail.credits.length > 0) {
+            for (const credit of detail.credits) {
+                parts.push(
+                    line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
+                );
+            }
+        }
+
+        if (detail.gross !== null) {
+            const net = detail.net;
+            parts.push(
+                line(
+                    `Total ${money(detail.gross)}` + (net !== detail.gross ? ` \u2212 credit = ${money(net)}` : ''),
+                    '#e0e0e0'
+                )
+            );
+        }
+
+        return parts.join('');
     }
 
     /** @private */

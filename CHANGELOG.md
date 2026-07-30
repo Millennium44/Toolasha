@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Lab Sim gold rows expand to show their cost breakdown
+
+- Clicking a Gold Upgrades row now expands it: each item bought with its price, what the swap sells or keeps, the total, and the win rate against the baseline.
+- **A blank Cost is now explained.** It means one of the items has no market listing at that enhancement level and no priced path to reach it, so the total is unknown rather than zero — the expanded row names which item. The win-rate delta on those rows is unaffected and still accurate.
+
+### Forced lab swaps price as an added purchase, not a trade-in
+
+- The labyrinth needs every element set, so buying Fire robes doesn't mean selling your Nature ones. The forced Anchorbound / elemental-robe / weapon swaps now price as an **added purchase with no resale credit**, which is what they actually cost you.
+- New setting **Lab Simulator: Keep gear the forced armor swaps replace** (on by default) controls this. Turn it off to price them as straight swaps that sell the replaced piece. Either way the expanded row shows the resale value, labelled as credited or deliberately not credited.
+
 ### Clear button for the labyrinth path and beacon overlays
 
 - The labyrinth toolbar has a **Clear** button that removes the path highlight and the beacon plan together. Previously the only ways to get an unobstructed view of the map were to re-run a calculation or change floors.
