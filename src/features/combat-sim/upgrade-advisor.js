@@ -1866,12 +1866,11 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         cost: calculateUpgradeCost(c, gameData),
     }));
 
-    // Generate buff candidates (skilling buffs handled in skilling tab)
+    // Generate buff candidates (skilling buffs handled in skilling tab, experience excluded — no combat impact)
     const buffCandidates = generateLabyrinthBuffCandidates();
     const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
-    const experienceBuffCandidates = buffCandidates.filter((c) => c.category === 'experience');
 
-    const total = candidatesWithCost.length + combatBuffCandidates.length + experienceBuffCandidates.length + 1;
+    const total = candidatesWithCost.length + combatBuffCandidates.length + 1;
     let current = 0;
 
     // Run baseline labyrinth sim
@@ -2011,28 +2010,11 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         onProgress?.({ current, total, description: buffCandidate.description });
     }
 
-    // ── Experience buff (flat % increase, no sim needed) ──
-    for (const buffCandidate of experienceBuffCandidates) {
-        const currentBonus = buffCandidate.currentLevel * buffCandidate.step;
-        const newBonus = (buffCandidate.currentLevel + 1) * buffCandidate.step;
-        const xpDeltaPct = ((1 + newBonus) / (1 + currentBonus) - 1) * 100;
-
-        results.push({
-            candidate: buffCandidate,
-            costType: 'token',
-            tokenCost: buffCandidate.tokenCost,
-            xpDeltaPct,
-            metricType: 'experience',
-        });
-        current++;
-        onProgress?.({ current, total, description: buffCandidate.description });
-    }
-
     // Sort: token results first, then gold; within each group by best delta descending
     results.sort((a, b) => {
         if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
-        const aDelta = a.winRateDelta ?? a.clearRateDelta ?? a.xpDeltaPct ?? 0;
-        const bDelta = b.winRateDelta ?? b.clearRateDelta ?? b.xpDeltaPct ?? 0;
+        const aDelta = a.winRateDelta ?? a.clearRateDelta ?? 0;
+        const bDelta = b.winRateDelta ?? b.clearRateDelta ?? 0;
         return bDelta - aDelta;
     });
 
