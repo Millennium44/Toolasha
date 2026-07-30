@@ -1957,24 +1957,32 @@ function computeDeltas(baseline, upgraded) {
     };
 }
 
+/** Improvement step the gold-per figures are quoted against, in percent. */
+export const GOLD_PER_STEP_PCT = 0.01;
+
 /**
- * Compute gold per 0.1% improvement for each metric.
+ * Compute gold per 0.01% improvement for each metric.
  * Lower = better value.
+ *
+ * The step size only rescales the figures — it divides every row by the same
+ * constant, so the ranking is identical whichever step is quoted.
  */
 function computeGoldPerImprovement(cost, deltas) {
     // Unknown cost (null) must rank as Infinity, never as free
     const safeCost = cost == null ? Infinity : cost;
+    // pctDelta is already in percent (e.g. 2 = 2%), so a 0.01% step means
+    // dividing by pctDelta / 0.01
+    const steps = (pctDelta) => Math.abs(pctDelta) / GOLD_PER_STEP_PCT;
+
     const goldPer = (pctDelta) => {
         if (pctDelta <= 0) return Infinity;
-        // Gold per 0.1% = cost / (pctDelta * 10)
-        // pctDelta is already in percent (e.g., 2 = 2%)
-        return safeCost / (pctDelta * 10);
+        return safeCost / steps(pctDelta);
     };
 
     // For deaths, fewer is better — use negative delta (reduction)
     const goldPerReduction = (pctDelta) => {
         if (pctDelta >= 0) return Infinity; // Deaths didn't decrease
-        return safeCost / (Math.abs(pctDelta) * 10);
+        return safeCost / steps(pctDelta);
     };
 
     return {
@@ -1989,7 +1997,7 @@ function computeGoldPerImprovement(cost, deltas) {
 /**
  * How long the upgrade takes to afford, and how long it takes to pay for itself.
  *
- * Gold per 0.1% answers "which upgrade is the most efficient". These answer a
+ * Gold per 0.01% answers "which upgrade is the most efficient". These answer a
  * different question — "is it worth buying at all" — and the two often disagree.
  * An upgrade with an excellent gold-per-DPS figure and a nine-month payback is
  * still a bad purchase for anyone whose bankroll is the binding constraint.
@@ -2034,9 +2042,13 @@ export const RANK_PLACES = 5;
  * a metric by a mile scores exactly what winning it by a hair scores. It is a
  * shortlisting aid, not a verdict, which is why it is not the default sort.
  *
- * Payback is excluded on purpose. It is a function of cost alone, so scoring it
- * would count the Cost column twice under another name. Ties share a placing,
- * so two candidates that measure identically cannot be separated by list order.
+ * Payback is excluded on purpose. Baseline profit is one number shared by every
+ * row, so dividing each cost by it preserves the cost ordering exactly — payback
+ * is the Cost column in hours, and scoring it would count cost twice. Repay is
+ * the one that carries new information, dividing by a gain that differs per row.
+ *
+ * Ties share a placing, so two candidates that measure identically cannot be
+ * separated by list order.
  *
  * Mutates and returns the rows, adding `score` and a `rankPoints` breakdown.
  *
@@ -2047,9 +2059,9 @@ export const RANK_PLACES = 5;
 export function assignRankScores(results, places = RANK_PLACES) {
     // Every metric here is lower-is-better, so one ladder direction serves all
     const metrics = [
-        { key: 'dps', label: 'Gold/0.1% DPS', value: (r) => r.goldPer?.dps },
-        { key: 'xp', label: 'Gold/0.1% EXP', value: (r) => r.goldPer?.xp },
-        { key: 'profit', label: 'Gold/0.1% Profit', value: (r) => r.goldPer?.profit },
+        { key: 'dps', label: 'Gold/0.01% DPS', value: (r) => r.goldPer?.dps },
+        { key: 'xp', label: 'Gold/0.01% EXP', value: (r) => r.goldPer?.xp },
+        { key: 'profit', label: 'Gold/0.01% Profit', value: (r) => r.goldPer?.profit },
         { key: 'repay', label: 'Repay time', value: (r) => r.economics?.repayHours },
     ];
 

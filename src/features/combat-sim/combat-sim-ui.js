@@ -3887,7 +3887,7 @@ class CombatSimUI {
     }
 
     /**
-     * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.1%.
+     * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.01%.
      * @param {Array<Object>} rows - Non-combat-level results
      * @param {Object} baseline - Baseline metrics
      * @returns {string} HTML
@@ -3949,13 +3949,13 @@ class CombatSimUI {
         }
 
         const paybackTitle =
-            'How long you grind at your current profit rate to afford this. A property of your ' +
-            'bankroll, not of the upgrade.';
+            'How long you grind at your current profit rate to afford this. Every row divides by that ' +
+            'same rate, so this orders candidates exactly as Cost does — it is the Cost column in hours.';
         const repayTitle =
             'How long the extra profit takes to earn the cost back. Blank means the upgrade does not ' +
             'raise profit, so it never repays — which does not make it a bad buy if you bought it for DPS.';
         const scoreTitle =
-            `Points for placing in the top ${RANK_PLACES} of each value metric — gold per 0.1% DPS, EXP ` +
+            `Points for placing in the top ${RANK_PLACES} of each value metric — gold per 0.01% DPS, EXP ` +
             'and Profit, plus repay time. Finds all-rounders that never top a single column. Ordinal, so ' +
             'winning a metric narrowly scores the same as winning it outright.';
 
@@ -3965,9 +3965,9 @@ class CombatSimUI {
                 <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
                 <th style="${thStyle}" data-sort-key="payback" title="${paybackTitle}">Payback${arrow('payback')}</th>
                 <th style="${thStyle}" data-sort-key="repay" title="${repayTitle}">Repay${arrow('repay')}</th>
-                <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
-                <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
+                <th style="${thStyle}" data-sort-key="dps">Gold/0.01% DPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-sort-key="xp">Gold/0.01% EXP${arrow('xp')}</th>
+                <th style="${thStyle}" data-sort-key="profit">Gold/0.01% Profit${arrow('profit')}</th>
                 <th style="${thStyle}" data-sort-key="score" title="${scoreTitle}">Score${arrow('score')}</th>
             </tr></thead><tbody>`;
 
