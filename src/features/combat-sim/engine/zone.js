@@ -11,7 +11,6 @@ class Zone {
         this.monsterSpawnInfo = gameZone.combatZoneInfo.fightInfo;
         this.dungeonSpawnInfo = gameZone.combatZoneInfo.dungeonInfo;
         this.encountersKilled = 1;
-        this.totalEncounters = 0; // Cumulative fights spawned (never resets, unlike encountersKilled)
         this.buffs = gameZone.buffs;
         this.isDungeon = gameZone.combatZoneInfo.isDungeon;
         this.dungeonsCompleted = 0;
@@ -27,8 +26,6 @@ class Zone {
         if (!this.monsterSpawnInfo) {
             return [];
         }
-
-        this.totalEncounters++;
 
         if (this.monsterSpawnInfo.bossSpawns && this.encountersKilled === this.monsterSpawnInfo.battlesPerBoss) {
             this.encountersKilled = 1;
@@ -75,8 +72,6 @@ class Zone {
     }
 
     getNextWave() {
-        this.totalEncounters++;
-
         if (this.encountersKilled > this.dungeonSpawnInfo.maxWaves) {
             this.dungeonsCompleted++;
             this.encountersKilled = 1;

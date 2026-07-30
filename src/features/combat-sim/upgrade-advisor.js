@@ -853,25 +853,45 @@ export function generateCandidates(
                 if (slotItems) {
                     const currentIdx = slotItems.findIndex((item) => item.hrid === currentHrid);
                     if (currentIdx >= 0 && currentIdx < slotItems.length - 1) {
-                        const nextTier = slotItems[currentIdx + 1];
-                        const nextName = nextTier.name || nextTier.hrid.split('/').pop();
-                        candidates.push({
-                            slot,
-                            currentHrid,
-                            currentLevel,
-                            upgradeHrid: nextTier.hrid,
-                            upgradeLevel: currentLevel,
-                            description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
-                            type: 'tier',
-                        });
-                        offensiveCandidateHrids.add(nextTier.hrid);
+                        const currentItemLevel = itemDetails?.itemLevel || 0;
+                        const currentIsRefined = currentHrid.endsWith('_refined');
+
+                        // The group is item-level sorted, so the immediate neighbour can be
+                        // a same-level sibling — a paid sidegrade, not an upgrade. Walk
+                        // forward to the first genuinely better entry: a higher item level,
+                        // or the refined variant of a non-refined item (same level, better
+                        // stats). Refined → another refined at the same level is a sidegrade.
+                        let nextTier = null;
+                        for (let i = currentIdx + 1; i < slotItems.length; i++) {
+                            const contender = slotItems[i];
+                            const isUpgrade =
+                                contender.itemLevel > currentItemLevel ||
+                                (!currentIsRefined && contender.hrid.endsWith('_refined'));
+                            if (isUpgrade) {
+                                nextTier = contender;
+                                break;
+                            }
+                        }
+
+                        if (nextTier) {
+                            const nextName = nextTier.name || nextTier.hrid.split('/').pop();
+                            candidates.push({
+                                slot,
+                                currentHrid,
+                                currentLevel,
+                                upgradeHrid: nextTier.hrid,
+                                upgradeLevel: currentLevel,
+                                description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
+                                type: 'tier',
+                            });
+                            offensiveCandidateHrids.add(nextTier.hrid);
+                        }
 
                         // Also suggest the highest non-refined item in the same slot|role
                         // when the player is already wearing high-tier gear (T60+). This
                         // surfaces direct T95 jumps (e.g. Sighted → Marksman) that the
                         // single-step progression would otherwise hide behind T75 stepping
                         // stones.
-                        const currentItemLevel = itemDetails?.itemLevel || 0;
                         if (currentItemLevel >= 60) {
                             let highestNonRefined = null;
                             for (let i = slotItems.length - 1; i >= 0; i--) {
@@ -883,7 +903,7 @@ export function generateCandidates(
                             if (
                                 highestNonRefined &&
                                 highestNonRefined.hrid !== currentHrid &&
-                                highestNonRefined.hrid !== nextTier.hrid &&
+                                highestNonRefined.hrid !== nextTier?.hrid &&
                                 highestNonRefined.itemLevel > currentItemLevel
                             ) {
                                 const highestName = highestNonRefined.name || highestNonRefined.hrid.split('/').pop();

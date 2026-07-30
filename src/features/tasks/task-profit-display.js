@@ -1523,11 +1523,12 @@ class TaskProfitDisplay {
                     if (!bottleneck || entry.hoursNeeded > bottleneck.hoursNeeded) bottleneck = entry;
                 }
 
-                // Fights = encounters, not kills — encounters spawn several
-                // monsters, so summing deaths overcounts (older-engine fallback)
+                // Fights = encounters cleared, not monsters killed — one encounter
+                // spawns several monsters, so summing deaths overcounts by the
+                // average wave size (fallback kept for pre-encounter-count sims)
                 const totalFightsPerHour =
-                    (simResult.zoneEncounters ?? 0) > 0
-                        ? simResult.zoneEncounters / 1 // SIM_HOURS = 1
+                    (simResult.encounters ?? 0) > 0
+                        ? simResult.encounters / 1 // SIM_HOURS = 1
                         : Object.values(simResult.deaths).reduce((s, v) => s + v, 0);
 
                 const summary = document.createElement('div');

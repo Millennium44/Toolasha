@@ -736,3 +736,56 @@ describe('Philosopher accessory candidates', () => {
         expect(philo.upgradeLevel).toBe(5);
     });
 });
+
+describe('tier progression sidegrade guard', () => {
+    function buildSiblingGameData() {
+        return {
+            actionDetailMap: {},
+            itemDetailMap: {
+                // Two T50 melee swords: same slot, same role, same item level
+                '/items/sword_a': {
+                    name: 'Sword A',
+                    itemLevel: 50,
+                    sortIndex: 1,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { slashDamage: 10 } },
+                },
+                '/items/sword_b': {
+                    name: 'Sword B',
+                    itemLevel: 50,
+                    sortIndex: 2,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { slashDamage: 10 } },
+                },
+                '/items/sword_c': {
+                    name: 'Sword C',
+                    itemLevel: 70,
+                    sortIndex: 3,
+                    equipmentDetail: { type: MAIN_HAND, combatStats: { slashDamage: 20 } },
+                },
+            },
+        };
+    }
+
+    test('skips a same-item-level sibling and suggests the next real tier instead', () => {
+        const candidates = generateCandidates(buildPlayer('/items/sword_a', 5), buildSiblingGameData(), 'equipment');
+        const tiers = candidates.filter((c) => c.type === 'tier');
+
+        // Sword B is the immediate neighbour but the same tier — a paid sidegrade
+        expect(tiers.some((c) => c.upgradeHrid === '/items/sword_b')).toBe(false);
+        expect(tiers.some((c) => c.upgradeHrid === '/items/sword_c')).toBe(true);
+    });
+
+    test('still suggests a refined variant sharing the base item level', () => {
+        const gameData = buildSiblingGameData();
+        gameData.itemDetailMap['/items/sword_a_refined'] = {
+            name: 'Sword A (R)',
+            itemLevel: 50,
+            sortIndex: 4,
+            equipmentDetail: { type: MAIN_HAND, combatStats: { slashDamage: 14 } },
+        };
+
+        const candidates = generateCandidates(buildPlayer('/items/sword_a', 10), gameData, 'equipment');
+        const tiers = candidates.filter((c) => c.type === 'tier');
+
+        expect(tiers.some((c) => c.upgradeHrid === '/items/sword_a_refined')).toBe(true);
+    });
+});
