@@ -1,6 +1,7 @@
 /**
- * Tests for the cheapest-viable-food solver's pure parts: pool construction,
- * the price decision, and reading survival out of a sim result.
+ * Tests for the cheapest-viable-food solver's pure parts: signature
+ * classification, pool construction, slot templating, the price decision, and
+ * reading survival out of a sim result.
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
@@ -8,17 +9,26 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 vi.mock('./combat-sim-runner.js', () => ({ runSimulation: vi.fn() }));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
 
-const { buildConsumablePools, buildFoodSlots, cheapestAtLeast, estimateFoodSimCount, readViability } =
-    await import('./food-optimizer.js');
+const {
+    restoreSignature,
+    buildConsumablePools,
+    buildSearchSlots,
+    cheapestAtLeast,
+    estimateFoodSimCount,
+    readViability,
+    runFoodOptimization,
+} = await import('./food-optimizer.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+const { runSimulation } = await import('./combat-sim-runner.js');
 
 const HOUR_NS = 3600 * 1e9;
 
 const PRICES = {
     '/items/cheese': 100,
     '/items/gourmet_cheese': 1_500,
+    '/items/marsberry_cake': 400,
     '/items/donut': 300,
-    '/items/dragon_fruit_yogurt': 900,
+    '/items/star_fruit_yogurt': 900,
     '/items/sword': 5_000,
     '/items/unpriced_cake': 0,
 };
@@ -31,6 +41,11 @@ function foodGameData() {
                 categoryHrid: '/item_categories/food',
                 consumableDetail: { hitpointRestore: 50, manapointRestore: 0 },
             },
+            '/items/marsberry_cake': {
+                name: 'Marsberry Cake',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: { hitpointRestore: 240, manapointRestore: 0 },
+            },
             '/items/gourmet_cheese': {
                 name: 'Gourmet Cheese',
                 categoryHrid: '/item_categories/food',
@@ -41,10 +56,10 @@ function foodGameData() {
                 categoryHrid: '/item_categories/food',
                 consumableDetail: { hitpointRestore: 0, manapointRestore: 60 },
             },
-            '/items/dragon_fruit_yogurt': {
-                name: 'Dragon Fruit Yogurt',
+            '/items/star_fruit_yogurt': {
+                name: 'Star Fruit Yogurt',
                 categoryHrid: '/item_categories/food',
-                consumableDetail: { hitpointRestore: 200, manapointRestore: 200 },
+                consumableDetail: { hitpointRestore: 0, manapointRestore: 350 },
             },
             '/items/unpriced_cake': {
                 name: 'Unpriced Cake',
@@ -56,10 +71,10 @@ function foodGameData() {
                 categoryHrid: '/item_categories/equipment',
                 equipmentDetail: {},
             },
-            '/items/coffee': {
-                name: 'Coffee',
-                categoryHrid: '/item_categories/drink',
-                consumableDetail: { hitpointRestore: 0, manapointRestore: 0, buffs: [{ uniqueHrid: '/x' }] },
+            '/items/lucky_coffee_cake': {
+                name: 'Lucky Cake',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: { hitpointRestore: 0, manapointRestore: 0, buffs: [{ uniqueHrid: '/luck' }] },
             },
         },
     };
@@ -69,55 +84,94 @@ beforeEach(() => {
     resolveItemPrice.mockImplementation((hrid) => ({ price: PRICES[hrid] ?? 0 }));
 });
 
+describe('restoreSignature', () => {
+    test('separates what is restored and how it is delivered', () => {
+        expect(restoreSignature({ hitpointRestore: 100 })).toBe('hp_instant');
+        expect(restoreSignature({ hitpointRestore: 100, recoveryDuration: 10 })).toBe('hp_overtime');
+        expect(restoreSignature({ manapointRestore: 100 })).toBe('mp_instant');
+        expect(restoreSignature({ hitpointRestore: 100, manapointRestore: 100 })).toBe('hpmp_instant');
+    });
+
+    test('returns null for buff-only consumables', () => {
+        expect(restoreSignature({ buffs: [{}] })).toBe(null);
+        expect(restoreSignature(null)).toBe(null);
+    });
+});
+
 describe('buildConsumablePools', () => {
-    test('collects HP and MP restore food, sorted by restore amount', () => {
+    test('groups by signature, sorted by restore amount', () => {
         const pools = buildConsumablePools(foodGameData());
 
-        expect(pools.hp.map((e) => e.hrid)).toEqual([
-            '/items/cheese',
-            '/items/dragon_fruit_yogurt',
-            '/items/gourmet_cheese',
-        ]);
-        expect(pools.mp.map((e) => e.hrid)).toEqual(['/items/donut', '/items/dragon_fruit_yogurt']);
+        expect(pools.get('hp_instant').map((e) => e.hrid)).toEqual(['/items/cheese', '/items/marsberry_cake']);
+        expect(pools.get('hp_overtime').map((e) => e.hrid)).toEqual(['/items/gourmet_cheese']);
+        expect(pools.get('mp_instant').map((e) => e.hrid)).toEqual(['/items/donut', '/items/star_fruit_yogurt']);
     });
 
-    test('lists an item that restores both in both pools', () => {
+    test('skips non-food, buff-only, and unpriced items', () => {
         const pools = buildConsumablePools(foodGameData());
-        expect(pools.hp.some((e) => e.hrid === '/items/dragon_fruit_yogurt')).toBe(true);
-        expect(pools.mp.some((e) => e.hrid === '/items/dragon_fruit_yogurt')).toBe(true);
-    });
-
-    test('skips non-food categories and unpriced items', () => {
-        const pools = buildConsumablePools(foodGameData());
-        const all = [...pools.hp, ...pools.mp].map((e) => e.hrid);
+        const all = [...pools.values()].flat().map((e) => e.hrid);
 
         expect(all).not.toContain('/items/sword');
-        expect(all).not.toContain('/items/coffee');
+        expect(all).not.toContain('/items/lucky_coffee_cake');
         // No market price means no way to call it cheap
         expect(all).not.toContain('/items/unpriced_cake');
     });
 
     test('records price per restored point', () => {
         const pools = buildConsumablePools(foodGameData());
-        const cheese = pools.hp.find((e) => e.hrid === '/items/cheese');
-        const gourmet = pools.hp.find((e) => e.hrid === '/items/gourmet_cheese');
-
+        const cheese = pools.get('hp_instant').find((e) => e.hrid === '/items/cheese');
         expect(cheese.pricePerPoint).toBeCloseTo(2);
-        expect(gourmet.pricePerPoint).toBeCloseTo(3);
-        expect(gourmet.overTime).toBe(true);
-        expect(cheese.overTime).toBe(false);
     });
 
-    test('returns empty pools without game data', () => {
-        expect(buildConsumablePools(null)).toEqual({ hp: [], mp: [] });
+    test('returns an empty map without game data', () => {
+        expect(buildConsumablePools(null).size).toBe(0);
+    });
+});
+
+describe('buildSearchSlots', () => {
+    test('binds each restore slot to its own signature pool at its original index', () => {
+        const gameData = foodGameData();
+        const pools = buildConsumablePools(gameData);
+        const slots = buildSearchSlots(
+            [{ hrid: '/items/marsberry_cake' }, null, { hrid: '/items/donut' }],
+            gameData.itemDetailMap,
+            pools
+        );
+
+        expect(slots).toHaveLength(2);
+        expect(slots[0]).toMatchObject({ index: 0, signature: 'hp_instant', currentHrid: '/items/marsberry_cake' });
+        expect(slots[0].pool.map((e) => e.hrid)).toEqual(['/items/cheese', '/items/marsberry_cake']);
+        expect(slots[1]).toMatchObject({ index: 2, signature: 'mp_instant', currentHrid: '/items/donut' });
+    });
+
+    test('never touches buff-only foods', () => {
+        const gameData = foodGameData();
+        const pools = buildConsumablePools(gameData);
+        const slots = buildSearchSlots([{ hrid: '/items/lucky_coffee_cake' }], gameData.itemDetailMap, pools);
+        expect(slots).toHaveLength(0);
+    });
+
+    test('an HP-over-time slot only sees HP-over-time candidates', () => {
+        const gameData = foodGameData();
+        const pools = buildConsumablePools(gameData);
+        const slots = buildSearchSlots([{ hrid: '/items/gourmet_cheese' }], gameData.itemDetailMap, pools);
+
+        expect(slots[0].pool.map((e) => e.hrid)).toEqual(['/items/gourmet_cheese']);
+    });
+
+    test('returns nothing when no restore food is equipped', () => {
+        const gameData = foodGameData();
+        const pools = buildConsumablePools(gameData);
+        expect(buildSearchSlots([null, null, null], gameData.itemDetailMap, pools)).toHaveLength(0);
+        expect(buildSearchSlots([], gameData.itemDetailMap, pools)).toHaveLength(0);
     });
 });
 
 describe('cheapestAtLeast', () => {
     const pool = [
-        { hrid: 'a', restore: 50, pricePerPoint: 3 },
-        { hrid: 'b', restore: 200, pricePerPoint: 1.5 },
-        { hrid: 'c', restore: 500, pricePerPoint: 2 },
+        { hrid: 'a', hpRestore: 50, mpRestore: 0, pricePerPoint: 3 },
+        { hrid: 'b', hpRestore: 200, mpRestore: 0, pricePerPoint: 1.5 },
+        { hrid: 'c', hpRestore: 500, mpRestore: 0, pricePerPoint: 2 },
     ];
 
     test('prefers a higher tier that costs less per point', () => {
@@ -128,42 +182,17 @@ describe('cheapestAtLeast', () => {
         expect(cheapestAtLeast(pool, pool[2]).hrid).toBe('c');
     });
 
+    test('requires every restored stat to hold, not just the total', () => {
+        const both = [
+            { hrid: 'x', hpRestore: 100, mpRestore: 100, pricePerPoint: 2 },
+            { hrid: 'y', hpRestore: 300, mpRestore: 50, pricePerPoint: 1 },
+        ];
+        // y is cheaper and restores more in total, but falls short on MP
+        expect(cheapestAtLeast(both, both[0]).hrid).toBe('x');
+    });
+
     test('keeps the reference when nothing beats it', () => {
         expect(cheapestAtLeast([pool[1]], pool[1]).hrid).toBe('b');
-    });
-});
-
-describe('buildFoodSlots', () => {
-    const itemDetailMap = {
-        ...foodGameData().itemDetailMap,
-        '/items/lucky_coffee_cake': {
-            name: 'Lucky Cake',
-            categoryHrid: '/item_categories/food',
-            consumableDetail: { hitpointRestore: 0, manapointRestore: 0, buffs: [{ uniqueHrid: '/luck' }] },
-        },
-    };
-    const hp = { hrid: '/items/cheese', triggers: null };
-    const mp = { hrid: '/items/donut', triggers: null };
-
-    test('always returns exactly three slots', () => {
-        expect(buildFoodSlots(hp, mp, [], itemDetailMap)).toHaveLength(3);
-        expect(buildFoodSlots(null, null, [], itemDetailMap)).toEqual([null, null, null]);
-    });
-
-    test('keeps a buff-only food the player already had', () => {
-        const slots = buildFoodSlots(hp, mp, [{ hrid: '/items/lucky_coffee_cake' }], itemDetailMap);
-        expect(slots.map((s) => s?.hrid)).toEqual(['/items/cheese', '/items/donut', '/items/lucky_coffee_cake']);
-    });
-
-    test('replaces the restore food the player had', () => {
-        const slots = buildFoodSlots(hp, null, [{ hrid: '/items/gourmet_cheese' }], itemDetailMap);
-        expect(slots).toEqual([{ hrid: '/items/cheese', triggers: null }, null, null]);
-    });
-
-    test('uses one slot when a single item covers both roles', () => {
-        const both = { hrid: '/items/dragon_fruit_yogurt', triggers: null };
-        const slots = buildFoodSlots(both, both, [], itemDetailMap);
-        expect(slots.filter(Boolean)).toHaveLength(1);
     });
 });
 
@@ -215,13 +244,121 @@ describe('readViability', () => {
     });
 });
 
-describe('estimateFoodSimCount', () => {
-    test('scales with the binary searches it will run', () => {
-        // 3 HP entries and 2 MP entries → 2 probes + 2 + 1 + 2 + 1
-        expect(estimateFoodSimCount(foodGameData())).toBe(8);
+describe('runFoodOptimization', () => {
+    /**
+     * Sim stand-in: dying is prevented only by an HP food restoring ≥ 240, and
+     * mana only holds with an MP food restoring ≥ 350 — the screenshot scenario
+     * where a cheap drink meant 49% of the run spent out of mana.
+     */
+    function mockSimFromFood() {
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => {
+            const food = playerDTOs[0].food.filter(Boolean);
+            const maxHp = Math.max(0, ...food.map((s) => hpOf(s.hrid)));
+            const maxMp = Math.max(0, ...food.map((s) => mpOf(s.hrid)));
+            const simulatedTime = hours * HOUR_NS;
+            return {
+                simulatedTime,
+                deaths: { player1: maxHp >= 240 ? 0 : 5 * hours },
+                playerRanOutOfManaTime: {
+                    player1: {
+                        isOutOfMana: false,
+                        startTimeForOutOfMana: 0,
+                        totalTimeForOutOfMana: maxMp >= 350 ? 0 : simulatedTime * 0.49,
+                    },
+                },
+                consumablesUsed: { player1: Object.fromEntries(food.map((s) => [s.hrid, 100 * hours])) },
+            };
+        });
+    }
+
+    const hpOf = (hrid) => foodGameData().itemDetailMap[hrid]?.consumableDetail?.hitpointRestore || 0;
+    const mpOf = (hrid) => foodGameData().itemDetailMap[hrid]?.consumableDetail?.manapointRestore || 0;
+
+    const params = () => ({
+        gameData: foodGameData(),
+        playerDTOs: [
+            {
+                hrid: 'player1',
+                food: [{ hrid: '/items/marsberry_cake' }, { hrid: '/items/donut' }, null],
+            },
+        ],
+        playerIndex: 0,
+        zoneHrid: '/actions/combat/x',
+        difficultyTier: 0,
+        hours: 1,
+        communityBuffs: {},
+        seed: 1,
+        baselineResult: null,
     });
 
-    test('counts only the fixed probes when there is nothing to search', () => {
-        expect(estimateFoodSimCount({ itemDetailMap: {} })).toBe(4);
+    test('never recommends a setup that runs out of mana when a viable tier exists', async () => {
+        mockSimFromFood();
+
+        const result = await runFoodOptimization(params(), null, {});
+
+        expect(result.recommendation.oomFraction).toBeLessThanOrEqual(result.oomTarget);
+        expect(result.oomTarget).toBeCloseTo(0.005);
+
+        // The donut (60 MP) leaves you dry — the same-type upgrade is the answer
+        const mpSlot = result.recommendation.slots.find((s) => s.index === 1);
+        expect(mpSlot.hrid).toBe('/items/star_fruit_yogurt');
+        expect(mpSlot.changed).toBe(true);
+    });
+
+    test('keeps the slot types the player runs', async () => {
+        mockSimFromFood();
+
+        const result = await runFoodOptimization(params(), null, {});
+
+        const hpSlot = result.recommendation.slots.find((s) => s.index === 0);
+        // Only hp_instant candidates were in play; the cake was already the
+        // minimum viable tier so it stays
+        expect(hpSlot.hrid).toBe('/items/marsberry_cake');
+        expect(hpSlot.changed).toBe(false);
+    });
+
+    test('recommends keeping current food when it is viable and cheapest', async () => {
+        mockSimFromFood();
+        const p = params();
+        // Current setup already viable: cake + yogurt
+        p.playerDTOs[0].food = [{ hrid: '/items/marsberry_cake' }, { hrid: '/items/star_fruit_yogurt' }, null];
+        p.baselineResult = {
+            simulatedTime: HOUR_NS,
+            deaths: { player1: 0 },
+            playerRanOutOfManaTime: {
+                player1: { isOutOfMana: false, startTimeForOutOfMana: 0, totalTimeForOutOfMana: 0 },
+            },
+            consumablesUsed: {
+                player1: { '/items/marsberry_cake': 100, '/items/star_fruit_yogurt': 100 },
+            },
+        };
+
+        const result = await runFoodOptimization(p, null, {});
+
+        expect(result.keepCurrent).toBe(true);
+    });
+
+    test('returns null when no restore food is equipped', async () => {
+        mockSimFromFood();
+        const p = params();
+        p.playerDTOs[0].food = [null, null, null];
+
+        expect(await runFoodOptimization(p, null, {})).toBe(null);
+    });
+});
+
+describe('estimateFoodSimCount', () => {
+    test('scales with a binary search per equipped restore slot', () => {
+        // Slot pools: hp_instant (2 items → 2 rungs + empty = ceil(log2(4)) = 2 sims)
+        // and mp_instant (2 items → 2 sims); plus ceiling and confirmation probes
+        const count = estimateFoodSimCount(foodGameData(), [
+            { hrid: '/items/marsberry_cake' },
+            { hrid: '/items/donut' },
+        ]);
+        expect(count).toBe(2 + 2 + 2);
+    });
+
+    test('counts only the fixed probes with no searchable slots', () => {
+        expect(estimateFoodSimCount(foodGameData(), [])).toBe(2);
     });
 });

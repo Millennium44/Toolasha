@@ -1504,7 +1504,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     }));
 
     const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
-    const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData) : 0;
+    const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
     // +1 baseline, + XP-rate sims for combat levels, + the food search
     const total = candidatesWithCost.length + combatLevelCount + foodSimCount + 1;
     let current = 0;
