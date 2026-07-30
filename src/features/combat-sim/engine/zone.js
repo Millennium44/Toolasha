@@ -1,3 +1,4 @@
+import { randomSpawn } from './rng.js';
 import { getGameData } from './game-data.js';
 import Monster from './monster.js';
 
@@ -45,7 +46,7 @@ class Zone {
         let totalStrength = 0;
 
         outer: for (let i = 0; i < this.monsterSpawnInfo.randomSpawnInfo.maxSpawnCount; i++) {
-            const randomWeight = totalWeight * Math.random();
+            const randomWeight = totalWeight * randomSpawn();
             let cumulativeWeight = 0;
 
             for (const spawn of this.monsterSpawnInfo.randomSpawnInfo.spawns) {
@@ -134,7 +135,7 @@ class Zone {
         let totalStrength = 0;
 
         outer: for (let i = 0; i < monsterSpawns.maxSpawnCount; i++) {
-            const randomWeight = totalWeight * Math.random();
+            const randomWeight = totalWeight * randomSpawn();
             let cumulativeWeight = 0;
 
             for (const spawn of monsterSpawns.spawns) {

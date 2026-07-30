@@ -1,3 +1,4 @@
+import { random, syncEncounterRng } from './rng.js';
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -46,6 +47,7 @@ class CombatSimulator {
         this.eventQueue = new EventQueue();
         this.simResult = new SimResult(zone, players.length);
         this.allPlayersDead = false;
+        this.encounterIndex = 0;
 
         this.wipeLogs = {
             buffer: new Array(200),
@@ -245,6 +247,7 @@ class CombatSimulator {
     reset() {
         this.tempDungeonCount = 0;
         this.simulationTime = 0;
+        this.encounterIndex = 0;
         this.eventQueue.clear();
         this.simResult = new SimResult(this.zone, this.players.length);
     }
@@ -351,6 +354,10 @@ class CombatSimulator {
     }
 
     startNewEncounter() {
+        // Restart the combat/setup streams so this encounter begins from the same
+        // random state in every run sharing the seed (no-op when unseeded)
+        syncEncounterRng(this.encounterIndex++);
+
         if (this.allPlayersDead) {
             this.allPlayersDead = false;
             if (!this.labyrinth) {
@@ -418,8 +425,8 @@ class CombatSimulator {
         if (parryUnits.length <= 0) {
             return undefined;
         }
-        const randomIndex = Math.floor(Math.random() * parryUnits.length);
-        if (parryUnits[randomIndex].combatDetails.combatStats.parry > Math.random()) {
+        const randomIndex = Math.floor(random() * parryUnits.length);
+        if (parryUnits[randomIndex].combatDetails.combatStats.parry > random()) {
             return parryUnits[randomIndex];
         }
         return undefined;
@@ -448,7 +455,7 @@ class CombatSimulator {
                         rangeEnd: cumulativeThreat,
                     });
                 });
-                const randomValueHit = Math.random() * cumulativeThreat;
+                const randomValueHit = random() * cumulativeThreat;
                 target = cumulativeRanges.find(
                     (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd
                 ).player;
@@ -467,7 +474,7 @@ class CombatSimulator {
                 this.addToWipeLogs(log);
             }
 
-            const mayhem = source.combatDetails.combatStats.mayhem > Math.random();
+            const mayhem = source.combatDetails.combatStats.mayhem > random();
 
             if (attackResult.didHit && source.combatDetails.combatStats.curse > 0) {
                 const curseExpireTime = 15000000000;
@@ -587,7 +594,7 @@ class CombatSimulator {
                 continue;
             }
 
-            if (!attackResult.didHit || parryTarget || source.combatDetails.combatStats.pierce <= Math.random()) {
+            if (!attackResult.didHit || parryTarget || source.combatDetails.combatStats.pierce <= random()) {
                 break;
             }
         }
@@ -1165,11 +1172,11 @@ class CombatSimulator {
 
         const todoAbilities = [ability];
 
-        if (source.combatDetails.combatStats.blaze > 0 && Math.random() < source.combatDetails.combatStats.blaze) {
+        if (source.combatDetails.combatStats.blaze > 0 && random() < source.combatDetails.combatStats.blaze) {
             todoAbilities.push(new Ability('blaze'));
         }
 
-        if (source.combatDetails.combatStats.bloom > 0 && Math.random() < source.combatDetails.combatStats.bloom) {
+        if (source.combatDetails.combatStats.bloom > 0 && random() < source.combatDetails.combatStats.bloom) {
             todoAbilities.push(new Ability('bloom'));
         }
 
@@ -1216,7 +1223,7 @@ class CombatSimulator {
             }
         }
 
-        if (source.combatDetails.combatStats.ripple > 0 && Math.random() < source.combatDetails.combatStats.ripple) {
+        if (source.combatDetails.combatStats.ripple > 0 && random() < source.combatDetails.combatStats.ripple) {
             const manapointsAdded = source.addManapoints(10);
             this.simResult.addManapointsGained(source, 'ripple', manapointsAdded);
             for (const ab of source.abilities) {
@@ -1382,7 +1389,7 @@ class CombatSimulator {
                             rangeEnd: cumulativeThreat,
                         });
                     });
-                    const randomValueHit = Math.random() * cumulativeThreat;
+                    const randomValueHit = random() * cumulativeThreat;
                     target = cumulativeRanges.find(
                         (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd
                     ).player;
@@ -1430,7 +1437,7 @@ class CombatSimulator {
                 if (
                     attackResult.didHit &&
                     abilityEffect.stunChance > 0 &&
-                    Math.random() < (abilityEffect.stunChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
+                    random() < (abilityEffect.stunChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
                 ) {
                     target.isStunned = true;
                     target.stunExpireTime = this.simulationTime + abilityEffect.stunDuration;
@@ -1445,8 +1452,7 @@ class CombatSimulator {
                 if (
                     attackResult.didHit &&
                     abilityEffect.blindChance > 0 &&
-                    Math.random() <
-                        (abilityEffect.blindChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
+                    random() < (abilityEffect.blindChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
                 ) {
                     target.isBlinded = true;
                     target.blindExpireTime = this.simulationTime + abilityEffect.blindDuration;
@@ -1461,8 +1467,7 @@ class CombatSimulator {
                 if (
                     attackResult.didHit &&
                     abilityEffect.silenceChance > 0 &&
-                    Math.random() <
-                        (abilityEffect.silenceChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
+                    random() < (abilityEffect.silenceChance * 100) / (100 + target.combatDetails.combatStats.tenacity)
                 ) {
                     target.isSilenced = true;
                     target.silenceExpireTime = this.simulationTime + abilityEffect.silenceDuration;
@@ -1570,7 +1575,7 @@ class CombatSimulator {
                     }
                 }
 
-                if (attackResult.didHit && abilityEffect.pierceChance > Math.random()) {
+                if (attackResult.didHit && abilityEffect.pierceChance > random()) {
                     continue;
                 }
             }
@@ -1652,7 +1657,7 @@ class CombatSimulator {
 
     processAbilityPromoteEffect(source, _ability, _abilityEffect) {
         const promotionHrids = ['/monsters/enchanted_rook', '/monsters/enchanted_knight', '/monsters/enchanted_bishop'];
-        const randomPromotionIndex = Math.floor(Math.random() * promotionHrids.length);
+        const randomPromotionIndex = Math.floor(random() * promotionHrids.length);
         return new Monster(promotionHrids[randomPromotionIndex], source.difficultyTier);
     }
 

@@ -35,6 +35,8 @@ const {
     getMainTrainingSkills,
     runLabyrinthAllFightsAnalysis,
     generateSkillingEquipmentCandidates,
+    generateHouseCandidates,
+    resolveCandidateModes,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -787,5 +789,109 @@ describe('tier progression sidegrade guard', () => {
         const tiers = candidates.filter((c) => c.type === 'tier');
 
         expect(tiers.some((c) => c.upgradeHrid === '/items/sword_a_refined')).toBe(true);
+    });
+});
+
+describe('resolveCandidateModes', () => {
+    test('uses the checked sets and drops the food pseudo-mode', () => {
+        expect(resolveCandidateModes(['equipment', 'house', 'food'])).toEqual(['equipment', 'house']);
+    });
+
+    test('deduplicates repeated sets', () => {
+        expect(resolveCandidateModes(['equipment', 'equipment'])).toEqual(['equipment']);
+    });
+
+    test('expands the legacy combined mode', () => {
+        expect(resolveCandidateModes(undefined, 'combined')).toEqual(['equipment', 'ability_level']);
+    });
+
+    test('passes a legacy single mode through', () => {
+        expect(resolveCandidateModes(undefined, 'ability_swap')).toEqual(['ability_swap']);
+    });
+
+    test('falls back to equipment with nothing specified', () => {
+        expect(resolveCandidateModes(undefined, undefined)).toEqual(['equipment']);
+        expect(resolveCandidateModes([], undefined)).toEqual(['equipment']);
+    });
+});
+
+describe('house upgrade candidates', () => {
+    const COMBAT_BUFF = { usableInActionTypeMap: { '/action_types/combat': true } };
+    const SKILL_BUFF = { usableInActionTypeMap: { '/action_types/brewing': true } };
+
+    function houseGameData() {
+        return {
+            houseRoomDetailMap: {
+                '/house_rooms/dojo': {
+                    name: 'Dojo',
+                    actionBuffs: [COMBAT_BUFF],
+                    upgradeCostsMap: {
+                        4: [
+                            { itemHrid: '/items/coin', count: 1_000_000 },
+                            { itemHrid: '/items/lumber', count: 10 },
+                        ],
+                    },
+                },
+                '/house_rooms/brewery': {
+                    name: 'Brewery',
+                    actionBuffs: [SKILL_BUFF],
+                    upgradeCostsMap: { 1: [{ itemHrid: '/items/coin', count: 100 }] },
+                },
+                '/house_rooms/gym': {
+                    name: 'Gym',
+                    globalBuffs: [COMBAT_BUFF],
+                    upgradeCostsMap: {},
+                },
+            },
+        };
+    }
+
+    test('offers one level per combat-relevant room and skips skilling rooms', () => {
+        const candidates = generateHouseCandidates(
+            { houseRooms: { '/house_rooms/dojo': 3, '/house_rooms/brewery': 0, '/house_rooms/gym': 0 } },
+            houseGameData()
+        );
+
+        expect(candidates.map((c) => c.roomHrid).sort()).toEqual(['/house_rooms/dojo', '/house_rooms/gym']);
+        const dojo = candidates.find((c) => c.roomHrid === '/house_rooms/dojo');
+        expect(dojo.currentLevel).toBe(3);
+        expect(dojo.upgradeLevel).toBe(4);
+        expect(dojo.description).toBe('Dojo Lv3 → Lv4');
+    });
+
+    test('skips rooms already at the level cap', () => {
+        const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 8 } }, houseGameData());
+        expect(candidates.some((c) => c.roomHrid === '/house_rooms/dojo')).toBe(false);
+    });
+
+    test('costs coins at face value plus the market price of each material', () => {
+        resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 2_000 : 0 }));
+
+        const cost = calculateUpgradeCost(
+            { type: 'house', roomHrid: '/house_rooms/dojo', currentLevel: 3, upgradeLevel: 4 },
+            houseGameData()
+        );
+
+        expect(cost).toBe(1_000_000 + 10 * 2_000);
+    });
+
+    test('reports unknown when a material has no price', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+
+        const cost = calculateUpgradeCost(
+            { type: 'house', roomHrid: '/house_rooms/dojo', currentLevel: 3, upgradeLevel: 4 },
+            houseGameData()
+        );
+
+        expect(cost).toBe(null);
+    });
+
+    test('reports unknown when the level has no cost recipe', () => {
+        const cost = calculateUpgradeCost(
+            { type: 'house', roomHrid: '/house_rooms/gym', currentLevel: 0, upgradeLevel: 1 },
+            houseGameData()
+        );
+
+        expect(cost).toBe(null);
     });
 });
