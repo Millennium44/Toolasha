@@ -4,6 +4,12 @@
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
+## Unreleased — branch `claude/new-session-s8abcv`
+
+### Credit jigglymoose for JIGS
+
+- The README's credits now thank jigglymoose, author of [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator), for the original code this project builds on, and link to the script. No module is singled out — the acknowledgement sits alongside the existing MWITools credit.
+
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
 ### Panel sizes you drag are remembered across reloads
