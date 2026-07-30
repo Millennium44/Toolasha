@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### No more paid sidegrade recommendations
+
+- The "next tier" equipment candidate took the next entry in an item-level-sorted list without checking the level actually went **up** — so a same-tier sibling in the same slot and role was recommended as an upgrade, costing gold for no gain. It now walks forward to the first genuinely better item. A refined variant sharing its base item's level still counts as an upgrade (better stats); refined → another refined at the same level does not.
+- **Consolidated the encounter counter**: the task zone-fight estimate now reads the sim's existing `encounters` field (fights cleared) instead of the duplicate `zoneEncounters` counter added earlier, which is removed.
+
 ### Recommender audit: unknown costs no longer rank as the best upgrade
 
 - **Unpriceable enhancement paths reported as free.** `calculateEnhancementCost` returned `0` when an item had no enhancement recipe, and also when every protection strategy failed to compute — and `0` cost means gold-per-improvement `0`, i.e. the **top-ranked, best-value upgrade in the list**, highlighted as best. It now returns "unknown", which the ranking already maps to last place (Combat Sim shows `?`, Lab Sim shows `—`). This is the same rule the code states elsewhere: "unknown cost must rank as Infinity, never as free".

@@ -218,9 +218,6 @@ class CombatSimulator {
         }
 
         this.simResult.simulatedTime = this.simulationTime;
-        if (this.zone) {
-            this.simResult.zoneEncounters = this.zone.totalEncounters;
-        }
 
         for (let i = 0; i < this.players.length; i++) {
             this.simResult.setDropRateMultipliers(this.players[i]);
