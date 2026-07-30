@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Philosopher's accessories recommended at +5
+
+- Combat Sim and Lab Sim (combat **and** skilling analysis) now always offer the Philosopher's necklace / ring / earrings at **+5** for jewelry slots, no matter how enhanced the worn accessory is. Previously the tier path only ever proposed a swap at the _current_ enhancement level — so wearing +12 jewelry hid the cheap entry point behind a +12 rebuy. When a same-slot philo swap at a higher level is also generated, the +5 version supersedes it.
+
 ### Ability dictionary button now actually appears
 
 - The first attempt matched menus by a class containing `actionMenu`, which the ability popup doesn't use. Detection is now fully class-free: it finds the popup's **Link to Chat** button, walks up to the container holding the `Lv.N` heading, and injects there. The book is also verified via `abilityBookDetail` so only real ability books get a button.
