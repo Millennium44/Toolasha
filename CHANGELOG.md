@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Ability dictionary button now actually appears
+
+- The first attempt matched menus by a class containing `actionMenu`, which the ability popup doesn't use. Detection is now fully class-free: it finds the popup's **Link to Chat** button, walks up to the container holding the `Lv.N` heading, and injects there. The book is also verified via `abilityBookDetail` so only real ability books get a button.
+
 ### Open Item Dictionary from ability menus
 
 - Clicking an ability (Abilities panel, Loadouts, anywhere the "Lv.N Name / Link to Chat" popup appears) now offers **Open Item Dictionary**, jumping straight to that ability's book entry. Menus are matched by their heading content rather than a hardcoded class, so it survives the game's class-name churn, and item menus are left alone since they already have the button.
