@@ -799,7 +799,8 @@ export function generateCandidates(
     abilityLevelType = 'increment',
     skipBackSlot = false,
     combatLevelTargets = null,
-    abilityTargets = null
+    abilityTargets = null,
+    houseTargetLevel = 0
 ) {
     const candidates = [];
 
@@ -1175,7 +1176,7 @@ export function generateCandidates(
     }
 
     if (mode === 'house') {
-        candidates.push(...generateHouseCandidates(playerDTO, gameData));
+        candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel));
     }
 
     candidates.forEach(clampRefinedCandidateToMinLevel);
@@ -1183,27 +1184,105 @@ export function generateCandidates(
 }
 
 /**
- * Does this house room buff combat at all?
- * The game tags each buff with the action types it applies to, so combat rooms
- * identify themselves — no need to hardcode a room list that a game update could
- * outdate. Rooms that only help skilling are skipped rather than burning a sim.
+ * Buff types the combat engine actually reads (see engine/combat-unit.js and
+ * combat-utilities.js). A house room whose buffs land in this set changes a fight
+ * no matter how the game labels the room.
+ */
+const COMBAT_BUFF_TYPES = new Set([
+    '/buff_types/accuracy',
+    '/buff_types/armor',
+    '/buff_types/attack_speed',
+    '/buff_types/cast_speed',
+    '/buff_types/combat_drop_quantity',
+    '/buff_types/combat_drop_rate',
+    '/buff_types/critical_damage',
+    '/buff_types/critical_rate',
+    '/buff_types/damage',
+    '/buff_types/damage_taken',
+    '/buff_types/elemental_thorns',
+    '/buff_types/evasion',
+    '/buff_types/fire_amplify',
+    '/buff_types/fire_resistance',
+    '/buff_types/fury_accuracy',
+    '/buff_types/fury_damage',
+    '/buff_types/healing_amplify',
+    '/buff_types/hp_regen',
+    '/buff_types/life_steal',
+    '/buff_types/mp_regen',
+    '/buff_types/nature_amplify',
+    '/buff_types/nature_resistance',
+    '/buff_types/physical_amplify',
+    '/buff_types/physical_thorns',
+    '/buff_types/rare_find',
+    '/buff_types/retaliation',
+    '/buff_types/tenacity',
+    '/buff_types/threat',
+    '/buff_types/water_amplify',
+    '/buff_types/water_resistance',
+    '/buff_types/wisdom',
+]);
+
+const COMBAT_ACTION_TYPE = '/action_types/combat';
+
+/**
+ * Does this house room change a combat sim?
+ *
+ * Three independent signals, because the game exposes the action-type tag in more
+ * than one place and a global buff carries no tag at all: the room's own
+ * usableInActionTypeMap, a per-buff usableInActionTypeMap, or a buff type the
+ * combat engine reads. Any of them is enough. Over-including a room only costs a
+ * sim that comes back at 0.00%; under-including hides a real upgrade, which is
+ * how the first version produced an empty list.
  * @param {Object} roomDetail - Entry from houseRoomDetailMap
  * @returns {boolean}
  */
-function houseRoomAffectsCombat(roomDetail) {
+export function houseRoomAffectsCombat(roomDetail) {
     const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
-    return buffs.some((buff) => buff?.usableInActionTypeMap?.['/action_types/combat']);
+    if (buffs.length === 0) return false;
+
+    if (roomDetail?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE]) return true;
+    return buffs.some(
+        (buff) => buff?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE] || COMBAT_BUFF_TYPES.has(buff?.typeHrid)
+    );
 }
 
 /**
- * Generate one-level house room upgrade candidates for every combat-relevant room.
+ * Count what the house scan saw, so an empty candidate list can explain itself
+ * instead of reading as "no upgrades available".
+ * @param {Object} playerDTO - Player DTO
+ * @param {Object} gameData - Game data payload
+ * @returns {{rooms: number, withBuffs: number, combatRelevant: number, belowCap: number}}
+ */
+export function describeHouseScan(playerDTO, gameData) {
+    const roomMap = gameData?.houseRoomDetailMap || {};
+    let withBuffs = 0;
+    let combatRelevant = 0;
+    let belowCap = 0;
+
+    for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
+        const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+        if (buffs.length > 0) withBuffs++;
+        if (!houseRoomAffectsCombat(roomDetail)) continue;
+        combatRelevant++;
+        const level = Math.max(0, Math.floor(Number(playerDTO?.houseRooms?.[roomHrid]) || 0));
+        if (level < MAX_HOUSE_LEVEL) belowCap++;
+    }
+
+    return { rooms: Object.keys(roomMap).length, withBuffs, combatRelevant, belowCap };
+}
+
+/**
+ * Generate house room upgrade candidates for every combat-relevant room.
  * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
  * @param {Object} gameData - Game data payload (houseRoomDetailMap)
+ * @param {number} [targetLevel] - Level to sim each room at; 0/unset means one level up
  * @returns {Array<Object>} Candidates of type 'house'
  */
-export function generateHouseCandidates(playerDTO, gameData) {
+export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0) {
     const roomMap = gameData?.houseRoomDetailMap;
     if (!roomMap) return [];
+
+    const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
 
     const candidates = [];
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
@@ -1212,7 +1291,10 @@ export function generateHouseCandidates(playerDTO, gameData) {
         const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
         if (currentLevel >= MAX_HOUSE_LEVEL) continue;
 
-        const upgradeLevel = currentLevel + 1;
+        // With a target set, jump straight to it; rooms already there are done
+        const upgradeLevel = target > 0 ? target : currentLevel + 1;
+        if (upgradeLevel <= currentLevel) continue;
+
         const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
         candidates.push({
             type: 'house',
@@ -1227,26 +1309,32 @@ export function generateHouseCandidates(playerDTO, gameData) {
 }
 
 /**
- * Market cost of one house room level: coins plus the buy price of every material.
+ * Market cost of a house room upgrade: every level from the current one up to the
+ * target, counting coins at face value and materials at their buy price.
  * @param {Object} candidate - House candidate
  * @param {Object} gameData - Game data payload
- * @returns {number|null} Total cost, or null when a material has no price
+ * @returns {number|null} Total cost, or null when a level or material has no price
  */
 function calculateHouseUpgradeCost(candidate, gameData) {
-    const costs = gameData?.houseRoomDetailMap?.[candidate.roomHrid]?.upgradeCostsMap?.[candidate.upgradeLevel];
-    if (!Array.isArray(costs) || costs.length === 0) return null;
+    const costsMap = gameData?.houseRoomDetailMap?.[candidate.roomHrid]?.upgradeCostsMap;
+    if (!costsMap) return null;
 
     let total = 0;
-    for (const entry of costs) {
-        const count = Number(entry?.count) || 0;
-        if (!entry?.itemHrid || count <= 0) continue;
-        if (entry.itemHrid === '/items/coin') {
-            total += count;
-            continue;
+    for (let level = candidate.currentLevel + 1; level <= candidate.upgradeLevel; level++) {
+        const costs = costsMap[level] ?? costsMap[String(level)];
+        if (!Array.isArray(costs) || costs.length === 0) return null;
+
+        for (const entry of costs) {
+            const count = Number(entry?.count) || 0;
+            if (!entry?.itemHrid || count <= 0) continue;
+            if (entry.itemHrid === '/items/coin') {
+                total += count;
+                continue;
+            }
+            const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
+            if (!price || price <= 0) return null; // Unknown material cost must not rank as free
+            total += price * count;
         }
-        const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
-        if (!price || price <= 0) return null; // Unknown material cost must not rank as free
-        total += price * count;
     }
     return total > 0 ? total : null;
 }
@@ -1450,7 +1538,8 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
 /**
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
- *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier, optimizeFood }
+ *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
+ *   houseTargetLevel, optimizeFood }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -1471,6 +1560,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         combatLevelTargets,
         abilityTargets,
         charmTier,
+        houseTargetLevel = 0,
         optimizeFood = false,
     } = params;
     const { abortSignal } = options;
@@ -1495,7 +1585,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             abilityLevelType,
             skipBackSlot,
             combatLevelTargets,
-            abilityTargets
+            abilityTargets,
+            houseTargetLevel
         )
     );
     const candidatesWithCost = candidates.map((c) => ({
@@ -1684,7 +1775,13 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         }
     }
 
-    return { baseline: baselineMetrics, results, food };
+    return {
+        baseline: baselineMetrics,
+        results,
+        food,
+        // Explains an empty house result rather than leaving it as "no upgrades"
+        houseScan: candidateModes.includes('house') ? describeHouseScan(playerDTO, gameData) : null,
+    };
 }
 
 /**
