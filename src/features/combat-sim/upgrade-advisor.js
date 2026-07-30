@@ -1994,6 +1994,9 @@ function computeGoldPerImprovement(cost, deltas) {
     };
 }
 
+/** Hours in a year, for annualising an hourly profit gain. */
+const HOURS_PER_YEAR = 24 * 365;
+
 /**
  * How long the upgrade takes to afford, and how long it takes to pay for itself.
  *
@@ -2018,18 +2021,54 @@ export function computeEconomics(cost, baseline, upgraded) {
     const profitGainPerHour = (upgraded?.profitPerHour ?? 0) - (baseline?.profitPerHour ?? 0);
 
     // Free is free: nothing to save up for and nothing to earn back
-    if (safeCost <= 0) return { profitGainPerHour, paybackHours: 0, repayHours: 0 };
+    if (safeCost <= 0) {
+        return {
+            profitGainPerHour,
+            paybackHours: 0,
+            repayHours: 0,
+            roiAnnualPct: profitGainPerHour > 0 ? Infinity : 0,
+        };
+    }
 
     const basePerHour = baseline?.profitPerHour ?? 0;
     return {
         profitGainPerHour,
         paybackHours: basePerHour > 0 ? safeCost / basePerHour : Infinity,
         repayHours: profitGainPerHour > 0 ? safeCost / profitGainPerHour : Infinity,
+        // A year of the added profit against the outlay. Null when the cost is
+        // unknown — zero would read as "no return" rather than "no idea"
+        roiAnnualPct: Number.isFinite(safeCost) ? (profitGainPerHour * HOURS_PER_YEAR * 100) / safeCost : null,
     };
 }
 
 /** Placings that earn points in the rank score, best first. */
 export const RANK_PLACES = 5;
+
+/**
+ * Metrics the Score can be built from, and which direction is good.
+ *
+ * Only value metrics appear here — every one weighs a result against what it
+ * costs. Raw deltas are deliberately absent: ranking by ΔDPS alone rewards
+ * whatever is most expensive, which is the opposite of what the score is for.
+ */
+export const SCORE_METRICS = [
+    { key: 'dps', label: 'Gold/0.01% DPS', lowerIsBetter: true, value: (r) => r.goldPer?.dps },
+    { key: 'xp', label: 'Gold/0.01% EXP', lowerIsBetter: true, value: (r) => r.goldPer?.xp },
+    { key: 'profit', label: 'Gold/0.01% Profit', lowerIsBetter: true, value: (r) => r.goldPer?.profit },
+    { key: 'encounters', label: 'Gold/0.01% EPH', lowerIsBetter: true, value: (r) => r.goldPer?.encounters },
+    { key: 'deaths', label: 'Gold/0.01% DPH', lowerIsBetter: true, value: (r) => r.goldPer?.deaths },
+    { key: 'repay', label: 'Repay time', lowerIsBetter: true, value: (r) => r.economics?.repayHours },
+    { key: 'roi', label: 'ROI (1yr)', lowerIsBetter: false, value: (r) => r.economics?.roiAnnualPct },
+];
+
+/**
+ * Metrics scored unless the user says otherwise.
+ *
+ * ROI is off by default because it is `profit gain / cost` and repay time is
+ * `cost / profit gain` — the same ratio inverted. Scoring both counts one
+ * signal twice, exactly the trap that keeps Payback out of the list.
+ */
+export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'repay'];
 
 /**
  * Score every candidate by how often it places well across the value metrics.
@@ -2053,17 +2092,15 @@ export const RANK_PLACES = 5;
  * Mutates and returns the rows, adding `score` and a `rankPoints` breakdown.
  *
  * @param {Array<Object>} results - Rows carrying `goldPer` and `economics`
- * @param {number} [places=RANK_PLACES] - How many placings earn points
+ * @param {Object} [options]
+ * @param {Array<string>} [options.keys=DEFAULT_SCORE_KEYS] - SCORE_METRICS keys to count
+ * @param {number} [options.places=RANK_PLACES] - How many placings earn points
  * @returns {Array<Object>} The same rows
  */
-export function assignRankScores(results, places = RANK_PLACES) {
-    // Every metric here is lower-is-better, so one ladder direction serves all
-    const metrics = [
-        { key: 'dps', label: 'Gold/0.01% DPS', value: (r) => r.goldPer?.dps },
-        { key: 'xp', label: 'Gold/0.01% EXP', value: (r) => r.goldPer?.xp },
-        { key: 'profit', label: 'Gold/0.01% Profit', value: (r) => r.goldPer?.profit },
-        { key: 'repay', label: 'Repay time', value: (r) => r.economics?.repayHours },
-    ];
+export function assignRankScores(results, options = {}) {
+    const places = options.places ?? RANK_PLACES;
+    const keys = options.keys ?? DEFAULT_SCORE_KEYS;
+    const metrics = SCORE_METRICS.filter((m) => keys.includes(m.key));
 
     for (const row of results) {
         row.rankPoints = {};
@@ -2072,7 +2109,7 @@ export function assignRankScores(results, places = RANK_PLACES) {
 
     for (const metric of metrics) {
         const ladder = [...new Set(results.map(metric.value).filter((v) => Number.isFinite(v)))]
-            .sort((a, b) => a - b)
+            .sort((a, b) => (metric.lowerIsBetter ? a - b : b - a))
             .slice(0, places);
         if (!ladder.length) continue;
 
