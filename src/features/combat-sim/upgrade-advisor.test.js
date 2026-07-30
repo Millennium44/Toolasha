@@ -1216,6 +1216,20 @@ describe('computeEconomics', () => {
         expect(e.repayHours).toBe(0);
     });
 
+    test('payback preserves the cost ordering, which is why it is not scored', () => {
+        // Every row divides by the same baseline rate, so payback cannot reorder
+        // candidates relative to Cost — the claim the column tooltip makes
+        const costs = [500, 10_000, 2_500, 40_000];
+        const paybacks = costs.map((c) => computeEconomics(c, base, { profitPerHour: 1500 }).paybackHours);
+
+        const byCost = [...costs].sort((a, b) => a - b);
+        const byPayback = costs
+            .map((c, i) => [c, paybacks[i]])
+            .sort((a, b) => a[1] - b[1])
+            .map(([c]) => c);
+        expect(byPayback).toEqual(byCost);
+    });
+
     test('nothing is affordable on zero profit', () => {
         const e = computeEconomics(10_000, { profitPerHour: 0 }, { profitPerHour: 500 });
         expect(e.paybackHours).toBe(Infinity);
