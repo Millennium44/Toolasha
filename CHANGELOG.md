@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Panel sizes you drag are remembered across reloads
+
+- The game's panel dividers resize by writing inline styles and forget the result on reload, so a panel dragged to a comfortable width resets every session. New **Layout: Remember panel sizes you drag** setting (on by default) records the resize and reapplies it next load, and reapplies it again when the game re-renders a panel and drops the inline style.
+- It does not hardcode which element the divider touches — the game's class names are generated and change between builds. Instead it watches for inline size styles written **while you are dragging** and remembers whatever changed, so the only styles ever replayed are ones the game itself wrote in response to your own drag.
+- The remembered element is located by a structural path (tag plus position among same-tag siblings) rather than by class, and is fingerprinted at capture. If a game update changes the layout enough that the path points somewhere else, the saved size is discarded instead of restyling the wrong element.
+
 ### Lab Sim gold rows expand to show their cost breakdown
 
 - Clicking a Gold Upgrades row now expands it: each item bought with its price, what the swap sells or keeps, the total, and the win rate against the baseline.
