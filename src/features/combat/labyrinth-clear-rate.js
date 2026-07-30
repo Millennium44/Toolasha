@@ -260,20 +260,27 @@ export function countDisjointRoutes(passable, cols) {
  * revealed rooms count, so mid-run the plan builds on what's uncovered).
  *
  * Priorities: use the minimum number of beacons that can cover such a corridor
- * (chained so consecutive reveal areas connect), prefer placements whose
- * revealed region offers two independent routes to the exit (no single blocked
- * room can sever it), maximize newly revealed rooms among those (beam search),
- * then spend any extra requested beacons where they add redundancy first and
- * coverage second.
+ * (chained so consecutive reveal areas connect), then rank those chains by the
+ * route they actually enable — fewest shrouds the resulting best path is forced
+ * to spend, then two independent routes to the exit, then a shorter route, and
+ * only then raw newly revealed rooms. Extra requested beacons go to redundancy
+ * first and coverage second.
+ *
+ * Ranking by the enabled route is what keeps a plan from tunnelling a corridor
+ * straight through rooms already known to be unclearable: covering them satisfies
+ * "revealed" but hands you a path that costs a shroud per room.
  *
  * Pure function so the planning logic is testable without DOM.
  * @param {boolean[]} revealed - Flat grid of already-revealed rooms
  * @param {number} cols - Grid width
  * @param {number} [beaconCount=0] - Total beacons to place; 0 = minimum needed
+ * @param {Object} [options] - { blocked: boolean[], unknownBlocked: boolean }
+ *   blocked marks revealed rooms below the clear threshold (a shroud to pass);
+ *   unknownBlocked applies the same to rooms still unrevealed after the plan
  * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
- *   revealedNew, minNeeded, routes } or null on empty input
+ *   revealedNew, minNeeded, routes, route } or null on empty input
  */
-export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+export function computeBeaconPlan(revealed, cols, beaconCount = 0, options = {}) {
     const n = revealed.length;
     if (!n || !cols) return null;
     const entranceIdx = 0;
@@ -322,6 +329,34 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
     const startRegion = bfsRegion(entranceIdx);
     const endRegion = bfsRegion(exitIdx);
 
+    // Quality of the route a plan actually enables. The walk is confined to what
+    // will be known — rooms already revealed, plus the ones this plan uncovers —
+    // so a plan is judged on the route it hands you, not on raw coverage. Already
+    // revealed rooms carry what is known about them; rooms a beacon will uncover
+    // are unknown at planning time and follow the same posture as any unknown.
+    const blocked = Array.isArray(options.blocked) ? options.blocked : [];
+    const unknownBlocked = !!options.unknownBlocked;
+    const routeQuality = (union) => {
+        const tiles = new Array(n).fill(null);
+        for (let i = 0; i < n; i++) {
+            const isRevealed = revealed[i];
+            const willReveal = union.has(i);
+            // Anything this plan leaves dark is not something to route through
+            if (!isRevealed && !willReveal && i !== entranceIdx && i !== exitIdx) continue;
+            tiles[i] = {
+                index: i,
+                cleared: false,
+                isEntrance: i === entranceIdx,
+                isExit: i === exitIdx,
+                isTreasure: false,
+                needsShroud: isRevealed ? !!blocked[i] : unknownBlocked,
+            };
+        }
+        const path = computeLabyrinthPath(tiles, cols);
+        if (!path) return { shrouds: Infinity, torches: Infinity };
+        return { shrouds: path.shrouds, torches: path.torches };
+    };
+
     // Already connected without any beacons?
     let connected = false;
     for (const i of startRegion) {
@@ -338,6 +373,7 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
             revealedNew: 0,
             minNeeded: 0,
             routes: countDisjointRoutes(revealed, cols),
+            route: routeQuality(new Set()),
         };
     }
 
@@ -435,10 +471,21 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
     }
 
-    // Among the best chains, prefer ones whose revealed region already offers
-    // two independent routes to the exit, then the most coverage
-    const finalists = states.slice(0, 40).map((s) => ({ ...s, routes: routesWith(s.union) }));
-    finalists.sort((a, b) => b.routes - a.routes || b.union.size - a.union.size);
+    // Among the best chains, rank by the route each one enables: fewest forced
+    // shrouds first (the scarce consumable), then a second independent route as
+    // insurance, then a shorter walk, and coverage only as a tiebreak
+    const finalists = states.slice(0, 60).map((s) => ({
+        ...s,
+        routes: routesWith(s.union),
+        quality: routeQuality(s.union),
+    }));
+    finalists.sort(
+        (a, b) =>
+            a.quality.shrouds - b.quality.shrouds ||
+            b.routes - a.routes ||
+            a.quality.torches - b.quality.torches ||
+            b.union.size - a.union.size
+    );
     const best = finalists[0];
 
     // Extra beacons: add redundancy first (up to two independent routes),
@@ -472,7 +519,25 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         routes = routes >= 2 ? routes : routesWith(covered);
     }
 
-    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded, routes };
+    return {
+        feasible: true,
+        beacons,
+        covered,
+        revealedNew: covered.size,
+        minNeeded,
+        routes,
+        route: routeQuality(covered),
+    };
+}
+
+/**
+ * Status-line suffix describing the walk a beacon plan enables.
+ * @param {Object} [route] - { shrouds, torches } from computeBeaconPlan
+ * @returns {string} Suffix, or '' when there is no finite route to describe
+ */
+export function describeRoute(route) {
+    if (!Number.isFinite(route?.torches)) return '';
+    return ` · route ${route.torches} rooms, ${route.shrouds} shroud${route.shrouds === 1 ? '' : 's'}`;
 }
 
 class LabyrinthClearRate {
@@ -2812,7 +2877,10 @@ class LabyrinthClearRate {
         );
 
         this.clearBeaconOverlays();
-        const plan = computeBeaconPlan(revealed, cols, count);
+        const plan = computeBeaconPlan(revealed, cols, count, {
+            blocked: this.buildKnownBlockedRooms(flat),
+            unknownBlocked: config.getSettingValue('labyrinthPathUnknownMode', 'clearable') === 'shroud',
+        });
         if (!plan) {
             this.setTileStatus('Beacon planning failed');
             return;
@@ -2827,7 +2895,9 @@ class LabyrinthClearRate {
         }
         if (plan.minNeeded === 0) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
-            this.setTileStatus(`Path to the exit is already revealed — no beacons needed${routeNote}`);
+            this.setTileStatus(
+                `Path to the exit is already revealed — no beacons needed${routeNote}${describeRoute(plan.route)}`
+            );
             return;
         }
 
@@ -2855,8 +2925,44 @@ class LabyrinthClearRate {
         const minNote = count === 0 ? ' (min)' : '';
         const routeText = plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route';
         this.setTileStatus(
-            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · ${routeText}`
+            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · ${routeText}` +
+                describeRoute(plan.route)
         );
+    }
+
+    /**
+     * Rooms already known to be unclearable, so beacon planning can route around
+     * them instead of covering a corridor that costs a shroud per room.
+     *
+     * Only synchronous knowledge is used: skilling and enhancing clear chances
+     * are computed directly, and combat rooms count only when a sim result is
+     * already cached. Planning must not kick off sims, so an unsimmed combat room
+     * is treated as passable rather than guessed at.
+     * @param {Array<Object|null>} flat - Flat room grid
+     * @returns {boolean[]} Per-room blocked flags
+     */
+    buildKnownBlockedRooms(flat) {
+        const threshold = Math.min(100, Math.max(1, config.getSettingValue('labyrinthPathClearThreshold', 70))) / 100;
+        return flat.map((room) => {
+            if (!room || room.isCleared) return false;
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            if (roomLevel <= 0) return false;
+
+            if (room.skillHrid) {
+                const result =
+                    room.skillHrid === '/skills/enhancing'
+                        ? this.computeEnhancingClear(roomLevel)
+                        : this.computeSkillingClear(room.skillHrid, roomLevel);
+                return !!result && result.clearChance < threshold;
+            }
+
+            if (room.monsterHrid) {
+                const cached = this.combatCache.get(this.buildCombatCacheKey(room.monsterHrid, roomLevel));
+                return !!cached && !cached.failed && cached.clearChance < threshold;
+            }
+
+            return false;
+        });
     }
 
     /**

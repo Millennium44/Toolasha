@@ -25,6 +25,7 @@ const {
     computeLabyrinthPath,
     computeBeaconPlan,
     countDisjointRoutes,
+    describeRoute,
 } = await import('./labyrinth-clear-rate.js');
 
 describe('normalizeChance', () => {
@@ -335,5 +336,94 @@ describe('computeBeaconPlan route redundancy', () => {
         expect(extra.feasible).toBe(true);
         expect(extra.routes).toBeGreaterThanOrEqual(minimal.routes);
         expect(extra.revealedNew).toBeGreaterThanOrEqual(minimal.revealedNew);
+    });
+});
+
+describe('computeBeaconPlan path awareness', () => {
+    /**
+     * Two revealed corridors — the top row and the bottom row — separated by five
+     * dark rows. One beacon on the middle row bridges them, and the column it sits
+     * in decides where the walk drops into the bottom row.
+     * @returns {Object} { cols, revealed, blocked }
+     */
+    function twoCorridorFloor() {
+        const cols = 7;
+        const revealed = new Array(49).fill(false);
+        for (let c = 0; c < cols; c++) {
+            revealed[c] = true; // top row, holds the entrance
+            revealed[42 + c] = true; // bottom row, holds the exit
+        }
+        // Bottom-row columns 2-4 are known to be unclearable: dropping in there
+        // means shrouding every room on the way to the exit
+        const blocked = new Array(49).fill(false);
+        for (const idx of [44, 45, 46]) blocked[idx] = true;
+        return { cols, revealed, blocked };
+    }
+
+    test('coverage alone drops the walk into rooms known to be unclearable', () => {
+        const { cols, revealed, blocked } = twoCorridorFloor();
+        const plan = computeBeaconPlan(revealed, cols, 0);
+
+        expect(plan.feasible).toBe(true);
+        expect(plan.beacons).toHaveLength(1);
+        // The widest reveal sits in the middle columns, which is exactly where
+        // the bottom row is impassable
+        expect(blocked[42 + (plan.beacons[0] % cols)]).toBe(true);
+    });
+
+    test('routes around known-unclearable rooms when told about them', () => {
+        const { cols, revealed, blocked } = twoCorridorFloor();
+        const plan = computeBeaconPlan(revealed, cols, 0, { blocked });
+
+        expect(plan.feasible).toBe(true);
+        expect(plan.beacons).toHaveLength(1);
+        expect(blocked[42 + (plan.beacons[0] % cols)]).toBe(false);
+        expect(plan.route.shrouds).toBe(0);
+        // Still bridges the floor rather than trading the route for nothing
+        expect(plan.revealedNew).toBeGreaterThan(0);
+    });
+
+    test('reports the route a plan enables', () => {
+        const { cols, revealed, blocked } = twoCorridorFloor();
+        const plan = computeBeaconPlan(revealed, cols, 0, { blocked });
+
+        // Top row to the beacon column, down through the reveal, along to the exit
+        expect(plan.route.torches).toBe(12);
+    });
+
+    test('reports the route when the exit is already reachable', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        for (const idx of [0, 1, 2, 3, 4, 9, 14, 19, 24]) revealed[idx] = true;
+        const blocked = new Array(25).fill(false);
+        blocked[14] = true;
+
+        const plan = computeBeaconPlan(revealed, cols, 0, { blocked });
+        expect(plan.minNeeded).toBe(0);
+        expect(plan.route).toEqual({ shrouds: 1, torches: 8 });
+    });
+
+    test('treats rooms it cannot judge according to the unknown posture', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        revealed[0] = true;
+
+        const optimistic = computeBeaconPlan(revealed, cols, 0);
+        const pessimistic = computeBeaconPlan(revealed, cols, 0, { unknownBlocked: true });
+
+        expect(optimistic.route.shrouds).toBe(0);
+        expect(pessimistic.route.shrouds).toBeGreaterThan(0);
+    });
+});
+
+describe('describeRoute', () => {
+    test('reads as a status suffix and pluralizes shrouds', () => {
+        expect(describeRoute({ torches: 12, shrouds: 1 })).toBe(' · route 12 rooms, 1 shroud');
+        expect(describeRoute({ torches: 8, shrouds: 0 })).toBe(' · route 8 rooms, 0 shrouds');
+    });
+
+    test('says nothing when there is no route to describe', () => {
+        expect(describeRoute(null)).toBe('');
+        expect(describeRoute({ torches: Infinity, shrouds: Infinity })).toBe('');
     });
 });

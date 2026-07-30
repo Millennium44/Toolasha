@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Beacon placement is chosen by the path it opens, not just by rooms revealed
+
+- Beacon planning used to maximise **newly revealed rooms** and nothing else, so it would happily tunnel a corridor straight through rooms already known to be unclearable. Those rooms count as revealed, but the path they hand you costs a shroud each. Placement is now ranked by the route the plan actually enables: **fewest forced shrouds first**, then a second independent route to the exit, then a shorter walk, and only then raw rooms revealed.
+- Room quality comes from what is already known — skilling and enhancing clear chances are computed directly, and combat rooms count when their sim result is already cached. Planning never starts a sim, so an unsimmed combat room is treated as passable rather than guessed at. Run the clear-rate calculation first and the beacon plan gets sharper.
+- Rooms a beacon will uncover are unknown when the plan is made, so they follow the **Unknown rooms** setting you already have: treated as clearable, or as needing a shroud. Setting it to shroud makes the planner prefer plans that lean on rooms you have already revealed.
+- The status line now reports the walk each plan buys you — `route 14 rooms, 2 shrouds` — including when the exit is already reachable and no beacons are needed.
+- A plan's route is scored over only what will be known: rooms already revealed plus the ones that plan uncovers. Rooms it leaves dark are not routed through, so two plans are compared on the paths they genuinely open.
+
 ### Panel sizes you drag are remembered across reloads
 
 - The game's panel dividers resize by writing inline styles and forget the result on reload, so a panel dragged to a comfortable width resets every session. New **Layout: Remember panel sizes you drag** setting (on by default) records the resize and reapplies it next load, and reapplies it again when the game re-renders a panel and drops the inline style.
