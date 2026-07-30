@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.86.0
+ * Version: 2.87.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2356,6 +2356,13 @@
                     max: 32,
                     help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
                 },
+                labSim_keepReplacedGear: {
+                    id: 'labSim_keepReplacedGear',
+                    label: 'Lab Simulator: Keep gear the forced armor swaps replace',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'The labyrinth needs every element set, so the Anchorbound / elemental robe / weapon swaps price as an added purchase with no resale credit for the gear they replace. Turn off to price them as a straight swap that sells the old piece.',
+                },
                 combatSim_sharedSeed: {
                     id: 'combatSim_sharedSeed',
                     label: 'Combat Simulator: Shared random seed for upgrade comparisons',
@@ -2634,6 +2641,13 @@
                     label: 'Left sidebar: Hide Guild notification badge',
                     type: 'checkbox',
                     default: false,
+                },
+                panelSizeMemory: {
+                    id: 'panelSizeMemory',
+                    label: 'Layout: Remember panel sizes you drag',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'The game forgets panel widths on reload. This records whatever a divider drag changes and reapplies it next session — only styles the game itself wrote in response to your own drag are replayed, and a remembered size is dropped if the layout changes shape.',
                 },
                 tabReorder: {
                     id: 'tabReorder',
