@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Lab Sim always evaluates Anchorbound and the matching top-tier armor
+
+- Whenever the Lab Sim upgrade analysis includes equipment, it now always sims the **Anchorbound plate body and legs** and the **top-tier body/legs that suit the loadout's weapon style** — each piece alone, each set as a pair, and the cross-set pairs (Anchorbound body with the other set's legs and vice versa). Duplicates collapse when Anchorbound _is_ the style match, and any combination you already wear is skipped rather than simmed as a no-op.
+- The tier progression only ever steps one rung from what's equipped, so a player in decent gear never saw these comparisons. They're forced in regardless of what's worn.
+- **Enhancement levels come from what you own**: the level equipped in the analyzed loadout, else the best copy in your inventory, else **+7** so the comparison still runs for gear you haven't bought. Copies equipped elsewhere and empty stacks are ignored.
+- Style matching reads the weapon from either the two-hand or main-hand slot, and "top tier" is the highest item level actually present rather than a hardcoded 95, so a future tier doesn't leave this pinned to old gear. Refined variants are skipped — they share their base item level but cost far more to reach a usable enhancement. When nothing at the top tier matches your style, style-neutral armor is used instead.
+- Cost is the real delta: it buys the added pieces and credits the gear they replace, and an empty slot credits nothing.
+
 ### Combat levels get their own results box; Ability Swaps carries a warning
 
 - **Combat level results moved into a separate box** below the gold-cost table, with their own columns (Skill, Level Time, Main Time, ΔDPS, ΔEXP/hr, ΔProfit/hr) and their own independent sorting. Previously, mixing Combat Lv with a gold-cost set flattened them into the gold table where their Cost cell was meaningless and the level-time column vanished entirely. The box states why they're ranked separately: levels cost grind time, not gold, so they can't share an axis with gear.

@@ -10,6 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
 import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
+import { generateLabArmorCandidates } from './lab-armor-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
@@ -2124,6 +2125,21 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             abilityTargets
         )
     );
+
+    // The labyrinth lives or dies on body/legs, so always evaluate the Anchorbound
+    // plate and the top-tier armor matching this loadout's weapon — the tier
+    // progression only ever steps one rung from what's worn and would hide them
+    if (labCandidateModes.includes('equipment')) {
+        const forced = generateLabArmorCandidates(playerDTO, gameData, dataManager.getInventory());
+        const seen = new Set(candidates.map((c) => `${c.slot}|${c.upgradeHrid}|${c.upgradeLevel}|${c.type}`));
+        for (const candidate of forced) {
+            const key = `${candidate.slot}|${candidate.upgradeHrid}|${candidate.upgradeLevel}|${candidate.type}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            candidates.push(candidate);
+        }
+    }
+
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
         cost: calculateUpgradeCost(c, gameData),
