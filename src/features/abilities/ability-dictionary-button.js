@@ -4,9 +4,10 @@
  * shown when clicking an ability in the Abilities panel), opening the
  * dictionary entry for that ability's book item.
  *
- * The menu's class name isn't known ahead of time, so menus are matched by
- * content: a "Lv.N <Ability Name>" heading whose name resolves to a real
- * ability. Item action menus are left alone — they already have this button.
+ * The popup's class name is unknown and varies with game builds, so menus are
+ * found purely by content: a container holding a "Link to Chat" button plus a
+ * "Lv.N <Ability Name>" heading whose name resolves to a real ability. Item
+ * action menus are left alone — they already have this button.
  */
 
 import config from '../../core/config.js';
@@ -28,12 +29,35 @@ class AbilityDictionaryButton {
         if (!config.getSetting('abilities_dictionaryButton')) return;
         this.isInitialized = true;
 
-        const unregister = domObserver.onClass('AbilityDictionaryButton', 'actionMenu', (menu) =>
-            this._injectButton(menu)
-        );
+        // Class-agnostic: scan added subtrees for the popup's "Link to Chat"
+        // button and work up to its menu container
+        const unregister = domObserver.register('AbilityDictionaryButton', (node) => this._scan(node));
         this.unregisterHandlers.push(unregister);
 
-        document.querySelectorAll('[class*="actionMenu"]').forEach((menu) => this._injectButton(menu));
+        this._scan(document.body);
+    }
+
+    /**
+     * Find ability menus inside an added subtree via their Link to Chat button.
+     * @param {HTMLElement} root
+     * @private
+     */
+    _scan(root) {
+        if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
+        const buttons = [];
+        if (root.tagName === 'BUTTON') buttons.push(root);
+        if (root.childElementCount > 0) buttons.push(...root.querySelectorAll('button'));
+
+        for (const btn of buttons) {
+            if (btn.textContent.trim() !== 'Link to Chat') continue;
+            // The menu is the nearest ancestor that also holds the "Lv.N" heading
+            let menu = btn.parentElement;
+            for (let depth = 0; menu && depth < 4; depth++) {
+                if (/Lv\.\s*\d+/.test(menu.textContent || '')) break;
+                menu = menu.parentElement;
+            }
+            if (menu) this._injectButton(menu, btn);
+        }
     }
 
     /**
@@ -63,17 +87,18 @@ class AbilityDictionaryButton {
         // Item menus carry an item name node — never treat those as abilities
         if (menu.querySelector('[class*="Item_name"]')) return null;
 
-        const match = (menu.textContent || '').match(/Lv\.\s*\d+\s+([^\n]+?)\s*(?:Link to Chat|$)/);
+        const match = (menu.textContent || '').match(/Lv\.\s*\d+\s*([^\n]+?)\s*(?:Link to Chat|$)/);
         if (!match) return null;
         return this._getAbilityNameMap().get(match[1].trim().toLowerCase()) || null;
     }
 
     /**
      * Inject the dictionary button into an ability action menu.
-     * @param {HTMLElement} menu
+     * @param {HTMLElement} menu - Menu container
+     * @param {HTMLElement} referenceBtn - The menu's Link to Chat button (style + anchor)
      * @private
      */
-    _injectButton(menu) {
+    _injectButton(menu, referenceBtn) {
         if (!menu || menu.querySelector(`.${BTN_CLASS}`)) return;
 
         const abilityHrid = this._findAbilityHrid(menu);
@@ -81,14 +106,12 @@ class AbilityDictionaryButton {
 
         // Ability books share the ability's slug: /abilities/puncture → /items/puncture
         const bookHrid = abilityHrid.replace('/abilities/', '/items/');
-        if (!dataManager.getItemDetails(bookHrid)) return;
+        if (!dataManager.getItemDetails(bookHrid)?.abilityBookDetail) return;
 
-        // Match the game's own menu buttons (e.g. Link to Chat)
-        const referenceBtn = menu.querySelector('button');
         const btn = document.createElement('button');
         btn.className = `${referenceBtn?.className || ''} ${BTN_CLASS}`.trim();
         btn.textContent = 'Open Item Dictionary';
-        btn.style.cssText = 'cursor: pointer; width: 100%;';
+        btn.style.cssText = 'cursor: pointer; width: 100%; margin-top: 4px;';
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -97,7 +120,8 @@ class AbilityDictionaryButton {
             }
         });
 
-        if (referenceBtn) {
+        // Place directly under Link to Chat, at whatever depth it lives
+        if (referenceBtn?.parentElement) {
             referenceBtn.insertAdjacentElement('afterend', btn);
         } else {
             menu.appendChild(btn);
