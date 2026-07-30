@@ -39,6 +39,7 @@ const {
     houseRoomAffectsCombat,
     describeHouseScan,
     resolveCandidateModes,
+    candidateAssignmentKey,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -998,5 +999,107 @@ describe('house upgrade candidates', () => {
         test('reports zeroes with no house data', () => {
             expect(describeHouseScan({}, {})).toEqual({ rooms: 0, withBuffs: 0, combatRelevant: 0, belowCap: 0 });
         });
+    });
+});
+
+describe('candidateAssignmentKey', () => {
+    const BODY = '/equipment_types/body';
+    const LEGS = '/equipment_types/legs';
+
+    test('a pair is distinct from either piece alone', () => {
+        const bodyOnly = { type: 'cross_slot', addedSlots: { [BODY]: { hrid: '/items/a', enhancementLevel: 7 } } };
+        const legsOnly = { type: 'cross_slot', addedSlots: { [LEGS]: { hrid: '/items/b', enhancementLevel: 7 } } };
+        const pair = {
+            type: 'cross_slot',
+            addedSlots: {
+                [BODY]: { hrid: '/items/a', enhancementLevel: 7 },
+                [LEGS]: { hrid: '/items/b', enhancementLevel: 7 },
+            },
+        };
+
+        const keys = [bodyOnly, legsOnly, pair].map(candidateAssignmentKey);
+        expect(new Set(keys).size).toBe(3);
+    });
+
+    test('two pairs sharing a body piece stay distinct', () => {
+        const withB = {
+            type: 'cross_slot',
+            addedSlots: {
+                [BODY]: { hrid: '/items/a', enhancementLevel: 7 },
+                [LEGS]: { hrid: '/items/b', enhancementLevel: 7 },
+            },
+        };
+        const withC = {
+            type: 'cross_slot',
+            addedSlots: {
+                [BODY]: { hrid: '/items/a', enhancementLevel: 7 },
+                [LEGS]: { hrid: '/items/c', enhancementLevel: 7 },
+            },
+        };
+
+        expect(candidateAssignmentKey(withB)).not.toBe(candidateAssignmentKey(withC));
+    });
+
+    test('a single-slot cross_slot matches the equivalent tier candidate', () => {
+        const tier = { type: 'tier', slot: BODY, upgradeHrid: '/items/a', upgradeLevel: 7 };
+        const crossSlot = {
+            type: 'cross_slot',
+            slot: BODY,
+            addedSlots: { [BODY]: { hrid: '/items/a', enhancementLevel: 7 } },
+            clearedSlots: [],
+        };
+
+        expect(candidateAssignmentKey(crossSlot)).toBe(candidateAssignmentKey(tier));
+    });
+
+    test('slot order does not change the key', () => {
+        const a = {
+            type: 'cross_slot',
+            addedSlots: {
+                [BODY]: { hrid: '/items/a', enhancementLevel: 7 },
+                [LEGS]: { hrid: '/items/b', enhancementLevel: 7 },
+            },
+        };
+        const b = {
+            type: 'cross_slot',
+            addedSlots: {
+                [LEGS]: { hrid: '/items/b', enhancementLevel: 7 },
+                [BODY]: { hrid: '/items/a', enhancementLevel: 7 },
+            },
+        };
+
+        expect(candidateAssignmentKey(a)).toBe(candidateAssignmentKey(b));
+    });
+
+    test('a weapon swap that clears slots differs from one that does not', () => {
+        const twoHand = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/two_hand': { hrid: '/items/w', enhancementLevel: 7 } },
+            clearedSlots: ['/equipment_types/main_hand', '/equipment_types/off_hand'],
+        };
+        const bare = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/two_hand': { hrid: '/items/w', enhancementLevel: 7 } },
+            clearedSlots: [],
+        };
+
+        expect(candidateAssignmentKey(twoHand)).not.toBe(candidateAssignmentKey(bare));
+    });
+
+    test('enhancement levels separate the same item at different levels', () => {
+        const plus7 = { type: 'tier', slot: BODY, upgradeHrid: '/items/a', upgradeLevel: 7 };
+        const plus10 = { type: 'tier', slot: BODY, upgradeHrid: '/items/a', upgradeLevel: 10 };
+        expect(candidateAssignmentKey(plus7)).not.toBe(candidateAssignmentKey(plus10));
+    });
+
+    test('non-equipment candidates key off their own type', () => {
+        const house = { type: 'house', slot: 'house|/house_rooms/dojo', upgradeLevel: 4 };
+        const level = { type: 'combat_level', slot: 'combat_level|meleeLevel', upgradeLevel: 105 };
+        const ability = { type: 'ability_level', slot: 'ability_1', upgradeHrid: '/abilities/x', upgradeLevel: 75 };
+
+        const keys = [house, level, ability].map(candidateAssignmentKey);
+        expect(new Set(keys).size).toBe(3);
+        expect(keys[0]).toContain('house');
+        expect(keys[1]).toContain('combat_level');
     });
 });

@@ -1249,6 +1249,32 @@ export function houseRoomAffectsCombat(roomDetail) {
 }
 
 /**
+ * Canonical key for what a candidate actually equips, used to deduplicate.
+ *
+ * Keyed on the full slot assignment rather than one representative slot: a
+ * multi-slot candidate differs from the single-slot swap of its first piece, and
+ * a single-slot cross_slot candidate is the same change as the equivalent tier
+ * candidate. Keying on the first slot alone collapsed the pair candidates into
+ * their body-only sibling and let single-slot duplicates through.
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {string} Key describing the resulting equipment change
+ */
+export function candidateAssignmentKey(candidate) {
+    if (candidate.addedSlots) {
+        const added = Object.entries(candidate.addedSlots)
+            .map(([slot, item]) => `${slot}=${item.hrid}@${item.enhancementLevel || 0}`)
+            .sort()
+            .join(',');
+        const cleared = [...(candidate.clearedSlots || [])].sort().join(',');
+        return `equip:${added}!${cleared}`;
+    }
+    if (candidate.type === 'combat_level' || candidate.type === 'house' || candidate.slot?.startsWith('ability_')) {
+        return `${candidate.type}:${candidate.slot}=${candidate.upgradeHrid || ''}@${candidate.upgradeLevel}`;
+    }
+    return `equip:${candidate.slot}=${candidate.upgradeHrid}@${candidate.upgradeLevel}!`;
+}
+
+/**
  * Count what the house scan saw, so an empty candidate list can explain itself
  * instead of reading as "no upgrades available".
  * @param {Object} playerDTO - Player DTO
@@ -2131,9 +2157,9 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // progression only ever steps one rung from what's worn and would hide them
     if (labCandidateModes.includes('equipment')) {
         const forced = generateLabArmorCandidates(playerDTO, gameData, dataManager.getInventory());
-        const seen = new Set(candidates.map((c) => `${c.slot}|${c.upgradeHrid}|${c.upgradeLevel}|${c.type}`));
+        const seen = new Set(candidates.map(candidateAssignmentKey));
         for (const candidate of forced) {
-            const key = `${candidate.slot}|${candidate.upgradeHrid}|${candidate.upgradeLevel}|${candidate.type}`;
+            const key = candidateAssignmentKey(candidate);
             if (seen.has(key)) continue;
             seen.add(key);
             candidates.push(candidate);

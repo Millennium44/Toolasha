@@ -219,6 +219,42 @@ describe('generateLabArmorCandidates', () => {
         expect(bodySwap.description).toBe('Old Tunic → Kraken Tunic (+7)');
     });
 
+    test('describes a pair as one swap of both pieces', () => {
+        const dto = player({
+            '/equipment_types/two_hand': { hrid: '/items/bow' },
+            [BODY]: { hrid: '/items/old_tunic', enhancementLevel: 4 },
+        });
+        const candidates = generateLabArmorCandidates(dto, gameData(), []);
+        const pair = candidates.find(
+            (c) =>
+                c.addedSlots[BODY]?.hrid === '/items/anchorbound_plate_body' &&
+                c.addedSlots[LEGS]?.hrid === '/items/anchorbound_plate_legs'
+        );
+
+        expect(pair.description).toBe('Old Tunic + empty → Anchorbound Plate Body + Anchorbound Plate Legs (+7)');
+        expect(pair.removedItems).toEqual([{ hrid: '/items/old_tunic', enhancementLevel: 4 }]);
+    });
+
+    test('shows per-piece levels when a pair mixes them', () => {
+        const dto = player({ '/equipment_types/two_hand': { hrid: '/items/bow' } });
+        const inventory = [
+            {
+                itemHrid: '/items/anchorbound_plate_legs',
+                enhancementLevel: 10,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const candidates = generateLabArmorCandidates(dto, gameData(), inventory);
+        const pair = candidates.find(
+            (c) =>
+                c.addedSlots[BODY]?.hrid === '/items/anchorbound_plate_body' &&
+                c.addedSlots[LEGS]?.hrid === '/items/anchorbound_plate_legs'
+        );
+
+        expect(pair.description).toContain('(+7/+10)');
+    });
+
     test('describes an empty slot as empty', () => {
         const candidates = generateLabArmorCandidates(rangedLoadout(), gameData(), []);
         const bodySwap = candidates.find(

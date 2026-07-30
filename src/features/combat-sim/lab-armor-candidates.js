@@ -241,10 +241,18 @@ export function generateLabArmorCandidates(playerDTO, gameData, inventory) {
         const primarySlot = slots[0];
         const primary = assignment[primarySlot];
         const currentPrimary = playerDTO.equipment?.[primarySlot];
-        const description =
-            slots.length === 1
-                ? `${gameData.itemDetailMap[currentPrimary?.hrid]?.name || 'empty'} → ${primary.name} (+${primary.enhancementLevel})`
-                : slots.map((slot) => `${assignment[slot].name} +${assignment[slot].enhancementLevel}`).join(' & ');
+
+        // Same "current → replacement (+level)" shape as every other row, so a
+        // two-piece swap reads as one change instead of its own notation
+        const fromNames = slots.map(
+            (slot) => gameData.itemDetailMap[playerDTO.equipment?.[slot]?.hrid]?.name || 'empty'
+        );
+        const toNames = slots.map((slot) => assignment[slot].name);
+        const levels = slots.map((slot) => assignment[slot].enhancementLevel);
+        const levelPart = levels.every((level) => level === levels[0])
+            ? `(+${levels[0]})`
+            : `(${levels.map((level) => `+${level}`).join('/')})`;
+        const description = `${fromNames.join(' + ')} → ${toNames.join(' + ')} ${levelPart}`;
 
         candidates.push({
             type: 'cross_slot',
