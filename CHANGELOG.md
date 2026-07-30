@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Document the release pipeline and test environment in CLAUDE.md
+
+- The release process was only ever reconstructed by reading the workflow file, so each new session
+  paid for it again. `CLAUDE.md` now records how Release Please drives a release end to end: the
+  release PR, the `releases` branch commits, and the rewrite of the `UPDATE-THIS-URL` placeholders
+  into commit-pinned jsDelivr links.
+- Records three things that are easy to get wrong: `package.json` versions must never be bumped by
+  hand (`scripts/check-version-bump.js` rejects it), Greasy Fork syncs from a webhook on released
+  bundles rather than feature branches, and vitest runs with no DOM implementation installed — so
+  DOM-touching tests need hand-rolled stubs rather than a new dependency.
+- Notes that the pre-commit hook runs both builds, so a slow commit is normal rather than stuck.
+
 ### Beacon placement is chosen by the path it opens, not just by rooms revealed
 
 - Beacon planning used to maximise **newly revealed rooms** and nothing else, so it would happily tunnel a corridor straight through rooms already known to be unclearable. Those rooms count as revealed, but the path they hand you costs a shroud each. Placement is now ranked by the route the plan actually enables: **fewest forced shrouds first**, then a second independent route to the exit, then a shorter walk, and only then raw rooms revealed.
