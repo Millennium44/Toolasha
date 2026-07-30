@@ -236,3 +236,7 @@ npm test -- --coverage      # Coverage report
 
 **Original Author**: bot7420 (MWITools)
 **Rewrite & Maintenance**: Celasha and Claude
+
+**With thanks to jigglymoose**, author of
+[JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator),
+for the original code this project builds on.
