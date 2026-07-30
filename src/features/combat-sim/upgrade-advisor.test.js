@@ -600,3 +600,75 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
         expect(cost).toBeNull();
     });
 });
+
+describe('Philosopher accessory candidates', () => {
+    const NECK = '/equipment_types/neck';
+    const RING = '/equipment_types/ring';
+
+    function buildJewelryGameData() {
+        return {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/necklace_of_speed': {
+                    name: 'Necklace Of Speed',
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, combatStats: { slashDamage: 2 } },
+                },
+                '/items/philosophers_necklace': {
+                    name: "Philosopher's Necklace",
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, combatStats: { slashDamage: 1 } },
+                },
+                '/items/philosophers_ring': {
+                    name: "Philosopher's Ring",
+                    itemLevel: 60,
+                    equipmentDetail: { type: RING, combatStats: { slashDamage: 1 } },
+                },
+            },
+        };
+    }
+
+    test('offers the philo accessory at +5 even when current jewelry is enhanced higher', () => {
+        const player = { equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 12 } } };
+
+        const candidates = generateCandidates(player, buildJewelryGameData(), 'equipment');
+        const philo = candidates.find((c) => c.upgradeHrid === '/items/philosophers_necklace');
+
+        expect(philo).toBeDefined();
+        expect(philo.upgradeLevel).toBe(5);
+        expect(philo.currentLevel).toBe(12);
+    });
+
+    test('does not offer a philo swap when the philo accessory is already worn', () => {
+        const player = { equipment: { [NECK]: { hrid: '/items/philosophers_necklace', enhancementLevel: 3 } } };
+
+        const candidates = generateCandidates(player, buildJewelryGameData(), 'equipment');
+        const philoSwaps = candidates.filter(
+            (c) => c.type === 'tier' && c.upgradeHrid === '/items/philosophers_necklace'
+        );
+
+        expect(philoSwaps).toHaveLength(0);
+    });
+
+    test('skips jewelry slots with nothing equipped', () => {
+        const player = { equipment: { [NECK]: null } };
+
+        const candidates = generateCandidates(player, buildJewelryGameData(), 'equipment');
+
+        expect(candidates.filter((c) => c.upgradeHrid?.startsWith('/items/philosophers_'))).toHaveLength(0);
+    });
+
+    test('skilling candidates also include the philo accessory at +5', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+        getItemPrices.mockReturnValue(null);
+        const gameData = buildJewelryGameData();
+        gameData.itemDetailMap['/items/necklace_of_speed'].equipmentDetail.noncombatStats = { skillingSpeed: 1 };
+
+        const editorDTO = { equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 12 } } };
+        const candidates = generateSkillingEquipmentCandidates(editorDTO, gameData);
+        const philo = candidates.find((c) => c.upgradeHrid === '/items/philosophers_necklace');
+
+        expect(philo).toBeDefined();
+        expect(philo.upgradeLevel).toBe(5);
+    });
+});

@@ -25,6 +25,10 @@ const BREAKPOINTS_REFINED = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
 const JEWELRY_SLOTS = new Set(['/equipment_types/earrings', '/equipment_types/ring', '/equipment_types/neck']);
 
+/** Philosopher's accessories are always offered from this enhancement level */
+const PHILO_START_LEVEL = 5;
+const PHILO_HRID_PREFIX = '/items/philosophers_';
+
 const CHARM_SLOT = '/equipment_types/charm';
 
 /** Combat skills evaluated by the Combat Levels advisor mode */
@@ -177,6 +181,69 @@ function getNextBreakpoint(currentLevel, slot, itemHrid) {
         if (bp > currentLevel) return bp;
     }
     return null;
+}
+
+/**
+ * Find the Philosopher's accessory for a jewelry slot.
+ * @param {string} slot - Equipment type hrid
+ * @param {Object} gameData
+ * @returns {{hrid: string, name: string}|null}
+ */
+function findPhiloAccessory(slot, gameData) {
+    for (const [hrid, detail] of Object.entries(gameData.itemDetailMap || {})) {
+        if (!hrid.startsWith(PHILO_HRID_PREFIX)) continue;
+        if (detail?.equipmentDetail?.type !== slot) continue;
+        return { hrid, name: detail.name || hrid.split('/').pop() };
+    }
+    return null;
+}
+
+/**
+ * Offer Philosopher's accessories at +5 for every jewelry slot, regardless of
+ * how enhanced the current accessory is. The normal tier/enhancement paths only
+ * propose swaps at the current enhancement level, which hides the cheap +5
+ * entry point behind, say, a +12 rebuy for someone wearing +12 jewelry.
+ * @param {Object} playerDTO
+ * @param {Object} gameData
+ * @param {Array} candidates - Candidate list (mutated)
+ */
+function addPhiloAccessoryCandidates(playerDTO, gameData, candidates) {
+    for (const slot of JEWELRY_SLOTS) {
+        const equip = playerDTO.equipment?.[slot];
+        // Empty slots aren't supported by candidate application (it matches on
+        // the current item's hrid), so only suggest swaps for worn accessories
+        if (!equip?.hrid) continue;
+
+        const philo = findPhiloAccessory(slot, gameData);
+        if (!philo || philo.hrid === equip.hrid) continue;
+
+        const currentLevel = equip.enhancementLevel || 0;
+        const alreadyQueued = candidates.some(
+            (c) => c.slot === slot && c.upgradeHrid === philo.hrid && c.upgradeLevel === PHILO_START_LEVEL
+        );
+        if (alreadyQueued) continue;
+
+        // Drop any same-slot swap to this philo item at a higher level: the
+        // tier path proposes it at the worn enhancement level (a +12 rebuy for
+        // +12 jewelry), which is the expensive version of this same upgrade
+        for (let i = candidates.length - 1; i >= 0; i--) {
+            const c = candidates[i];
+            if (c.slot === slot && c.upgradeHrid === philo.hrid && c.upgradeLevel > PHILO_START_LEVEL) {
+                candidates.splice(i, 1);
+            }
+        }
+
+        const currentName = gameData.itemDetailMap[equip.hrid]?.name || equip.hrid.split('/').pop();
+        candidates.push({
+            slot,
+            currentHrid: equip.hrid,
+            currentLevel,
+            upgradeHrid: philo.hrid,
+            upgradeLevel: PHILO_START_LEVEL,
+            description: `${currentName} +${currentLevel} → ${philo.name} +${PHILO_START_LEVEL}`,
+            type: 'tier',
+        });
+    }
 }
 
 /**
@@ -960,6 +1027,8 @@ export function generateCandidates(
                 }
             }
         }
+
+        addPhiloAccessoryCandidates(playerDTO, gameData, candidates);
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
@@ -2340,6 +2409,18 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
                 description: `${itemName} +${currentLevel} \u2192 +${nextBP}`,
                 type: 'enhancement',
             };
+            candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidates.push(candidate);
+        }
+
+        // Philosopher's accessories at +5, even when the worn jewelry is
+        // enhanced higher — same reasoning as the combat advisor
+        const philoCandidates = [];
+        addPhiloAccessoryCandidates({ equipment }, gameData, philoCandidates);
+        for (const candidate of philoCandidates) {
+            const dedupKey = `philo:${candidate.slot}:${candidate.upgradeHrid}:${candidate.currentHrid}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
             candidate.cost = calculateUpgradeCost(candidate, gameData);
             candidates.push(candidate);
         }
