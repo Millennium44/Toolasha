@@ -8,11 +8,13 @@ import {
     ANCHORBOUND_HRIDS,
     DEFAULT_ARMOR_ENHANCEMENT,
     findElementalArmor,
+    findElementalWeapon,
     findTopTierArmor,
+    getEquippedWeapon,
     generateLabArmorCandidates,
     getLoadoutElements,
     getWeaponStyleFamily,
-    resolveArmorEnhancement,
+    resolveItemEnhancement,
     styleFamilyOfStats,
 } from './lab-armor-candidates.js';
 
@@ -106,13 +108,13 @@ describe('findTopTierArmor', () => {
     });
 });
 
-describe('resolveArmorEnhancement', () => {
+describe('resolveItemEnhancement', () => {
     const hrid = '/items/anchorbound_plate_body';
 
     test('uses the equipped level first', () => {
         const dto = player({ [BODY]: { hrid, enhancementLevel: 12 } });
         const inventory = [{ itemHrid: hrid, enhancementLevel: 3, count: 1 }];
-        expect(resolveArmorEnhancement(hrid, dto, inventory)).toBe(12);
+        expect(resolveItemEnhancement(hrid, dto, inventory)).toBe(12);
     });
 
     test('falls back to the best copy in inventory', () => {
@@ -120,7 +122,7 @@ describe('resolveArmorEnhancement', () => {
             { itemHrid: hrid, enhancementLevel: 4, count: 1, itemLocationHrid: '/item_locations/inventory' },
             { itemHrid: hrid, enhancementLevel: 9, count: 1, itemLocationHrid: '/item_locations/inventory' },
         ];
-        expect(resolveArmorEnhancement(hrid, player({}), inventory)).toBe(9);
+        expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(9);
     });
 
     test('ignores copies equipped elsewhere and empty stacks', () => {
@@ -128,12 +130,12 @@ describe('resolveArmorEnhancement', () => {
             { itemHrid: hrid, enhancementLevel: 15, count: 1, itemLocationHrid: '/item_locations/body' },
             { itemHrid: hrid, enhancementLevel: 11, count: 0, itemLocationHrid: '/item_locations/inventory' },
         ];
-        expect(resolveArmorEnhancement(hrid, player({}), inventory)).toBe(DEFAULT_ARMOR_ENHANCEMENT);
+        expect(resolveItemEnhancement(hrid, player({}), inventory)).toBe(DEFAULT_ARMOR_ENHANCEMENT);
     });
 
     test('defaults when neither equipped nor owned', () => {
-        expect(resolveArmorEnhancement(hrid, player({}), [])).toBe(7);
-        expect(resolveArmorEnhancement(hrid, player({}), null)).toBe(7);
+        expect(resolveItemEnhancement(hrid, player({}), [])).toBe(7);
+        expect(resolveItemEnhancement(hrid, player({}), null)).toBe(7);
     });
 });
 
@@ -311,6 +313,15 @@ describe('elemental magic armor', () => {
                     natureAmplify: 0.3,
                     damageType: NATURE,
                 }),
+                '/items/blazing_trident': armor('Blazing Trident', '/equipment_types/main_hand', 95, {
+                    magicDamage: 0.5,
+                    fireAmplify: 0.3,
+                    damageType: FIRE,
+                }),
+                '/items/flame_wand': armor('Flame Wand', '/equipment_types/main_hand', 80, {
+                    magicDamage: 0.3,
+                    damageType: FIRE,
+                }),
             },
             abilityDetailMap: {
                 '/abilities/fireball': { abilityEffects: [{ damageType: FIRE }] },
@@ -414,5 +425,115 @@ describe('elemental magic armor', () => {
         expect(pairKeys).toContain('/items/royal_nature_robe_top+/items/royal_nature_robe_bottoms');
         expect(pairKeys).toContain('/items/royal_fire_robe_top+/items/royal_fire_robe_bottoms');
         expect(pairKeys).toContain('/items/anchorbound_plate_body+/items/royal_nature_robe_bottoms');
+    });
+});
+
+describe('elemental weapon swaps', () => {
+    const NATURE = '/damage_types/nature';
+    const FIRE = '/damage_types/fire';
+
+    function magicGameData() {
+        return {
+            itemDetailMap: {
+                '/items/anchorbound_plate_body': armor('Anchorbound Plate Body', BODY, 95, { armor: 50 }),
+                '/items/anchorbound_plate_legs': armor('Anchorbound Plate Legs', LEGS, 95, { armor: 40 }),
+                '/items/royal_fire_robe_top': armor('Royal Fire Robe Top', BODY, 95, { fireAmplify: 0.12 }),
+                '/items/royal_fire_robe_bottoms': armor('Royal Fire Robe Bottoms', LEGS, 95, { fireAmplify: 0.1 }),
+                '/items/royal_nature_robe_top': armor('Royal Nature Robe Top', BODY, 95, { natureAmplify: 0.12 }),
+                '/items/royal_nature_robe_bottoms': armor('Royal Nature Robe Bottoms', LEGS, 95, {
+                    natureAmplify: 0.1,
+                }),
+                '/items/blooming_trident': armor('Blooming Trident', '/equipment_types/main_hand', 95, {
+                    magicDamage: 0.5,
+                    damageType: NATURE,
+                }),
+                '/items/blazing_trident': armor('Blazing Trident', '/equipment_types/main_hand', 95, {
+                    magicDamage: 0.5,
+                    damageType: FIRE,
+                }),
+                '/items/flame_wand': armor('Flame Wand', '/equipment_types/main_hand', 95, {
+                    magicDamage: 0.4,
+                    damageType: FIRE,
+                }),
+            },
+            abilityDetailMap: {
+                '/abilities/fireball': { abilityEffects: [{ damageType: FIRE }] },
+                '/abilities/entangle': { abilityEffects: [{ damageType: NATURE }] },
+            },
+        };
+    }
+
+    const natureTridentFireSpells = () => ({
+        hrid: 'player1',
+        equipment: { '/equipment_types/main_hand': { hrid: '/items/blooming_trident', enhancementLevel: 7 } },
+        abilities: [{ hrid: '/abilities/fireball' }],
+    });
+
+    describe('getEquippedWeapon', () => {
+        test('reports the weapon slot, name and damage type', () => {
+            expect(getEquippedWeapon(natureTridentFireSpells(), magicGameData())).toMatchObject({
+                slot: '/equipment_types/main_hand',
+                hrid: '/items/blooming_trident',
+                damageType: NATURE,
+            });
+        });
+
+        test('returns null when unarmed', () => {
+            expect(getEquippedWeapon({ equipment: {} }, magicGameData())).toBe(null);
+        });
+    });
+
+    describe('findElementalWeapon', () => {
+        test('prefers the same weapon class in the other element', () => {
+            const weapon = getEquippedWeapon(natureTridentFireSpells(), magicGameData());
+            // Flame Wand is also fire and same tier, but a Trident maps to a Trident
+            expect(findElementalWeapon(weapon, FIRE, magicGameData()).hrid).toBe('/items/blazing_trident');
+        });
+
+        test('never returns the weapon already equipped', () => {
+            const weapon = getEquippedWeapon(natureTridentFireSpells(), magicGameData());
+            expect(findElementalWeapon(weapon, NATURE, magicGameData())).toBe(null);
+        });
+
+        test('returns null for an element with no weapon', () => {
+            const weapon = getEquippedWeapon(natureTridentFireSpells(), magicGameData());
+            expect(findElementalWeapon(weapon, '/damage_types/water', magicGameData())).toBe(null);
+        });
+    });
+
+    test('sims the spells-element weapon alone and with its robes', () => {
+        const candidates = generateLabArmorCandidates(natureTridentFireSpells(), magicGameData(), []);
+        const withWeapon = candidates.filter((c) => c.addedSlots['/equipment_types/main_hand']);
+
+        expect(withWeapon).toHaveLength(2);
+        for (const candidate of withWeapon) {
+            expect(candidate.addedSlots['/equipment_types/main_hand'].hrid).toBe('/items/blazing_trident');
+        }
+
+        const full = withWeapon.find((c) => Object.keys(c.addedSlots).length === 3);
+        expect(full.addedSlots[BODY].hrid).toBe('/items/royal_fire_robe_top');
+        expect(full.addedSlots[LEGS].hrid).toBe('/items/royal_fire_robe_bottoms');
+        expect(full.description).toBe(
+            'Blooming Trident + empty + empty → Blazing Trident + Royal Fire Robe Top + Royal Fire Robe Bottoms (+7)'
+        );
+    });
+
+    test('credits the weapon it replaces', () => {
+        const candidates = generateLabArmorCandidates(natureTridentFireSpells(), magicGameData(), []);
+        const weaponOnly = candidates.find(
+            (c) => Object.keys(c.addedSlots).length === 1 && c.addedSlots['/equipment_types/main_hand']
+        );
+
+        expect(weaponOnly.removedItems).toEqual([{ hrid: '/items/blooming_trident', enhancementLevel: 7 }]);
+        expect(weaponOnly.clearedSlots).toEqual([]);
+    });
+
+    test('leaves the weapon alone when the spells match its element', () => {
+        const dto = {
+            equipment: { '/equipment_types/main_hand': { hrid: '/items/blooming_trident', enhancementLevel: 7 } },
+            abilities: [{ hrid: '/abilities/entangle' }],
+        };
+        const candidates = generateLabArmorCandidates(dto, magicGameData(), []);
+        expect(candidates.some((c) => c.addedSlots['/equipment_types/main_hand'])).toBe(false);
     });
 });

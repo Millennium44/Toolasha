@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Sim the weapon in your spells' element too
+
+- When the spells cast an element the weapon doesn't deal — a Nature trident casting Fireball — the weapon's own element is dead weight. The Lab Sim now also sims **that element's weapon**, both on its own and wearing that element's robes, since the matched weapon and robes are the build those spells belong to.
+- The replacement stays in the same weapon class: elemental variants share the weapon's last name word, so a Trident maps to a Trident rather than proposing a different playstyle. With no same-class match, the best top-tier weapon of that element in the same slot is used.
+- The weapon's enhancement level follows the same rule as armor — equipped, else best owned copy, else +7 — and the swap credits the weapon it replaces. Loadouts whose spells already match the weapon's element get no weapon candidates.
+
 ### Magic armor is chosen per element, from both the weapon and the spells
 
 - Magic loadouts always got Fire robes suggested. The style match only knew "magic", and every top-tier robe qualified equally, so the tie broke alphabetically and Fire won every time — regardless of what the loadout actually casts.
