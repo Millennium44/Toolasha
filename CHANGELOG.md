@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Combat levels get their own results box; Ability Swaps carries a warning
+
+- **Combat level results moved into a separate box** below the gold-cost table, with their own columns (Skill, Level Time, Main Time, ΔDPS, ΔEXP/hr, ΔProfit/hr) and their own independent sorting. Previously, mixing Combat Lv with a gold-cost set flattened them into the gold table where their Cost cell was meaningless and the level-time column vanished entirely. The box states why they're ranked separately: levels cost grind time, not gold, so they can't share an axis with gear.
+- Each table now sorts independently and expands its own detail rows — clicking a row in one no longer toggles a row in the other.
+- **Ability Swaps hover now warns what it is**: it sims every style-compatible ability for every slot (far more sims than any other set, so expect a long run), and a swapped-in ability is simmed at the level of the ability it replaces using that book's default triggers — no trigger tuning, and its cost assumes leveling a fresh book from scratch. The ranking is a hint about what's worth trying by hand, not a verdict.
+
 ### Upgrade tab controls are grouped with the checkbox they belong to
 
 - Each candidate set is now a bordered chip holding its own options, so it's visible which checkbox an option modifies: **Skip Back** sits inside Equipment, the **+Levels / Target Lv / Targets** controls inside Ability Lv, **Charm / Targets / Main time** inside Combat Lv, and **Lv / Targets** inside House. A checked set lights its chip and reveals its options; unchecked sets dim and collapse.
