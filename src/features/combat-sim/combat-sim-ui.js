@@ -44,6 +44,16 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+const PANEL_SIZE_KEY = 'combatSimPanelSize';
+
+/**
+ * Columns hidden until asked for.
+ *
+ * The raw deltas restate what the gold-per columns already price, and ROI is
+ * repay time inverted — all six are worth having on demand, none is worth the
+ * width by default. Sixteen columns at once is what forced the panel wider.
+ */
+const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
 
 /**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
@@ -680,20 +690,23 @@ class CombatSimUI {
         this.panel.appendChild(upgradeContent);
         this.panel.appendChild(status);
 
-        const resizeHandle = document.createElement('div');
-        resizeHandle.style.cssText = `
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            width: 16px;
-            height: 16px;
-            cursor: nwse-resize;
-            background: linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
-            border-radius: 0 0 8px 0;
-            z-index: 1;
-        `;
-        this.panel.appendChild(resizeHandle);
-        this._setupResize(resizeHandle);
+        // Three grips, not one. The corner alone meant aiming at 16 square pixels
+        // to make the panel wider; the edges give the whole side as a target.
+        const addGrip = (css, axis) => {
+            const grip = document.createElement('div');
+            grip.style.cssText = `position:absolute; z-index:1; ${css}`;
+            this.panel.appendChild(grip);
+            this._setupResize(grip, axis);
+        };
+
+        addGrip('top:44px; bottom:16px; right:0; width:8px; cursor:ew-resize;', 'x');
+        addGrip('left:0; right:16px; bottom:0; height:8px; cursor:ns-resize;', 'y');
+        addGrip(
+            `bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; z-index:2;
+             background:linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
+             border-radius:0 0 8px 0;`,
+            'both'
+        );
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -725,6 +738,7 @@ class CombatSimUI {
         });
         this._restoreUpgradeModes();
         this._loadUpgradeColumnPrefs();
+        this._restorePanelSize();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -3093,7 +3107,7 @@ class CombatSimUI {
     /**
      * @private
      */
-    _setupResize(handle) {
+    _setupResize(handle, axis = 'both') {
         handle.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -3102,20 +3116,61 @@ class CombatSimUI {
             const startWidth = this.panel.offsetWidth;
             const startHeight = this.panel.offsetHeight;
             bringPanelToFront(this.panel);
+            // Without this, dragging over the page selects text instead of resizing
+            const priorSelect = document.body.style.userSelect;
+            document.body.style.userSelect = 'none';
 
             const onMove = (ev) => {
-                const newWidth = Math.max(400, startWidth + (ev.clientX - startX));
-                const newHeight = Math.max(300, startHeight + (ev.clientY - startY));
-                this.panel.style.width = `${newWidth}px`;
-                this.panel.style.height = `${newHeight}px`;
+                if (axis !== 'y') {
+                    this.panel.style.width = `${Math.max(400, startWidth + (ev.clientX - startX))}px`;
+                }
+                if (axis !== 'x') {
+                    this.panel.style.height = `${Math.max(300, startHeight + (ev.clientY - startY))}px`;
+                }
             };
             const onUp = () => {
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
+                document.body.style.userSelect = priorSelect;
+                this._persistPanelSize();
             };
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
         });
+    }
+
+    /**
+     * Remember the panel's size so it does not need resizing every session.
+     * @private
+     */
+    async _persistPanelSize() {
+        try {
+            await storage.set(
+                PANEL_SIZE_KEY,
+                { width: this.panel.offsetWidth, height: this.panel.offsetHeight },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save panel size:', error);
+        }
+    }
+
+    /**
+     * Restore a remembered panel size, clamped to the current viewport so a size
+     * saved on a larger monitor cannot open the panel off-screen.
+     * @private
+     */
+    async _restorePanelSize() {
+        try {
+            const saved = await storage.get(PANEL_SIZE_KEY, 'settings', null);
+            if (!saved || !this.panel) return;
+            const width = Number(saved.width);
+            const height = Number(saved.height);
+            if (width > 0) this.panel.style.width = `${Math.min(width, window.innerWidth * 0.95)}px`;
+            if (height > 0) this.panel.style.height = `${Math.min(height, window.innerHeight * 0.95)}px`;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore panel size:', error);
+        }
     }
 
     /**
@@ -3916,11 +3971,13 @@ class CombatSimUI {
         // Sticky needs an opaque background or rows scroll through the header.
         // The offset is the results pane's own padding, so the header parks flush
         // with the top of the scroll area rather than floating below it.
-        const thStyle =
-            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
-            'cursor:pointer; user-select:none; white-space:nowrap; position:sticky; top:-10px; z-index:2; ' +
-            'background:#12121f;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+        const thBase =
+            'padding:3px 4px; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; ' +
+            'user-select:none; position:sticky; top:-10px; z-index:2; background:#12121f; line-height:1.15;';
+        const tdBase = 'padding:3px 4px; border-bottom:1px solid #1a1a2e;';
+        // Numbers right-align and never wrap; only the Upgrade name may reflow,
+        // which is what keeps sixteen columns inside a panel this wide
+        const align = (c) => (c.numeric ? 'text-align:right; white-space:nowrap;' : 'text-align:left;');
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
 
         // Best value per column, for the green highlight
@@ -3937,11 +3994,14 @@ class CombatSimUI {
         }
 
         let html = `${this._renderUpgradeColumnMenu()}
-        <table style="width:100%; border-collapse:collapse; font-size:11px;">
+        <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead><tr>`;
         for (const c of columns) {
             const title = c.title ? ` title="${c.title}"` : '';
-            html += `<th style="${thStyle}" data-sort-key="${c.key}"${title}>${c.label}${arrow(c.key)}</th>`;
+            // The second line carries the qualifier, so "Gold/0.01% Profit" costs
+            // the width of "Gold/0.01%" rather than the whole phrase
+            const heading = c.sub ? `${c.label}<br>${c.sub}${arrow(c.key)}` : `${c.label}${arrow(c.key)}`;
+            html += `<th style="${thBase} ${align(c)}" data-sort-key="${c.key}"${title}>${heading}</th>`;
         }
         html += '</tr></thead><tbody>';
 
@@ -3952,7 +4012,7 @@ class CombatSimUI {
             for (const c of columns) {
                 const value = c.value(r);
                 const isBest = c.highlight && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
-                const style = isBest ? `${tdStyle} color:#4caf50; font-weight:700;` : tdStyle;
+                const style = `${tdBase} ${align(c)}${isBest ? ' color:#4caf50; font-weight:700;' : ''}`;
                 const title = c.title ? ` title="${c.title}"` : '';
                 html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;
             }
@@ -3978,7 +4038,7 @@ class CombatSimUI {
      * @private
      */
     _renderUpgradeColumnMenu() {
-        const hidden = this._upgradeHiddenColumns || new Set();
+        const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
         const open = this._upgradeColumnMenuOpen ? '' : 'display:none;';
 
@@ -4033,7 +4093,7 @@ class CombatSimUI {
      * @private
      */
     _upgradeColumns(baseline = {}) {
-        const hidden = this._upgradeHiddenColumns || new Set();
+        const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
         const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
 
         const goldPer = (val) => (Number.isFinite(val) ? formatKMB(val) : '—');
@@ -4065,12 +4125,14 @@ class CombatSimUI {
                 key: 'cost',
                 label: 'Cost',
                 fixed: true,
+                numeric: true,
                 value: (r) => (r.cost == null ? Infinity : r.cost),
                 render: (r) => (r.cost == null ? '?' : formatKMB(r.cost)),
             },
             {
                 key: 'payback',
                 label: 'Payback',
+                numeric: true,
                 title:
                     'How long you grind at your current profit rate to afford this. Every row divides by ' +
                     'that same rate, so this orders candidates exactly as Cost does — it is the Cost ' +
@@ -4081,6 +4143,7 @@ class CombatSimUI {
             {
                 key: 'repay',
                 label: 'Repay',
+                numeric: true,
                 highlight: true,
                 title:
                     'How long the extra profit takes to earn the cost back. Blank means the upgrade does ' +
@@ -4092,7 +4155,9 @@ class CombatSimUI {
             },
             {
                 key: 'roi',
-                label: 'ROI (1yr)',
+                label: 'ROI',
+                sub: '1yr',
+                numeric: true,
                 lowerIsBetter: false,
                 highlight: true,
                 title:
@@ -4105,13 +4170,16 @@ class CombatSimUI {
             {
                 key: 'deltaDps',
                 label: 'ΔDPS',
+                numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.dps - (baseline.dps ?? 0),
                 render: (r, v) => delta(v, 2),
             },
             {
                 key: 'dps',
-                label: 'Gold/0.01% DPS',
+                label: 'Gold/0.01%',
+                sub: 'DPS',
+                numeric: true,
                 highlight: true,
                 title: 'Cost of one 0.01% DPS improvement. Lower is better.' + scoreNote('dps'),
                 value: (r) => r.goldPer.dps,
@@ -4119,14 +4187,18 @@ class CombatSimUI {
             },
             {
                 key: 'deltaXp',
-                label: 'ΔEXP/hr',
+                label: 'ΔEXP',
+                sub: '/hr',
+                numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.xpPerHour - (baseline.xpPerHour ?? 0),
                 render: (r, v) => delta(v),
             },
             {
                 key: 'xp',
-                label: 'Gold/0.01% EXP',
+                label: 'Gold/0.01%',
+                sub: 'EXP',
+                numeric: true,
                 highlight: true,
                 title: 'Cost of one 0.01% EXP/hr improvement. Lower is better.' + scoreNote('xp'),
                 value: (r) => r.goldPer.xp,
@@ -4134,14 +4206,18 @@ class CombatSimUI {
             },
             {
                 key: 'deltaProfit',
-                label: 'ΔProfit/hr',
+                label: 'ΔProfit',
+                sub: '/hr',
+                numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.economics?.profitGainPerHour ?? 0,
                 render: (r, v) => delta(v),
             },
             {
                 key: 'profit',
-                label: 'Gold/0.01% Profit',
+                label: 'Gold/0.01%',
+                sub: 'Profit',
+                numeric: true,
                 highlight: true,
                 title: 'Cost of one 0.01% profit improvement. Lower is better.' + scoreNote('profit'),
                 value: (r) => r.goldPer.profit,
@@ -4150,13 +4226,16 @@ class CombatSimUI {
             {
                 key: 'deltaEph',
                 label: 'ΔEPH',
+                numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.encountersPerHour - (baseline.encountersPerHour ?? 0),
                 render: (r, v) => delta(v, 2),
             },
             {
                 key: 'encounters',
-                label: 'Gold/0.01% EPH',
+                label: 'Gold/0.01%',
+                sub: 'EPH',
+                numeric: true,
                 highlight: true,
                 title: 'Cost of one 0.01% encounters-per-hour improvement.' + scoreNote('encounters'),
                 value: (r) => r.goldPer.encounters,
@@ -4165,12 +4244,15 @@ class CombatSimUI {
             {
                 key: 'deltaDph',
                 label: 'ΔDPH',
+                numeric: true,
                 value: (r) => r.metrics.deathsPerHour - (baseline.deathsPerHour ?? 0),
                 render: (r, v) => delta(v, 2),
             },
             {
                 key: 'deaths',
-                label: 'Gold/0.01% DPH',
+                label: 'Gold/0.01%',
+                sub: 'DPH',
+                numeric: true,
                 highlight: true,
                 title:
                     'Cost of one 0.01% reduction in deaths per hour. Blank when deaths did not fall.' +
@@ -4182,6 +4264,7 @@ class CombatSimUI {
                 key: 'score',
                 label: 'Score',
                 fixed: true,
+                numeric: true,
                 lowerIsBetter: false,
                 highlight: true,
                 title:
@@ -4376,6 +4459,8 @@ class CombatSimUI {
         const wireSort = (attr, stateKey) => {
             container.querySelectorAll(`[${attr}]`).forEach((th) => {
                 th.addEventListener('click', () => {
+                    // Sorting is the table talking, not the menu — get it out of the way
+                    this._setUpgradeColumnMenuOpen(false);
                     const key = th.getAttribute(attr);
                     if (this[stateKey].key === key) {
                         this[stateKey].asc = !this[stateKey].asc;
@@ -4403,8 +4488,7 @@ class CombatSimUI {
 
         button.addEventListener('click', (e) => {
             e.stopPropagation();
-            this._upgradeColumnMenuOpen = !this._upgradeColumnMenuOpen;
-            menu.style.display = this._upgradeColumnMenuOpen ? 'flex' : 'none';
+            this._setUpgradeColumnMenuOpen(!this._upgradeColumnMenuOpen);
         });
         // Clicks inside must not close it, or every checkbox would shut the menu
         menu.addEventListener('click', (e) => e.stopPropagation());
@@ -4435,6 +4519,32 @@ class CombatSimUI {
     }
 
     /**
+     * Open or close the ⚙ Columns popover.
+     *
+     * While open it holds one document-level listener so a click anywhere else
+     * dismisses it; closing removes that listener again, so nothing accumulates.
+     * The open flag survives re-renders on purpose — toggling a checkbox rebuilds
+     * the table underneath and the menu should stay put while you configure —
+     * but sorting closes it, since that is the table talking, not the menu.
+     *
+     * @param {boolean} open - Desired state
+     * @private
+     */
+    _setUpgradeColumnMenuOpen(open) {
+        this._upgradeColumnMenuOpen = open;
+        const menu = this.panel?.querySelector('#mwi-csim-upgrade-cols-menu');
+        if (menu) menu.style.display = open ? 'flex' : 'none';
+
+        if (open && !this._upgradeColumnMenuAway) {
+            this._upgradeColumnMenuAway = () => this._setUpgradeColumnMenuOpen(false);
+            document.addEventListener('click', this._upgradeColumnMenuAway);
+        } else if (!open && this._upgradeColumnMenuAway) {
+            document.removeEventListener('click', this._upgradeColumnMenuAway);
+            this._upgradeColumnMenuAway = null;
+        }
+    }
+
+    /**
      * Re-rank the stored results against the current score selection.
      *
      * Scoring is pure ranking over figures already measured, so changing what
@@ -4456,7 +4566,7 @@ class CombatSimUI {
             await storage.set(
                 UPGRADE_COLUMNS_KEY,
                 {
-                    hidden: [...(this._upgradeHiddenColumns || [])],
+                    hidden: [...(this._upgradeHiddenColumns || DEFAULT_HIDDEN_COLUMNS)],
                     scored: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
                 },
                 'settings'

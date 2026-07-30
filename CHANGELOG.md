@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Easier panel resizing, tighter upgrade columns, and a Columns menu that stays put
+
+- **The sim panel resizes from its right and bottom edges**, not just the corner grip — the whole side is a target instead of sixteen square pixels. Dragging no longer selects page text, and **the size is remembered**, clamped to the viewport on restore so a size saved on a bigger monitor cannot open the panel off-screen.
+- **Upgrade columns are narrower.** Headers split across two lines, so "Gold/0.01% Profit" costs the width of "Gold/0.01%" rather than the whole phrase; numbers right-align and never wrap, and only the upgrade name may reflow.
+- **The raw deltas and ROI are hidden by default.** The deltas restate what the gold-per columns already price and ROI is repay time inverted, so none of the six earns its width up front — showing all sixteen at once is what forced the panel wider. Every one is a checkbox away in ⚙ Columns.
+- **Fixed: the Columns menu reopened on almost any click.** It now closes when you click outside it or sort a column, while staying open as you tick boxes inside it — configuring should not dismiss the thing you are configuring. The dismiss listener is added on open and removed on close rather than living permanently on the document.
+
 ### Sticky headers, eight more columns, and a configurable Score
 
 - The upgrade table's **header row now sticks** to the top of the results pane, so the columns stay labelled however far you scroll.
