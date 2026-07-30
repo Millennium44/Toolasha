@@ -3529,14 +3529,33 @@ class CombatSimUI {
         const current = food.current;
         const pct = (fraction) => `${((fraction || 0) * 100).toFixed(1)}%`;
 
-        const picks = [];
-        if (rec.hp) picks.push(`${rec.hp.name} <span style="color:#666;">(${formatKMB(rec.hp.restore)} HP)</span>`);
-        if (rec.mp) picks.push(`${rec.mp.name} <span style="color:#666;">(${formatKMB(rec.mp.restore)} MP)</span>`);
-        const picksText = picks.length ? picks.join(' + ') : 'nothing — you survive this zone without food';
+        const restoreLabel = (slot) => {
+            const parts = [];
+            if (slot.hpRestore > 0) parts.push(`${formatKMB(slot.hpRestore)} HP`);
+            if (slot.mpRestore > 0) parts.push(`${formatKMB(slot.mpRestore)} MP`);
+            return parts.join(' / ');
+        };
+
+        let picksText;
+        if (food.keepCurrent) {
+            picksText =
+                '<span style="color:#4caf50;">Keep your current food</span> — it already survives this zone and nothing cheaper of the same types does.';
+        } else {
+            const lines = rec.slots.map((slot) => {
+                if (!slot.hrid) {
+                    return `${slot.fromName} → <span style="color:#4caf50;">empty</span> <span style="color:#666;">(not needed here)</span>`;
+                }
+                if (!slot.changed) {
+                    return `${slot.fromName} <span style="color:#666;">(kept, ${restoreLabel(slot)})</span>`;
+                }
+                return `${slot.fromName} → <span style="color:#e0e0e0;">${slot.name}</span> <span style="color:#666;">(${restoreLabel(slot)})</span>`;
+            });
+            picksText = lines.join('<br>');
+        }
 
         const savings = current.costPerHour != null ? current.costPerHour - rec.costPerHour : null;
         let savingsText = '';
-        if (savings != null) {
+        if (savings != null && !food.keepCurrent) {
             if (savings > 1) {
                 savingsText = `<span style="color:#4caf50;">saves ${formatKMB(savings)}/hr</span>`;
             } else if (savings < -1) {
@@ -3553,23 +3572,34 @@ class CombatSimUI {
                   }, ${(current.deathsPerHour ?? 0).toFixed(2)} deaths/hr, ${pct(current.oomFraction)} out of mana`
                 : 'Current: no food equipped';
 
-        const caveat = food.ceilingDies
-            ? `<div style="color:#ff9800; font-size:10px; margin-top:4px;">No food setup reaches zero deaths here — the target was relaxed to the best achievable (${food.deathTarget.toFixed(2)} deaths/hr).</div>`
+        const shortfalls = [];
+        if (food.ceilingDies) {
+            shortfalls.push(`deaths (target relaxed to ${food.deathTarget.toFixed(2)}/hr)`);
+        }
+        if (food.ceilingOoms) {
+            shortfalls.push(`mana (target relaxed to ${pct(food.oomTarget)} out of mana)`);
+        }
+        const caveat = shortfalls.length
+            ? `<div style="color:#ff9800; font-size:10px; margin-top:4px;">Even the best tiers of your food types fall short on ${shortfalls.join(' and ')} at this zone.</div>`
             : '';
 
-        return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">Cheapest viable food</div>
-            <div style="color:#e0e0e0; font-size:12px;">${picksText}</div>
-            <div style="color:#aaa; font-size:11px; margin-top:4px;">
+        const statsLine = food.keepCurrent
+            ? ''
+            : `<div style="color:#aaa; font-size:11px; margin-top:4px;">
                 ${formatKMB(rec.costPerHour)}/hr in consumables ${savingsText ? '— ' + savingsText : ''}
                 <span style="color:#666;">
                     · ${rec.deathsPerHour.toFixed(2)} deaths/hr · ${pct(rec.oomFraction)} out of mana
                 </span>
-            </div>
+            </div>`;
+
+        return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">Cheapest viable food</div>
+            <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
+            ${statsLine}
             <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
             <div style="color:#666; font-size:10px; margin-top:2px;">
-                ${food.simCount} sims searched. Buff drinks are left as configured, and only one HP and one MP item are
-                considered — mixing an instant with an over-time food isn't searched.
+                ${food.simCount} sims searched. Each slot keeps its current food type — an HP food is only compared
+                against other HP foods of the same kind — and buff foods stay equipped.
             </div>
             ${caveat}
         </div>`;

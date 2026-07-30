@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Food search keeps your food types and refuses out-of-mana picks
+
+- The first version of the food search collapsed all three food slots down to one HP item plus one MP item. For setups that rely on more slots (two HP foods, or an extra mana source), even the "best available" probe ran out of mana — and since the search relaxes its targets to whatever the best probe achieves, a 49%-out-of-mana recommendation could "pass" while your real setup sat at 0%.
+- The search is now slot-templated: **each equipped food slot keeps its exact food type** (HP instant only competes against HP instant, MP over-time against MP over-time), buff foods are never touched, and only the tier within each type is varied. A slot can also come back as "empty (not needed here)" when the zone doesn't require it.
+- Out-of-mana and deaths are both hard requirements at every step — targets only relax when even the best tiers of _your own_ food types can't meet them, and the card says so explicitly per shortfall.
+- **Keeping your current food is always a candidate**: if it's viable and no more expensive than the searched pick, the card now says to keep it instead of recommending a sidegrade. The card also shows per-slot changes as "current → replacement" lines.
+- Regression-tested against the exact failure: a low-tier mana drink leaving 49% of the run out of mana must lose to the same-type higher tier, never be recommended for a 5K/hr saving.
+
 ### Upgrade tab: pick several candidate sets at once, plus house and food
 
 - **Mode dropdown → checkboxes.** The Upgrade tab's single-choice Mode select is now a row of **Include** checkboxes (Equipment, Ability Lv, Ability Swaps, Combat Lv, House, Food), so several candidate sets sim together and land in one ranked list instead of forcing one analysis per set. The old "Equipment + Abilities" option is gone — it's just both boxes checked. The selection is remembered between sessions.
