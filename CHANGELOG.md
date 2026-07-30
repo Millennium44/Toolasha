@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Fixed: armor pairs never appeared, and single swaps appeared twice
+
+- The forced Lab Sim armor candidates were deduplicated on `slot|upgradeHrid|upgradeLevel|type`, which for a two-piece swap only described its **first** piece. So "Anchorbound body alone", "Anchorbound body + Anchorbound legs" and "Anchorbound body + other legs" all shared one key and the pairs were silently dropped — every armor row simmed one slot at a time. The same key also failed to match a single-slot `cross_slot` candidate against the equivalent `tier` candidate, so those rendered as duplicate rows with identical numbers.
+- Deduplication now keys on the **full slot assignment** the candidate results in (added slots with their enhancement levels, plus any cleared slots), so pairs are distinct from their pieces, two pairs sharing a body piece stay distinct, and a single-slot swap matches its tier-progression twin regardless of which generator produced it.
+- Pair rows now read in the same shape as every other row — `Royal Nature Robe Top + Royal Nature Robe Bottoms → Anchorbound Plate Body + Anchorbound Plate Legs (+7)` — with per-piece levels shown as `(+7/+10)` when they differ.
+
 ### Lab Sim always evaluates Anchorbound and the matching top-tier armor
 
 - Whenever the Lab Sim upgrade analysis includes equipment, it now always sims the **Anchorbound plate body and legs** and the **top-tier body/legs that suit the loadout's weapon style** — each piece alone, each set as a pair, and the cross-set pairs (Anchorbound body with the other set's legs and vice versa). Duplicates collapse when Anchorbound _is_ the style match, and any combination you already wear is skipped rather than simmed as a no-op.
