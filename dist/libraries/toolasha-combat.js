@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.85.0
+ * Version: 2.86.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -8636,9 +8636,10 @@
             } else {
                 // Regular zone: check each monster's drop table and rare drop table
                 const spawns = action.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || [];
+                const bossSpawns = action.combatZoneInfo?.fightInfo?.bossSpawns || [];
                 const validTiers = new Set();
 
-                for (const spawn of spawns) {
+                for (const spawn of [...spawns, ...bossSpawns]) {
                     const monster = combatMonsterDetailMap[spawn.combatMonsterHrid];
                     if (!monster) continue;
 
@@ -8675,7 +8676,87 @@
         return results;
     }
 
-    var WORKER_SCRIPT$1 = "(function () {\n    'use strict';\n\n    /**\n     * Game Data Singleton\n     *\n     * Replaces static JSON imports across the ported combat simulator engine.\n     * Game data maps are set once per simulation run from Toolasha's live data.\n     */\n\n    let _gameData = null;\n\n    /**\n     * Set all game data maps for the simulation.\n     * @param {Object} data - Game data maps from dataManager.getInitClientData()\n     */\n    function setGameData(data) {\n        _gameData = data;\n    }\n\n    /**\n     * Get the current game data maps.\n     * @returns {Object} Game data maps\n     */\n    function getGameData() {\n        return _gameData;\n    }\n\n    class CombatUtilities {\n        static getTarget(enemies) {\n            if (!enemies) {\n                return null;\n            }\n            const target = enemies.find((enemy) => enemy.combatDetails.currentHitpoints > 0);\n\n            return target ?? null;\n        }\n\n        static randomInt(min, max) {\n            if (max < min) {\n                const temp = min;\n                min = max;\n                max = temp;\n            }\n\n            const minCeil = Math.ceil(min);\n            const maxFloor = Math.floor(max);\n\n            if (Math.floor(min) === maxFloor) {\n                return Math.floor((min + max) / 2 + Math.random());\n            }\n\n            const minTail = -1 * (min - minCeil);\n            const maxTail = max - maxFloor;\n\n            const balancedWeight = 2 * minTail + (maxFloor - minCeil);\n            const balancedAverage = (maxFloor + minCeil) / 2;\n            const average = (max + min) / 2;\n            const extraTailWeight = (balancedWeight * (average - balancedAverage)) / (maxFloor + 1 - average);\n            const extraTailChance = Math.abs(extraTailWeight / (extraTailWeight + balancedWeight));\n\n            if (Math.random() < extraTailChance) {\n                if (maxTail > minTail) {\n                    return Math.floor(maxFloor + 1);\n                } else {\n                    return Math.floor(minCeil - 1);\n                }\n            }\n\n            if (maxTail > minTail) {\n                return Math.floor(min + Math.random() * (maxFloor + minTail - min + 1));\n            } else {\n                return Math.floor(minCeil - maxTail + Math.random() * (max - (minCeil - maxTail) + 1));\n            }\n        }\n\n        static processAttack(source, target, abilityEffect = null) {\n            const combatStyle = abilityEffect\n                ? abilityEffect.combatStyleHrid\n                : source.combatDetails.combatStats.combatStyleHrid;\n            const damageType = abilityEffect ? abilityEffect.damageType : source.combatDetails.combatStats.damageType;\n\n            let sourceAccuracyRating = 1;\n            let sourceAutoAttackMaxDamage = 1;\n            let targetEvasionRating = 1;\n\n            switch (combatStyle) {\n                case '/combat_styles/stab':\n                    sourceAccuracyRating = source.combatDetails.stabAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.stabMaxDamage;\n                    targetEvasionRating = target.combatDetails.stabEvasionRating;\n                    break;\n                case '/combat_styles/slash':\n                    sourceAccuracyRating = source.combatDetails.slashAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.slashMaxDamage;\n                    targetEvasionRating = target.combatDetails.slashEvasionRating;\n                    break;\n                case '/combat_styles/smash':\n                    sourceAccuracyRating = source.combatDetails.smashAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.smashMaxDamage;\n                    targetEvasionRating = target.combatDetails.smashEvasionRating;\n                    break;\n                case '/combat_styles/ranged':\n                    sourceAccuracyRating = source.combatDetails.rangedAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.rangedMaxDamage;\n                    targetEvasionRating = target.combatDetails.rangedEvasionRating;\n                    break;\n                case '/combat_styles/magic':\n                    sourceAccuracyRating = source.combatDetails.magicAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.magicMaxDamage;\n                    targetEvasionRating = target.combatDetails.magicEvasionRating;\n                    break;\n                default:\n                    throw new Error('Unknown combat style: ' + combatStyle);\n            }\n\n            let sourceDamageMultiplier = 1;\n            let sourceResistance = 0;\n            let sourcePenetration = 0;\n            let targetResistance = 0;\n            let targetThornPower = 0;\n            let targetPenetration = 0;\n            let thornType;\n\n            switch (damageType) {\n                case '/damage_types/physical':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.physicalAmplify;\n                    sourceResistance = source.combatDetails.totalArmor;\n                    sourcePenetration = source.combatDetails.combatStats.armorPenetration;\n                    targetResistance = target.combatDetails.totalArmor;\n                    targetThornPower = target.combatDetails.combatStats.physicalThorns;\n                    targetPenetration = target.combatDetails.combatStats.armorPenetration;\n                    thornType = 'physicalThorns';\n                    break;\n                case '/damage_types/water':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.waterAmplify;\n                    sourceResistance = source.combatDetails.totalWaterResistance;\n                    sourcePenetration = source.combatDetails.combatStats.waterPenetration;\n                    targetResistance = target.combatDetails.totalWaterResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.waterPenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                case '/damage_types/nature':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.natureAmplify;\n                    sourceResistance = source.combatDetails.totalNatureResistance;\n                    sourcePenetration = source.combatDetails.combatStats.naturePenetration;\n                    targetResistance = target.combatDetails.totalNatureResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.naturePenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                case '/damage_types/fire':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.fireAmplify;\n                    sourceResistance = source.combatDetails.totalFireResistance;\n                    sourcePenetration = source.combatDetails.combatStats.firePenetration;\n                    targetResistance = target.combatDetails.totalFireResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.firePenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                default:\n                    throw new Error('Unknown damage type: ' + damageType);\n            }\n\n            let hitChance = 1;\n            let critChance = 0;\n            let isCrit = false;\n            const bonusCritChance = source.combatDetails.combatStats.criticalRate;\n            const bonusCritDamage = source.combatDetails.combatStats.criticalDamage;\n\n            if (abilityEffect) {\n                sourceAccuracyRating *= 1 + abilityEffect.bonusAccuracyRatio;\n            }\n\n            hitChance =\n                Math.pow(sourceAccuracyRating, 1.4) /\n                (Math.pow(sourceAccuracyRating, 1.4) + Math.pow(targetEvasionRating, 1.4));\n\n            if (combatStyle === '/combat_styles/ranged') {\n                critChance = 0.3 * hitChance;\n            }\n\n            critChance = critChance + bonusCritChance;\n\n            const baseDamageFlat = abilityEffect ? abilityEffect.damageFlat : 0;\n            const baseDamageRatio = abilityEffect ? abilityEffect.damageRatio : 1;\n\n            const armorDamageRatioFlat = abilityEffect\n                ? abilityEffect.armorDamageRatio * source.combatDetails.totalArmor\n                : 0;\n\n            let sourceMinDamage = sourceDamageMultiplier * (1 + baseDamageFlat + armorDamageRatioFlat);\n            let sourceMaxDamage =\n                sourceDamageMultiplier *\n                (baseDamageRatio * sourceAutoAttackMaxDamage + baseDamageFlat + armorDamageRatioFlat);\n\n            if (Math.random() < critChance) {\n                sourceMaxDamage = sourceMaxDamage * (1 + bonusCritDamage);\n                sourceMinDamage = sourceMaxDamage;\n                isCrit = true;\n            }\n\n            let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);\n            // taskDamage intentionally excluded — trinket slot not exported by reference sims\n            // damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;\n            damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;\n            if (!abilityEffect) {\n                damageRoll += damageRoll * source.combatDetails.combatStats.autoAttackDamage;\n            } else {\n                damageRoll *= 1 + source.combatDetails.combatStats.abilityDamage;\n            }\n\n            let damageDone = 0;\n            let thornDamageDone = 0;\n\n            let didHit = false;\n            if (Math.random() < hitChance) {\n                didHit = true;\n                let penetratedTargetResistance = targetResistance;\n\n                if (sourcePenetration > 0 && targetResistance > 0) {\n                    penetratedTargetResistance = targetResistance / (1 + sourcePenetration);\n                }\n\n                let targetDamageTakenRatio = 100 / (100 + penetratedTargetResistance);\n                if (penetratedTargetResistance < 0) {\n                    targetDamageTakenRatio = (100 - penetratedTargetResistance) / 100;\n                }\n\n                const mitigatedDamage = Math.ceil(targetDamageTakenRatio * damageRoll);\n                damageDone = Math.min(mitigatedDamage, target.combatDetails.currentHitpoints);\n                target.combatDetails.currentHitpoints -= damageDone;\n            }\n\n            if (targetThornPower > 0.0 && targetResistance > -99) {\n                let penetratedSourceResistance = sourceResistance;\n\n                if (sourceResistance > 0) {\n                    penetratedSourceResistance = sourceResistance / (1 + targetPenetration);\n                }\n\n                let sourceDamageTakenRatio = 100.0 / (100 + penetratedSourceResistance);\n                if (penetratedSourceResistance < 0) {\n                    sourceDamageTakenRatio = (100 - penetratedSourceResistance) / 100;\n                }\n\n                const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;\n                const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;\n                const targetDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;\n\n                const thornsDamageRoll = CombatUtilities.randomInt(\n                    1,\n                    targetDamageMultiplier *\n                        target.combatDetails.defensiveMaxDamage *\n                        (1.0 + targetResistance / 100.0) *\n                        targetThornPower\n                );\n\n                const mitigatedThornsDamage = Math.ceil(sourceDamageTakenRatio * thornsDamageRoll);\n\n                thornDamageDone = Math.min(mitigatedThornsDamage, source.combatDetails.currentHitpoints);\n                source.combatDetails.currentHitpoints -= thornDamageDone;\n            }\n\n            let retaliationDamageDone = 0;\n            if (target.combatDetails.combatStats.retaliation > 0) {\n                const retaliationHitChance =\n                    Math.pow(target.combatDetails.smashAccuracyRating, 1.4) /\n                    (Math.pow(target.combatDetails.smashAccuracyRating, 1.4) +\n                        Math.pow(source.combatDetails.smashEvasionRating, 1.4));\n\n                if (retaliationHitChance > Math.random()) {\n                    let sourceEffectiveArmor = source.combatDetails.totalArmor;\n                    if (sourceEffectiveArmor > 0) {\n                        sourceEffectiveArmor =\n                            sourceEffectiveArmor / (1.0 + target.combatDetails.combatStats.armorPenetration);\n                    }\n\n                    let sourceDamageTakenRatio = 100.0 / (100.0 + sourceEffectiveArmor);\n                    if (sourceEffectiveArmor < 0) {\n                        sourceDamageTakenRatio = (100.0 - sourceEffectiveArmor) / 100.0;\n                    }\n\n                    const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;\n                    const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;\n                    const retaliationDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;\n\n                    let premitigatedDamage = damageRoll;\n                    premitigatedDamage = Math.min(premitigatedDamage, target.combatDetails.defensiveMaxDamage * 5);\n\n                    const retaliationMinDamage =\n                        retaliationDamageMultiplier * target.combatDetails.combatStats.retaliation * premitigatedDamage;\n                    const retaliationMaxDamage =\n                        retaliationDamageMultiplier *\n                        target.combatDetails.combatStats.retaliation *\n                        (target.combatDetails.defensiveMaxDamage + premitigatedDamage);\n\n                    const retaliationDamageRoll = CombatUtilities.randomInt(retaliationMinDamage, retaliationMaxDamage);\n                    const mitigatedRetaliationDamage = Math.ceil(sourceDamageTakenRatio * retaliationDamageRoll);\n                    retaliationDamageDone = Math.min(mitigatedRetaliationDamage, source.combatDetails.currentHitpoints);\n                    source.combatDetails.currentHitpoints -= retaliationDamageDone;\n                }\n            }\n\n            let lifeStealHeal = 0;\n            if (!abilityEffect && didHit && source.combatDetails.combatStats.lifeSteal > 0) {\n                lifeStealHeal = source.addHitpoints(Math.floor(source.combatDetails.combatStats.lifeSteal * damageDone));\n            }\n\n            let hpDrain = 0;\n            if (abilityEffect && didHit && abilityEffect.hpDrainRatio > 0) {\n                const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n                hpDrain = source.addHitpoints(Math.floor(abilityEffect.hpDrainRatio * damageDone * healingAmplify));\n            }\n\n            let manaLeechMana = 0;\n            if (!abilityEffect && didHit && source.combatDetails.combatStats.manaLeech > 0) {\n                manaLeechMana = source.addManapoints(Math.floor(source.combatDetails.combatStats.manaLeech * damageDone));\n            }\n\n            return {\n                damageDone,\n                didHit,\n                thornDamageDone,\n                thornType,\n                retaliationDamageDone,\n                lifeStealHeal,\n                hpDrain,\n                manaLeechMana,\n                isCrit,\n            };\n        }\n\n        static processHeal(source, abilityEffect, target) {\n            if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {\n                throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);\n            }\n\n            const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n            const magicMaxDamage = source.combatDetails.magicMaxDamage;\n\n            const baseHealFlat = abilityEffect.damageFlat;\n            const baseHealRatio = abilityEffect.damageRatio;\n\n            const minHeal = healingAmplify * (1 + baseHealFlat);\n            const maxHeal = healingAmplify * (baseHealRatio * magicMaxDamage + baseHealFlat);\n\n            const heal = this.randomInt(minHeal, maxHeal);\n            const amountHealed = target.addHitpoints(heal);\n\n            return amountHealed;\n        }\n\n        static processRevive(source, abilityEffect, target) {\n            if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {\n                throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);\n            }\n\n            const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n            const magicMaxDamage = source.combatDetails.magicMaxDamage;\n\n            const baseHealFlat = abilityEffect.damageFlat;\n            const baseHealRatio = abilityEffect.damageRatio;\n\n            const minHeal = healingAmplify * (1 + baseHealFlat);\n            const maxHeal = healingAmplify * (baseHealRatio * magicMaxDamage + baseHealFlat);\n\n            const heal = this.randomInt(minHeal, maxHeal);\n            const amountHealed = target.addHitpoints(heal);\n            target.combatDetails.currentManapoints = target.combatDetails.maxManapoints;\n            target.clearCCs();\n\n            // target.clearBuffs();\n\n            return amountHealed;\n        }\n\n        static processSpendHp(source, abilityEffect) {\n            const currentHp = source.combatDetails.currentHitpoints;\n            const spendHpRatio = abilityEffect.spendHpRatio;\n\n            const spentHp = Math.floor(currentHp * spendHpRatio);\n\n            source.combatDetails.currentHitpoints -= spentHp;\n\n            return spentHp;\n        }\n\n        static calculateTickValue(totalValue, totalTicks, currentTick) {\n            const currentSum = Math.floor((currentTick * totalValue) / totalTicks);\n            const previousSum = Math.floor(((currentTick - 1) * totalValue) / totalTicks);\n\n            return currentSum - previousSum;\n        }\n    }\n\n    class CombatEvent {\n        constructor(type, time) {\n            this.type = type;\n            this.time = time;\n        }\n    }\n\n    class AutoAttackEvent extends CombatEvent {\n        static type = 'autoAttack';\n\n        constructor(time, source) {\n            super(AutoAttackEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class DamageOverTimeEvent extends CombatEvent {\n        static type = 'damageOverTime';\n\n        constructor(time, sourceRef, target, damage, totalTicks, currentTick, combatStyleHrid) {\n            super(DamageOverTimeEvent.type, time);\n\n            // Calling it 'source' would wrongly clear Damage Over Time when the source dies\n            this.sourceRef = sourceRef;\n            this.target = target;\n            this.damage = damage;\n            this.totalTicks = totalTicks;\n            this.currentTick = currentTick;\n            this.combatStyleHrid = combatStyleHrid;\n        }\n    }\n\n    class CheckBuffExpirationEvent extends CombatEvent {\n        static type = 'checkBuffExpiration';\n\n        constructor(time, source) {\n            super(CheckBuffExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class CombatStartEvent extends CombatEvent {\n        static type = 'combatStart';\n\n        constructor(time) {\n            super(CombatStartEvent.type, time);\n        }\n    }\n\n    class ConsumableTickEvent extends CombatEvent {\n        static type = 'consumableTick';\n\n        constructor(time, source, consumable, totalTicks, currentTick) {\n            super(ConsumableTickEvent.type, time);\n\n            this.source = source;\n            this.consumable = consumable;\n            this.totalTicks = totalTicks;\n            this.currentTick = currentTick;\n        }\n    }\n\n    class CooldownReadyEvent extends CombatEvent {\n        static type = 'cooldownReady';\n\n        constructor(time) {\n            super(CooldownReadyEvent.type, time);\n        }\n    }\n\n    class EnemyRespawnEvent extends CombatEvent {\n        static type = 'enemyRespawn';\n\n        constructor(time) {\n            super(EnemyRespawnEvent.type, time);\n        }\n    }\n\n    /**\n     * EventQueue — simple binary min-heap with linear scan queries.\n     *\n     * Optimized for the combat sim's access pattern: frequent add/remove (every tick)\n     * with rare queries (a few per encounter). The heap typically holds 10-30 events,\n     * making linear scans trivially fast and eliminating the overhead of maintaining\n     * secondary indexes on every mutation.\n     */\n\n    /**\n     * Binary min-heap with O(log n) removal via position tracking.\n     */\n    class IndexedMinHeap {\n        constructor() {\n            this.data = [];\n        }\n\n        get size() {\n            return this.data.length;\n        }\n\n        push(event) {\n            event._heapIndex = this.data.length;\n            this.data.push(event);\n            this._siftUp(this.data.length - 1);\n        }\n\n        pop() {\n            if (this.data.length === 0) return undefined;\n            const top = this.data[0];\n            const last = this.data.pop();\n            if (this.data.length > 0) {\n                last._heapIndex = 0;\n                this.data[0] = last;\n                this._siftDown(0);\n            }\n            top._heapIndex = -1;\n            return top;\n        }\n\n        remove(event) {\n            const idx = event._heapIndex;\n            if (idx === undefined || idx < 0 || idx >= this.data.length || this.data[idx] !== event) {\n                return false;\n            }\n\n            if (idx === this.data.length - 1) {\n                this.data.pop();\n                event._heapIndex = -1;\n                return true;\n            }\n\n            const last = this.data.pop();\n            last._heapIndex = idx;\n            this.data[idx] = last;\n            event._heapIndex = -1;\n\n            this._siftUp(idx);\n            this._siftDown(idx);\n            return true;\n        }\n\n        _siftUp(idx) {\n            const data = this.data;\n            while (idx > 0) {\n                const parent = (idx - 1) >> 1;\n                if (data[idx].time >= data[parent].time) break;\n                const tmp = data[parent];\n                data[parent] = data[idx];\n                data[idx] = tmp;\n                data[parent]._heapIndex = parent;\n                data[idx]._heapIndex = idx;\n                idx = parent;\n            }\n        }\n\n        _siftDown(idx) {\n            const data = this.data;\n            const len = data.length;\n            while (true) {\n                let smallest = idx;\n                const left = 2 * idx + 1;\n                const right = 2 * idx + 2;\n\n                if (left < len && data[left].time < data[smallest].time) smallest = left;\n                if (right < len && data[right].time < data[smallest].time) smallest = right;\n\n                if (smallest === idx) break;\n\n                const tmp = data[smallest];\n                data[smallest] = data[idx];\n                data[idx] = tmp;\n                data[smallest]._heapIndex = smallest;\n                data[idx]._heapIndex = idx;\n                idx = smallest;\n            }\n        }\n    }\n\n    /**\n     * EventQueue with O(log n) add/remove and linear scan queries.\n     */\n    class EventQueue {\n        constructor() {\n            this.minHeap = new IndexedMinHeap();\n        }\n\n        /**\n         * Add event to the queue.\n         * @param {Object} event\n         */\n        addEvent(event) {\n            this.minHeap.push(event);\n        }\n\n        /**\n         * Pop the earliest event.\n         * @returns {Object|undefined}\n         */\n        getNextEvent() {\n            return this.minHeap.pop();\n        }\n\n        /**\n         * Check if any event of the given type exists.\n         * @param {string} type\n         * @returns {boolean}\n         */\n        containsEventOfType(type) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type) return true;\n            }\n            return false;\n        }\n\n        /**\n         * Check if an event of the given type and hrid exists.\n         * @param {string} type\n         * @param {string} hrid\n         * @returns {boolean}\n         */\n        containsEventOfTypeAndHrid(type, hrid) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type && data[i].hrid === hrid) return true;\n            }\n            return false;\n        }\n\n        /**\n         * Get an event matching type + source.\n         * @param {string} type\n         * @param {Object} source\n         * @returns {Object|null}\n         */\n        getByTypeAndSource(type, source) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type && data[i].source === source) return data[i];\n            }\n            return null;\n        }\n\n        /**\n         * Clear all events matching type + source.\n         * @param {string} type\n         * @param {Object} source\n         * @returns {boolean} true if any events were cleared\n         */\n        clearByTypeAndSource(type, source) {\n            // Snapshot matches first: removing during index iteration can skip events displaced by heap sifts\n            const matches = this.minHeap.data.filter((event) => event.type === type && event.source === source);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Clear all events matching type + hrid.\n         * @param {string} type\n         * @param {string} hrid\n         * @returns {boolean}\n         */\n        clearByTypeAndHrid(type, hrid) {\n            const matches = this.minHeap.data.filter((event) => event.type === type && event.hrid === hrid);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Clear all events for a unit (as source OR target).\n         * @param {Object} unit\n         */\n        clearEventsForUnit(unit) {\n            const matches = this.minHeap.data.filter((event) => event.source === unit || event.target === unit);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n        }\n\n        /**\n         * Clear all events of a given type.\n         * @param {string} type\n         */\n        clearEventsOfType(type) {\n            const matches = this.minHeap.data.filter((event) => event.type === type);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n        }\n\n        /**\n         * Clear all events and reset.\n         */\n        clear() {\n            this.minHeap = new IndexedMinHeap();\n        }\n\n        /**\n         * Generic clearMatching for complex predicates.\n         * @param {Function} fn - Predicate\n         * @returns {boolean}\n         */\n        clearMatching(fn) {\n            const matches = this.minHeap.data.filter(fn);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Generic getMatching for complex predicates.\n         * @param {Function} fn - Predicate\n         * @returns {Object|null}\n         */\n        getMatching(fn) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (fn(data[i])) return data[i];\n            }\n            return null;\n        }\n    }\n\n    class PlayerRespawnEvent extends CombatEvent {\n        static type = 'playerRespawn';\n\n        constructor(time, hrid) {\n            super(PlayerRespawnEvent.type, time);\n            this.hrid = hrid;\n        }\n    }\n\n    class RegenTickEvent extends CombatEvent {\n        static type = 'regenTick';\n\n        constructor(time) {\n            super(RegenTickEvent.type, time);\n        }\n    }\n\n    class StunExpirationEvent extends CombatEvent {\n        static type = 'stunExpiration';\n\n        constructor(time, source) {\n            super(StunExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class BlindExpirationEvent extends CombatEvent {\n        static type = 'blindExpiration';\n\n        constructor(time, source) {\n            super(BlindExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class SilenceExpirationEvent extends CombatEvent {\n        static type = 'silenceExpiration';\n\n        constructor(time, source) {\n            super(SilenceExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class CurseExpirationEvent extends CombatEvent {\n        static type = 'curseExpiration';\n        static maxCurseStacks = 5;\n\n        constructor(time, curseAmount, source) {\n            super(CurseExpirationEvent.type, time);\n\n            this.curseAmount = Math.min(curseAmount + 1, CurseExpirationEvent.maxCurseStacks);\n\n            this.source = source;\n        }\n    }\n\n    class WeakenExpirationEvent extends CombatEvent {\n        static type = 'weakenExpiration';\n        static maxWeakenStacks = 5;\n\n        constructor(time, weakenAmount, source) {\n            super(WeakenExpirationEvent.type, time);\n            this.weakenAmount = Math.min(weakenAmount + 1, WeakenExpirationEvent.maxWeakenStacks);\n            this.source = source;\n        }\n    }\n\n    class FuryExpirationEvent extends CombatEvent {\n        static type = 'furyExpiration';\n\n        constructor(time, furyAmount, source) {\n            super(FuryExpirationEvent.type, time);\n\n            this.furyAmount = furyAmount;\n            this.source = source;\n        }\n    }\n\n    class EnrageTickEvent extends CombatEvent {\n        static type = 'enrageTick';\n\n        constructor(time, encounterTime) {\n            super(EnrageTickEvent.type, time);\n\n            this.encounterTime = encounterTime;\n        }\n    }\n\n    class SimResult {\n        constructor(zone, numberOfPlayers) {\n            this.deaths = {};\n            this.experienceGained = {};\n            this.encounters = 0;\n            this.attacks = {};\n            this.consumablesUsed = {};\n            this.hitpointsGained = {};\n            this.manapointsGained = {};\n            this.debuffOnLevelGap = {};\n            this.dropRateMultiplier = {};\n            this.rareFindMultiplier = {};\n            this.combatDropQuantity = {};\n            this.playerRanOutOfMana = {\n                player1: false,\n                player2: false,\n                player3: false,\n                player4: false,\n                player5: false,\n            };\n            this.playerRanOutOfManaTime = {};\n            this.manaUsed = {};\n            this.timeSpentAlive = [];\n            this.bossSpawns = [];\n            this.hitpointsSpent = {};\n            this.zoneName = zone.hrid;\n            this.difficultyTier = zone.difficultyTier;\n            this.isDungeon = false;\n            this.dungeonsCompleted = 0;\n            this.dungeonsFailed = 0;\n            this.maxWaveReached = 0;\n            this.numberOfPlayers = numberOfPlayers;\n            this.maxEnrageStack = 0;\n\n            this.wipeEvents = [];\n            this.totalDamageDealt = {}; // sourceHrid → total damage dealt\n        }\n\n        addWipeEvent(logs, simulationTime, wave) {\n            this.wipeEvents.push({\n                simulationTime: simulationTime,\n                logs: logs,\n                wave: wave,\n                timestamp: new Date().toISOString(),\n            });\n        }\n\n        addDeath(unit) {\n            if (!this.deaths[unit.hrid]) {\n                this.deaths[unit.hrid] = 0;\n            }\n\n            this.deaths[unit.hrid] += 1;\n        }\n\n        updateTimeSpentAlive(name, alive, time) {\n            const i = this.timeSpentAlive.findIndex((e) => e.name === name);\n            if (alive) {\n                if (i !== -1) {\n                    this.timeSpentAlive[i].alive = true;\n                    this.timeSpentAlive[i].spawnedAt = time;\n                } else {\n                    this.timeSpentAlive.push({ name: name, timeSpentAlive: 0, spawnedAt: time, alive: true, count: 0 });\n                }\n            } else {\n                const timeAlive = time - this.timeSpentAlive[i].spawnedAt;\n                this.timeSpentAlive[i].alive = false;\n                this.timeSpentAlive[i].timeSpentAlive += timeAlive;\n                this.timeSpentAlive[i].count += 1;\n            }\n        }\n\n        addExperienceGain(unit, experience) {\n            if (!unit.isPlayer) {\n                return;\n            }\n\n            if (!this.experienceGained[unit.hrid]) {\n                this.experienceGained[unit.hrid] = {\n                    stamina: 0,\n                    intelligence: 0,\n                    attack: 0,\n                    melee: 0,\n                    defense: 0,\n                    ranged: 0,\n                    magic: 0,\n                };\n            }\n\n            const experienceGainedRate = {\n                stamina: 0,\n                intelligence: 0,\n                attack: 0,\n                melee: 0,\n                defense: 0,\n                ranged: 0,\n                magic: 0,\n            };\n\n            const primaryTraining = unit.combatDetails.combatStats.primaryTraining;\n            experienceGainedRate[primaryTraining.split('/')[2]] = 0.3;\n\n            const combatStyleDetailMap = getGameData().combatStyleDetailMap;\n            const skillExpMap = combatStyleDetailMap[unit.combatDetails.combatStats.combatStyleHrid].skillExpMap;\n            const skillExpMapLength = Object.keys(skillExpMap).length;\n\n            const focusTraining = unit.combatDetails.combatStats.focusTraining;\n            if (focusTraining && skillExpMap[focusTraining]) {\n                experienceGainedRate[focusTraining.split('/')[2]] += 0.7;\n            } else {\n                Object.keys(skillExpMap).forEach((skillHrid) => {\n                    experienceGainedRate[skillHrid.split('/')[2]] += 0.7 / skillExpMapLength;\n                });\n            }\n\n            for (const [type, rate] of Object.entries(experienceGainedRate)) {\n                if (rate <= 0) continue;\n\n                const skillExperience = rate * (1 + unit.combatDetails.combatStats[type + 'Experience']);\n\n                this.experienceGained[unit.hrid][type] +=\n                    experience *\n                    (1 + unit.combatDetails.combatStats.combatExperience) *\n                    skillExperience *\n                    (1 + unit.debuffOnLevelGap);\n            }\n        }\n\n        addEncounterEnd() {\n            this.encounters++;\n        }\n\n        addAttack(source, target, ability, hit) {\n            if (!this.attacks[source.hrid]) {\n                this.attacks[source.hrid] = {};\n            }\n            if (!this.attacks[source.hrid][target.hrid]) {\n                this.attacks[source.hrid][target.hrid] = {};\n            }\n            if (!this.attacks[source.hrid][target.hrid][ability]) {\n                this.attacks[source.hrid][target.hrid][ability] = {};\n            }\n\n            if (!this.attacks[source.hrid][target.hrid][ability][hit]) {\n                this.attacks[source.hrid][target.hrid][ability][hit] = 0;\n            }\n\n            this.attacks[source.hrid][target.hrid][ability][hit] += 1;\n\n            if (hit !== 'miss') {\n                this.totalDamageDealt[source.hrid] = (this.totalDamageDealt[source.hrid] || 0) + hit;\n            }\n        }\n\n        addConsumableUse(unit, consumable) {\n            if (!this.consumablesUsed[unit.hrid]) {\n                this.consumablesUsed[unit.hrid] = {};\n            }\n            if (!this.consumablesUsed[unit.hrid][consumable.hrid]) {\n                this.consumablesUsed[unit.hrid][consumable.hrid] = 0;\n            }\n\n            this.consumablesUsed[unit.hrid][consumable.hrid] += 1;\n        }\n\n        addHitpointsGained(unit, source, amount) {\n            if (!this.hitpointsGained[unit.hrid]) {\n                this.hitpointsGained[unit.hrid] = {};\n            }\n            if (!this.hitpointsGained[unit.hrid][source]) {\n                this.hitpointsGained[unit.hrid][source] = 0;\n            }\n\n            this.hitpointsGained[unit.hrid][source] += amount;\n        }\n\n        addManapointsGained(unit, source, amount) {\n            if (!this.manapointsGained[unit.hrid]) {\n                this.manapointsGained[unit.hrid] = {};\n            }\n            if (!this.manapointsGained[unit.hrid][source]) {\n                this.manapointsGained[unit.hrid][source] = 0;\n            }\n\n            this.manapointsGained[unit.hrid][source] += amount;\n        }\n\n        setDropRateMultipliers(unit) {\n            if (!this.dropRateMultiplier[unit.hrid]) {\n                this.dropRateMultiplier[unit.hrid] = {};\n            }\n            this.dropRateMultiplier[unit.hrid] = 1 + unit.combatDetails.combatStats.combatDropRate;\n\n            if (!this.rareFindMultiplier[unit.hrid]) {\n                this.rareFindMultiplier[unit.hrid] = {};\n            }\n            this.rareFindMultiplier[unit.hrid] = 1 + unit.combatDetails.combatStats.combatRareFind;\n\n            if (!this.combatDropQuantity[unit.hrid]) {\n                this.combatDropQuantity[unit.hrid] = {};\n            }\n            this.combatDropQuantity[unit.hrid] = unit.combatDetails.combatStats.combatDropQuantity;\n\n            if (!this.debuffOnLevelGap[unit.hrid]) {\n                this.debuffOnLevelGap[unit.hrid] = {};\n            }\n            this.debuffOnLevelGap[unit.hrid] = unit.debuffOnLevelGap;\n        }\n\n        setManaUsed(unit) {\n            this.manaUsed[unit.hrid] = {};\n            for (const [key, value] of unit.abilityManaCosts.entries()) {\n                this.manaUsed[unit.hrid][key] = value;\n            }\n        }\n\n        addHitpointsSpent(unit, source, amount) {\n            if (!this.hitpointsSpent[unit.hrid]) {\n                this.hitpointsSpent[unit.hrid] = {};\n            }\n            if (!this.hitpointsSpent[unit.hrid][source]) {\n                this.hitpointsSpent[unit.hrid][source] = 0;\n            }\n\n            this.hitpointsSpent[unit.hrid][source] += amount;\n        }\n\n        addRanOutOfManaCount(unit, isOutOfMana, time) {\n            if (isOutOfMana) this.playerRanOutOfMana[unit.hrid] = true;\n\n            if (!this.playerRanOutOfManaTime[unit.hrid]) {\n                this.playerRanOutOfManaTime[unit.hrid] = {\n                    isOutOfMana: false,\n                    startTimeForOutOfMana: 0,\n                    totalTimeForOutOfMana: 0,\n                };\n            }\n\n            if (isOutOfMana) {\n                if (!this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {\n                    this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = true;\n                    this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana = time;\n                }\n            } else if (this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {\n                this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = false;\n                this.playerRanOutOfManaTime[unit.hrid].totalTimeForOutOfMana +=\n                    time - this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana;\n            }\n        }\n    }\n\n    class AbilityCastEndEvent extends CombatEvent {\n        static type = 'abilityCastEndEvent';\n\n        constructor(time, source, ability) {\n            super(AbilityCastEndEvent.type, time);\n\n            this.source = source;\n            this.ability = ability;\n        }\n    }\n\n    class AwaitCooldownEvent extends CombatEvent {\n        static type = 'awaitCooldownEvent';\n\n        constructor(time, source) {\n            super(AwaitCooldownEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class Buff {\n        startTime;\n\n        constructor(buff, level = 1) {\n            this.uniqueHrid = buff.uniqueHrid;\n            this.typeHrid = buff.typeHrid;\n            this.ratioBoost = buff.ratioBoost + (level - 1) * buff.ratioBoostLevelBonus;\n            this.flatBoost = buff.flatBoost + (level - 1) * buff.flatBoostLevelBonus;\n            this.duration = buff.duration;\n            this.multiplierForSkillHrid = buff.multiplierForSkillHrid ?? '';\n            this.multiplierPerSkillLevel = buff.multiplierPerSkillLevel ?? 0;\n        }\n    }\n\n    class Trigger {\n        constructor(dependencyHrid, conditionHrid, comparatorHrid, value = 0) {\n            this.dependencyHrid = dependencyHrid;\n            this.conditionHrid = conditionHrid;\n            this.comparatorHrid = comparatorHrid;\n            this.value = value;\n        }\n\n        static createFromDTO(dto) {\n            const trigger = new Trigger(dto.dependencyHrid, dto.conditionHrid, dto.comparatorHrid, dto.value);\n\n            return trigger;\n        }\n\n        isActive(source, target, friendlies, enemies, currentTime) {\n            const combatTriggerDependencyDetailMap = getGameData().combatTriggerDependencyDetailMap;\n            if (combatTriggerDependencyDetailMap[this.dependencyHrid].isSingleTarget) {\n                return this.isActiveSingleTarget(source, target, currentTime);\n            } else {\n                return this.isActiveMultiTarget(friendlies, enemies, currentTime);\n            }\n        }\n\n        isActiveSingleTarget(source, target, currentTime) {\n            let dependencyValue;\n            switch (this.dependencyHrid) {\n                case '/combat_trigger_dependencies/self':\n                    dependencyValue = this.getDependencyValue(source, currentTime);\n                    break;\n                case '/combat_trigger_dependencies/targeted_enemy':\n                    if (!target) {\n                        return false;\n                    }\n                    dependencyValue = this.getDependencyValue(target, currentTime);\n                    break;\n                default:\n                    throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);\n            }\n\n            return this.compareValue(dependencyValue);\n        }\n\n        isActiveMultiTarget(friendlies, enemies, currentTime) {\n            let dependency;\n            switch (this.dependencyHrid) {\n                case '/combat_trigger_dependencies/all_allies':\n                    if (!friendlies) {\n                        return false;\n                    }\n                    dependency = friendlies;\n                    break;\n                case '/combat_trigger_dependencies/all_enemies':\n                    if (!enemies) {\n                        return false;\n                    }\n                    dependency = enemies;\n                    break;\n                default:\n                    throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);\n            }\n\n            if (!dependency) {\n                return false;\n            }\n\n            let dependencyValue;\n            switch (this.conditionHrid) {\n                case '/combat_trigger_conditions/number_of_active_units':\n                    dependencyValue = dependency.filter((unit) => unit.combatDetails.currentHitpoints > 0).length;\n                    break;\n                case '/combat_trigger_conditions/number_of_dead_units':\n                    dependencyValue = dependency.filter((unit) => unit.combatDetails.currentHitpoints <= 0).length;\n                    break;\n                case '/combat_trigger_conditions/lowest_hp_percentage':\n                    dependencyValue =\n                        dependency\n                            .filter((unit) => unit.combatDetails.currentHitpoints > 0)\n                            .reduce((prev, curr) => {\n                                const currentHpPercentage =\n                                    curr.combatDetails.currentHitpoints / curr.combatDetails.maxHitpoints;\n                                return currentHpPercentage < prev ? currentHpPercentage : prev;\n                            }, 2) * 100;\n                    break;\n                default:\n                    dependencyValue = dependency\n                        .filter((unit) => unit.combatDetails.currentHitpoints > 0)\n                        .map((unit) => this.getDependencyValue(unit, currentTime))\n                        .reduce((prev, cur) => prev + cur, 0);\n                    break;\n            }\n\n            return this.compareValue(dependencyValue);\n        }\n\n        getDependencyValue(source, currentTime) {\n            switch (this.conditionHrid) {\n                case '/combat_trigger_conditions/berserk':\n                case '/combat_trigger_conditions/frenzy':\n                case '/combat_trigger_conditions/precision':\n                case '/combat_trigger_conditions/vampirism':\n                case '/combat_trigger_conditions/attack_coffee':\n                case '/combat_trigger_conditions/defense_coffee':\n                case '/combat_trigger_conditions/lucky_coffee':\n                case '/combat_trigger_conditions/magic_coffee':\n                case '/combat_trigger_conditions/melee_coffee':\n                case '/combat_trigger_conditions/ranged_coffee':\n                case '/combat_trigger_conditions/swiftness_coffee':\n                case '/combat_trigger_conditions/wisdom_coffee':\n                case '/combat_trigger_conditions/ice_spear':\n                case '/combat_trigger_conditions/puncture':\n                case '/combat_trigger_conditions/frost_surge':\n                case '/combat_trigger_conditions/elusiveness':\n                case '/combat_trigger_conditions/channeling_coffee':\n                case '/combat_trigger_conditions/fierce_aura':\n                case '/combat_trigger_conditions/invincible_armor':\n                case '/combat_trigger_conditions/invincible_fire_resistance':\n                case '/combat_trigger_conditions/invincible_nature_resistance':\n                case '/combat_trigger_conditions/invincible_water_resistance':\n                case '/combat_trigger_conditions/provoke':\n                case '/combat_trigger_conditions/taunt':\n                case '/combat_trigger_conditions/crippling_slash':\n                case '/combat_trigger_conditions/mana_spring':\n                case '/combat_trigger_conditions/retribution':\n                case '/combat_trigger_conditions/fracturing_impact':\n                case '/combat_trigger_conditions/maim':\n                case '/combat_trigger_conditions/curse':\n                case '/combat_trigger_conditions/weaken': {\n                    const buffHrid = '/buff_uniques' + this.conditionHrid.slice(this.conditionHrid.lastIndexOf('/'));\n                    return source.combatBuffs[buffHrid];\n                }\n                case '/combat_trigger_conditions/critical_aura':\n                case '/combat_trigger_conditions/critical_coffee':\n                case '/combat_trigger_conditions/intelligence_coffee':\n                case '/combat_trigger_conditions/stamina_coffee':\n                case '/combat_trigger_conditions/elemental_affinity':\n                case '/combat_trigger_conditions/fury':\n                case '/combat_trigger_conditions/guardian_aura':\n                case '/combat_trigger_conditions/insanity':\n                case '/combat_trigger_conditions/spike_shell':\n                case '/combat_trigger_conditions/toxic_pollen':\n                case '/combat_trigger_conditions/invincible':\n                case '/combat_trigger_conditions/mystic_aura':\n                case '/combat_trigger_conditions/pestilent_shot':\n                case '/combat_trigger_conditions/smoke_burst':\n                case '/combat_trigger_conditions/speed_aura':\n                case '/combat_trigger_conditions/toughness':\n                case '/combat_trigger_conditions/enrage': {\n                    const buffPrefix = '/buff_uniques' + this.conditionHrid.slice(this.conditionHrid.lastIndexOf('/'));\n                    const buffs = Object.keys(source.combatBuffs).filter((buff) => buff.startsWith(buffPrefix));\n                    return source.combatBuffs[buffs?.[0]];\n                }\n                case '/combat_trigger_conditions/current_hp':\n                    return source.combatDetails.currentHitpoints;\n                case '/combat_trigger_conditions/current_mp':\n                    return source.combatDetails.currentManapoints;\n                case '/combat_trigger_conditions/missing_hp':\n                    return source.combatDetails.maxHitpoints - source.combatDetails.currentHitpoints;\n                case '/combat_trigger_conditions/missing_mp':\n                    return source.combatDetails.maxManapoints - source.combatDetails.currentManapoints;\n                case '/combat_trigger_conditions/stun_status':\n                    // Replicate the game's behaviour of \"stun status active\" triggers activating\n                    // immediately after the stun has worn off\n                    return source.isStunned || source.stunExpireTime === currentTime;\n                case '/combat_trigger_conditions/blind_status':\n                    return source.isBlinded || source.blindExpireTime === currentTime;\n                case '/combat_trigger_conditions/silence_status':\n                    return source.isSilenced || source.silenceExpireTime === currentTime;\n                default:\n                    throw new Error('Unknown conditionHrid in trigger: ' + this.conditionHrid);\n            }\n        }\n\n        compareValue(dependencyValue) {\n            switch (this.comparatorHrid) {\n                case '/combat_trigger_comparators/greater_than_equal':\n                    return dependencyValue >= this.value;\n                case '/combat_trigger_comparators/less_than_equal':\n                    return dependencyValue <= this.value;\n                case '/combat_trigger_comparators/is_active':\n                    return !!dependencyValue;\n                case '/combat_trigger_comparators/is_inactive':\n                    return !dependencyValue;\n                default:\n                    throw new Error('Unknown comparatorHrid in trigger: ' + this.comparatorHrid);\n            }\n        }\n    }\n\n    const abilityFromCombatStat = {\n        blaze: {\n            hrid: '/abilities/blaze',\n            name: 'Blaze',\n            description: '',\n            isSpecialAbility: false,\n            manaCost: 0,\n            cooldownDuration: 0,\n            castDuration: 0,\n            abilityEffects: [\n                {\n                    targetType: 'allEnemies',\n                    effectType: '/ability_effect_types/damage',\n                    combatStyleHrid: '/combat_styles/magic',\n                    damageType: '/damage_types/fire',\n                    baseDamageFlat: 0,\n                    baseDamageFlatLevelBonus: 0.0,\n                    baseDamageRatio: 0.3,\n                    baseDamageRatioLevelBonus: 0,\n                    bonusAccuracyRatio: 0,\n                    bonusAccuracyRatioLevelBonus: 0,\n                    damageOverTimeRatio: 0,\n                    damageOverTimeDuration: 0,\n                    armorDamageRatio: 0,\n                    armorDamageRatioLevelBonus: 0,\n                    hpDrainRatio: 0,\n                    pierceChance: 0,\n                    blindChance: 0,\n                    blindDuration: 0,\n                    silenceChance: 0,\n                    silenceDuration: 0,\n                    stunChance: 0,\n                    stunDuration: 0,\n                    spendHpRatio: 0,\n                    buffs: null,\n                },\n            ],\n            defaultCombatTriggers: [\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_enemies',\n                    conditionHrid: '/combat_trigger_conditions/number_of_active_units',\n                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',\n                    value: 1,\n                },\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_enemies',\n                    conditionHrid: '/combat_trigger_conditions/current_hp',\n                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',\n                    value: 1,\n                },\n            ],\n        },\n        bloom: {\n            hrid: '/abilities/bloom',\n            name: 'Bloom',\n            description: '',\n            isSpecialAbility: false,\n            manaCost: 0,\n            cooldownDuration: 0,\n            castDuration: 0,\n            abilityEffects: [\n                {\n                    targetType: 'lowestHpAlly',\n                    effectType: '/ability_effect_types/heal',\n                    combatStyleHrid: '/combat_styles/magic',\n                    damageType: '',\n                    baseDamageFlat: 10,\n                    baseDamageFlatLevelBonus: 0,\n                    baseDamageRatio: 0.15,\n                    baseDamageRatioLevelBonus: 0,\n                    bonusAccuracyRatio: 0,\n                    bonusAccuracyRatioLevelBonus: 0,\n                    damageOverTimeRatio: 0,\n                    damageOverTimeDuration: 0,\n                    armorDamageRatio: 0,\n                    armorDamageRatioLevelBonus: 0,\n                    hpDrainRatio: 0,\n                    pierceChance: 0,\n                    blindChance: 0,\n                    blindDuration: 0,\n                    silenceChance: 0,\n                    silenceDuration: 0,\n                    stunChance: 0,\n                    stunDuration: 0,\n                    spendHpRatio: 0,\n                    buffs: null,\n                },\n            ],\n            defaultCombatTriggers: [\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_allies',\n                    conditionHrid: '/combat_trigger_conditions/lowest_hp_percentage',\n                    comparatorHrid: '/combat_trigger_comparators/less_than_equal',\n                    value: 100,\n                },\n            ],\n        },\n    };\n\n    class Ability {\n        constructor(hrid, level = 1, triggers = null) {\n            this.hrid = hrid;\n            this.level = level;\n\n            const abilityDetailMap = getGameData().abilityDetailMap;\n            let gameAbility = abilityDetailMap[hrid];\n            if (!gameAbility) {\n                gameAbility = abilityFromCombatStat[hrid];\n            }\n            if (!gameAbility) {\n                throw new Error('No ability found for hrid: ' + this.hrid);\n            }\n\n            this.manaCost = gameAbility.manaCost;\n            this.cooldownDuration = gameAbility.cooldownDuration;\n            this.castDuration = gameAbility.castDuration;\n            this.isSpecialAbility = gameAbility.isSpecialAbility;\n\n            this.abilityEffects = [];\n\n            for (const effect of gameAbility.abilityEffects) {\n                const abilityEffect = {\n                    targetType: effect.targetType,\n                    effectType: effect.effectType,\n                    combatStyleHrid: effect.combatStyleHrid,\n                    damageType: effect.damageType,\n                    damageFlat: effect.baseDamageFlat + (this.level - 1) * effect.baseDamageFlatLevelBonus,\n                    damageRatio: effect.baseDamageRatio + (this.level - 1) * effect.baseDamageRatioLevelBonus,\n                    bonusAccuracyRatio: effect.bonusAccuracyRatio + (this.level - 1) * effect.bonusAccuracyRatioLevelBonus,\n                    damageOverTimeRatio: effect.damageOverTimeRatio,\n                    damageOverTimeDuration: effect.damageOverTimeDuration,\n                    armorDamageRatio: effect.armorDamageRatio + (this.level - 1) * effect.armorDamageRatioLevelBonus,\n                    hpDrainRatio: effect.hpDrainRatio,\n                    pierceChance: effect.pierceChance,\n                    blindChance: effect.blindChance,\n                    blindDuration: effect.blindDuration,\n                    silenceChance: effect.silenceChance,\n                    silenceDuration: effect.silenceDuration,\n                    stunChance: effect.stunChance,\n                    stunDuration: effect.stunDuration,\n                    spendHpRatio: effect.spendHpRatio,\n                    buffs: null,\n                };\n                if (effect.buffs) {\n                    abilityEffect.buffs = [];\n                    for (const buff of effect.buffs) {\n                        abilityEffect.buffs.push(new Buff(buff, this.level));\n                    }\n                }\n                this.abilityEffects.push(abilityEffect);\n            }\n\n            if (triggers) {\n                this.triggers = triggers;\n            } else {\n                this.triggers = [];\n                for (const defaultTrigger of gameAbility.defaultCombatTriggers) {\n                    const trigger = new Trigger(\n                        defaultTrigger.dependencyHrid,\n                        defaultTrigger.conditionHrid,\n                        defaultTrigger.comparatorHrid,\n                        defaultTrigger.value\n                    );\n                    this.triggers.push(trigger);\n                }\n            }\n\n            this.lastUsed = Number.MIN_SAFE_INTEGER;\n        }\n\n        static createFromDTO(dto) {\n            const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;\n            const ability = new Ability(dto.hrid, dto.level, triggers);\n\n            return ability;\n        }\n\n        shouldTrigger(currentTime, source, target, friendlies, enemies) {\n            if (source.isStunned) {\n                return false;\n            }\n\n            if (source.isSilenced) {\n                return false;\n            }\n\n            const haste = source.combatDetails.combatStats.abilityHaste;\n            let cooldownDuration = this.cooldownDuration;\n            if (haste > 0) {\n                cooldownDuration = (cooldownDuration * 100) / (100 + haste);\n            }\n\n            if (this.lastUsed + cooldownDuration > currentTime) {\n                return false;\n            }\n\n            if (this.triggers.length === 0) {\n                return true;\n            }\n\n            let shouldTrigger = true;\n            for (const trigger of this.triggers) {\n                if (!trigger.isActive(source, target, friendlies, enemies, currentTime)) {\n                    shouldTrigger = false;\n                }\n            }\n\n            return shouldTrigger;\n        }\n    }\n\n    class CombatUnit {\n        isPlayer;\n        isStunned = false;\n        stunExpireTime = null;\n        isBlinded = false;\n        blindExpireTime = null;\n        isSilenced = false;\n        silenceExpireTime = null;\n\n        isOutOfMana = false;\n\n        // Base levels which don't change after initialization\n        staminaLevel = 1;\n        intelligenceLevel = 1;\n        attackLevel = 1;\n        meleeLevel = 1;\n        defenseLevel = 1;\n        rangedLevel = 1;\n        magicLevel = 1;\n\n        experience = 0;\n        experienceRate = 0;\n        enrageTime = 0;\n\n        abilities = [null, null, null, null];\n        food = [null, null, null];\n        drinks = [null, null, null];\n        houseRooms = [];\n        abilityManaCosts = new Map();\n\n        // Calculated combat stats including temporary buffs\n        combatDetails = {\n            staminaLevel: 1,\n            intelligenceLevel: 1,\n            attackLevel: 1,\n            meleeLevel: 1,\n            defenseLevel: 1,\n            rangedLevel: 1,\n            magicLevel: 1,\n            maxHitpoints: 110,\n            currentHitpoints: 110,\n            maxManapoints: 110,\n            currentManapoints: 110,\n            stabAccuracyRating: 11,\n            slashAccuracyRating: 11,\n            smashAccuracyRating: 11,\n            rangedAccuracyRating: 11,\n            magicAccuracyRating: 11,\n            stabMaxDamage: 11,\n            slashMaxDamage: 11,\n            smashMaxDamage: 11,\n            rangedMaxDamage: 11,\n            magicMaxDamage: 11,\n            stabEvasionRating: 11,\n            slashEvasionRating: 11,\n            smashEvasionRating: 11,\n            rangedEvasionRating: 11,\n            magicEvasionRating: 11,\n            defensiveMaxDamage: 0,\n            totalArmor: 0.2,\n            totalWaterResistance: 0.4,\n            totalNatureResistance: 0.4,\n            totalFireResistance: 0.4,\n            abilityHaste: 0,\n            tenacity: 0,\n            totalThreat: 100,\n            combatStats: {\n                combatStyleHrid: '/combat_styles/smash',\n                damageType: '/damage_types/physical',\n                attackInterval: 3000000000,\n                autoAttackDamage: 0,\n                abilityDamage: 0,\n                criticalRate: 0,\n                criticalDamage: 0,\n                stabAccuracy: 0,\n                slashAccuracy: 0,\n                smashAccuracy: 0,\n                rangedAccuracy: 0,\n                magicAccuracy: 0,\n                stabDamage: 0,\n                slashDamage: 0,\n                smashDamage: 0,\n                rangedDamage: 0,\n                magicDamage: 0,\n                defensiveDamage: 0,\n                taskDamage: 0,\n                physicalAmplify: 0,\n                waterAmplify: 0,\n                natureAmplify: 0,\n                fireAmplify: 0,\n                healingAmplify: 0,\n                physicalThorns: 0,\n                elementalThorns: 0,\n                maxHitpoints: 0,\n                maxManapoints: 0,\n                stabEvasion: 0,\n                slashEvasion: 0,\n                smashEvasion: 0,\n                rangedEvasion: 0,\n                magicEvasion: 0,\n                armor: 0,\n                waterResistance: 0,\n                natureResistance: 0,\n                fireResistance: 0,\n                lifeSteal: 0,\n                hpRegenPer10: 0.01,\n                mpRegenPer10: 0.01,\n                combatDropRate: 0,\n                combatDropQuantity: 0,\n                combatRareFind: 0,\n                combatExperience: 0,\n                maxHitpointsRatio: 0,\n                maxManapointsRatio: 0,\n                foodSlots: 1,\n                drinkSlots: 1,\n                armorPenetration: 0,\n                waterPenetration: 0,\n                naturePenetration: 0,\n                firePenetration: 0,\n                manaLeech: 0,\n                castSpeed: 0,\n                threat: 100,\n                parry: 0,\n                mayhem: 0,\n                pierce: 0,\n                curse: 0,\n                ripple: 0,\n                bloom: 0,\n                blaze: 0,\n                weaken: 0,\n                fury: 0,\n                foodHaste: 0,\n                drinkConcentration: 0,\n                damageTaken: 0,\n                attackSpeed: 0,\n                armorDamageRatio: 0,\n                hpDrainRatio: 0,\n                primaryTraining: '',\n                focusTraining: '',\n                staminaExperience: 0,\n                intelligenceExperience: 0,\n                attackExperience: 0,\n                defenseExperience: 0,\n                meleeExperience: 0,\n                rangedExperience: 0,\n                magicExperience: 0,\n                retaliation: 0,\n            },\n        };\n        combatBuffs = {};\n        // All active sources per buff uniqueHrid; combatBuffs holds the strongest.\n        // The game applies the strongest source of a buff and falls back to the\n        // next strongest when it expires.\n        buffSources = new Map();\n        permanentBuffs = {};\n        zoneBuffs = {};\n        extraBuffs = {};\n        furyAmount = 0;\n        furyExpireTime = 0;\n\n        constructor() {}\n\n        updateCombatDetails() {\n            if (this.isPlayer) {\n                if (this.combatDetails.combatStats.hpRegenPer10 === 0) {\n                    this.combatDetails.combatStats.hpRegenPer10 = 0.01;\n                } else {\n                    this.combatDetails.combatStats.hpRegenPer10 = 0.01 + this.combatDetails.combatStats.hpRegenPer10;\n                }\n                if (this.combatDetails.combatStats.mpRegenPer10 === 0) {\n                    this.combatDetails.combatStats.mpRegenPer10 = 0.01;\n                } else {\n                    this.combatDetails.combatStats.mpRegenPer10 = 0.01 + this.combatDetails.combatStats.mpRegenPer10;\n                }\n            }\n\n            ['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic'].forEach((stat) => {\n                this.combatDetails[stat + 'Level'] = this[stat + 'Level'];\n                const boosts = this.getBuffBoosts('/buff_types/' + stat + '_level');\n                boosts.forEach((buff) => {\n                    this.combatDetails[stat + 'Level'] += this[stat + 'Level'] * buff.ratioBoost;\n                    this.combatDetails[stat + 'Level'] += buff.flatBoost;\n                });\n            });\n\n            this.combatDetails.maxHitpoints = Math.floor(\n                (10 * (10 + this.combatDetails.staminaLevel) + this.combatDetails.combatStats.maxHitpoints) *\n                    (1 + this.combatDetails.combatStats.maxHitpointsRatio)\n            );\n            this.combatDetails.maxManapoints = Math.floor(\n                (10 * (10 + this.combatDetails.intelligenceLevel) + this.combatDetails.combatStats.maxManapoints) *\n                    (1 + this.combatDetails.combatStats.maxManapointsRatio)\n            );\n\n            const accuracyRatioBoostFromFury = this.getBuffBoost('/buff_types/fury_accuracy').ratioBoost;\n            const damageRatioBoostFromFury = this.getBuffBoost('/buff_types/fury_damage').ratioBoost;\n\n            const accuracyRatioBoost = this.getBuffBoost('/buff_types/accuracy').ratioBoost;\n            const damageRatioBoost = this.getBuffBoost('/buff_types/damage').ratioBoost;\n\n            ['stab', 'slash', 'smash'].forEach((style) => {\n                this.combatDetails[style + 'AccuracyRating'] =\n                    (10 + this.combatDetails.attackLevel) *\n                    (1 + this.combatDetails.combatStats[style + 'Accuracy']) *\n                    (1 + accuracyRatioBoost) *\n                    (1 + accuracyRatioBoostFromFury);\n                this.combatDetails[style + 'MaxDamage'] =\n                    (10 + this.combatDetails.meleeLevel) *\n                    (1 + this.combatDetails.combatStats[style + 'Damage']) *\n                    (1 + damageRatioBoost) *\n                    (1 + damageRatioBoostFromFury);\n                const baseEvasion =\n                    (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats[style + 'Evasion']);\n                this.combatDetails[style + 'EvasionRating'] = baseEvasion;\n                const evasionBoosts = this.getBuffBoosts('/buff_types/evasion');\n                for (const boost of evasionBoosts) {\n                    this.combatDetails[style + 'EvasionRating'] += boost.flatBoost;\n                    this.combatDetails[style + 'EvasionRating'] += baseEvasion * boost.ratioBoost;\n                }\n            });\n\n            this.combatDetails.defensiveMaxDamage =\n                (10 + this.combatDetails.defenseLevel) *\n                (1 + this.combatDetails.combatStats.defensiveDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            // when equiped bulwark\n            if (this.equipment?.['/equipment_types/two_hand']?.hrid.includes('bulwark')) {\n                this.combatDetails.smashMaxDamage += this.combatDetails.defensiveMaxDamage;\n            }\n\n            this.combatDetails.rangedAccuracyRating =\n                (10 + this.combatDetails.attackLevel) *\n                (1 + this.combatDetails.combatStats.rangedAccuracy) *\n                (1 + accuracyRatioBoost) *\n                (1 + accuracyRatioBoostFromFury);\n            this.combatDetails.rangedMaxDamage =\n                (10 + this.combatDetails.rangedLevel) *\n                (1 + this.combatDetails.combatStats.rangedDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            const baseRangedEvasion =\n                (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.rangedEvasion);\n            this.combatDetails.rangedEvasionRating = baseRangedEvasion;\n            const evasionBoosts = this.getBuffBoosts('/buff_types/evasion');\n            for (const boost of evasionBoosts) {\n                this.combatDetails.rangedEvasionRating += boost.flatBoost;\n                this.combatDetails.rangedEvasionRating += baseRangedEvasion * boost.ratioBoost;\n            }\n\n            this.combatDetails.combatStats.damageTaken = this.getBuffBoost('/buff_types/damage_taken').flatBoost;\n\n            this.combatDetails.magicAccuracyRating =\n                (10 + this.combatDetails.attackLevel) *\n                (1 + this.combatDetails.combatStats.magicAccuracy) *\n                (1 + accuracyRatioBoost) *\n                (1 + accuracyRatioBoostFromFury);\n            this.combatDetails.magicMaxDamage =\n                (10 + this.combatDetails.magicLevel) *\n                (1 + this.combatDetails.combatStats.magicDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            const baseMagicEvasion =\n                (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.magicEvasion);\n            this.combatDetails.magicEvasionRating = baseMagicEvasion;\n            for (const boost of evasionBoosts) {\n                this.combatDetails.magicEvasionRating += boost.flatBoost;\n                this.combatDetails.magicEvasionRating += baseMagicEvasion * boost.ratioBoost;\n            }\n\n            this.combatDetails.combatStats.physicalAmplify += this.getBuffBoost('/buff_types/physical_amplify').flatBoost;\n            this.combatDetails.combatStats.waterAmplify += this.getBuffBoost('/buff_types/water_amplify').flatBoost;\n            this.combatDetails.combatStats.natureAmplify += this.getBuffBoost('/buff_types/nature_amplify').flatBoost;\n            this.combatDetails.combatStats.fireAmplify += this.getBuffBoost('/buff_types/fire_amplify').flatBoost;\n            this.combatDetails.combatStats.healingAmplify += this.getBuffBoost('/buff_types/healing_amplify').flatBoost;\n\n            this.combatDetails.combatStats.attackInterval /= 1 + this.combatDetails.attackLevel / 2000;\n\n            const baseAttackSpeed = this.combatDetails.combatStats.attackSpeed;\n            this.combatDetails.combatStats.attackInterval /= 1 + baseAttackSpeed;\n            const attackIntervalBoosts = this.getBuffBoosts('/buff_types/attack_speed');\n            const attackIntervalRatioBoost = attackIntervalBoosts\n                .map((boost) => boost.ratioBoost)\n                .reduce((prev, cur) => prev + cur, 0);\n            this.combatDetails.combatStats.attackInterval /= 1 + attackIntervalRatioBoost;\n\n            const baseArmor = 0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.armor;\n            this.combatDetails.totalArmor = baseArmor;\n            const armorBoosts = this.getBuffBoosts('/buff_types/armor');\n            for (const boost of armorBoosts) {\n                this.combatDetails.totalArmor += boost.flatBoost;\n                this.combatDetails.totalArmor += baseArmor * boost.ratioBoost;\n            }\n\n            const baseWaterResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.waterResistance;\n            this.combatDetails.totalWaterResistance = baseWaterResistance;\n            const waterResistanceBoosts = this.getBuffBoosts('/buff_types/water_resistance');\n            for (const boost of waterResistanceBoosts) {\n                this.combatDetails.totalWaterResistance += boost.flatBoost;\n                this.combatDetails.totalWaterResistance += baseWaterResistance * boost.ratioBoost;\n            }\n\n            const baseNatureResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.natureResistance;\n            this.combatDetails.totalNatureResistance = baseNatureResistance;\n            const natureResistanceBoosts = this.getBuffBoosts('/buff_types/nature_resistance');\n            for (const boost of natureResistanceBoosts) {\n                this.combatDetails.totalNatureResistance += boost.flatBoost;\n                this.combatDetails.totalNatureResistance += baseNatureResistance * boost.ratioBoost;\n            }\n\n            const baseFireResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.fireResistance;\n            this.combatDetails.totalFireResistance = baseFireResistance;\n            const fireResistanceBoosts = this.getBuffBoosts('/buff_types/fire_resistance');\n            for (const boost of fireResistanceBoosts) {\n                this.combatDetails.totalFireResistance += boost.flatBoost;\n                this.combatDetails.totalFireResistance += baseFireResistance * boost.ratioBoost;\n            }\n\n            const hpRegenBoosts = this.getBuffBoost('/buff_types/hp_regen');\n            this.combatDetails.combatStats.hpRegenPer10 +=\n                this.combatDetails.combatStats.hpRegenPer10 * hpRegenBoosts.ratioBoost;\n            this.combatDetails.combatStats.hpRegenPer10 += hpRegenBoosts.flatBoost;\n\n            const mpRegenBoosts = this.getBuffBoost('/buff_types/mp_regen');\n            this.combatDetails.combatStats.mpRegenPer10 +=\n                this.combatDetails.combatStats.mpRegenPer10 * mpRegenBoosts.ratioBoost;\n            this.combatDetails.combatStats.mpRegenPer10 += mpRegenBoosts.flatBoost;\n\n            this.combatDetails.combatStats.lifeSteal += this.getBuffBoost('/buff_types/life_steal').flatBoost;\n            this.combatDetails.combatStats.physicalThorns += this.getBuffBoost('/buff_types/physical_thorns').flatBoost;\n            this.combatDetails.combatStats.elementalThorns += this.getBuffBoost('/buff_types/elemental_thorns').flatBoost;\n            this.combatDetails.combatStats.combatExperience += this.getBuffBoost('/buff_types/wisdom').flatBoost;\n            this.combatDetails.combatStats.criticalRate += this.getBuffBoost('/buff_types/critical_rate').flatBoost;\n            this.combatDetails.combatStats.criticalDamage += this.getBuffBoost('/buff_types/critical_damage').flatBoost;\n\n            this.combatDetails.combatStats.castSpeed += this.getBuffBoost('/buff_types/cast_speed').flatBoost;\n            this.combatDetails.combatStats.castSpeed += this.combatDetails['attackLevel'] / 2000;\n\n            const combatDropRateBoosts = this.getBuffBoost('/buff_types/combat_drop_rate');\n            this.combatDetails.combatStats.combatDropRate +=\n                (1 + this.combatDetails.combatStats.combatDropRate) * combatDropRateBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatDropRate += combatDropRateBoosts.flatBoost;\n            const combatRareFindBoosts = this.getBuffBoost('/buff_types/rare_find');\n            this.combatDetails.combatStats.combatRareFind +=\n                (1 + this.combatDetails.combatStats.combatRareFind) * combatRareFindBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatRareFind += combatRareFindBoosts.flatBoost;\n            const combatDropQuantityBoosts = this.getBuffBoost('/buff_types/combat_drop_quantity');\n            this.combatDetails.combatStats.combatDropQuantity +=\n                (1 + this.combatDetails.combatStats.combatDropQuantity) * combatDropQuantityBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatDropQuantity += combatDropQuantityBoosts.flatBoost;\n\n            const baseThreat = 100 + this.combatDetails.combatStats.threat;\n            this.combatDetails.totalThreat = baseThreat;\n            const threatBoosts = this.getBuffBoost('/buff_types/threat');\n            if (threatBoosts.ratioBoost !== 0) {\n                this.combatDetails.combatStats.threat += baseThreat * threatBoosts.ratioBoost;\n            } else {\n                this.combatDetails.combatStats.threat = baseThreat;\n            }\n            this.combatDetails.combatStats.threat += threatBoosts.flatBoost;\n\n            this.combatDetails.combatStats.retaliation += this.getBuffBoost('/buff_types/retaliation').flatBoost;\n            this.combatDetails.combatStats.tenacity += this.getBuffBoost('/buff_types/tenacity').flatBoost;\n        }\n\n        addBuff(buff, currentTime) {\n            // Clone: buff definitions are shared across aura targets and sim runs\n            const instance = structuredClone(buff);\n            instance.startTime = currentTime;\n\n            let sources = this.buffSources.get(instance.uniqueHrid);\n            if (!sources) {\n                sources = [];\n                this.buffSources.set(instance.uniqueHrid, sources);\n            }\n\n            // Drop expired sources, then refresh-in-place when the same-strength\n            // source reapplies (recast/re-tick) so lists stay bounded\n            const active = sources.filter((b) => b.startTime + b.duration > currentTime);\n            const sameStrength = active.findIndex(\n                (b) => b.ratioBoost === instance.ratioBoost && b.flatBoost === instance.flatBoost\n            );\n            if (sameStrength !== -1) {\n                active[sameStrength] = instance;\n            } else {\n                active.push(instance);\n            }\n            this.buffSources.set(instance.uniqueHrid, active);\n\n            this.combatBuffs[instance.uniqueHrid] = this.strongestBuff(active);\n\n            this.updateCombatDetails();\n        }\n\n        /**\n         * Pick the strongest source of a buff (largest magnitude — debuffs like\n         * curse carry negative boosts, so compare absolute values).\n         * @param {Array<Object>} sources - Active buff instances for one uniqueHrid\n         * @returns {Object} The strongest buff instance\n         */\n        strongestBuff(sources) {\n            let strongest = sources[0];\n            for (let i = 1; i < sources.length; i++) {\n                const b = sources[i];\n                const ratioDiff = Math.abs(b.ratioBoost) - Math.abs(strongest.ratioBoost);\n                if (ratioDiff > 0 || (ratioDiff === 0 && Math.abs(b.flatBoost) > Math.abs(strongest.flatBoost))) {\n                    strongest = b;\n                }\n            }\n            return strongest;\n        }\n\n        removeBuff(buff) {\n            if (!this.combatBuffs[buff.uniqueHrid]) {\n                return;\n            }\n            delete this.combatBuffs[buff.uniqueHrid];\n            this.buffSources.delete(buff.uniqueHrid);\n\n            this.updateCombatDetails();\n        }\n\n        /**\n         * Update fury accuracy and damage buffs in a single batch, calling updateCombatDetails() once.\n         * @param {number} furyAmount - Current fury stack count (0-5)\n         * @param {number} furyStat - Fury combat stat value\n         * @param {number} currentTime - Simulation time for buff start\n         * @param {number} duration - Buff duration (fury expire time)\n         */\n        updateFuryBuffs(furyAmount, furyStat, currentTime, duration) {\n            if (furyAmount > 0) {\n                this.combatBuffs['/buff_uniques/fury_accuracy'] = {\n                    uniqueHrid: '/buff_uniques/fury_accuracy',\n                    typeHrid: '/buff_types/fury_accuracy',\n                    ratioBoost: furyAmount * furyStat,\n                    ratioBoostLevelBonus: 0,\n                    flatBoost: 0,\n                    flatBoostLevelBonus: 0,\n                    startTime: currentTime,\n                    duration: duration,\n                };\n                this.combatBuffs['/buff_uniques/fury_damage'] = {\n                    uniqueHrid: '/buff_uniques/fury_damage',\n                    typeHrid: '/buff_types/fury_damage',\n                    ratioBoost: furyAmount * furyStat,\n                    ratioBoostLevelBonus: 0,\n                    flatBoost: 0,\n                    flatBoostLevelBonus: 0,\n                    startTime: currentTime,\n                    duration: duration,\n                };\n            } else {\n                delete this.combatBuffs['/buff_uniques/fury_accuracy'];\n                delete this.combatBuffs['/buff_uniques/fury_damage'];\n            }\n            this.updateCombatDetails();\n        }\n\n        addPermanentBuff(buff) {\n            if (this.permanentBuffs[buff.typeHrid]) {\n                this.permanentBuffs[buff.typeHrid].flatBoost += buff.flatBoost;\n                this.permanentBuffs[buff.typeHrid].ratioBoost += buff.ratioBoost;\n            } else {\n                // Clone: buff objects can be shared across party members (extraBuffs/zoneBuffs), so never mutate them\n                this.permanentBuffs[buff.typeHrid] = structuredClone(buff);\n            }\n        }\n\n        generatePermanentBuffs() {\n            for (let i = 0; i < this.houseRooms.length; i++) {\n                const houseRoom = this.houseRooms[i];\n                houseRoom.buffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n            if (this.zoneBuffs) {\n                this.zoneBuffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n            if (this.extraBuffs) {\n                this.extraBuffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n        }\n\n        removeExpiredBuffs(currentTime) {\n            for (const [uniqueHrid, sources] of this.buffSources) {\n                const active = sources.filter((b) => b.startTime + b.duration > currentTime);\n                if (active.length === sources.length) {\n                    continue;\n                }\n                if (active.length === 0) {\n                    this.buffSources.delete(uniqueHrid);\n                    delete this.combatBuffs[uniqueHrid];\n                } else {\n                    // Strongest source expired → fall back to the next strongest\n                    this.buffSources.set(uniqueHrid, active);\n                    this.combatBuffs[uniqueHrid] = this.strongestBuff(active);\n                }\n            }\n\n            // Buffs written directly to combatBuffs (fury) have no source list\n            for (const buff of Object.values(this.combatBuffs)) {\n                if (!this.buffSources.has(buff.uniqueHrid) && buff.startTime + buff.duration <= currentTime) {\n                    delete this.combatBuffs[buff.uniqueHrid];\n                }\n            }\n\n            this.updateCombatDetails();\n        }\n\n        clearBuffs() {\n            this.combatBuffs = structuredClone(this.permanentBuffs);\n            this.buffSources = new Map();\n            this.furyAmount = 0;\n            this.furyExpireTime = 0;\n            this.updateCombatDetails();\n        }\n\n        clearCCs() {\n            this.isStunned = false;\n            this.stunExpireTime = null;\n            this.isSilenced = false;\n            this.silenceExpireTime = null;\n            this.isBlinded = false;\n            this.blindExpireTime = null;\n            this.combatDetails.combatStats.damageTaken = 0;\n        }\n\n        getBuffBoosts(type) {\n            const boosts = [];\n            Object.values(this.combatBuffs)\n                .filter((buff) => buff.typeHrid === type)\n                .forEach((buff) => {\n                    boosts.push({ ratioBoost: buff.ratioBoost, flatBoost: buff.flatBoost });\n                });\n\n            return boosts;\n        }\n\n        getBuffBoost(type) {\n            const boosts = this.getBuffBoosts(type);\n\n            const boost = {\n                ratioBoost: 0,\n                flatBoost: 0,\n            };\n\n            for (let i = 0; i < boosts.length; i++) {\n                boost.ratioBoost += boosts[i]?.ratioBoost ?? 0;\n                boost.flatBoost += boosts[i]?.flatBoost ?? 0;\n            }\n\n            return boost;\n        }\n\n        reset(currentTime = 0) {\n            this.clearCCs();\n\n            if (currentTime === 0 || !this.isPlayer) {\n                // First combat start or enemy reset: full reset\n                this.clearBuffs();\n                this.resetCooldowns(currentTime);\n            } else {\n                // Dungeon wipe restart (players only): remove expired buffs, keep cooldowns\n                this.removeExpiredBuffs(currentTime);\n            }\n\n            this.updateCombatDetails();\n            this.combatDetails.currentHitpoints = this.combatDetails.maxHitpoints;\n            this.combatDetails.currentManapoints = this.combatDetails.maxManapoints;\n        }\n\n        resetCooldowns(currentTime = 0) {\n            this.food.filter((food) => food !== null).forEach((food) => (food.lastUsed = Number.MIN_SAFE_INTEGER));\n            this.drinks.filter((drink) => drink !== null).forEach((drink) => (drink.lastUsed = Number.MIN_SAFE_INTEGER));\n\n            const haste = this.combatDetails.combatStats.abilityHaste;\n\n            this.abilities\n                .filter((ability) => ability !== null)\n                .forEach((ability) => {\n                    if (this.isPlayer) {\n                        ability.lastUsed = Number.MIN_SAFE_INTEGER;\n                    } else {\n                        let cooldownDuration = ability.cooldownDuration;\n                        if (haste > 0) {\n                            cooldownDuration = (cooldownDuration * 100) / (100 + haste);\n                        }\n                        ability.lastUsed =\n                            currentTime -\n                            Math.floor(cooldownDuration * 0.5) +\n                            Math.floor(Math.random() * cooldownDuration * 0.5);\n                    }\n                });\n        }\n\n        addHitpoints(hitpoints) {\n            let hitpointsAdded = 0;\n\n            if (this.combatDetails.currentHitpoints >= this.combatDetails.maxHitpoints) {\n                return hitpointsAdded;\n            }\n\n            const newHitpoints = Math.min(this.combatDetails.currentHitpoints + hitpoints, this.combatDetails.maxHitpoints);\n            hitpointsAdded = newHitpoints - this.combatDetails.currentHitpoints;\n            this.combatDetails.currentHitpoints = newHitpoints;\n\n            return hitpointsAdded;\n        }\n\n        addManapoints(manapoints) {\n            let manapointsAdded = 0;\n\n            if (this.combatDetails.currentManapoints >= this.combatDetails.maxManapoints) {\n                return manapointsAdded;\n            }\n\n            const newManapoints = Math.min(\n                this.combatDetails.currentManapoints + manapoints,\n                this.combatDetails.maxManapoints\n            );\n            manapointsAdded = newManapoints - this.combatDetails.currentManapoints;\n            this.combatDetails.currentManapoints = newManapoints;\n\n            return manapointsAdded;\n        }\n    }\n\n    const LABYRINTH_BASE_ROOM_LEVEL = 100;\n\n    class Monster extends CombatUnit {\n        difficultyTier = 0;\n        roomLevel = 0;\n\n        constructor(hrid, difficultyTier = 0, roomLevel = 0) {\n            super();\n\n            this.isPlayer = false;\n            this.hrid = hrid;\n            this.difficultyTier = difficultyTier;\n            this.roomLevel = roomLevel;\n\n            const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;\n            const gameMonster = combatMonsterDetailMap[this.hrid];\n            if (!gameMonster) {\n                throw new Error('No monster found for hrid: ' + this.hrid);\n            }\n\n            this.enrageTime = gameMonster.enrageTime;\n\n            // Labyrinth scaling: ability levels scale by roomLevel / 100\n            const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;\n\n            for (let i = 0; i < gameMonster.abilities.length; i++) {\n                if (gameMonster.abilities[i].minDifficultyTier > this.difficultyTier) {\n                    continue;\n                }\n                const baseLevel = gameMonster.abilities[i].level;\n                const scaledLevel = this.roomLevel > 0 ? Math.floor(baseLevel * labyrinthScaleFactor) : baseLevel;\n                this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, scaledLevel);\n            }\n        }\n\n        updateCombatDetails() {\n            const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;\n            const gameMonster = combatMonsterDetailMap[this.hrid];\n\n            const levelMultiplier = 1.0 + 0.25 * this.difficultyTier;\n            const defLevelMultiplier = 1.0 + 0.15 * this.difficultyTier;\n            const levelBonus = 20.0 * this.difficultyTier;\n\n            // Labyrinth scaling: all levels multiply by roomLevel / 100\n            const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;\n\n            this.staminaLevel =\n                levelMultiplier * (gameMonster.combatDetails.staminaLevel + levelBonus) * labyrinthScaleFactor;\n            this.intelligenceLevel =\n                levelMultiplier * (gameMonster.combatDetails.intelligenceLevel + levelBonus) * labyrinthScaleFactor;\n            this.attackLevel =\n                levelMultiplier * (gameMonster.combatDetails.attackLevel + levelBonus) * labyrinthScaleFactor;\n            this.meleeLevel = levelMultiplier * (gameMonster.combatDetails.meleeLevel + levelBonus) * labyrinthScaleFactor;\n            this.defenseLevel =\n                defLevelMultiplier * (gameMonster.combatDetails.defenseLevel + levelBonus) * labyrinthScaleFactor;\n            this.rangedLevel =\n                levelMultiplier * (gameMonster.combatDetails.rangedLevel + levelBonus) * labyrinthScaleFactor;\n            this.magicLevel = levelMultiplier * (gameMonster.combatDetails.magicLevel + levelBonus) * labyrinthScaleFactor;\n\n            const expMultiplier = 1.0 + 0.5 * this.difficultyTier;\n            const expBonus = 5.0 * this.difficultyTier;\n\n            this.experience = expMultiplier * (gameMonster.experience + expBonus);\n\n            this.combatDetails.combatStats.combatStyleHrid = gameMonster.combatDetails.combatStats.combatStyleHrids[0];\n\n            for (const [key, value] of Object.entries(gameMonster.combatDetails.combatStats)) {\n                this.combatDetails.combatStats[key] = value;\n            }\n\n            [\n                'stabAccuracy',\n                'slashAccuracy',\n                'smashAccuracy',\n                'rangedAccuracy',\n                'magicAccuracy',\n                'stabDamage',\n                'slashDamage',\n                'smashDamage',\n                'rangedDamage',\n                'magicDamage',\n                'defensiveDamage',\n                'taskDamage',\n                'physicalAmplify',\n                'waterAmplify',\n                'natureAmplify',\n                'fireAmplify',\n                'healingAmplify',\n                'stabEvasion',\n                'slashEvasion',\n                'smashEvasion',\n                'rangedEvasion',\n                'magicEvasion',\n                'armor',\n                'waterResistance',\n                'natureResistance',\n                'fireResistance',\n                'maxHitpoints',\n                'maxManapoints',\n                'lifeSteal',\n                'hpRegenPer10',\n                'mpRegenPer10',\n                'physicalThorns',\n                'elementalThorns',\n                'combatDropRate',\n                'combatRareFind',\n                'combatDropQuantity',\n                'combatExperience',\n                'criticalRate',\n                'criticalDamage',\n                'armorPenetration',\n                'waterPenetration',\n                'naturePenetration',\n                'firePenetration',\n                'abilityHaste',\n                'tenacity',\n                'manaLeech',\n                'castSpeed',\n                'threat',\n                'parry',\n                'mayhem',\n                'pierce',\n                'curse',\n                'fury',\n                'weaken',\n                'ripple',\n                'bloom',\n                'blaze',\n                'attackSpeed',\n                'foodHaste',\n                'drinkConcentration',\n                'autoAttackDamage',\n                'abilityDamage',\n                'retaliation',\n            ].forEach((stat) => {\n                if (gameMonster.combatDetails.combatStats[stat] == null) {\n                    this.combatDetails.combatStats[stat] = 0;\n                }\n            });\n\n            if (this.combatDetails.combatStats.attackInterval === 0) {\n                this.combatDetails.combatStats.attackInterval = gameMonster.combatDetails.attackInterval;\n            }\n\n            super.updateCombatDetails();\n\n            // Labyrinth: armor/resistances scale linearly from base values. defenseLevel already includes\n            // the room scale, so recompute from unscaled defense instead of multiplying the totals again\n            // (which would compound the room-level factor on the defense-derived component).\n            if (this.roomLevel > 0) {\n                const scaleFactor = this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL;\n                const unscaledDefense = this.defenseLevel / scaleFactor;\n                const combatStats = this.combatDetails.combatStats;\n                this.combatDetails.totalArmor = (0.2 * unscaledDefense + combatStats.armor) * scaleFactor;\n                this.combatDetails.totalWaterResistance =\n                    (0.2 * unscaledDefense + combatStats.waterResistance) * scaleFactor;\n                this.combatDetails.totalNatureResistance =\n                    (0.2 * unscaledDefense + combatStats.natureResistance) * scaleFactor;\n                this.combatDetails.totalFireResistance = (0.2 * unscaledDefense + combatStats.fireResistance) * scaleFactor;\n            }\n        }\n    }\n\n    const ONE_SECOND = 1e9;\n    const HOT_TICK_INTERVAL = 5 * ONE_SECOND;\n    const DOT_TICK_INTERVAL = 3 * ONE_SECOND;\n    const REGEN_TICK_INTERVAL = 10 * ONE_SECOND;\n    const ENEMY_RESPAWN_INTERVAL = 3 * ONE_SECOND;\n    const PLAYER_RESPAWN_INTERVAL = 150 * ONE_SECOND;\n    const RESTART_INTERVAL = 3 * ONE_SECOND;\n    const ENRAGE_TICK_INTERVAL = 60 * ONE_SECOND;\n\n    class CombatSimulator {\n        /**\n         * @param {Array} players\n         * @param {Object} zone\n         * @param {Function} [onProgress] - Optional progress callback receiving { zone, difficultyTier, progress }\n         * @param {Labyrinth} [labyrinth] - Optional labyrinth encounter manager (replaces zone encounter logic)\n         */\n        constructor(players, zone, onProgress, labyrinth) {\n            this.players = players;\n            this.zone = zone;\n            this.labyrinth = labyrinth || null;\n            this.onProgress = onProgress;\n            this.eventQueue = new EventQueue();\n            this.simResult = new SimResult(zone, players.length);\n            this.allPlayersDead = false;\n\n            this.wipeLogs = {\n                buffer: new Array(200),\n                index: 0,\n                count: 0,\n                maxSize: 200,\n            };\n        }\n\n        addToWipeLogs(logEntry) {\n            const { buffer, maxSize } = this.wipeLogs;\n\n            buffer[this.wipeLogs.index] = logEntry;\n            this.wipeLogs.index = (this.wipeLogs.index + 1) % maxSize;\n            this.wipeLogs.count = Math.min(this.wipeLogs.count + 1, maxSize);\n        }\n\n        logAndResetWipeLogs() {\n            const logs = this.getOrderedWipeLogs();\n\n            logs.forEach((log) => {\n                if (log.error) {\n                    console.log(log.error);\n                }\n            });\n\n            this.wipeLogs.index = 0;\n            this.wipeLogs.count = 0;\n        }\n\n        buildCombatLog(source, ability, target, damageDone) {\n            try {\n                const sourceHrid = source?.hrid || 'UNKNOWN_SOURCE';\n                const targetHrid = target?.hrid || 'UNKNOWN_TARGET';\n\n                const afterHp = target?.combatDetails?.currentHitpoints || 0;\n                const beforeHp = Math.max(0, afterHp + damageDone);\n\n                const playersHp = this.players.map((p) => ({\n                    hrid: p.hrid || 'UNKNOWN_PLAYER',\n                    current: p.combatDetails?.currentHitpoints ?? 0,\n                    max: p.combatDetails?.maxHitpoints ?? 0,\n                }));\n\n                return {\n                    time: this.simulationTime,\n                    wave: this.zone.encountersKilled - 1,\n                    source: sourceHrid,\n                    ability: ability,\n                    target: targetHrid,\n                    damage: damageDone,\n                    beforeHp: beforeHp,\n                    afterHp: afterHp,\n                    playersHp: playersHp,\n                    isCrit: false,\n                };\n            } catch (e) {\n                return {\n                    error: `[Log generation error] ${e.message}`,\n                };\n            }\n        }\n\n        generateCombatLog(source, ability, target, attackResult) {\n            try {\n                const sourceHrid = source?.hrid || 'UNKNOWN_SOURCE';\n                const targetHrid = target?.hrid || 'UNKNOWN_TARGET';\n                const damage = attackResult?.damageDone || 0;\n\n                const afterHp = target?.combatDetails?.currentHitpoints || 0;\n                const beforeHp = Math.max(0, afterHp + damage);\n\n                const playersHp = this.players.map((p) => ({\n                    hrid: p.hrid || 'UNKNOWN_PLAYER',\n                    current: p.combatDetails?.currentHitpoints ?? 0,\n                    max: p.combatDetails?.maxHitpoints ?? 0,\n                }));\n\n                return {\n                    time: this.simulationTime,\n                    wave: this.zone.encountersKilled - 1,\n                    source: sourceHrid,\n                    ability: ability,\n                    target: targetHrid,\n                    damage: damage,\n                    beforeHp: beforeHp,\n                    afterHp: afterHp,\n                    playersHp: playersHp,\n                    isCrit: attackResult?.isCrit || false,\n                };\n            } catch (e) {\n                return {\n                    error: `[Log generation error] ${e.message}`,\n                };\n            }\n        }\n\n        getOrderedWipeLogs() {\n            const { buffer, maxSize, count } = this.wipeLogs;\n            const logs = [];\n\n            for (let i = 0; i < count; i++) {\n                const idx = (this.wipeLogs.index - count + maxSize + i) % maxSize;\n                logs.push(buffer[idx]);\n            }\n\n            return logs;\n        }\n\n        saveWipeLogsToSimResult(wave) {\n            const logs = this.getOrderedWipeLogs();\n            this.simResult.addWipeEvent(logs, this.simulationTime, wave);\n        }\n\n        /**\n         * Run the combat simulation synchronously.\n         * @param {number} simulationTimeLimit - Simulation time limit in nanoseconds\n         * @returns {SimResult}\n         */\n        simulate(simulationTimeLimit) {\n            this.reset();\n\n            let ticks = 0;\n\n            const combatStartEvent = new CombatStartEvent(0);\n            this.eventQueue.addEvent(combatStartEvent);\n\n            while (this.simulationTime < simulationTimeLimit) {\n                const nextEvent = this.eventQueue.getNextEvent();\n                this.processEvent(nextEvent);\n\n                ticks++;\n                if (ticks === 50000) {\n                    ticks = 0;\n                    if (this.onProgress) {\n                        this.onProgress({\n                            zone: this.zone.hrid,\n                            difficultyTier: this.zone.difficultyTier,\n                            progress: Math.min(this.simulationTime / simulationTimeLimit, 1),\n                        });\n                    }\n                }\n            }\n\n            this.simResult.isDungeon = this.zone.isDungeon;\n            if (this.simResult.isDungeon) {\n                this.simResult.dungeonsCompleted = this.zone.dungeonsCompleted;\n                this.simResult.dungeonsFailed = this.zone.dungeonsFailed;\n                if (this.simResult.dungeonsCompleted < 1) {\n                    this.simResult.maxWaveReached = 0;\n                    for (let i = 1; i <= this.zone.dungeonSpawnInfo.maxWaves; i++) {\n                        const waveName = '#' + i.toString();\n                        const idx = this.simResult.timeSpentAlive.findIndex((e) => e.name === waveName);\n                        if (idx === -1 || this.simResult.timeSpentAlive[idx].count === 0) {\n                            break;\n                        }\n                        this.simResult.maxWaveReached = i;\n                    }\n                } else {\n                    this.simResult.maxWaveReached = this.zone.dungeonSpawnInfo.maxWaves;\n                }\n            }\n\n            // Labyrinth result tracking\n            if (this.labyrinth) {\n                this.simResult.isLabyrinth = true;\n                this.simResult.labyAttemptCount = this.labyrinth.attemptCount;\n                this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;\n                this.simResult.roomLevel = this.labyrinth.roomLevel;\n            }\n\n            this.simResult.simulatedTime = this.simulationTime;\n\n            for (let i = 0; i < this.players.length; i++) {\n                this.simResult.setDropRateMultipliers(this.players[i]);\n                this.simResult.setManaUsed(this.players[i]);\n            }\n\n            if (this.zone.isDungeon) {\n                Object.entries(this.zone.dungeonSpawnInfo.fixedSpawnsMap).forEach(([wave, monsters]) => {\n                    let waveName = '#' + wave.toString();\n                    monsters.forEach((monster) => {\n                        waveName += ',' + monster.combatMonsterHrid;\n                    });\n                    this.simResult.bossSpawns.push(waveName);\n                });\n            }\n            if (this.zone.monsterSpawnInfo.bossSpawns) {\n                for (const boss of this.zone.monsterSpawnInfo.bossSpawns) {\n                    this.simResult.bossSpawns.push(boss.combatMonsterHrid);\n                }\n            }\n\n            return this.simResult;\n        }\n\n        reset() {\n            this.tempDungeonCount = 0;\n            this.simulationTime = 0;\n            this.eventQueue.clear();\n            this.simResult = new SimResult(this.zone, this.players.length);\n        }\n\n        processEvent(event) {\n            this.simulationTime = event.time;\n\n            switch (event.type) {\n                case CombatStartEvent.type:\n                    this.processCombatStartEvent(event);\n                    break;\n                case PlayerRespawnEvent.type:\n                    this.processPlayerRespawnEvent(event);\n                    break;\n                case EnemyRespawnEvent.type:\n                    this.processEnemyRespawnEvent(event);\n                    break;\n                case AutoAttackEvent.type:\n                    this.processAutoAttackEvent(event);\n                    break;\n                case ConsumableTickEvent.type:\n                    this.processConsumableTickEvent(event);\n                    break;\n                case DamageOverTimeEvent.type:\n                    this.processDamageOverTimeTickEvent(event);\n                    break;\n                case CheckBuffExpirationEvent.type:\n                    this.processCheckBuffExpirationEvent(event);\n                    break;\n                case RegenTickEvent.type:\n                    this.processRegenTickEvent(event);\n                    break;\n                case StunExpirationEvent.type:\n                    this.processStunExpirationEvent(event);\n                    break;\n                case BlindExpirationEvent.type:\n                    this.processBlindExpirationEvent(event);\n                    break;\n                case SilenceExpirationEvent.type:\n                    this.processSilenceExpirationEvent(event);\n                    break;\n                case CurseExpirationEvent.type:\n                    this.processCurseExpirationEvent(event);\n                    break;\n                case WeakenExpirationEvent.type:\n                    this.processWeakenExpirationEvent(event);\n                    break;\n                case FuryExpirationEvent.type:\n                    this.processFuryExpirationEvent(event);\n                    break;\n                case EnrageTickEvent.type:\n                    this.processEnrageTickEvent(event);\n                    break;\n                case AbilityCastEndEvent.type:\n                    this.tryUseAbility(event.source, event.ability);\n                    break;\n                case AwaitCooldownEvent.type:\n                    this.addNextAttackEvent(event.source);\n                    break;\n            }\n\n            this.checkTriggers();\n        }\n\n        processCombatStartEvent(event) {\n            for (let i = 0; i < this.players.length; i++) {\n                if (event.time === 0) {\n                    // First combat start event\n                    this.players[i].generatePermanentBuffs();\n                }\n                if (this.labyrinth) {\n                    // Labyrinth: full reset every encounter (independent fights)\n                    this.players[i].reset(0);\n                } else {\n                    this.players[i].reset(this.simulationTime);\n                }\n            }\n\n            const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);\n            this.eventQueue.addEvent(regenTickEvent);\n\n            this.startNewEncounter();\n        }\n\n        processPlayerRespawnEvent(event) {\n            const respawningPlayer = this.players.find((player) => player.hrid === event.hrid);\n            respawningPlayer.combatDetails.currentHitpoints = respawningPlayer.combatDetails.maxHitpoints;\n            respawningPlayer.combatDetails.currentManapoints = respawningPlayer.combatDetails.maxManapoints;\n            respawningPlayer.clearBuffs();\n            respawningPlayer.clearCCs();\n            if (this.allPlayersDead) {\n                this.allPlayersDead = false;\n                this.startAttacks();\n            } else {\n                this.addNextAttackEvent(respawningPlayer);\n            }\n        }\n\n        processEnemyRespawnEvent(_event) {\n            this.startNewEncounter();\n        }\n\n        startNewEncounter() {\n            if (this.allPlayersDead) {\n                this.allPlayersDead = false;\n                if (!this.labyrinth) {\n                    this.zone.failWave();\n                }\n            }\n\n            if (this.labyrinth) {\n                this.enemies = this.labyrinth.getMonster();\n                this.labyrinth.updateEncounterStartTime(this.simulationTime);\n            } else if (!this.zone.isDungeon) {\n                this.enemies = this.zone.getRandomEncounter();\n            } else {\n                this.enemies = this.zone.getNextWave();\n                this.simResult.updateTimeSpentAlive(\n                    '#' + (this.zone.encountersKilled - 1).toString(),\n                    true,\n                    this.simulationTime\n                );\n                const currentDungeonCount = this.zone.dungeonsCompleted;\n                if (currentDungeonCount > this.tempDungeonCount) {\n                    this.tempDungeonCount = currentDungeonCount;\n                    for (let i = 0; i < this.players.length; i++) {\n                        this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;\n                        this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;\n                    }\n                }\n            }\n\n            this.enemies.forEach((enemy) => {\n                enemy.reset(this.simulationTime);\n                this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);\n            });\n\n            this.eventQueue.clearEventsOfType(EnrageTickEvent.type);\n            const enrageTickEvent = new EnrageTickEvent(this.simulationTime + ENRAGE_TICK_INTERVAL, ENRAGE_TICK_INTERVAL);\n            this.eventQueue.addEvent(enrageTickEvent);\n            this.enrageBeginTime = this.simulationTime;\n\n            this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n\n            this.checkTriggers();\n            this.startAttacks();\n        }\n\n        startAttacks() {\n            const units = [...this.players];\n            if (this.enemies) {\n                units.push(...this.enemies);\n            }\n\n            for (const unit of units) {\n                if (unit.combatDetails.currentHitpoints <= 0) {\n                    continue;\n                }\n\n                this.addNextAttackEvent(unit);\n            }\n        }\n\n        checkParry(targets) {\n            const parryUnits = targets.filter(\n                (unit) => unit && unit.combatDetails.currentHitpoints > 0 && unit.combatDetails.combatStats.parry > 0\n            );\n            if (parryUnits.length <= 0) {\n                return undefined;\n            }\n            const randomIndex = Math.floor(Math.random() * parryUnits.length);\n            if (parryUnits[randomIndex].combatDetails.combatStats.parry > Math.random()) {\n                return parryUnits[randomIndex];\n            }\n            return undefined;\n        }\n\n        processAutoAttackEvent(event) {\n            const targets = event.source.isPlayer ? this.enemies : this.players;\n\n            if (!targets) {\n                return;\n            }\n\n            const aliveTargets = targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0);\n\n            for (let i = 0; i < aliveTargets.length; i++) {\n                let target = aliveTargets[i];\n                if (!event.source.isPlayer && aliveTargets.length > 1) {\n                    let cumulativeThreat = 0;\n                    const cumulativeRanges = [];\n                    aliveTargets.forEach((player) => {\n                        const playerThreat = player.combatDetails.combatStats.threat;\n                        cumulativeThreat += playerThreat;\n                        cumulativeRanges.push({\n                            player: player,\n                            rangeStart: cumulativeThreat - playerThreat,\n                            rangeEnd: cumulativeThreat,\n                        });\n                    });\n                    const randomValueHit = Math.random() * cumulativeThreat;\n                    target = cumulativeRanges.find(\n                        (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd\n                    ).player;\n                }\n                let source = event.source;\n\n                const parryTarget = this.checkParry(targets);\n                if (parryTarget) {\n                    target = source;\n                    source = parryTarget;\n                }\n\n                const attackResult = CombatUtilities.processAttack(source, target);\n                if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {\n                    const log = this.generateCombatLog(source, 'autoAttack', target, attackResult);\n                    this.addToWipeLogs(log);\n                }\n\n                const mayhem = source.combatDetails.combatStats.mayhem > Math.random();\n\n                if (attackResult.didHit && source.combatDetails.combatStats.curse > 0) {\n                    const curseExpireTime = 15000000000;\n                    const currentCurseEvent = this.eventQueue.getByTypeAndSource(CurseExpirationEvent.type, target);\n                    let currentCurseAmount = 0;\n                    if (currentCurseEvent) currentCurseAmount = currentCurseEvent.curseAmount;\n                    this.eventQueue.clearByTypeAndSource(CurseExpirationEvent.type, target);\n\n                    const curseExpirationEvent = new CurseExpirationEvent(\n                        this.simulationTime + curseExpireTime,\n                        currentCurseAmount,\n                        target\n                    );\n                    const curseBuff = {\n                        uniqueHrid: '/buff_uniques/curse',\n                        typeHrid: '/buff_types/damage_taken',\n                        ratioBoost: 0,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: source.combatDetails.combatStats.curse * curseExpirationEvent.curseAmount,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: curseExpireTime,\n                    };\n                    target.addBuff(curseBuff, this.simulationTime);\n                    this.eventQueue.addEvent(curseExpirationEvent);\n                }\n\n                if (source.combatDetails.combatStats.fury > 0) {\n                    this._processFuryUpdate(source, attackResult.didHit);\n                }\n\n                if (target.combatDetails.combatStats.weaken > 0) {\n                    const weakenExpireTime = 15000000000;\n                    const currentWeakenEvent = this.eventQueue.getByTypeAndSource(WeakenExpirationEvent.type, source);\n                    let weakenAmount = 0;\n                    if (currentWeakenEvent) weakenAmount = currentWeakenEvent.weakenAmount;\n                    this.eventQueue.clearByTypeAndSource(WeakenExpirationEvent.type, source);\n                    const weakenExpirationEvent = new WeakenExpirationEvent(\n                        this.simulationTime + 15000000000,\n                        weakenAmount,\n                        source\n                    );\n                    const weakenBuff = {\n                        uniqueHrid: '/buff_uniques/weaken',\n                        typeHrid: '/buff_types/damage',\n                        ratioBoost: -1 * target.combatDetails.combatStats.weaken * weakenExpirationEvent.weakenAmount,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: weakenExpireTime,\n                    };\n                    source.addBuff(weakenBuff, this.simulationTime);\n                    this.eventQueue.addEvent(weakenExpirationEvent);\n                }\n\n                if (!mayhem || (mayhem && attackResult.didHit) || (mayhem && i === aliveTargets.length - 1)) {\n                    this.simResult.addAttack(\n                        source,\n                        target,\n                        'autoAttack',\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n                }\n\n                if (attackResult.lifeStealHeal > 0) {\n                    this.simResult.addHitpointsGained(source, 'lifesteal', attackResult.lifeStealHeal);\n                }\n\n                if (attackResult.manaLeechMana > 0) {\n                    this.simResult.addManapointsGained(source, 'manaLeech', attackResult.manaLeechMana);\n                }\n\n                if (attackResult.thornDamageDone > 0) {\n                    this.simResult.addAttack(target, source, attackResult.thornType, attackResult.thornDamageDone);\n                }\n                if (this.zone.isDungeon && attackResult.thornDamageDone > 0 && source.isPlayer) {\n                    const log = this.buildCombatLog(target, attackResult.thornType, source, attackResult.thornDamageDone);\n                    this.addToWipeLogs(log);\n                }\n\n                if (target.combatDetails.combatStats.retaliation > 0) {\n                    this.simResult.addAttack(\n                        target,\n                        source,\n                        'retaliation',\n                        attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                    );\n                }\n                if (this.zone.isDungeon && attackResult.retaliationDamageDone > 0 && source.isPlayer) {\n                    const log = this.buildCombatLog(target, 'retaliation', source, attackResult.retaliationDamageDone);\n                    this.addToWipeLogs(log);\n                }\n\n                if (target.combatDetails.currentHitpoints === 0) {\n                    this.eventQueue.clearEventsForUnit(target);\n                    this.simResult.addDeath(target);\n                    if (!target.isPlayer) {\n                        this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);\n                    }\n                }\n\n                // Could die from reflect damage\n                if (\n                    source.combatDetails.currentHitpoints === 0 &&\n                    (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)\n                ) {\n                    this.eventQueue.clearEventsForUnit(source);\n                    this.simResult.addDeath(source);\n                    if (!source.isPlayer) {\n                        this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                    }\n                    break;\n                }\n\n                if (mayhem && !attackResult.didHit) {\n                    continue;\n                }\n\n                if (!attackResult.didHit || parryTarget || source.combatDetails.combatStats.pierce <= Math.random()) {\n                    break;\n                }\n            }\n\n            // checkEncounterEnd must run first (side effects); a source dead from thorns/parry must not re-queue\n            if (!this.checkEncounterEnd() && event.source.combatDetails.currentHitpoints > 0) {\n                this.addNextAttackEvent(event.source);\n            }\n        }\n\n        checkEncounterEnd() {\n            // Labyrinth timeout check\n            if (this.labyrinth && this.enemies && this.labyrinth.checkTimeout(this.simulationTime)) {\n                // Timeout = loss. Clear everything and immediately restart.\n                this.enemies = null;\n                this.eventQueue.clear();\n                const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                this.eventQueue.addEvent(combatStartEvent);\n                return true;\n            }\n\n            if (this.enemies) {\n                const deadEnemies = this.enemies.filter(\n                    (enemy) => enemy.combatDetails.currentHitpoints <= 0 && enemy.experienceRate === 0\n                );\n                if (deadEnemies.length > 0) {\n                    deadEnemies.forEach((enemy) => {\n                        let aliveDuration = this.simulationTime - this.enrageBeginTime;\n                        if (aliveDuration > enemy.enrageTime) {\n                            aliveDuration = enemy.enrageTime;\n                        }\n                        enemy.experienceRate = 1.0 + aliveDuration / enemy.enrageTime;\n                    });\n                }\n            }\n\n            let encounterEnded = false;\n\n            if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {\n                this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n\n                if (this.labyrinth) {\n                    // Labyrinth win: immediate restart (no respawn delay)\n                    this.enemies = null;\n                    this.simResult.addEncounterEnd();\n                    this.eventQueue.clear();\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                    this.eventQueue.addEvent(combatStartEvent);\n                    return true;\n                }\n\n                const enemyRespawnEvent = new EnemyRespawnEvent(this.simulationTime + ENEMY_RESPAWN_INTERVAL);\n                this.eventQueue.addEvent(enemyRespawnEvent);\n\n                // calc exp before clear\n                if (this.enemies.some((enemy) => enemy.experienceRate <= 0)) {\n                    console.warn('[CombatSimulator] Some enemies have no experience rate');\n                }\n\n                const totalExp = this.enemies\n                    .map((enemy) => enemy.experience * enemy.experienceRate)\n                    .reduce((a, b) => a + b, 0);\n                this.players.forEach((player) => {\n                    this.simResult.addExperienceGain(player, totalExp / this.players.length);\n                });\n\n                this.enemies = null;\n\n                if (this.zone.isDungeon) {\n                    this.simResult.updateTimeSpentAlive(\n                        '#' + (this.zone.encountersKilled - 1).toString(),\n                        false,\n                        this.simulationTime\n                    );\n                }\n                this.simResult.addEncounterEnd();\n\n                encounterEnded = true;\n            }\n\n            this.players.forEach((player) => {\n                if (\n                    player.combatDetails.currentHitpoints <= 0 &&\n                    !this.eventQueue.containsEventOfTypeAndHrid(PlayerRespawnEvent.type, player.hrid)\n                ) {\n                    if (!this.zone.isDungeon && !this.labyrinth) {\n                        const playerRespawnEvent = new PlayerRespawnEvent(\n                            this.simulationTime + PLAYER_RESPAWN_INTERVAL,\n                            player.hrid\n                        );\n                        this.eventQueue.addEvent(playerRespawnEvent);\n                    }\n                    this.simResult.addRanOutOfManaCount(player, false, this.simulationTime);\n                }\n            });\n\n            if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {\n                if (this.labyrinth) {\n                    // Labyrinth death = loss. Immediate restart.\n                    this.enemies = null;\n                    this.eventQueue.clear();\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                    this.eventQueue.addEvent(combatStartEvent);\n                    return true;\n                } else if (this.zone.isDungeon) {\n                    this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);\n                    this.wipeLogs.index = 0;\n                    this.wipeLogs.count = 0;\n\n                    // Clear combat events but preserve buff expiration and cooldown events\n                    this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n                    this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n                    this.eventQueue.clearEventsOfType(DamageOverTimeEvent.type);\n                    this.eventQueue.clearEventsOfType(ConsumableTickEvent.type);\n                    this.eventQueue.clearEventsOfType(RegenTickEvent.type);\n                    this.eventQueue.clearEventsOfType(EnrageTickEvent.type);\n                    this.eventQueue.clearEventsOfType(StunExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(BlindExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(SilenceExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(AwaitCooldownEvent.type);\n                    this.enemies = null;\n\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime + RESTART_INTERVAL);\n                    this.eventQueue.addEvent(combatStartEvent);\n                } else {\n                    this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n                    this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n                }\n                encounterEnded = true;\n                this.allPlayersDead = true;\n            }\n\n            return encounterEnded;\n        }\n\n        addNextAttackEvent(source) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return;\n            }\n            // Check both event types via indexed lookups instead of O(n) getMatching\n            if (\n                this.eventQueue.getByTypeAndSource(AbilityCastEndEvent.type, source) ||\n                this.eventQueue.getByTypeAndSource(AutoAttackEvent.type, source)\n            ) {\n                return;\n            }\n\n            let target;\n            let friendlies;\n            let enemies;\n            if (source.isPlayer) {\n                target = CombatUtilities.getTarget(this.enemies);\n                friendlies = this.players;\n                enemies = this.enemies;\n            } else {\n                target = CombatUtilities.getTarget(this.players);\n                friendlies = this.enemies;\n                enemies = this.players;\n            }\n\n            let usedAbility = false;\n            let skipNextAbility = false;\n\n            source.abilities\n                .filter((ability) => ability != null)\n                .forEach((ability) => {\n                    if (\n                        !usedAbility &&\n                        !skipNextAbility &&\n                        ability.shouldTrigger(this.simulationTime, source, target, friendlies, enemies)\n                    ) {\n                        if (!this.canUseAbility(source, ability, true)) {\n                            skipNextAbility = true;\n                        }\n\n                        if (!skipNextAbility) {\n                            let castDuration = ability.castDuration;\n                            castDuration /= 1 + source.combatDetails.combatStats.castSpeed;\n                            const abilityCastEndEvent = new AbilityCastEndEvent(\n                                this.simulationTime + castDuration,\n                                source,\n                                ability\n                            );\n                            this.eventQueue.addEvent(abilityCastEndEvent);\n                            usedAbility = true;\n                        }\n                    }\n                });\n\n            if (usedAbility) {\n                source.isOutOfMana = false;\n                return;\n            }\n\n            if (!enemies) {\n                return;\n            }\n\n            if (!source.isBlinded) {\n                const autoAttackEvent = new AutoAttackEvent(\n                    this.simulationTime + source.combatDetails.combatStats.attackInterval,\n                    source\n                );\n                this.eventQueue.addEvent(autoAttackEvent);\n            } else {\n                source.isOutOfMana = true;\n            }\n        }\n\n        processConsumableTickEvent(event) {\n            if (event.consumable.hitpointRestore > 0) {\n                const tickValue = CombatUtilities.calculateTickValue(\n                    event.consumable.hitpointRestore,\n                    event.totalTicks,\n                    event.currentTick\n                );\n                const hitpointsAdded = event.source.addHitpoints(tickValue);\n                this.simResult.addHitpointsGained(event.source, event.consumable.hrid, hitpointsAdded);\n            }\n\n            if (event.consumable.manapointRestore > 0) {\n                const tickValue = CombatUtilities.calculateTickValue(\n                    event.consumable.manapointRestore,\n                    event.totalTicks,\n                    event.currentTick\n                );\n                const manapointsAdded = event.source.addManapoints(tickValue);\n                this.simResult.addManapointsGained(event.source, event.consumable.hrid, manapointsAdded);\n\n                // when oom check ability trigger\n                if (event.source.isOutOfMana) {\n                    const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, event.source);\n                    this.eventQueue.addEvent(awaitCooldownEvent);\n                }\n            }\n\n            if (event.currentTick < event.totalTicks) {\n                const consumableTickEvent = new ConsumableTickEvent(\n                    this.simulationTime + HOT_TICK_INTERVAL,\n                    event.source,\n                    event.consumable,\n                    event.totalTicks,\n                    event.currentTick + 1\n                );\n                this.eventQueue.addEvent(consumableTickEvent);\n            }\n        }\n\n        processDamageOverTimeTickEvent(event) {\n            const tickDamage = CombatUtilities.calculateTickValue(event.damage, event.totalTicks, event.currentTick);\n            const damage = Math.min(tickDamage, event.target.combatDetails.currentHitpoints);\n\n            event.target.combatDetails.currentHitpoints -= damage;\n            this.simResult.addAttack(event.sourceRef, event.target, 'damageOverTime', damage);\n\n            const log = this.buildCombatLog('', 'damageOverTime', event.target, damage);\n            this.addToWipeLogs(log);\n\n            if (event.currentTick < event.totalTicks) {\n                const damageOverTimeTickEvent = new DamageOverTimeEvent(\n                    this.simulationTime + DOT_TICK_INTERVAL,\n                    event.sourceRef,\n                    event.target,\n                    event.damage,\n                    event.totalTicks,\n                    event.currentTick + 1,\n                    event.combatStyleHrid\n                );\n                this.eventQueue.addEvent(damageOverTimeTickEvent);\n            }\n\n            if (event.target.combatDetails.currentHitpoints === 0) {\n                this.eventQueue.clearEventsForUnit(event.target);\n                this.simResult.addDeath(event.target);\n                if (!event.target.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(event.target.hrid, false, this.simulationTime);\n                }\n            }\n\n            this.checkEncounterEnd();\n        }\n\n        processRegenTickEvent(_event) {\n            const units = [...this.players];\n            // Enemy regen is always 0 in game data — skip enemies\n\n            for (const unit of units) {\n                if (unit.combatDetails.currentHitpoints <= 0) {\n                    continue;\n                }\n\n                const hitpointRegen = Math.floor(\n                    unit.combatDetails.maxHitpoints * unit.combatDetails.combatStats.hpRegenPer10\n                );\n                const hitpointsAdded = unit.addHitpoints(hitpointRegen);\n                this.simResult.addHitpointsGained(unit, 'regen', hitpointsAdded);\n\n                const manapointRegen = Math.floor(\n                    unit.combatDetails.maxManapoints * unit.combatDetails.combatStats.mpRegenPer10\n                );\n                const manapointsAdded = unit.addManapoints(manapointRegen);\n                this.simResult.addManapointsGained(unit, 'regen', manapointsAdded);\n\n                // when oom check ability trigger\n                if (unit.isOutOfMana) {\n                    const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, unit);\n                    this.eventQueue.addEvent(awaitCooldownEvent);\n                }\n            }\n\n            const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);\n            this.eventQueue.addEvent(regenTickEvent);\n        }\n\n        processCheckBuffExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processStunExpirationEvent(event) {\n            event.source.isStunned = false;\n            this.addNextAttackEvent(event.source);\n        }\n\n        processBlindExpirationEvent(event) {\n            event.source.isBlinded = false;\n            this.addNextAttackEvent(event.source);\n        }\n\n        processSilenceExpirationEvent(event) {\n            event.source.isSilenced = false;\n        }\n\n        processCurseExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processWeakenExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processFuryExpirationEvent(event) {\n            event.source.furyAmount = 0;\n            event.source.furyExpireTime = 0;\n            event.source.updateFuryBuffs(0, 0, 0, 0);\n        }\n\n        _processFuryUpdate(source, didHit) {\n            const FURY_EXPIRE_TIME = 15000000000;\n            const MAX_FURY_STACK = 5;\n\n            const oldAmount = source.furyAmount;\n            const newAmount = didHit ? Math.min(oldAmount + 1, MAX_FURY_STACK) : Math.floor(oldAmount / 2);\n\n            source.furyAmount = newAmount;\n\n            // Always reschedule expiration (resets the 15s timer)\n            this.eventQueue.clearByTypeAndSource(FuryExpirationEvent.type, source);\n            if (newAmount > 0) {\n                source.furyExpireTime = this.simulationTime + FURY_EXPIRE_TIME;\n                this.eventQueue.addEvent(new FuryExpirationEvent(source.furyExpireTime, newAmount, source));\n            }\n\n            // Only recalculate combat stats if stacks actually changed\n            if (newAmount !== oldAmount) {\n                source.updateFuryBuffs(\n                    newAmount,\n                    source.combatDetails.combatStats.fury,\n                    this.simulationTime,\n                    FURY_EXPIRE_TIME\n                );\n            }\n        }\n\n        processEnrageTickEvent(event) {\n            if (!this.enemies) return;\n            const maxEnrageStack = 10;\n            this.enemies\n                .filter((enemy) => enemy.combatDetails.currentHitpoints > 0)\n                .forEach((enemy) => {\n                    const nowStack = Math.min(maxEnrageStack, Math.floor(event.encounterTime / enemy.enrageTime));\n\n                    if (nowStack <= 0) {\n                        return;\n                    }\n\n                    const enrageDamageBuff = {\n                        uniqueHrid: '/buff_uniques/enrage_damage',\n                        typeHrid: '/buff_types/damage',\n                        ratioBoost: nowStack * 0.1,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: ENRAGE_TICK_INTERVAL,\n                    };\n                    const enrageAccuracyBuff = {\n                        uniqueHrid: '/buff_uniques/enrage_accuracy',\n                        typeHrid: '/buff_types/accuracy',\n                        ratioBoost: nowStack * 0.1,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: ENRAGE_TICK_INTERVAL,\n                    };\n                    enemy.addBuff(enrageDamageBuff, this.simulationTime);\n                    enemy.addBuff(enrageAccuracyBuff, this.simulationTime);\n\n                    this.simResult.maxEnrageStack = Math.max(this.simResult.maxEnrageStack, nowStack);\n                });\n\n            const enrageTickEvent = new EnrageTickEvent(\n                this.simulationTime + ENRAGE_TICK_INTERVAL,\n                event.encounterTime + ENRAGE_TICK_INTERVAL\n            );\n            this.eventQueue.addEvent(enrageTickEvent);\n        }\n\n        checkTriggers() {\n            let triggeredSomething;\n\n            do {\n                triggeredSomething = false;\n\n                for (const player of this.players) {\n                    if (player.combatDetails.currentHitpoints > 0) {\n                        if (this.checkTriggersForUnit(player, this.players, this.enemies)) {\n                            triggeredSomething = true;\n                        }\n                    }\n                }\n\n                if (this.enemies) {\n                    for (const enemy of this.enemies) {\n                        if (enemy.combatDetails.currentHitpoints > 0) {\n                            if (this.checkTriggersForUnit(enemy, this.enemies, this.players)) {\n                                triggeredSomething = true;\n                            }\n                        }\n                    }\n                }\n            } while (triggeredSomething);\n        }\n\n        checkTriggersForUnit(unit, friendlies, enemies) {\n            if (unit.combatDetails.currentHitpoints <= 0) {\n                throw new Error('Checking triggers for a dead unit');\n            }\n\n            let triggeredSomething = false;\n            const target = CombatUtilities.getTarget(enemies);\n\n            for (const food of unit.food) {\n                if (food && food.shouldTrigger(this.simulationTime, unit, target, friendlies, enemies)) {\n                    const result = this.tryUseConsumable(unit, food);\n                    if (result) {\n                        triggeredSomething = true;\n                    }\n                }\n            }\n\n            for (const drink of unit.drinks) {\n                if (drink && drink.shouldTrigger(this.simulationTime, unit, target, friendlies, enemies)) {\n                    const result = this.tryUseConsumable(unit, drink);\n                    if (result) {\n                        triggeredSomething = true;\n                    }\n                }\n            }\n\n            return triggeredSomething;\n        }\n\n        tryUseConsumable(source, consumable) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return false;\n            }\n\n            consumable.lastUsed = this.simulationTime;\n            let consumeCooldown = consumable.cooldownDuration;\n            if (source.combatDetails.combatStats.drinkConcentration > 0 && consumable.catagoryHrid.includes('drink')) {\n                consumeCooldown = consumeCooldown / (1 + source.combatDetails.combatStats.drinkConcentration);\n            } else if (source.combatDetails.combatStats.foodHaste > 0 && consumable.catagoryHrid.includes('food')) {\n                consumeCooldown = consumeCooldown / (1 + source.combatDetails.combatStats.foodHaste);\n            }\n            const cooldownReadyEvent = new CooldownReadyEvent(this.simulationTime + consumeCooldown);\n            this.eventQueue.addEvent(cooldownReadyEvent);\n\n            this.simResult.addConsumableUse(source, consumable);\n\n            if (consumable.recoveryDuration === 0) {\n                if (consumable.hitpointRestore > 0) {\n                    const hitpointsAdded = source.addHitpoints(consumable.hitpointRestore);\n                    this.simResult.addHitpointsGained(source, consumable.hrid, hitpointsAdded);\n                }\n\n                if (consumable.manapointRestore > 0) {\n                    const manapointsAdded = source.addManapoints(consumable.manapointRestore);\n                    this.simResult.addManapointsGained(source, consumable.hrid, manapointsAdded);\n\n                    // when oom check ability trigger\n                    if (source.isOutOfMana) {\n                        const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, source);\n                        this.eventQueue.addEvent(awaitCooldownEvent);\n                    }\n                }\n            } else {\n                const consumableTickEvent = new ConsumableTickEvent(\n                    this.simulationTime + HOT_TICK_INTERVAL,\n                    source,\n                    consumable,\n                    consumable.recoveryDuration / HOT_TICK_INTERVAL,\n                    1\n                );\n                this.eventQueue.addEvent(consumableTickEvent);\n            }\n\n            for (const buff of consumable.buffs) {\n                const currentBuff = structuredClone(buff);\n                if (source.combatDetails.combatStats.drinkConcentration > 0 && consumable.catagoryHrid.includes('drink')) {\n                    currentBuff.ratioBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;\n                    currentBuff.flatBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;\n                    currentBuff.duration = currentBuff.duration / (1 + source.combatDetails.combatStats.drinkConcentration);\n                }\n                source.addBuff(currentBuff, this.simulationTime);\n                const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                    this.simulationTime + currentBuff.duration,\n                    source\n                );\n                this.eventQueue.addEvent(checkBuffExpirationEvent);\n            }\n\n            return true;\n        }\n\n        canUseAbility(source, ability, oomCheck) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return false;\n            }\n\n            if (source.combatDetails.currentManapoints < ability.manaCost) {\n                if (source.isPlayer && oomCheck) {\n                    this.simResult.addRanOutOfManaCount(source, true, this.simulationTime);\n                }\n                return false;\n            }\n            if (source.isPlayer && oomCheck) {\n                this.simResult.addRanOutOfManaCount(source, false, this.simulationTime);\n            }\n            return true;\n        }\n\n        tryUseAbility(source, ability) {\n            if (!this.canUseAbility(source, ability, true)) {\n                return false;\n            }\n\n            if (source.isPlayer) {\n                if (source.abilityManaCosts.has(ability.hrid)) {\n                    source.abilityManaCosts.set(ability.hrid, source.abilityManaCosts.get(ability.hrid) + ability.manaCost);\n                } else {\n                    source.abilityManaCosts.set(ability.hrid, ability.manaCost);\n                }\n            }\n\n            source.combatDetails.currentManapoints -= ability.manaCost;\n\n            ability.lastUsed = this.simulationTime;\n\n            source.combatDetails.combatStats.abilityHaste;\n            ability.cooldownDuration;\n\n            const todoAbilities = [ability];\n\n            if (source.combatDetails.combatStats.blaze > 0 && Math.random() < source.combatDetails.combatStats.blaze) {\n                todoAbilities.push(new Ability('blaze'));\n            }\n\n            if (source.combatDetails.combatStats.bloom > 0 && Math.random() < source.combatDetails.combatStats.bloom) {\n                todoAbilities.push(new Ability('bloom'));\n            }\n\n            for (const todoAbility of todoAbilities) {\n                for (const abilityEffect of todoAbility.abilityEffects) {\n                    switch (abilityEffect.effectType) {\n                        case '/ability_effect_types/buff':\n                            this.processAbilityBuffEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/damage':\n                            this.processAbilityDamageEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/heal':\n                            this.processAbilityHealEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/spend_hp':\n                            this.processAbilitySpendHpEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/revive':\n                            this.processAbilityReviveEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/promote': {\n                            this.eventQueue.clearEventsForUnit(source);\n                            const promotedMonster = this.processAbilityPromoteEffect(source, todoAbility, abilityEffect);\n                            promotedMonster.reset(this.simulationTime);\n                            const enemyIndex = this.enemies.indexOf(source);\n                            if (enemyIndex !== -1) {\n                                this.enemies[enemyIndex] = promotedMonster;\n                                this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                                this.simResult.updateTimeSpentAlive(promotedMonster.hrid, true, this.simulationTime);\n                            }\n                            source = promotedMonster;\n                            this.addNextAttackEvent(source);\n                            break;\n                        }\n                        default:\n                            throw new Error(\n                                'Unsupported effect type for ability: ' +\n                                    todoAbility.hrid +\n                                    ' effectType: ' +\n                                    abilityEffect.effectType\n                            );\n                    }\n                }\n            }\n\n            if (source.combatDetails.combatStats.ripple > 0 && Math.random() < source.combatDetails.combatStats.ripple) {\n                const manapointsAdded = source.addManapoints(10);\n                this.simResult.addManapointsGained(source, 'ripple', manapointsAdded);\n                for (const ab of source.abilities) {\n                    if (ab && ab.lastUsed) {\n                        const remainingCooldown = ab.lastUsed + ab.cooldownDuration - this.simulationTime;\n                        if (remainingCooldown > 0) {\n                            ab.lastUsed = Math.max(ab.lastUsed - ONE_SECOND * 2, this.simulationTime - ab.cooldownDuration);\n                        }\n                    }\n                }\n            }\n\n            this.addNextAttackEvent(source);\n\n            // Could die from reflect damage\n            if (source.combatDetails.currentHitpoints === 0) {\n                this.eventQueue.clearEventsForUnit(source);\n                this.simResult.addDeath(source);\n                if (!source.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                }\n            }\n\n            this.checkEncounterEnd();\n\n            return true;\n        }\n\n        processAbilityBuffEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType === 'allAllies') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    for (const buff of abilityEffect.buffs) {\n                        if (ability.isSpecialAbility && buff.multiplierForSkillHrid && buff.multiplierPerSkillLevel > 0) {\n                            const multiplier =\n                                1.0 +\n                                source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] *\n                                    buff.multiplierPerSkillLevel;\n                            const currentBuff = structuredClone(buff);\n                            currentBuff.flatBoost *= multiplier;\n                            currentBuff.ratioBoost *= multiplier;\n                            target.addBuff(currentBuff, this.simulationTime);\n                        } else {\n                            target.addBuff(buff, this.simulationTime);\n                        }\n                        const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                            this.simulationTime + buff.duration,\n                            target\n                        );\n                        this.eventQueue.addEvent(checkBuffExpirationEvent);\n                    }\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for buff ability effect: ' + ability.hrid);\n            }\n\n            for (const buff of abilityEffect.buffs) {\n                source.addBuff(buff, this.simulationTime);\n                const checkBuffExpirationEvent = new CheckBuffExpirationEvent(this.simulationTime + buff.duration, source);\n                this.eventQueue.addEvent(checkBuffExpirationEvent);\n            }\n        }\n\n        processAbilityDamageEffect(source, ability, abilityEffect) {\n            let targets;\n            switch (abilityEffect.targetType) {\n                case 'enemy':\n                case 'allEnemies':\n                    targets = source.isPlayer ? this.enemies : this.players;\n                    break;\n                default:\n                    throw new Error('Unsupported target type for damage ability effect: ' + ability.hrid);\n            }\n\n            if (!targets) {\n                return;\n            }\n\n            const avoidTarget = [];\n\n            let isSkipParry = false;\n\n            for (let target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                let parryTarget;\n                if (!isSkipParry) {\n                    parryTarget = this.checkParry(targets);\n                    isSkipParry = true; // parry check only once on first target\n                }\n\n                if (parryTarget) {\n                    const tempTarget = source;\n                    const tempSource = parryTarget;\n\n                    const attackResult = CombatUtilities.processAttack(tempSource, tempTarget);\n\n                    this.simResult.addAttack(\n                        tempSource,\n                        tempTarget,\n                        'parry',\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n\n                    if (attackResult.lifeStealHeal > 0) {\n                        this.simResult.addHitpointsGained(tempSource, 'lifesteal', attackResult.lifeStealHeal);\n                    }\n\n                    if (attackResult.manaLeechMana > 0) {\n                        this.simResult.addManapointsGained(tempSource, 'manaLeech', attackResult.manaLeechMana);\n                    }\n\n                    if (attackResult.thornDamageDone > 0) {\n                        this.simResult.addAttack(\n                            tempTarget,\n                            tempSource,\n                            attackResult.thornType,\n                            attackResult.thornDamageDone\n                        );\n                    }\n                    if (tempTarget.combatDetails.combatStats.retaliation > 0) {\n                        this.simResult.addAttack(\n                            tempTarget,\n                            tempSource,\n                            'retaliation',\n                            attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                        );\n                    }\n\n                    if (tempTarget.combatDetails.currentHitpoints === 0) {\n                        this.eventQueue.clearEventsForUnit(tempTarget);\n                        this.simResult.addDeath(tempTarget);\n                        if (!tempTarget.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(tempTarget.hrid, false, this.simulationTime);\n                        }\n                    }\n\n                    // Could die from reflect damage\n                    if (\n                        tempSource.combatDetails.currentHitpoints === 0 &&\n                        (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)\n                    ) {\n                        this.eventQueue.clearEventsForUnit(tempSource);\n                        this.simResult.addDeath(tempSource);\n                        if (!tempSource.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(tempSource.hrid, false, this.simulationTime);\n                        }\n                    }\n                } else {\n                    targets = targets.filter(\n                        (unit) => unit && !avoidTarget.includes(unit.hrid) && unit.combatDetails.currentHitpoints > 0\n                    );\n                    if (!source.isPlayer && targets.length > 0 && abilityEffect.targetType === 'enemy') {\n                        let cumulativeThreat = 0;\n                        const cumulativeRanges = [];\n                        targets.forEach((player) => {\n                            const playerThreat = player.combatDetails.combatStats.threat;\n                            cumulativeThreat += playerThreat;\n                            cumulativeRanges.push({\n                                player: player,\n                                rangeStart: cumulativeThreat - playerThreat,\n                                rangeEnd: cumulativeThreat,\n                            });\n                        });\n                        const randomValueHit = Math.random() * cumulativeThreat;\n                        target = cumulativeRanges.find(\n                            (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd\n                        ).player;\n                        avoidTarget.push(target.hrid);\n                    }\n                    if (targets.length <= 0) {\n                        break;\n                    }\n\n                    const attackResult = CombatUtilities.processAttack(source, target, abilityEffect);\n\n                    if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {\n                        const log = this.generateCombatLog(source, ability.hrid, target, attackResult);\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (attackResult.hpDrain > 0) {\n                        this.simResult.addHitpointsGained(source, ability.hrid, attackResult.hpDrain);\n                    }\n\n                    if (attackResult.didHit && abilityEffect.buffs) {\n                        for (const buff of abilityEffect.buffs) {\n                            target.addBuff(buff, this.simulationTime);\n                            const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                                this.simulationTime + buff.duration,\n                                target\n                            );\n                            this.eventQueue.addEvent(checkBuffExpirationEvent);\n                        }\n                    }\n\n                    if (abilityEffect.damageOverTimeRatio > 0 && attackResult.damageDone > 0) {\n                        const damageOverTimeEvent = new DamageOverTimeEvent(\n                            this.simulationTime + DOT_TICK_INTERVAL,\n                            source,\n                            target,\n                            attackResult.damageDone * abilityEffect.damageOverTimeRatio,\n                            abilityEffect.damageOverTimeDuration / DOT_TICK_INTERVAL,\n                            1,\n                            abilityEffect.combatStyleHrid\n                        );\n                        this.eventQueue.addEvent(damageOverTimeEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.stunChance > 0 &&\n                        Math.random() < (abilityEffect.stunChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isStunned = true;\n                        target.stunExpireTime = this.simulationTime + abilityEffect.stunDuration;\n                        // Clear all 3 event types via indexed lookups instead of O(n) clearMatching\n                        this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, target);\n                        this.eventQueue.clearByTypeAndSource(AbilityCastEndEvent.type, target);\n                        this.eventQueue.clearByTypeAndSource(StunExpirationEvent.type, target);\n                        const stunExpirationEvent = new StunExpirationEvent(target.stunExpireTime, target);\n                        this.eventQueue.addEvent(stunExpirationEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.blindChance > 0 &&\n                        Math.random() <\n                            (abilityEffect.blindChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isBlinded = true;\n                        target.blindExpireTime = this.simulationTime + abilityEffect.blindDuration;\n                        this.eventQueue.clearByTypeAndSource(BlindExpirationEvent.type, target);\n                        if (this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, target)) {\n                            this.addNextAttackEvent(target);\n                        }\n                        const blindExpirationEvent = new BlindExpirationEvent(target.blindExpireTime, target);\n                        this.eventQueue.addEvent(blindExpirationEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.silenceChance > 0 &&\n                        Math.random() <\n                            (abilityEffect.silenceChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isSilenced = true;\n                        target.silenceExpireTime = this.simulationTime + abilityEffect.silenceDuration;\n                        this.eventQueue.clearByTypeAndSource(SilenceExpirationEvent.type, target);\n                        if (this.eventQueue.clearByTypeAndSource(AbilityCastEndEvent.type, target)) {\n                            this.addNextAttackEvent(target);\n                        }\n                        const silenceExpirationEvent = new SilenceExpirationEvent(target.silenceExpireTime, target);\n                        this.eventQueue.addEvent(silenceExpirationEvent);\n                    }\n\n                    if (attackResult.didHit && source.combatDetails.combatStats.curse > 0) {\n                        const curseExpireTime = 15000000000;\n                        const currentCurseEvent = this.eventQueue.getByTypeAndSource(CurseExpirationEvent.type, target);\n                        let currentCurseAmount = 0;\n                        if (currentCurseEvent) currentCurseAmount = currentCurseEvent.curseAmount;\n                        this.eventQueue.clearByTypeAndSource(CurseExpirationEvent.type, target);\n\n                        const curseExpirationEvent = new CurseExpirationEvent(\n                            this.simulationTime + curseExpireTime,\n                            currentCurseAmount,\n                            target\n                        );\n                        const curseBuff = {\n                            uniqueHrid: '/buff_uniques/curse',\n                            typeHrid: '/buff_types/damage_taken',\n                            ratioBoost: 0,\n                            ratioBoostLevelBonus: 0,\n                            flatBoost: source.combatDetails.combatStats.curse * curseExpirationEvent.curseAmount,\n                            flatBoostLevelBonus: 0,\n                            startTime: '0001-01-01T00:00:00Z',\n                            duration: curseExpireTime,\n                        };\n                        target.addBuff(curseBuff, this.simulationTime);\n                        this.eventQueue.addEvent(curseExpirationEvent);\n                    }\n\n                    if (target.combatDetails.combatStats.weaken > 0) {\n                        const weakenExpireTime = 15000000000;\n                        const currentWeakenEvent = this.eventQueue.getByTypeAndSource(WeakenExpirationEvent.type, source);\n                        let weakenAmount = 0;\n                        if (currentWeakenEvent) weakenAmount = currentWeakenEvent.weakenAmount;\n                        this.eventQueue.clearByTypeAndSource(WeakenExpirationEvent.type, source);\n                        const weakenExpirationEvent = new WeakenExpirationEvent(\n                            this.simulationTime + weakenExpireTime,\n                            weakenAmount,\n                            source\n                        );\n                        const weakenBuff = {\n                            uniqueHrid: '/buff_uniques/weaken',\n                            typeHrid: '/buff_types/damage',\n                            ratioBoost: -1 * target.combatDetails.combatStats.weaken * weakenExpirationEvent.weakenAmount,\n                            ratioBoostLevelBonus: 0,\n                            flatBoost: 0,\n                            flatBoostLevelBonus: 0,\n                            startTime: '0001-01-01T00:00:00Z',\n                            duration: weakenExpireTime,\n                        };\n                        source.addBuff(weakenBuff, this.simulationTime);\n                        this.eventQueue.addEvent(weakenExpirationEvent);\n                    }\n\n                    if (source.combatDetails.combatStats.fury > 0) {\n                        this._processFuryUpdate(source, attackResult.didHit);\n                    }\n\n                    this.simResult.addAttack(\n                        source,\n                        target,\n                        ability.hrid,\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n\n                    if (attackResult.thornDamageDone > 0) {\n                        this.simResult.addAttack(target, source, attackResult.thornType, attackResult.thornDamageDone);\n                    }\n                    if (this.zone.isDungeon && attackResult.thornDamageDone > 0 && source.isPlayer) {\n                        const log = this.buildCombatLog(\n                            target,\n                            attackResult.thornType,\n                            source,\n                            attackResult.thornDamageDone\n                        );\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (target.combatDetails.combatStats.retaliation > 0) {\n                        this.simResult.addAttack(\n                            target,\n                            source,\n                            'retaliation',\n                            attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                        );\n                    }\n                    if (this.zone.isDungeon && attackResult.retaliationDamageDone > 0 && source.isPlayer) {\n                        const log = this.buildCombatLog(target, 'retaliation', source, attackResult.retaliationDamageDone);\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (target.combatDetails.currentHitpoints === 0) {\n                        this.eventQueue.clearEventsForUnit(target);\n                        this.simResult.addDeath(target);\n                        if (!target.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);\n                        }\n                    }\n\n                    if (attackResult.didHit && abilityEffect.pierceChance > Math.random()) {\n                        continue;\n                    }\n                }\n\n                if (parryTarget) {\n                    break;\n                }\n\n                if (abilityEffect.targetType === 'enemy') {\n                    break;\n                }\n            }\n        }\n\n        processAbilityHealEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType === 'allAllies') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    const amountHealed = CombatUtilities.processHeal(source, abilityEffect, target);\n                    this.simResult.addHitpointsGained(target, ability.hrid, amountHealed);\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType === 'lowestHpAlly') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                let healTarget;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    if (!healTarget) {\n                        healTarget = target;\n                        continue;\n                    }\n                    if (\n                        target.combatDetails.currentHitpoints / target.combatDetails.maxHitpoints <\n                        healTarget.combatDetails.currentHitpoints / healTarget.combatDetails.maxHitpoints\n                    ) {\n                        healTarget = target;\n                    }\n                }\n\n                if (healTarget) {\n                    const amountHealed = CombatUtilities.processHeal(source, abilityEffect, healTarget);\n                    this.simResult.addHitpointsGained(healTarget, ability.hrid, amountHealed);\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for heal ability effect: ' + ability.hrid);\n            }\n\n            const amountHealed = CombatUtilities.processHeal(source, abilityEffect, source);\n            this.simResult.addHitpointsGained(source, ability.hrid, amountHealed);\n        }\n\n        processAbilityReviveEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType !== 'deadAlly') {\n                throw new Error('Unsupported target type for revive ability effect: ' + ability.hrid);\n            }\n\n            const targets = source.isPlayer ? this.players : this.enemies;\n            const reviveTarget = targets.find((unit) => unit && unit.combatDetails.currentHitpoints <= 0);\n\n            if (reviveTarget) {\n                this.eventQueue.clearByTypeAndHrid(PlayerRespawnEvent.type, reviveTarget.hrid);\n\n                reviveTarget.removeExpiredBuffs(this.simulationTime);\n\n                const amountHealed = CombatUtilities.processRevive(source, abilityEffect, reviveTarget);\n                this.simResult.addHitpointsGained(reviveTarget, ability.hrid, amountHealed);\n\n                this.addNextAttackEvent(reviveTarget);\n\n                if (!source.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(reviveTarget.hrid, true, this.simulationTime);\n                }\n            }\n        }\n\n        processAbilityPromoteEffect(source, _ability, _abilityEffect) {\n            const promotionHrids = ['/monsters/enchanted_rook', '/monsters/enchanted_knight', '/monsters/enchanted_bishop'];\n            const randomPromotionIndex = Math.floor(Math.random() * promotionHrids.length);\n            return new Monster(promotionHrids[randomPromotionIndex], source.difficultyTier);\n        }\n\n        processAbilitySpendHpEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for spend hp ability effect: ' + ability.hrid);\n            }\n\n            const hpSpent = CombatUtilities.processSpendHp(source, abilityEffect);\n            this.simResult.addHitpointsSpent(source, ability.hrid, hpSpent);\n        }\n    }\n\n    const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds\n\n    /**\n     * Labyrinth encounter manager.\n     * Each encounter is a single monster at a given roomLevel.\n     * Timeout (120s) or player death = loss; enemy killed = win.\n     */\n    class Labyrinth {\n        constructor(monsterHrid, roomLevel, crateHrids = []) {\n            this.monsterHrid = monsterHrid;\n            this.hrid = monsterHrid;\n            this.roomLevel = roomLevel;\n            this.buffs = [];\n            this.attemptCount = 0;\n            this.encounterStartTime = 0;\n\n            // Resolve crate buffs from game data\n            if (crateHrids.length > 0) {\n                const gameData = getGameData();\n                const crateMap = gameData.labyrinthCrateDetailMap;\n                if (crateMap) {\n                    for (const hrid of crateHrids) {\n                        if (crateMap[hrid]) {\n                            this.buffs = this.buffs.concat(crateMap[hrid]);\n                        }\n                    }\n                }\n            }\n        }\n\n        /**\n         * Spawn a new monster for the next encounter.\n         * @returns {Monster[]} Single-element array with the scaled monster\n         */\n        getMonster() {\n            this.attemptCount++;\n            return [new Monster(this.monsterHrid, 0, this.roomLevel)];\n        }\n\n        /**\n         * Record when a new encounter begins.\n         * @param {number} time - Current simulation time in nanoseconds\n         */\n        updateEncounterStartTime(time) {\n            this.encounterStartTime = time;\n        }\n\n        /**\n         * Check if the current encounter has exceeded the 120s timeout.\n         * @param {number} currentTime - Current simulation time in nanoseconds\n         * @returns {boolean}\n         */\n        checkTimeout(currentTime) {\n            return currentTime - this.encounterStartTime > LABYRINTH_TIMEOUT;\n        }\n    }\n\n    class Consumable {\n        constructor(hrid, triggers = null) {\n            this.hrid = hrid;\n\n            const itemDetailMap = getGameData().itemDetailMap;\n            const gameConsumable = itemDetailMap[this.hrid];\n            if (!gameConsumable) {\n                throw new Error('No consumable found for hrid: ' + this.hrid);\n            }\n\n            this.cooldownDuration = gameConsumable.consumableDetail.cooldownDuration;\n            this.hitpointRestore = gameConsumable.consumableDetail.hitpointRestore;\n            this.manapointRestore = gameConsumable.consumableDetail.manapointRestore;\n            this.recoveryDuration = gameConsumable.consumableDetail.recoveryDuration;\n            this.catagoryHrid = gameConsumable.categoryHrid;\n\n            this.buffs = [];\n            if (gameConsumable.consumableDetail.buffs) {\n                for (const consumableBuff of gameConsumable.consumableDetail.buffs) {\n                    const buff = new Buff(consumableBuff);\n                    this.buffs.push(buff);\n                }\n            }\n\n            if (triggers) {\n                this.triggers = triggers;\n            } else {\n                this.triggers = [];\n                for (const defaultTrigger of gameConsumable.consumableDetail.defaultCombatTriggers) {\n                    const trigger = new Trigger(\n                        defaultTrigger.dependencyHrid,\n                        defaultTrigger.conditionHrid,\n                        defaultTrigger.comparatorHrid,\n                        defaultTrigger.value\n                    );\n                    this.triggers.push(trigger);\n                }\n            }\n\n            this.lastUsed = Number.MIN_SAFE_INTEGER;\n        }\n\n        static createFromDTO(dto) {\n            const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;\n            const consumable = new Consumable(dto.hrid, triggers);\n\n            return consumable;\n        }\n\n        shouldTrigger(currentTime, source, target, friendlies, enemies) {\n            if (source.isStunned) {\n                return false;\n            }\n            let consumableHaste;\n            if (this.catagoryHrid.includes('food')) {\n                consumableHaste = source.combatDetails.combatStats.foodHaste;\n            } else {\n                consumableHaste = source.combatDetails.combatStats.drinkConcentration;\n            }\n            let cooldownDuration = this.cooldownDuration;\n            if (consumableHaste > 0) {\n                cooldownDuration = cooldownDuration / (1 + consumableHaste);\n            }\n\n            if (this.lastUsed + cooldownDuration > currentTime) {\n                return false;\n            }\n\n            if (this.triggers.length === 0) {\n                return true;\n            }\n\n            let shouldTrigger = true;\n            for (const trigger of this.triggers) {\n                if (!trigger.isActive(source, target, friendlies, enemies, currentTime)) {\n                    shouldTrigger = false;\n                }\n            }\n\n            return shouldTrigger;\n        }\n    }\n\n    class Equipment {\n        constructor(hrid, enhancementLevel) {\n            this.hrid = hrid;\n            const gameData = getGameData();\n            const gameItem = gameData.itemDetailMap[this.hrid];\n            if (!gameItem) {\n                throw new Error('No equipment found for hrid: ' + this.hrid);\n            }\n            this.gameItem = gameItem;\n            this.enhancementLevel = enhancementLevel;\n        }\n\n        static createFromDTO(dto) {\n            const equipment = new Equipment(dto.hrid, dto.enhancementLevel);\n\n            return equipment;\n        }\n\n        getCombatStat(combatStat) {\n            const gameData = getGameData();\n            const multiplier = gameData.enhancementLevelTotalBonusMultiplierTable[this.enhancementLevel];\n            if (this.gameItem.equipmentDetail.combatStats[combatStat]) {\n                const enhancementBonus = this.gameItem.equipmentDetail.combatEnhancementBonuses[combatStat] || 0;\n                const stat = this.gameItem.equipmentDetail.combatStats[combatStat] + multiplier * enhancementBonus;\n                return stat;\n            }\n            return 0;\n        }\n\n        getCombatStyle() {\n            return this.gameItem.equipmentDetail.combatStats.combatStyleHrids[0];\n        }\n\n        getDamageType() {\n            return this.gameItem.equipmentDetail.combatStats.damageType;\n        }\n\n        getPrimaryTraining() {\n            return this.gameItem.equipmentDetail.combatStats.primaryTraining;\n        }\n\n        getFocusTraining() {\n            return this.gameItem.equipmentDetail.combatStats.focusTraining;\n        }\n    }\n\n    class HouseRoom {\n        constructor(hrid, level) {\n            this.hrid = hrid;\n            this.level = level;\n\n            const gameData = getGameData();\n            const gameHouseRoom = gameData.houseRoomDetailMap[this.hrid];\n            if (!gameHouseRoom) {\n                throw new Error('No house room found for hrid: ' + this.hrid);\n            }\n\n            this.buffs = [];\n            if (gameHouseRoom.actionBuffs) {\n                for (const actionBuff of gameHouseRoom.actionBuffs) {\n                    const buff = new Buff(actionBuff, level);\n                    this.buffs.push(buff);\n                }\n            }\n            if (gameHouseRoom.globalBuffs) {\n                for (const globalBuff of gameHouseRoom.globalBuffs) {\n                    const buff = new Buff(globalBuff, level);\n                    this.buffs.push(buff);\n                }\n            }\n        }\n    }\n\n    class Player extends CombatUnit {\n        equipment = {\n            '/equipment_types/head': null,\n            '/equipment_types/body': null,\n            '/equipment_types/legs': null,\n            '/equipment_types/feet': null,\n            '/equipment_types/hands': null,\n            '/equipment_types/main_hand': null,\n            '/equipment_types/two_hand': null,\n            '/equipment_types/off_hand': null,\n            '/equipment_types/pouch': null,\n            '/equipment_types/back': null,\n            '/equipment_types/neck': null,\n            '/equipment_types/earrings': null,\n            '/equipment_types/ring': null,\n            '/equipment_types/charm': null,\n        };\n\n        constructor() {\n            super();\n\n            this.isPlayer = true;\n            this.hrid = 'player';\n        }\n\n        static createFromDTO(dto) {\n            const player = new Player();\n\n            player.staminaLevel = dto.staminaLevel;\n            player.intelligenceLevel = dto.intelligenceLevel;\n            player.attackLevel = dto.attackLevel;\n            player.meleeLevel = dto.meleeLevel;\n            player.defenseLevel = dto.defenseLevel;\n            player.rangedLevel = dto.rangedLevel;\n            player.magicLevel = dto.magicLevel;\n\n            player.hrid = dto.hrid;\n\n            for (const [key, value] of Object.entries(dto.equipment)) {\n                player.equipment[key] = value ? Equipment.createFromDTO(value) : null;\n            }\n\n            player.food = dto.food.map((food) => (food ? Consumable.createFromDTO(food) : null));\n            player.drinks = dto.drinks.map((drink) => (drink ? Consumable.createFromDTO(drink) : null));\n            player.abilities = dto.abilities.map((ability) => (ability ? Ability.createFromDTO(ability) : null));\n            Object.entries(dto.houseRooms).forEach((houseRoom) => {\n                if (houseRoom[1] > 0) {\n                    player.houseRooms.push(new HouseRoom(houseRoom[0], houseRoom[1]));\n                }\n            });\n\n            player.debuffOnLevelGap = dto.debuffOnLevelGap;\n\n            return player;\n        }\n\n        updateCombatDetails() {\n            if (this.equipment['/equipment_types/main_hand']) {\n                this.combatDetails.combatStats.combatStyleHrid =\n                    this.equipment['/equipment_types/main_hand'].getCombatStyle();\n                this.combatDetails.combatStats.damageType = this.equipment['/equipment_types/main_hand'].getDamageType();\n                this.combatDetails.combatStats.attackInterval =\n                    this.equipment['/equipment_types/main_hand'].getCombatStat('attackInterval');\n                this.combatDetails.combatStats.primaryTraining =\n                    this.equipment['/equipment_types/main_hand'].getPrimaryTraining();\n            } else if (this.equipment['/equipment_types/two_hand']) {\n                this.combatDetails.combatStats.combatStyleHrid =\n                    this.equipment['/equipment_types/two_hand'].getCombatStyle();\n                this.combatDetails.combatStats.damageType = this.equipment['/equipment_types/two_hand'].getDamageType();\n                this.combatDetails.combatStats.attackInterval =\n                    this.equipment['/equipment_types/two_hand'].getCombatStat('attackInterval');\n                this.combatDetails.combatStats.primaryTraining =\n                    this.equipment['/equipment_types/two_hand'].getPrimaryTraining();\n            } else {\n                this.combatDetails.combatStats.combatStyleHrid = '/combat_styles/smash';\n                this.combatDetails.combatStats.damageType = '/damage_types/physical';\n                this.combatDetails.combatStats.attackInterval = 3000000000;\n                this.combatDetails.combatStats.primaryTraining = '/skills/melee';\n            }\n\n            if (this.equipment['/equipment_types/charm']) {\n                this.combatDetails.combatStats.focusTraining = this.equipment['/equipment_types/charm'].getFocusTraining();\n            } else {\n                this.combatDetails.combatStats.focusTraining = '';\n            }\n\n            [\n                'stabAccuracy',\n                'slashAccuracy',\n                'smashAccuracy',\n                'rangedAccuracy',\n                'magicAccuracy',\n                'stabDamage',\n                'slashDamage',\n                'smashDamage',\n                'rangedDamage',\n                'magicDamage',\n                'defensiveDamage',\n                'taskDamage',\n                'physicalAmplify',\n                'waterAmplify',\n                'natureAmplify',\n                'fireAmplify',\n                'healingAmplify',\n                'stabEvasion',\n                'slashEvasion',\n                'smashEvasion',\n                'rangedEvasion',\n                'magicEvasion',\n                'armor',\n                'waterResistance',\n                'natureResistance',\n                'fireResistance',\n                'maxHitpoints',\n                'maxManapoints',\n                'lifeSteal',\n                'hpRegenPer10',\n                'mpRegenPer10',\n                'physicalThorns',\n                'elementalThorns',\n                'combatDropRate',\n                'combatRareFind',\n                'combatDropQuantity',\n                'combatExperience',\n                'criticalRate',\n                'criticalDamage',\n                'armorPenetration',\n                'waterPenetration',\n                'naturePenetration',\n                'firePenetration',\n                'abilityHaste',\n                'tenacity',\n                'manaLeech',\n                'castSpeed',\n                'threat',\n                'parry',\n                'mayhem',\n                'pierce',\n                'curse',\n                'fury',\n                'weaken',\n                'ripple',\n                'bloom',\n                'blaze',\n                'attackSpeed',\n                'foodHaste',\n                'drinkConcentration',\n                'autoAttackDamage',\n                'abilityDamage',\n                'staminaExperience',\n                'intelligenceExperience',\n                'attackExperience',\n                'defenseExperience',\n                'meleeExperience',\n                'rangedExperience',\n                'magicExperience',\n                'retaliation',\n                'maxHitpointsRatio',\n                'maxManapointsRatio',\n            ].forEach((stat) => {\n                this.combatDetails.combatStats[stat] = Object.values(this.equipment)\n                    .filter((equipment) => equipment != null)\n                    .map((equipment) => equipment.getCombatStat(stat))\n                    .reduce((prev, cur) => prev + cur, 0);\n            });\n\n            if (this.equipment['/equipment_types/pouch']) {\n                this.combatDetails.combatStats.foodSlots =\n                    1 + this.equipment['/equipment_types/pouch'].getCombatStat('foodSlots');\n                this.combatDetails.combatStats.drinkSlots =\n                    1 + this.equipment['/equipment_types/pouch'].getCombatStat('drinkSlots');\n            } else {\n                this.combatDetails.combatStats.foodSlots = 1;\n                this.combatDetails.combatStats.drinkSlots = 1;\n            }\n\n            super.updateCombatDetails();\n        }\n    }\n\n    class Zone {\n        constructor(hrid, difficultyTier) {\n            this.hrid = hrid;\n            this.difficultyTier = difficultyTier;\n\n            const actionDetailMap = getGameData().actionDetailMap;\n            const gameZone = actionDetailMap[this.hrid];\n            this.monsterSpawnInfo = gameZone.combatZoneInfo.fightInfo;\n            this.dungeonSpawnInfo = gameZone.combatZoneInfo.dungeonInfo;\n            this.encountersKilled = 1;\n            this.buffs = gameZone.buffs;\n            this.isDungeon = gameZone.combatZoneInfo.isDungeon;\n            this.dungeonsCompleted = 0;\n            this.dungeonsFailed = 0;\n            this.finalWave = false;\n\n            if (this.monsterSpawnInfo) {\n                this.monsterSpawnInfo.battlesPerBoss = 10;\n            }\n        }\n\n        getRandomEncounter() {\n            if (!this.monsterSpawnInfo) {\n                return [];\n            }\n\n            if (this.monsterSpawnInfo.bossSpawns && this.encountersKilled === this.monsterSpawnInfo.battlesPerBoss) {\n                this.encountersKilled = 1;\n                return this.monsterSpawnInfo.bossSpawns.map(\n                    (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)\n                );\n            }\n\n            if (!this.monsterSpawnInfo.randomSpawnInfo || !this.monsterSpawnInfo.randomSpawnInfo.spawns) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const totalWeight = this.monsterSpawnInfo.randomSpawnInfo.spawns.reduce((prev, cur) => prev + cur.rate, 0);\n\n            const encounterHrids = [];\n            let totalStrength = 0;\n\n            outer: for (let i = 0; i < this.monsterSpawnInfo.randomSpawnInfo.maxSpawnCount; i++) {\n                const randomWeight = totalWeight * Math.random();\n                let cumulativeWeight = 0;\n\n                for (const spawn of this.monsterSpawnInfo.randomSpawnInfo.spawns) {\n                    cumulativeWeight += spawn.rate;\n                    if (randomWeight <= cumulativeWeight) {\n                        totalStrength += spawn.strength;\n\n                        if (totalStrength <= this.monsterSpawnInfo.randomSpawnInfo.maxTotalStrength) {\n                            encounterHrids.push({ hrid: spawn.combatMonsterHrid, difficultyTier: spawn.difficultyTier });\n                        } else {\n                            break outer;\n                        }\n                        break;\n                    }\n                }\n            }\n            this.encountersKilled++;\n            return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));\n        }\n\n        failWave() {\n            this.dungeonsFailed++;\n            this.encountersKilled = 1;\n        }\n\n        getNextWave() {\n            if (this.encountersKilled > this.dungeonSpawnInfo.maxWaves) {\n                this.dungeonsCompleted++;\n                this.encountersKilled = 1;\n            }\n\n            const waveNum = this.encountersKilled;\n            const fixedSpawns = this.dungeonSpawnInfo.fixedSpawnsMap[waveNum.toString()];\n\n            if (fixedSpawns) {\n                this.encountersKilled++;\n                return fixedSpawns.map(\n                    (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)\n                );\n            }\n\n            // Random spawn path\n            const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;\n\n            if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const waveKeys = Object.keys(randomSpawnInfoMap)\n                .map(Number)\n                .sort((a, b) => a - b);\n\n            if (waveKeys.length === 0) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            let monsterSpawns = null;\n\n            if (waveNum >= waveKeys[waveKeys.length - 1]) {\n                monsterSpawns = randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];\n            } else {\n                for (let i = 0; i < waveKeys.length - 1; i++) {\n                    if (waveNum >= waveKeys[i] && waveNum < waveKeys[i + 1]) {\n                        monsterSpawns = randomSpawnInfoMap[waveKeys[i]];\n                        break;\n                    }\n                }\n            }\n\n            // Fallback to first available spawn info if no range matched\n            if (!monsterSpawns || !monsterSpawns.spawns) {\n                monsterSpawns = randomSpawnInfoMap[waveKeys[0]];\n            }\n\n            // Final safety — if still broken, skip wave instead of crashing\n            if (!monsterSpawns?.spawns) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const totalWeight = monsterSpawns.spawns.reduce((prev, cur) => prev + cur.rate, 0);\n\n            const encounterHrids = [];\n            let totalStrength = 0;\n\n            outer: for (let i = 0; i < monsterSpawns.maxSpawnCount; i++) {\n                const randomWeight = totalWeight * Math.random();\n                let cumulativeWeight = 0;\n\n                for (const spawn of monsterSpawns.spawns) {\n                    cumulativeWeight += spawn.rate;\n                    if (randomWeight <= cumulativeWeight) {\n                        totalStrength += spawn.strength;\n\n                        if (totalStrength <= monsterSpawns.maxTotalStrength) {\n                            encounterHrids.push({\n                                hrid: spawn.combatMonsterHrid,\n                                difficultyTier: spawn.difficultyTier,\n                            });\n                        } else {\n                            break outer;\n                        }\n                        break;\n                    }\n                }\n            }\n            this.encountersKilled++;\n            return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));\n        }\n    }\n\n    /**\n     * Combat Simulator Worker Entry\n     *\n     * This file is bundled into a string at build time by the workerBundlePlugin\n     * and runs inside a Web Worker. It receives simulation parameters via\n     * postMessage and returns results.\n     */\n\n\n    onmessage = function (event) {\n        const { type, taskId } = event.data;\n\n        if (type !== 'start_simulation') return;\n\n        try {\n            const {\n                gameData,\n                playerDTOs,\n                zoneHrid,\n                difficultyTier,\n                simulationTimeLimit,\n                extraBuffs,\n                labyrinth: labyrinthData,\n            } = event.data;\n\n            // Set game data for the engine singleton\n            setGameData(gameData);\n\n            // Create Zone (used as fallback even in labyrinth mode for SimResult constructor)\n            const zone = new Zone(zoneHrid, difficultyTier);\n\n            // Create Labyrinth if specified\n            let labyrinth = null;\n            if (labyrinthData) {\n                labyrinth = new Labyrinth(labyrinthData.monsterHrid, labyrinthData.roomLevel, labyrinthData.crates || []);\n            }\n\n            // Create Players\n            const players = playerDTOs.map((dto) => {\n                const cloned = structuredClone(dto);\n                if (labyrinth) {\n                    cloned.food = cloned.food.map(() => null);\n                    cloned.drinks = cloned.drinks.map(() => null);\n                }\n                const player = Player.createFromDTO(cloned);\n                // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs\n                player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;\n                player.extraBuffs = extraBuffs;\n                return player;\n            });\n\n            // Create simulator with progress callback\n            const combatSimulator = new CombatSimulator(\n                players,\n                zone,\n                (progressData) => {\n                    postMessage({\n                        type: 'progress',\n                        taskId,\n                        progress: Math.round(progressData.progress * 100),\n                    });\n                },\n                labyrinth\n            );\n\n            // Run simulation\n            const simResult = combatSimulator.simulate(simulationTimeLimit);\n\n            postMessage({\n                type: 'result',\n                taskId,\n                simResult,\n            });\n        } catch (error) {\n            postMessage({\n                type: 'error',\n                taskId,\n                error: error.message || String(error),\n            });\n        }\n    };\n\n})();\n";
+    var WORKER_SCRIPT$1 = "(function () {\n    'use strict';\n\n    /**\n     * Game Data Singleton\n     *\n     * Replaces static JSON imports across the ported combat simulator engine.\n     * Game data maps are set once per simulation run from Toolasha's live data.\n     */\n\n    let _gameData = null;\n\n    /**\n     * Set all game data maps for the simulation.\n     * @param {Object} data - Game data maps from dataManager.getInitClientData()\n     */\n    function setGameData(data) {\n        _gameData = data;\n    }\n\n    /**\n     * Get the current game data maps.\n     * @returns {Object} Game data maps\n     */\n    function getGameData() {\n        return _gameData;\n    }\n\n    /**\n     * Seeded RNG for the combat simulator.\n     *\n     * The engine draws random numbers constantly — spawn composition, hit and crit\n     * rolls, parry, threat targeting, stun chance, proc chances. Left unseeded, two\n     * sims of the same setup are independent samples, so an upgrade comparison\n     * measures the upgrade's effect *plus* the gap between two random draws. That's\n     * why sub-0.1% deltas flip sign between runs.\n     *\n     * Seeding both sims from one value gives them common random numbers: the shared\n     * part of the stream cancels out of the difference and only the upgrade's real\n     * effect is left. Draws are split into independent streams by purpose so a\n     * player-side change can't shift monster-side draws — both sims walk the same\n     * spawn sequence even after their combat rolls have diverged.\n     *\n     * With no seed set every draw falls through to Math.random(), which is the\n     * previous behavior, so paths that want a fresh sample per run are untouched.\n     */\n\n    /** Odd 32-bit constant (2^32 / golden ratio) used to space stream seeds apart. */\n    const STREAM_STRIDE = 0x9e3779b9;\n\n    /**\n     * mulberry32 — 32-bit counter-based PRNG. Small state, no dependencies,\n     * uniform enough for Monte Carlo work, period 2^32.\n     * @param {number} seed - Any 32-bit integer\n     * @returns {Function} Draw function returning [0, 1)\n     */\n    function mulberry32(seed) {\n        let state = seed >>> 0;\n        return function draw() {\n            state = (state + 0x6d2b79f5) >>> 0;\n            let t = state;\n            t = Math.imul(t ^ (t >>> 15), t | 1);\n            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n        };\n    }\n\n    /**\n     * Mix a seed with an index into a well-separated 32-bit seed (murmur3 finalizer).\n     * @param {number} seed - Base seed\n     * @param {number} index - Stream or chunk index\n     * @returns {number} Derived 32-bit seed\n     */\n    function mixSeed(seed, index) {\n        let h = (seed ^ Math.imul(index + 1, STREAM_STRIDE)) >>> 0;\n        h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;\n        h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;\n        return (h ^ (h >>> 16)) >>> 0;\n    }\n\n    /** Combat rolls: hits, crits, damage, procs, targeting. Desyncs as soon as loadouts differ. */\n    let combatDraw = null;\n\n    /**\n     * Monster spawn composition only. Kept free of any player-dependent draw so the\n     * encounter sequence is identical across sims of the same seed.\n     */\n    let spawnDraw = null;\n\n    /** Per-encounter monster setup (starting ability cooldown offsets). */\n    let setupDraw = null;\n\n    /** Base seed, kept so the per-encounter streams can be re-derived mid-run. */\n    let baseSeed = null;\n\n    /**\n     * Normalize a seed input to a 32-bit integer.\n     * @param {*} seed\n     * @returns {number|null} 32-bit seed, or null if not a usable number\n     */\n    function normalizeSeed(seed) {\n        if (seed === null || seed === undefined || seed === '') return null;\n        const numeric = Number(seed);\n        if (!Number.isFinite(numeric)) return null;\n        return Math.floor(Math.abs(numeric)) >>> 0;\n    }\n\n    /**\n     * Seed every simulation stream from one value. Two sims given the same seed draw\n     * the same numbers in the same order until their flow diverges.\n     * @param {number|null} seed - Seed, or null/undefined to run unseeded\n     * @returns {boolean} True if seeded, false if left on Math.random()\n     */\n    function seedSimRng(seed) {\n        const base = normalizeSeed(seed);\n        if (base === null) {\n            clearSimRng();\n            return false;\n        }\n\n        baseSeed = base;\n        combatDraw = mulberry32(mixSeed(base, 0));\n        spawnDraw = mulberry32(mixSeed(base, 1));\n        setupDraw = mulberry32(mixSeed(base, 2));\n        return true;\n    }\n\n    /**\n     * Re-derive the combat and setup streams for the start of an encounter.\n     *\n     * Without this, the streams desync the moment the two sims take a different\n     * number of draws — a stronger loadout needs fewer swings — and everything after\n     * that point is back to being an independent sample. Restarting those streams\n     * each encounter caps the damage: encounter N begins from the same random state\n     * in both runs no matter what happened in encounter N-1. The spawn stream is\n     * deliberately left running so the monster sequence keeps advancing in order.\n     *\n     * No-op while unseeded.\n     * @param {number} encounterIndex - Zero-based encounter counter for this run\n     * @returns {boolean} True if the streams were re-derived\n     */\n    function syncEncounterRng(encounterIndex) {\n        if (baseSeed === null) return false;\n\n        const slot = 0x10000 + encounterIndex * 2;\n        combatDraw = mulberry32(mixSeed(baseSeed, slot));\n        setupDraw = mulberry32(mixSeed(baseSeed, slot + 1));\n        return true;\n    }\n\n    /** Drop back to Math.random() for every stream. */\n    function clearSimRng() {\n        baseSeed = null;\n        combatDraw = null;\n        spawnDraw = null;\n        setupDraw = null;\n    }\n\n    /**\n     * Combat roll. Falls through to Math.random() when unseeded.\n     * @returns {number} [0, 1)\n     */\n    function random() {\n        return combatDraw ? combatDraw() : Math.random();\n    }\n\n    /**\n     * Spawn-composition roll. Falls through to Math.random() when unseeded.\n     * @returns {number} [0, 1)\n     */\n    function randomSpawn() {\n        return spawnDraw ? spawnDraw() : Math.random();\n    }\n\n    /**\n     * Monster-setup roll. Falls through to Math.random() when unseeded.\n     * @returns {number} [0, 1)\n     */\n    function randomSetup() {\n        return setupDraw ? setupDraw() : Math.random();\n    }\n\n    class CombatUtilities {\n        static getTarget(enemies) {\n            if (!enemies) {\n                return null;\n            }\n            const target = enemies.find((enemy) => enemy.combatDetails.currentHitpoints > 0);\n\n            return target ?? null;\n        }\n\n        static randomInt(min, max) {\n            if (max < min) {\n                const temp = min;\n                min = max;\n                max = temp;\n            }\n\n            const minCeil = Math.ceil(min);\n            const maxFloor = Math.floor(max);\n\n            if (Math.floor(min) === maxFloor) {\n                return Math.floor((min + max) / 2 + random());\n            }\n\n            const minTail = -1 * (min - minCeil);\n            const maxTail = max - maxFloor;\n\n            const balancedWeight = 2 * minTail + (maxFloor - minCeil);\n            const balancedAverage = (maxFloor + minCeil) / 2;\n            const average = (max + min) / 2;\n            const extraTailWeight = (balancedWeight * (average - balancedAverage)) / (maxFloor + 1 - average);\n            const extraTailChance = Math.abs(extraTailWeight / (extraTailWeight + balancedWeight));\n\n            if (random() < extraTailChance) {\n                if (maxTail > minTail) {\n                    return Math.floor(maxFloor + 1);\n                } else {\n                    return Math.floor(minCeil - 1);\n                }\n            }\n\n            if (maxTail > minTail) {\n                return Math.floor(min + random() * (maxFloor + minTail - min + 1));\n            } else {\n                return Math.floor(minCeil - maxTail + random() * (max - (minCeil - maxTail) + 1));\n            }\n        }\n\n        static processAttack(source, target, abilityEffect = null) {\n            const combatStyle = abilityEffect\n                ? abilityEffect.combatStyleHrid\n                : source.combatDetails.combatStats.combatStyleHrid;\n            const damageType = abilityEffect ? abilityEffect.damageType : source.combatDetails.combatStats.damageType;\n\n            let sourceAccuracyRating = 1;\n            let sourceAutoAttackMaxDamage = 1;\n            let targetEvasionRating = 1;\n\n            switch (combatStyle) {\n                case '/combat_styles/stab':\n                    sourceAccuracyRating = source.combatDetails.stabAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.stabMaxDamage;\n                    targetEvasionRating = target.combatDetails.stabEvasionRating;\n                    break;\n                case '/combat_styles/slash':\n                    sourceAccuracyRating = source.combatDetails.slashAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.slashMaxDamage;\n                    targetEvasionRating = target.combatDetails.slashEvasionRating;\n                    break;\n                case '/combat_styles/smash':\n                    sourceAccuracyRating = source.combatDetails.smashAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.smashMaxDamage;\n                    targetEvasionRating = target.combatDetails.smashEvasionRating;\n                    break;\n                case '/combat_styles/ranged':\n                    sourceAccuracyRating = source.combatDetails.rangedAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.rangedMaxDamage;\n                    targetEvasionRating = target.combatDetails.rangedEvasionRating;\n                    break;\n                case '/combat_styles/magic':\n                    sourceAccuracyRating = source.combatDetails.magicAccuracyRating;\n                    sourceAutoAttackMaxDamage = source.combatDetails.magicMaxDamage;\n                    targetEvasionRating = target.combatDetails.magicEvasionRating;\n                    break;\n                default:\n                    throw new Error('Unknown combat style: ' + combatStyle);\n            }\n\n            let sourceDamageMultiplier = 1;\n            let sourceResistance = 0;\n            let sourcePenetration = 0;\n            let targetResistance = 0;\n            let targetThornPower = 0;\n            let targetPenetration = 0;\n            let thornType;\n\n            switch (damageType) {\n                case '/damage_types/physical':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.physicalAmplify;\n                    sourceResistance = source.combatDetails.totalArmor;\n                    sourcePenetration = source.combatDetails.combatStats.armorPenetration;\n                    targetResistance = target.combatDetails.totalArmor;\n                    targetThornPower = target.combatDetails.combatStats.physicalThorns;\n                    targetPenetration = target.combatDetails.combatStats.armorPenetration;\n                    thornType = 'physicalThorns';\n                    break;\n                case '/damage_types/water':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.waterAmplify;\n                    sourceResistance = source.combatDetails.totalWaterResistance;\n                    sourcePenetration = source.combatDetails.combatStats.waterPenetration;\n                    targetResistance = target.combatDetails.totalWaterResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.waterPenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                case '/damage_types/nature':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.natureAmplify;\n                    sourceResistance = source.combatDetails.totalNatureResistance;\n                    sourcePenetration = source.combatDetails.combatStats.naturePenetration;\n                    targetResistance = target.combatDetails.totalNatureResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.naturePenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                case '/damage_types/fire':\n                    sourceDamageMultiplier = 1 + source.combatDetails.combatStats.fireAmplify;\n                    sourceResistance = source.combatDetails.totalFireResistance;\n                    sourcePenetration = source.combatDetails.combatStats.firePenetration;\n                    targetResistance = target.combatDetails.totalFireResistance;\n                    targetThornPower = target.combatDetails.combatStats.elementalThorns;\n                    targetPenetration = target.combatDetails.combatStats.firePenetration;\n                    thornType = 'elementalThorns';\n                    break;\n                default:\n                    throw new Error('Unknown damage type: ' + damageType);\n            }\n\n            let hitChance = 1;\n            let critChance = 0;\n            let isCrit = false;\n            const bonusCritChance = source.combatDetails.combatStats.criticalRate;\n            const bonusCritDamage = source.combatDetails.combatStats.criticalDamage;\n\n            if (abilityEffect) {\n                sourceAccuracyRating *= 1 + abilityEffect.bonusAccuracyRatio;\n            }\n\n            hitChance =\n                Math.pow(sourceAccuracyRating, 1.4) /\n                (Math.pow(sourceAccuracyRating, 1.4) + Math.pow(targetEvasionRating, 1.4));\n\n            if (combatStyle === '/combat_styles/ranged') {\n                critChance = 0.3 * hitChance;\n            }\n\n            critChance = critChance + bonusCritChance;\n\n            const baseDamageFlat = abilityEffect ? abilityEffect.damageFlat : 0;\n            const baseDamageRatio = abilityEffect ? abilityEffect.damageRatio : 1;\n\n            const armorDamageRatioFlat = abilityEffect\n                ? abilityEffect.armorDamageRatio * source.combatDetails.totalArmor\n                : 0;\n\n            let sourceMinDamage = sourceDamageMultiplier * (1 + baseDamageFlat + armorDamageRatioFlat);\n            let sourceMaxDamage =\n                sourceDamageMultiplier *\n                (baseDamageRatio * sourceAutoAttackMaxDamage + baseDamageFlat + armorDamageRatioFlat);\n\n            if (random() < critChance) {\n                sourceMaxDamage = sourceMaxDamage * (1 + bonusCritDamage);\n                sourceMinDamage = sourceMaxDamage;\n                isCrit = true;\n            }\n\n            let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);\n            // taskDamage intentionally excluded — trinket slot not exported by reference sims\n            // damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;\n            damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;\n            if (!abilityEffect) {\n                damageRoll += damageRoll * source.combatDetails.combatStats.autoAttackDamage;\n            } else {\n                damageRoll *= 1 + source.combatDetails.combatStats.abilityDamage;\n            }\n\n            let damageDone = 0;\n            let thornDamageDone = 0;\n\n            let didHit = false;\n            if (random() < hitChance) {\n                didHit = true;\n                let penetratedTargetResistance = targetResistance;\n\n                if (sourcePenetration > 0 && targetResistance > 0) {\n                    penetratedTargetResistance = targetResistance / (1 + sourcePenetration);\n                }\n\n                let targetDamageTakenRatio = 100 / (100 + penetratedTargetResistance);\n                if (penetratedTargetResistance < 0) {\n                    targetDamageTakenRatio = (100 - penetratedTargetResistance) / 100;\n                }\n\n                const mitigatedDamage = Math.ceil(targetDamageTakenRatio * damageRoll);\n                damageDone = Math.min(mitigatedDamage, target.combatDetails.currentHitpoints);\n                target.combatDetails.currentHitpoints -= damageDone;\n            }\n\n            if (targetThornPower > 0.0 && targetResistance > -99) {\n                let penetratedSourceResistance = sourceResistance;\n\n                if (sourceResistance > 0) {\n                    penetratedSourceResistance = sourceResistance / (1 + targetPenetration);\n                }\n\n                let sourceDamageTakenRatio = 100.0 / (100 + penetratedSourceResistance);\n                if (penetratedSourceResistance < 0) {\n                    sourceDamageTakenRatio = (100 - penetratedSourceResistance) / 100;\n                }\n\n                const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;\n                const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;\n                const targetDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;\n\n                const thornsDamageRoll = CombatUtilities.randomInt(\n                    1,\n                    targetDamageMultiplier *\n                        target.combatDetails.defensiveMaxDamage *\n                        (1.0 + targetResistance / 100.0) *\n                        targetThornPower\n                );\n\n                const mitigatedThornsDamage = Math.ceil(sourceDamageTakenRatio * thornsDamageRoll);\n\n                thornDamageDone = Math.min(mitigatedThornsDamage, source.combatDetails.currentHitpoints);\n                source.combatDetails.currentHitpoints -= thornDamageDone;\n            }\n\n            let retaliationDamageDone = 0;\n            if (target.combatDetails.combatStats.retaliation > 0) {\n                const retaliationHitChance =\n                    Math.pow(target.combatDetails.smashAccuracyRating, 1.4) /\n                    (Math.pow(target.combatDetails.smashAccuracyRating, 1.4) +\n                        Math.pow(source.combatDetails.smashEvasionRating, 1.4));\n\n                if (retaliationHitChance > random()) {\n                    let sourceEffectiveArmor = source.combatDetails.totalArmor;\n                    if (sourceEffectiveArmor > 0) {\n                        sourceEffectiveArmor =\n                            sourceEffectiveArmor / (1.0 + target.combatDetails.combatStats.armorPenetration);\n                    }\n\n                    let sourceDamageTakenRatio = 100.0 / (100.0 + sourceEffectiveArmor);\n                    if (sourceEffectiveArmor < 0) {\n                        sourceDamageTakenRatio = (100.0 - sourceEffectiveArmor) / 100.0;\n                    }\n\n                    const targetTaskDamageMultiplier = 1.0 + target.combatDetails.combatStats.taskDamage;\n                    const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;\n                    const retaliationDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;\n\n                    let premitigatedDamage = damageRoll;\n                    premitigatedDamage = Math.min(premitigatedDamage, target.combatDetails.defensiveMaxDamage * 5);\n\n                    const retaliationMinDamage =\n                        retaliationDamageMultiplier * target.combatDetails.combatStats.retaliation * premitigatedDamage;\n                    const retaliationMaxDamage =\n                        retaliationDamageMultiplier *\n                        target.combatDetails.combatStats.retaliation *\n                        (target.combatDetails.defensiveMaxDamage + premitigatedDamage);\n\n                    const retaliationDamageRoll = CombatUtilities.randomInt(retaliationMinDamage, retaliationMaxDamage);\n                    const mitigatedRetaliationDamage = Math.ceil(sourceDamageTakenRatio * retaliationDamageRoll);\n                    retaliationDamageDone = Math.min(mitigatedRetaliationDamage, source.combatDetails.currentHitpoints);\n                    source.combatDetails.currentHitpoints -= retaliationDamageDone;\n                }\n            }\n\n            let lifeStealHeal = 0;\n            if (!abilityEffect && didHit && source.combatDetails.combatStats.lifeSteal > 0) {\n                lifeStealHeal = source.addHitpoints(Math.floor(source.combatDetails.combatStats.lifeSteal * damageDone));\n            }\n\n            let hpDrain = 0;\n            if (abilityEffect && didHit && abilityEffect.hpDrainRatio > 0) {\n                const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n                hpDrain = source.addHitpoints(Math.floor(abilityEffect.hpDrainRatio * damageDone * healingAmplify));\n            }\n\n            let manaLeechMana = 0;\n            if (!abilityEffect && didHit && source.combatDetails.combatStats.manaLeech > 0) {\n                manaLeechMana = source.addManapoints(Math.floor(source.combatDetails.combatStats.manaLeech * damageDone));\n            }\n\n            return {\n                damageDone,\n                didHit,\n                thornDamageDone,\n                thornType,\n                retaliationDamageDone,\n                lifeStealHeal,\n                hpDrain,\n                manaLeechMana,\n                isCrit,\n            };\n        }\n\n        static processHeal(source, abilityEffect, target) {\n            if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {\n                throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);\n            }\n\n            const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n            const magicMaxDamage = source.combatDetails.magicMaxDamage;\n\n            const baseHealFlat = abilityEffect.damageFlat;\n            const baseHealRatio = abilityEffect.damageRatio;\n\n            const minHeal = healingAmplify * (1 + baseHealFlat);\n            const maxHeal = healingAmplify * (baseHealRatio * magicMaxDamage + baseHealFlat);\n\n            const heal = this.randomInt(minHeal, maxHeal);\n            const amountHealed = target.addHitpoints(heal);\n\n            return amountHealed;\n        }\n\n        static processRevive(source, abilityEffect, target) {\n            if (abilityEffect.combatStyleHrid !== '/combat_styles/magic') {\n                throw new Error('Heal ability effect not supported for combat style: ' + abilityEffect.combatStyleHrid);\n            }\n\n            const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;\n            const magicMaxDamage = source.combatDetails.magicMaxDamage;\n\n            const baseHealFlat = abilityEffect.damageFlat;\n            const baseHealRatio = abilityEffect.damageRatio;\n\n            const minHeal = healingAmplify * (1 + baseHealFlat);\n            const maxHeal = healingAmplify * (baseHealRatio * magicMaxDamage + baseHealFlat);\n\n            const heal = this.randomInt(minHeal, maxHeal);\n            const amountHealed = target.addHitpoints(heal);\n            target.combatDetails.currentManapoints = target.combatDetails.maxManapoints;\n            target.clearCCs();\n\n            // target.clearBuffs();\n\n            return amountHealed;\n        }\n\n        static processSpendHp(source, abilityEffect) {\n            const currentHp = source.combatDetails.currentHitpoints;\n            const spendHpRatio = abilityEffect.spendHpRatio;\n\n            const spentHp = Math.floor(currentHp * spendHpRatio);\n\n            source.combatDetails.currentHitpoints -= spentHp;\n\n            return spentHp;\n        }\n\n        static calculateTickValue(totalValue, totalTicks, currentTick) {\n            const currentSum = Math.floor((currentTick * totalValue) / totalTicks);\n            const previousSum = Math.floor(((currentTick - 1) * totalValue) / totalTicks);\n\n            return currentSum - previousSum;\n        }\n    }\n\n    class CombatEvent {\n        constructor(type, time) {\n            this.type = type;\n            this.time = time;\n        }\n    }\n\n    class AutoAttackEvent extends CombatEvent {\n        static type = 'autoAttack';\n\n        constructor(time, source) {\n            super(AutoAttackEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class DamageOverTimeEvent extends CombatEvent {\n        static type = 'damageOverTime';\n\n        constructor(time, sourceRef, target, damage, totalTicks, currentTick, combatStyleHrid) {\n            super(DamageOverTimeEvent.type, time);\n\n            // Calling it 'source' would wrongly clear Damage Over Time when the source dies\n            this.sourceRef = sourceRef;\n            this.target = target;\n            this.damage = damage;\n            this.totalTicks = totalTicks;\n            this.currentTick = currentTick;\n            this.combatStyleHrid = combatStyleHrid;\n        }\n    }\n\n    class CheckBuffExpirationEvent extends CombatEvent {\n        static type = 'checkBuffExpiration';\n\n        constructor(time, source) {\n            super(CheckBuffExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class CombatStartEvent extends CombatEvent {\n        static type = 'combatStart';\n\n        constructor(time) {\n            super(CombatStartEvent.type, time);\n        }\n    }\n\n    class ConsumableTickEvent extends CombatEvent {\n        static type = 'consumableTick';\n\n        constructor(time, source, consumable, totalTicks, currentTick) {\n            super(ConsumableTickEvent.type, time);\n\n            this.source = source;\n            this.consumable = consumable;\n            this.totalTicks = totalTicks;\n            this.currentTick = currentTick;\n        }\n    }\n\n    class CooldownReadyEvent extends CombatEvent {\n        static type = 'cooldownReady';\n\n        constructor(time) {\n            super(CooldownReadyEvent.type, time);\n        }\n    }\n\n    class EnemyRespawnEvent extends CombatEvent {\n        static type = 'enemyRespawn';\n\n        constructor(time) {\n            super(EnemyRespawnEvent.type, time);\n        }\n    }\n\n    /**\n     * EventQueue — simple binary min-heap with linear scan queries.\n     *\n     * Optimized for the combat sim's access pattern: frequent add/remove (every tick)\n     * with rare queries (a few per encounter). The heap typically holds 10-30 events,\n     * making linear scans trivially fast and eliminating the overhead of maintaining\n     * secondary indexes on every mutation.\n     */\n\n    /**\n     * Binary min-heap with O(log n) removal via position tracking.\n     */\n    class IndexedMinHeap {\n        constructor() {\n            this.data = [];\n        }\n\n        get size() {\n            return this.data.length;\n        }\n\n        push(event) {\n            event._heapIndex = this.data.length;\n            this.data.push(event);\n            this._siftUp(this.data.length - 1);\n        }\n\n        pop() {\n            if (this.data.length === 0) return undefined;\n            const top = this.data[0];\n            const last = this.data.pop();\n            if (this.data.length > 0) {\n                last._heapIndex = 0;\n                this.data[0] = last;\n                this._siftDown(0);\n            }\n            top._heapIndex = -1;\n            return top;\n        }\n\n        remove(event) {\n            const idx = event._heapIndex;\n            if (idx === undefined || idx < 0 || idx >= this.data.length || this.data[idx] !== event) {\n                return false;\n            }\n\n            if (idx === this.data.length - 1) {\n                this.data.pop();\n                event._heapIndex = -1;\n                return true;\n            }\n\n            const last = this.data.pop();\n            last._heapIndex = idx;\n            this.data[idx] = last;\n            event._heapIndex = -1;\n\n            this._siftUp(idx);\n            this._siftDown(idx);\n            return true;\n        }\n\n        _siftUp(idx) {\n            const data = this.data;\n            while (idx > 0) {\n                const parent = (idx - 1) >> 1;\n                if (data[idx].time >= data[parent].time) break;\n                const tmp = data[parent];\n                data[parent] = data[idx];\n                data[idx] = tmp;\n                data[parent]._heapIndex = parent;\n                data[idx]._heapIndex = idx;\n                idx = parent;\n            }\n        }\n\n        _siftDown(idx) {\n            const data = this.data;\n            const len = data.length;\n            while (true) {\n                let smallest = idx;\n                const left = 2 * idx + 1;\n                const right = 2 * idx + 2;\n\n                if (left < len && data[left].time < data[smallest].time) smallest = left;\n                if (right < len && data[right].time < data[smallest].time) smallest = right;\n\n                if (smallest === idx) break;\n\n                const tmp = data[smallest];\n                data[smallest] = data[idx];\n                data[idx] = tmp;\n                data[smallest]._heapIndex = smallest;\n                data[idx]._heapIndex = idx;\n                idx = smallest;\n            }\n        }\n    }\n\n    /**\n     * EventQueue with O(log n) add/remove and linear scan queries.\n     */\n    class EventQueue {\n        constructor() {\n            this.minHeap = new IndexedMinHeap();\n        }\n\n        /**\n         * Add event to the queue.\n         * @param {Object} event\n         */\n        addEvent(event) {\n            this.minHeap.push(event);\n        }\n\n        /**\n         * Pop the earliest event.\n         * @returns {Object|undefined}\n         */\n        getNextEvent() {\n            return this.minHeap.pop();\n        }\n\n        /**\n         * Check if any event of the given type exists.\n         * @param {string} type\n         * @returns {boolean}\n         */\n        containsEventOfType(type) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type) return true;\n            }\n            return false;\n        }\n\n        /**\n         * Check if an event of the given type and hrid exists.\n         * @param {string} type\n         * @param {string} hrid\n         * @returns {boolean}\n         */\n        containsEventOfTypeAndHrid(type, hrid) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type && data[i].hrid === hrid) return true;\n            }\n            return false;\n        }\n\n        /**\n         * Get an event matching type + source.\n         * @param {string} type\n         * @param {Object} source\n         * @returns {Object|null}\n         */\n        getByTypeAndSource(type, source) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (data[i].type === type && data[i].source === source) return data[i];\n            }\n            return null;\n        }\n\n        /**\n         * Clear all events matching type + source.\n         * @param {string} type\n         * @param {Object} source\n         * @returns {boolean} true if any events were cleared\n         */\n        clearByTypeAndSource(type, source) {\n            // Snapshot matches first: removing during index iteration can skip events displaced by heap sifts\n            const matches = this.minHeap.data.filter((event) => event.type === type && event.source === source);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Clear all events matching type + hrid.\n         * @param {string} type\n         * @param {string} hrid\n         * @returns {boolean}\n         */\n        clearByTypeAndHrid(type, hrid) {\n            const matches = this.minHeap.data.filter((event) => event.type === type && event.hrid === hrid);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Clear all events for a unit (as source OR target).\n         * @param {Object} unit\n         */\n        clearEventsForUnit(unit) {\n            const matches = this.minHeap.data.filter((event) => event.source === unit || event.target === unit);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n        }\n\n        /**\n         * Clear all events of a given type.\n         * @param {string} type\n         */\n        clearEventsOfType(type) {\n            const matches = this.minHeap.data.filter((event) => event.type === type);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n        }\n\n        /**\n         * Clear all events and reset.\n         */\n        clear() {\n            this.minHeap = new IndexedMinHeap();\n        }\n\n        /**\n         * Generic clearMatching for complex predicates.\n         * @param {Function} fn - Predicate\n         * @returns {boolean}\n         */\n        clearMatching(fn) {\n            const matches = this.minHeap.data.filter(fn);\n            for (const event of matches) {\n                this.minHeap.remove(event);\n            }\n            return matches.length > 0;\n        }\n\n        /**\n         * Generic getMatching for complex predicates.\n         * @param {Function} fn - Predicate\n         * @returns {Object|null}\n         */\n        getMatching(fn) {\n            const data = this.minHeap.data;\n            for (let i = 0; i < data.length; i++) {\n                if (fn(data[i])) return data[i];\n            }\n            return null;\n        }\n    }\n\n    class PlayerRespawnEvent extends CombatEvent {\n        static type = 'playerRespawn';\n\n        constructor(time, hrid) {\n            super(PlayerRespawnEvent.type, time);\n            this.hrid = hrid;\n        }\n    }\n\n    class RegenTickEvent extends CombatEvent {\n        static type = 'regenTick';\n\n        constructor(time) {\n            super(RegenTickEvent.type, time);\n        }\n    }\n\n    class StunExpirationEvent extends CombatEvent {\n        static type = 'stunExpiration';\n\n        constructor(time, source) {\n            super(StunExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class BlindExpirationEvent extends CombatEvent {\n        static type = 'blindExpiration';\n\n        constructor(time, source) {\n            super(BlindExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class SilenceExpirationEvent extends CombatEvent {\n        static type = 'silenceExpiration';\n\n        constructor(time, source) {\n            super(SilenceExpirationEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class CurseExpirationEvent extends CombatEvent {\n        static type = 'curseExpiration';\n        static maxCurseStacks = 5;\n\n        constructor(time, curseAmount, source) {\n            super(CurseExpirationEvent.type, time);\n\n            this.curseAmount = Math.min(curseAmount + 1, CurseExpirationEvent.maxCurseStacks);\n\n            this.source = source;\n        }\n    }\n\n    class WeakenExpirationEvent extends CombatEvent {\n        static type = 'weakenExpiration';\n        static maxWeakenStacks = 5;\n\n        constructor(time, weakenAmount, source) {\n            super(WeakenExpirationEvent.type, time);\n            this.weakenAmount = Math.min(weakenAmount + 1, WeakenExpirationEvent.maxWeakenStacks);\n            this.source = source;\n        }\n    }\n\n    class FuryExpirationEvent extends CombatEvent {\n        static type = 'furyExpiration';\n\n        constructor(time, furyAmount, source) {\n            super(FuryExpirationEvent.type, time);\n\n            this.furyAmount = furyAmount;\n            this.source = source;\n        }\n    }\n\n    class EnrageTickEvent extends CombatEvent {\n        static type = 'enrageTick';\n\n        constructor(time, encounterTime) {\n            super(EnrageTickEvent.type, time);\n\n            this.encounterTime = encounterTime;\n        }\n    }\n\n    class SimResult {\n        constructor(zone, numberOfPlayers) {\n            this.deaths = {};\n            this.experienceGained = {};\n            this.encounters = 0;\n            this.attacks = {};\n            this.consumablesUsed = {};\n            this.hitpointsGained = {};\n            this.manapointsGained = {};\n            this.debuffOnLevelGap = {};\n            this.dropRateMultiplier = {};\n            this.rareFindMultiplier = {};\n            this.combatDropQuantity = {};\n            this.playerRanOutOfMana = {\n                player1: false,\n                player2: false,\n                player3: false,\n                player4: false,\n                player5: false,\n            };\n            this.playerRanOutOfManaTime = {};\n            this.manaUsed = {};\n            this.timeSpentAlive = [];\n            this.bossSpawns = [];\n            this.hitpointsSpent = {};\n            this.zoneName = zone.hrid;\n            this.difficultyTier = zone.difficultyTier;\n            this.isDungeon = false;\n            this.dungeonsCompleted = 0;\n            this.dungeonsFailed = 0;\n            this.maxWaveReached = 0;\n            this.numberOfPlayers = numberOfPlayers;\n            this.maxEnrageStack = 0;\n\n            this.wipeEvents = [];\n            this.totalDamageDealt = {}; // sourceHrid → total damage dealt\n        }\n\n        addWipeEvent(logs, simulationTime, wave) {\n            this.wipeEvents.push({\n                simulationTime: simulationTime,\n                logs: logs,\n                wave: wave,\n                timestamp: new Date().toISOString(),\n            });\n        }\n\n        addDeath(unit) {\n            if (!this.deaths[unit.hrid]) {\n                this.deaths[unit.hrid] = 0;\n            }\n\n            this.deaths[unit.hrid] += 1;\n        }\n\n        updateTimeSpentAlive(name, alive, time) {\n            const i = this.timeSpentAlive.findIndex((e) => e.name === name);\n            if (alive) {\n                if (i !== -1) {\n                    this.timeSpentAlive[i].alive = true;\n                    this.timeSpentAlive[i].spawnedAt = time;\n                } else {\n                    this.timeSpentAlive.push({ name: name, timeSpentAlive: 0, spawnedAt: time, alive: true, count: 0 });\n                }\n            } else {\n                const timeAlive = time - this.timeSpentAlive[i].spawnedAt;\n                this.timeSpentAlive[i].alive = false;\n                this.timeSpentAlive[i].timeSpentAlive += timeAlive;\n                this.timeSpentAlive[i].count += 1;\n            }\n        }\n\n        addExperienceGain(unit, experience) {\n            if (!unit.isPlayer) {\n                return;\n            }\n\n            if (!this.experienceGained[unit.hrid]) {\n                this.experienceGained[unit.hrid] = {\n                    stamina: 0,\n                    intelligence: 0,\n                    attack: 0,\n                    melee: 0,\n                    defense: 0,\n                    ranged: 0,\n                    magic: 0,\n                };\n            }\n\n            const experienceGainedRate = {\n                stamina: 0,\n                intelligence: 0,\n                attack: 0,\n                melee: 0,\n                defense: 0,\n                ranged: 0,\n                magic: 0,\n            };\n\n            const primaryTraining = unit.combatDetails.combatStats.primaryTraining;\n            experienceGainedRate[primaryTraining.split('/')[2]] = 0.3;\n\n            const combatStyleDetailMap = getGameData().combatStyleDetailMap;\n            const skillExpMap = combatStyleDetailMap[unit.combatDetails.combatStats.combatStyleHrid].skillExpMap;\n            const skillExpMapLength = Object.keys(skillExpMap).length;\n\n            const focusTraining = unit.combatDetails.combatStats.focusTraining;\n            if (focusTraining && skillExpMap[focusTraining]) {\n                experienceGainedRate[focusTraining.split('/')[2]] += 0.7;\n            } else {\n                Object.keys(skillExpMap).forEach((skillHrid) => {\n                    experienceGainedRate[skillHrid.split('/')[2]] += 0.7 / skillExpMapLength;\n                });\n            }\n\n            for (const [type, rate] of Object.entries(experienceGainedRate)) {\n                if (rate <= 0) continue;\n\n                const skillExperience = rate * (1 + unit.combatDetails.combatStats[type + 'Experience']);\n\n                this.experienceGained[unit.hrid][type] +=\n                    experience *\n                    (1 + unit.combatDetails.combatStats.combatExperience) *\n                    skillExperience *\n                    (1 + unit.debuffOnLevelGap);\n            }\n        }\n\n        addEncounterEnd() {\n            this.encounters++;\n        }\n\n        addAttack(source, target, ability, hit) {\n            if (!this.attacks[source.hrid]) {\n                this.attacks[source.hrid] = {};\n            }\n            if (!this.attacks[source.hrid][target.hrid]) {\n                this.attacks[source.hrid][target.hrid] = {};\n            }\n            if (!this.attacks[source.hrid][target.hrid][ability]) {\n                this.attacks[source.hrid][target.hrid][ability] = {};\n            }\n\n            if (!this.attacks[source.hrid][target.hrid][ability][hit]) {\n                this.attacks[source.hrid][target.hrid][ability][hit] = 0;\n            }\n\n            this.attacks[source.hrid][target.hrid][ability][hit] += 1;\n\n            if (hit !== 'miss') {\n                this.totalDamageDealt[source.hrid] = (this.totalDamageDealt[source.hrid] || 0) + hit;\n            }\n        }\n\n        addConsumableUse(unit, consumable) {\n            if (!this.consumablesUsed[unit.hrid]) {\n                this.consumablesUsed[unit.hrid] = {};\n            }\n            if (!this.consumablesUsed[unit.hrid][consumable.hrid]) {\n                this.consumablesUsed[unit.hrid][consumable.hrid] = 0;\n            }\n\n            this.consumablesUsed[unit.hrid][consumable.hrid] += 1;\n        }\n\n        addHitpointsGained(unit, source, amount) {\n            if (!this.hitpointsGained[unit.hrid]) {\n                this.hitpointsGained[unit.hrid] = {};\n            }\n            if (!this.hitpointsGained[unit.hrid][source]) {\n                this.hitpointsGained[unit.hrid][source] = 0;\n            }\n\n            this.hitpointsGained[unit.hrid][source] += amount;\n        }\n\n        addManapointsGained(unit, source, amount) {\n            if (!this.manapointsGained[unit.hrid]) {\n                this.manapointsGained[unit.hrid] = {};\n            }\n            if (!this.manapointsGained[unit.hrid][source]) {\n                this.manapointsGained[unit.hrid][source] = 0;\n            }\n\n            this.manapointsGained[unit.hrid][source] += amount;\n        }\n\n        setDropRateMultipliers(unit) {\n            if (!this.dropRateMultiplier[unit.hrid]) {\n                this.dropRateMultiplier[unit.hrid] = {};\n            }\n            this.dropRateMultiplier[unit.hrid] = 1 + unit.combatDetails.combatStats.combatDropRate;\n\n            if (!this.rareFindMultiplier[unit.hrid]) {\n                this.rareFindMultiplier[unit.hrid] = {};\n            }\n            this.rareFindMultiplier[unit.hrid] = 1 + unit.combatDetails.combatStats.combatRareFind;\n\n            if (!this.combatDropQuantity[unit.hrid]) {\n                this.combatDropQuantity[unit.hrid] = {};\n            }\n            this.combatDropQuantity[unit.hrid] = unit.combatDetails.combatStats.combatDropQuantity;\n\n            if (!this.debuffOnLevelGap[unit.hrid]) {\n                this.debuffOnLevelGap[unit.hrid] = {};\n            }\n            this.debuffOnLevelGap[unit.hrid] = unit.debuffOnLevelGap;\n        }\n\n        setManaUsed(unit) {\n            this.manaUsed[unit.hrid] = {};\n            for (const [key, value] of unit.abilityManaCosts.entries()) {\n                this.manaUsed[unit.hrid][key] = value;\n            }\n        }\n\n        addHitpointsSpent(unit, source, amount) {\n            if (!this.hitpointsSpent[unit.hrid]) {\n                this.hitpointsSpent[unit.hrid] = {};\n            }\n            if (!this.hitpointsSpent[unit.hrid][source]) {\n                this.hitpointsSpent[unit.hrid][source] = 0;\n            }\n\n            this.hitpointsSpent[unit.hrid][source] += amount;\n        }\n\n        addRanOutOfManaCount(unit, isOutOfMana, time) {\n            if (isOutOfMana) this.playerRanOutOfMana[unit.hrid] = true;\n\n            if (!this.playerRanOutOfManaTime[unit.hrid]) {\n                this.playerRanOutOfManaTime[unit.hrid] = {\n                    isOutOfMana: false,\n                    startTimeForOutOfMana: 0,\n                    totalTimeForOutOfMana: 0,\n                };\n            }\n\n            if (isOutOfMana) {\n                if (!this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {\n                    this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = true;\n                    this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana = time;\n                }\n            } else if (this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {\n                this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = false;\n                this.playerRanOutOfManaTime[unit.hrid].totalTimeForOutOfMana +=\n                    time - this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana;\n            }\n        }\n    }\n\n    class AbilityCastEndEvent extends CombatEvent {\n        static type = 'abilityCastEndEvent';\n\n        constructor(time, source, ability) {\n            super(AbilityCastEndEvent.type, time);\n\n            this.source = source;\n            this.ability = ability;\n        }\n    }\n\n    class AwaitCooldownEvent extends CombatEvent {\n        static type = 'awaitCooldownEvent';\n\n        constructor(time, source) {\n            super(AwaitCooldownEvent.type, time);\n\n            this.source = source;\n        }\n    }\n\n    class Buff {\n        startTime;\n\n        constructor(buff, level = 1) {\n            this.uniqueHrid = buff.uniqueHrid;\n            this.typeHrid = buff.typeHrid;\n            this.ratioBoost = buff.ratioBoost + (level - 1) * buff.ratioBoostLevelBonus;\n            this.flatBoost = buff.flatBoost + (level - 1) * buff.flatBoostLevelBonus;\n            this.duration = buff.duration;\n            this.multiplierForSkillHrid = buff.multiplierForSkillHrid ?? '';\n            this.multiplierPerSkillLevel = buff.multiplierPerSkillLevel ?? 0;\n        }\n    }\n\n    class Trigger {\n        constructor(dependencyHrid, conditionHrid, comparatorHrid, value = 0) {\n            this.dependencyHrid = dependencyHrid;\n            this.conditionHrid = conditionHrid;\n            this.comparatorHrid = comparatorHrid;\n            this.value = value;\n        }\n\n        static createFromDTO(dto) {\n            const trigger = new Trigger(dto.dependencyHrid, dto.conditionHrid, dto.comparatorHrid, dto.value);\n\n            return trigger;\n        }\n\n        isActive(source, target, friendlies, enemies, currentTime) {\n            const combatTriggerDependencyDetailMap = getGameData().combatTriggerDependencyDetailMap;\n            if (combatTriggerDependencyDetailMap[this.dependencyHrid].isSingleTarget) {\n                return this.isActiveSingleTarget(source, target, currentTime);\n            } else {\n                return this.isActiveMultiTarget(friendlies, enemies, currentTime);\n            }\n        }\n\n        isActiveSingleTarget(source, target, currentTime) {\n            let dependencyValue;\n            switch (this.dependencyHrid) {\n                case '/combat_trigger_dependencies/self':\n                    dependencyValue = this.getDependencyValue(source, currentTime);\n                    break;\n                case '/combat_trigger_dependencies/targeted_enemy':\n                    if (!target) {\n                        return false;\n                    }\n                    dependencyValue = this.getDependencyValue(target, currentTime);\n                    break;\n                default:\n                    throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);\n            }\n\n            return this.compareValue(dependencyValue);\n        }\n\n        isActiveMultiTarget(friendlies, enemies, currentTime) {\n            let dependency;\n            switch (this.dependencyHrid) {\n                case '/combat_trigger_dependencies/all_allies':\n                    if (!friendlies) {\n                        return false;\n                    }\n                    dependency = friendlies;\n                    break;\n                case '/combat_trigger_dependencies/all_enemies':\n                    if (!enemies) {\n                        return false;\n                    }\n                    dependency = enemies;\n                    break;\n                default:\n                    throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);\n            }\n\n            if (!dependency) {\n                return false;\n            }\n\n            let dependencyValue;\n            switch (this.conditionHrid) {\n                case '/combat_trigger_conditions/number_of_active_units':\n                    dependencyValue = dependency.filter((unit) => unit.combatDetails.currentHitpoints > 0).length;\n                    break;\n                case '/combat_trigger_conditions/number_of_dead_units':\n                    dependencyValue = dependency.filter((unit) => unit.combatDetails.currentHitpoints <= 0).length;\n                    break;\n                case '/combat_trigger_conditions/lowest_hp_percentage':\n                    dependencyValue =\n                        dependency\n                            .filter((unit) => unit.combatDetails.currentHitpoints > 0)\n                            .reduce((prev, curr) => {\n                                const currentHpPercentage =\n                                    curr.combatDetails.currentHitpoints / curr.combatDetails.maxHitpoints;\n                                return currentHpPercentage < prev ? currentHpPercentage : prev;\n                            }, 2) * 100;\n                    break;\n                default:\n                    dependencyValue = dependency\n                        .filter((unit) => unit.combatDetails.currentHitpoints > 0)\n                        .map((unit) => this.getDependencyValue(unit, currentTime))\n                        .reduce((prev, cur) => prev + cur, 0);\n                    break;\n            }\n\n            return this.compareValue(dependencyValue);\n        }\n\n        getDependencyValue(source, currentTime) {\n            switch (this.conditionHrid) {\n                case '/combat_trigger_conditions/berserk':\n                case '/combat_trigger_conditions/frenzy':\n                case '/combat_trigger_conditions/precision':\n                case '/combat_trigger_conditions/vampirism':\n                case '/combat_trigger_conditions/attack_coffee':\n                case '/combat_trigger_conditions/defense_coffee':\n                case '/combat_trigger_conditions/lucky_coffee':\n                case '/combat_trigger_conditions/magic_coffee':\n                case '/combat_trigger_conditions/melee_coffee':\n                case '/combat_trigger_conditions/ranged_coffee':\n                case '/combat_trigger_conditions/swiftness_coffee':\n                case '/combat_trigger_conditions/wisdom_coffee':\n                case '/combat_trigger_conditions/ice_spear':\n                case '/combat_trigger_conditions/puncture':\n                case '/combat_trigger_conditions/frost_surge':\n                case '/combat_trigger_conditions/elusiveness':\n                case '/combat_trigger_conditions/channeling_coffee':\n                case '/combat_trigger_conditions/fierce_aura':\n                case '/combat_trigger_conditions/invincible_armor':\n                case '/combat_trigger_conditions/invincible_fire_resistance':\n                case '/combat_trigger_conditions/invincible_nature_resistance':\n                case '/combat_trigger_conditions/invincible_water_resistance':\n                case '/combat_trigger_conditions/provoke':\n                case '/combat_trigger_conditions/taunt':\n                case '/combat_trigger_conditions/crippling_slash':\n                case '/combat_trigger_conditions/mana_spring':\n                case '/combat_trigger_conditions/retribution':\n                case '/combat_trigger_conditions/fracturing_impact':\n                case '/combat_trigger_conditions/maim':\n                case '/combat_trigger_conditions/curse':\n                case '/combat_trigger_conditions/weaken': {\n                    const buffHrid = '/buff_uniques' + this.conditionHrid.slice(this.conditionHrid.lastIndexOf('/'));\n                    return source.combatBuffs[buffHrid];\n                }\n                case '/combat_trigger_conditions/critical_aura':\n                case '/combat_trigger_conditions/critical_coffee':\n                case '/combat_trigger_conditions/intelligence_coffee':\n                case '/combat_trigger_conditions/stamina_coffee':\n                case '/combat_trigger_conditions/elemental_affinity':\n                case '/combat_trigger_conditions/fury':\n                case '/combat_trigger_conditions/guardian_aura':\n                case '/combat_trigger_conditions/insanity':\n                case '/combat_trigger_conditions/spike_shell':\n                case '/combat_trigger_conditions/toxic_pollen':\n                case '/combat_trigger_conditions/invincible':\n                case '/combat_trigger_conditions/mystic_aura':\n                case '/combat_trigger_conditions/pestilent_shot':\n                case '/combat_trigger_conditions/smoke_burst':\n                case '/combat_trigger_conditions/speed_aura':\n                case '/combat_trigger_conditions/toughness':\n                case '/combat_trigger_conditions/enrage': {\n                    const buffPrefix = '/buff_uniques' + this.conditionHrid.slice(this.conditionHrid.lastIndexOf('/'));\n                    const buffs = Object.keys(source.combatBuffs).filter((buff) => buff.startsWith(buffPrefix));\n                    return source.combatBuffs[buffs?.[0]];\n                }\n                case '/combat_trigger_conditions/current_hp':\n                    return source.combatDetails.currentHitpoints;\n                case '/combat_trigger_conditions/current_mp':\n                    return source.combatDetails.currentManapoints;\n                case '/combat_trigger_conditions/missing_hp':\n                    return source.combatDetails.maxHitpoints - source.combatDetails.currentHitpoints;\n                case '/combat_trigger_conditions/missing_mp':\n                    return source.combatDetails.maxManapoints - source.combatDetails.currentManapoints;\n                case '/combat_trigger_conditions/stun_status':\n                    // Replicate the game's behaviour of \"stun status active\" triggers activating\n                    // immediately after the stun has worn off\n                    return source.isStunned || source.stunExpireTime === currentTime;\n                case '/combat_trigger_conditions/blind_status':\n                    return source.isBlinded || source.blindExpireTime === currentTime;\n                case '/combat_trigger_conditions/silence_status':\n                    return source.isSilenced || source.silenceExpireTime === currentTime;\n                default:\n                    throw new Error('Unknown conditionHrid in trigger: ' + this.conditionHrid);\n            }\n        }\n\n        compareValue(dependencyValue) {\n            switch (this.comparatorHrid) {\n                case '/combat_trigger_comparators/greater_than_equal':\n                    return dependencyValue >= this.value;\n                case '/combat_trigger_comparators/less_than_equal':\n                    return dependencyValue <= this.value;\n                case '/combat_trigger_comparators/is_active':\n                    return !!dependencyValue;\n                case '/combat_trigger_comparators/is_inactive':\n                    return !dependencyValue;\n                default:\n                    throw new Error('Unknown comparatorHrid in trigger: ' + this.comparatorHrid);\n            }\n        }\n    }\n\n    const abilityFromCombatStat = {\n        blaze: {\n            hrid: '/abilities/blaze',\n            name: 'Blaze',\n            description: '',\n            isSpecialAbility: false,\n            manaCost: 0,\n            cooldownDuration: 0,\n            castDuration: 0,\n            abilityEffects: [\n                {\n                    targetType: 'allEnemies',\n                    effectType: '/ability_effect_types/damage',\n                    combatStyleHrid: '/combat_styles/magic',\n                    damageType: '/damage_types/fire',\n                    baseDamageFlat: 0,\n                    baseDamageFlatLevelBonus: 0.0,\n                    baseDamageRatio: 0.3,\n                    baseDamageRatioLevelBonus: 0,\n                    bonusAccuracyRatio: 0,\n                    bonusAccuracyRatioLevelBonus: 0,\n                    damageOverTimeRatio: 0,\n                    damageOverTimeDuration: 0,\n                    armorDamageRatio: 0,\n                    armorDamageRatioLevelBonus: 0,\n                    hpDrainRatio: 0,\n                    pierceChance: 0,\n                    blindChance: 0,\n                    blindDuration: 0,\n                    silenceChance: 0,\n                    silenceDuration: 0,\n                    stunChance: 0,\n                    stunDuration: 0,\n                    spendHpRatio: 0,\n                    buffs: null,\n                },\n            ],\n            defaultCombatTriggers: [\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_enemies',\n                    conditionHrid: '/combat_trigger_conditions/number_of_active_units',\n                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',\n                    value: 1,\n                },\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_enemies',\n                    conditionHrid: '/combat_trigger_conditions/current_hp',\n                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',\n                    value: 1,\n                },\n            ],\n        },\n        bloom: {\n            hrid: '/abilities/bloom',\n            name: 'Bloom',\n            description: '',\n            isSpecialAbility: false,\n            manaCost: 0,\n            cooldownDuration: 0,\n            castDuration: 0,\n            abilityEffects: [\n                {\n                    targetType: 'lowestHpAlly',\n                    effectType: '/ability_effect_types/heal',\n                    combatStyleHrid: '/combat_styles/magic',\n                    damageType: '',\n                    baseDamageFlat: 10,\n                    baseDamageFlatLevelBonus: 0,\n                    baseDamageRatio: 0.15,\n                    baseDamageRatioLevelBonus: 0,\n                    bonusAccuracyRatio: 0,\n                    bonusAccuracyRatioLevelBonus: 0,\n                    damageOverTimeRatio: 0,\n                    damageOverTimeDuration: 0,\n                    armorDamageRatio: 0,\n                    armorDamageRatioLevelBonus: 0,\n                    hpDrainRatio: 0,\n                    pierceChance: 0,\n                    blindChance: 0,\n                    blindDuration: 0,\n                    silenceChance: 0,\n                    silenceDuration: 0,\n                    stunChance: 0,\n                    stunDuration: 0,\n                    spendHpRatio: 0,\n                    buffs: null,\n                },\n            ],\n            defaultCombatTriggers: [\n                {\n                    dependencyHrid: '/combat_trigger_dependencies/all_allies',\n                    conditionHrid: '/combat_trigger_conditions/lowest_hp_percentage',\n                    comparatorHrid: '/combat_trigger_comparators/less_than_equal',\n                    value: 100,\n                },\n            ],\n        },\n    };\n\n    class Ability {\n        constructor(hrid, level = 1, triggers = null) {\n            this.hrid = hrid;\n            this.level = level;\n\n            const abilityDetailMap = getGameData().abilityDetailMap;\n            let gameAbility = abilityDetailMap[hrid];\n            if (!gameAbility) {\n                gameAbility = abilityFromCombatStat[hrid];\n            }\n            if (!gameAbility) {\n                throw new Error('No ability found for hrid: ' + this.hrid);\n            }\n\n            this.manaCost = gameAbility.manaCost;\n            this.cooldownDuration = gameAbility.cooldownDuration;\n            this.castDuration = gameAbility.castDuration;\n            this.isSpecialAbility = gameAbility.isSpecialAbility;\n\n            this.abilityEffects = [];\n\n            for (const effect of gameAbility.abilityEffects) {\n                const abilityEffect = {\n                    targetType: effect.targetType,\n                    effectType: effect.effectType,\n                    combatStyleHrid: effect.combatStyleHrid,\n                    damageType: effect.damageType,\n                    damageFlat: effect.baseDamageFlat + (this.level - 1) * effect.baseDamageFlatLevelBonus,\n                    damageRatio: effect.baseDamageRatio + (this.level - 1) * effect.baseDamageRatioLevelBonus,\n                    bonusAccuracyRatio: effect.bonusAccuracyRatio + (this.level - 1) * effect.bonusAccuracyRatioLevelBonus,\n                    damageOverTimeRatio: effect.damageOverTimeRatio,\n                    damageOverTimeDuration: effect.damageOverTimeDuration,\n                    armorDamageRatio: effect.armorDamageRatio + (this.level - 1) * effect.armorDamageRatioLevelBonus,\n                    hpDrainRatio: effect.hpDrainRatio,\n                    pierceChance: effect.pierceChance,\n                    blindChance: effect.blindChance,\n                    blindDuration: effect.blindDuration,\n                    silenceChance: effect.silenceChance,\n                    silenceDuration: effect.silenceDuration,\n                    stunChance: effect.stunChance,\n                    stunDuration: effect.stunDuration,\n                    spendHpRatio: effect.spendHpRatio,\n                    buffs: null,\n                };\n                if (effect.buffs) {\n                    abilityEffect.buffs = [];\n                    for (const buff of effect.buffs) {\n                        abilityEffect.buffs.push(new Buff(buff, this.level));\n                    }\n                }\n                this.abilityEffects.push(abilityEffect);\n            }\n\n            if (triggers) {\n                this.triggers = triggers;\n            } else {\n                this.triggers = [];\n                for (const defaultTrigger of gameAbility.defaultCombatTriggers) {\n                    const trigger = new Trigger(\n                        defaultTrigger.dependencyHrid,\n                        defaultTrigger.conditionHrid,\n                        defaultTrigger.comparatorHrid,\n                        defaultTrigger.value\n                    );\n                    this.triggers.push(trigger);\n                }\n            }\n\n            this.lastUsed = Number.MIN_SAFE_INTEGER;\n        }\n\n        static createFromDTO(dto) {\n            const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;\n            const ability = new Ability(dto.hrid, dto.level, triggers);\n\n            return ability;\n        }\n\n        shouldTrigger(currentTime, source, target, friendlies, enemies) {\n            if (source.isStunned) {\n                return false;\n            }\n\n            if (source.isSilenced) {\n                return false;\n            }\n\n            const haste = source.combatDetails.combatStats.abilityHaste;\n            let cooldownDuration = this.cooldownDuration;\n            if (haste > 0) {\n                cooldownDuration = (cooldownDuration * 100) / (100 + haste);\n            }\n\n            if (this.lastUsed + cooldownDuration > currentTime) {\n                return false;\n            }\n\n            if (this.triggers.length === 0) {\n                return true;\n            }\n\n            let shouldTrigger = true;\n            for (const trigger of this.triggers) {\n                if (!trigger.isActive(source, target, friendlies, enemies, currentTime)) {\n                    shouldTrigger = false;\n                }\n            }\n\n            return shouldTrigger;\n        }\n    }\n\n    class CombatUnit {\n        isPlayer;\n        isStunned = false;\n        stunExpireTime = null;\n        isBlinded = false;\n        blindExpireTime = null;\n        isSilenced = false;\n        silenceExpireTime = null;\n\n        isOutOfMana = false;\n\n        // Base levels which don't change after initialization\n        staminaLevel = 1;\n        intelligenceLevel = 1;\n        attackLevel = 1;\n        meleeLevel = 1;\n        defenseLevel = 1;\n        rangedLevel = 1;\n        magicLevel = 1;\n\n        experience = 0;\n        experienceRate = 0;\n        enrageTime = 0;\n\n        abilities = [null, null, null, null];\n        food = [null, null, null];\n        drinks = [null, null, null];\n        houseRooms = [];\n        abilityManaCosts = new Map();\n\n        // Calculated combat stats including temporary buffs\n        combatDetails = {\n            staminaLevel: 1,\n            intelligenceLevel: 1,\n            attackLevel: 1,\n            meleeLevel: 1,\n            defenseLevel: 1,\n            rangedLevel: 1,\n            magicLevel: 1,\n            maxHitpoints: 110,\n            currentHitpoints: 110,\n            maxManapoints: 110,\n            currentManapoints: 110,\n            stabAccuracyRating: 11,\n            slashAccuracyRating: 11,\n            smashAccuracyRating: 11,\n            rangedAccuracyRating: 11,\n            magicAccuracyRating: 11,\n            stabMaxDamage: 11,\n            slashMaxDamage: 11,\n            smashMaxDamage: 11,\n            rangedMaxDamage: 11,\n            magicMaxDamage: 11,\n            stabEvasionRating: 11,\n            slashEvasionRating: 11,\n            smashEvasionRating: 11,\n            rangedEvasionRating: 11,\n            magicEvasionRating: 11,\n            defensiveMaxDamage: 0,\n            totalArmor: 0.2,\n            totalWaterResistance: 0.4,\n            totalNatureResistance: 0.4,\n            totalFireResistance: 0.4,\n            abilityHaste: 0,\n            tenacity: 0,\n            totalThreat: 100,\n            combatStats: {\n                combatStyleHrid: '/combat_styles/smash',\n                damageType: '/damage_types/physical',\n                attackInterval: 3000000000,\n                autoAttackDamage: 0,\n                abilityDamage: 0,\n                criticalRate: 0,\n                criticalDamage: 0,\n                stabAccuracy: 0,\n                slashAccuracy: 0,\n                smashAccuracy: 0,\n                rangedAccuracy: 0,\n                magicAccuracy: 0,\n                stabDamage: 0,\n                slashDamage: 0,\n                smashDamage: 0,\n                rangedDamage: 0,\n                magicDamage: 0,\n                defensiveDamage: 0,\n                taskDamage: 0,\n                physicalAmplify: 0,\n                waterAmplify: 0,\n                natureAmplify: 0,\n                fireAmplify: 0,\n                healingAmplify: 0,\n                physicalThorns: 0,\n                elementalThorns: 0,\n                maxHitpoints: 0,\n                maxManapoints: 0,\n                stabEvasion: 0,\n                slashEvasion: 0,\n                smashEvasion: 0,\n                rangedEvasion: 0,\n                magicEvasion: 0,\n                armor: 0,\n                waterResistance: 0,\n                natureResistance: 0,\n                fireResistance: 0,\n                lifeSteal: 0,\n                hpRegenPer10: 0.01,\n                mpRegenPer10: 0.01,\n                combatDropRate: 0,\n                combatDropQuantity: 0,\n                combatRareFind: 0,\n                combatExperience: 0,\n                maxHitpointsRatio: 0,\n                maxManapointsRatio: 0,\n                foodSlots: 1,\n                drinkSlots: 1,\n                armorPenetration: 0,\n                waterPenetration: 0,\n                naturePenetration: 0,\n                firePenetration: 0,\n                manaLeech: 0,\n                castSpeed: 0,\n                threat: 100,\n                parry: 0,\n                mayhem: 0,\n                pierce: 0,\n                curse: 0,\n                ripple: 0,\n                bloom: 0,\n                blaze: 0,\n                weaken: 0,\n                fury: 0,\n                foodHaste: 0,\n                drinkConcentration: 0,\n                damageTaken: 0,\n                attackSpeed: 0,\n                armorDamageRatio: 0,\n                hpDrainRatio: 0,\n                primaryTraining: '',\n                focusTraining: '',\n                staminaExperience: 0,\n                intelligenceExperience: 0,\n                attackExperience: 0,\n                defenseExperience: 0,\n                meleeExperience: 0,\n                rangedExperience: 0,\n                magicExperience: 0,\n                retaliation: 0,\n            },\n        };\n        combatBuffs = {};\n        // All active sources per buff uniqueHrid; combatBuffs holds the strongest.\n        // The game applies the strongest source of a buff and falls back to the\n        // next strongest when it expires.\n        buffSources = new Map();\n        permanentBuffs = {};\n        zoneBuffs = {};\n        extraBuffs = {};\n        furyAmount = 0;\n        furyExpireTime = 0;\n\n        constructor() {}\n\n        updateCombatDetails() {\n            if (this.isPlayer) {\n                if (this.combatDetails.combatStats.hpRegenPer10 === 0) {\n                    this.combatDetails.combatStats.hpRegenPer10 = 0.01;\n                } else {\n                    this.combatDetails.combatStats.hpRegenPer10 = 0.01 + this.combatDetails.combatStats.hpRegenPer10;\n                }\n                if (this.combatDetails.combatStats.mpRegenPer10 === 0) {\n                    this.combatDetails.combatStats.mpRegenPer10 = 0.01;\n                } else {\n                    this.combatDetails.combatStats.mpRegenPer10 = 0.01 + this.combatDetails.combatStats.mpRegenPer10;\n                }\n            }\n\n            ['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic'].forEach((stat) => {\n                this.combatDetails[stat + 'Level'] = this[stat + 'Level'];\n                const boosts = this.getBuffBoosts('/buff_types/' + stat + '_level');\n                boosts.forEach((buff) => {\n                    this.combatDetails[stat + 'Level'] += this[stat + 'Level'] * buff.ratioBoost;\n                    this.combatDetails[stat + 'Level'] += buff.flatBoost;\n                });\n            });\n\n            this.combatDetails.maxHitpoints = Math.floor(\n                (10 * (10 + this.combatDetails.staminaLevel) + this.combatDetails.combatStats.maxHitpoints) *\n                    (1 + this.combatDetails.combatStats.maxHitpointsRatio)\n            );\n            this.combatDetails.maxManapoints = Math.floor(\n                (10 * (10 + this.combatDetails.intelligenceLevel) + this.combatDetails.combatStats.maxManapoints) *\n                    (1 + this.combatDetails.combatStats.maxManapointsRatio)\n            );\n\n            const accuracyRatioBoostFromFury = this.getBuffBoost('/buff_types/fury_accuracy').ratioBoost;\n            const damageRatioBoostFromFury = this.getBuffBoost('/buff_types/fury_damage').ratioBoost;\n\n            const accuracyRatioBoost = this.getBuffBoost('/buff_types/accuracy').ratioBoost;\n            const damageRatioBoost = this.getBuffBoost('/buff_types/damage').ratioBoost;\n\n            ['stab', 'slash', 'smash'].forEach((style) => {\n                this.combatDetails[style + 'AccuracyRating'] =\n                    (10 + this.combatDetails.attackLevel) *\n                    (1 + this.combatDetails.combatStats[style + 'Accuracy']) *\n                    (1 + accuracyRatioBoost) *\n                    (1 + accuracyRatioBoostFromFury);\n                this.combatDetails[style + 'MaxDamage'] =\n                    (10 + this.combatDetails.meleeLevel) *\n                    (1 + this.combatDetails.combatStats[style + 'Damage']) *\n                    (1 + damageRatioBoost) *\n                    (1 + damageRatioBoostFromFury);\n                const baseEvasion =\n                    (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats[style + 'Evasion']);\n                this.combatDetails[style + 'EvasionRating'] = baseEvasion;\n                const evasionBoosts = this.getBuffBoosts('/buff_types/evasion');\n                for (const boost of evasionBoosts) {\n                    this.combatDetails[style + 'EvasionRating'] += boost.flatBoost;\n                    this.combatDetails[style + 'EvasionRating'] += baseEvasion * boost.ratioBoost;\n                }\n            });\n\n            this.combatDetails.defensiveMaxDamage =\n                (10 + this.combatDetails.defenseLevel) *\n                (1 + this.combatDetails.combatStats.defensiveDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            // when equiped bulwark\n            if (this.equipment?.['/equipment_types/two_hand']?.hrid.includes('bulwark')) {\n                this.combatDetails.smashMaxDamage += this.combatDetails.defensiveMaxDamage;\n            }\n\n            this.combatDetails.rangedAccuracyRating =\n                (10 + this.combatDetails.attackLevel) *\n                (1 + this.combatDetails.combatStats.rangedAccuracy) *\n                (1 + accuracyRatioBoost) *\n                (1 + accuracyRatioBoostFromFury);\n            this.combatDetails.rangedMaxDamage =\n                (10 + this.combatDetails.rangedLevel) *\n                (1 + this.combatDetails.combatStats.rangedDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            const baseRangedEvasion =\n                (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.rangedEvasion);\n            this.combatDetails.rangedEvasionRating = baseRangedEvasion;\n            const evasionBoosts = this.getBuffBoosts('/buff_types/evasion');\n            for (const boost of evasionBoosts) {\n                this.combatDetails.rangedEvasionRating += boost.flatBoost;\n                this.combatDetails.rangedEvasionRating += baseRangedEvasion * boost.ratioBoost;\n            }\n\n            this.combatDetails.combatStats.damageTaken = this.getBuffBoost('/buff_types/damage_taken').flatBoost;\n\n            this.combatDetails.magicAccuracyRating =\n                (10 + this.combatDetails.attackLevel) *\n                (1 + this.combatDetails.combatStats.magicAccuracy) *\n                (1 + accuracyRatioBoost) *\n                (1 + accuracyRatioBoostFromFury);\n            this.combatDetails.magicMaxDamage =\n                (10 + this.combatDetails.magicLevel) *\n                (1 + this.combatDetails.combatStats.magicDamage) *\n                (1 + damageRatioBoost) *\n                (1 + damageRatioBoostFromFury);\n\n            const baseMagicEvasion =\n                (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.magicEvasion);\n            this.combatDetails.magicEvasionRating = baseMagicEvasion;\n            for (const boost of evasionBoosts) {\n                this.combatDetails.magicEvasionRating += boost.flatBoost;\n                this.combatDetails.magicEvasionRating += baseMagicEvasion * boost.ratioBoost;\n            }\n\n            this.combatDetails.combatStats.physicalAmplify += this.getBuffBoost('/buff_types/physical_amplify').flatBoost;\n            this.combatDetails.combatStats.waterAmplify += this.getBuffBoost('/buff_types/water_amplify').flatBoost;\n            this.combatDetails.combatStats.natureAmplify += this.getBuffBoost('/buff_types/nature_amplify').flatBoost;\n            this.combatDetails.combatStats.fireAmplify += this.getBuffBoost('/buff_types/fire_amplify').flatBoost;\n            this.combatDetails.combatStats.healingAmplify += this.getBuffBoost('/buff_types/healing_amplify').flatBoost;\n\n            this.combatDetails.combatStats.attackInterval /= 1 + this.combatDetails.attackLevel / 2000;\n\n            const baseAttackSpeed = this.combatDetails.combatStats.attackSpeed;\n            this.combatDetails.combatStats.attackInterval /= 1 + baseAttackSpeed;\n            const attackIntervalBoosts = this.getBuffBoosts('/buff_types/attack_speed');\n            const attackIntervalRatioBoost = attackIntervalBoosts\n                .map((boost) => boost.ratioBoost)\n                .reduce((prev, cur) => prev + cur, 0);\n            this.combatDetails.combatStats.attackInterval /= 1 + attackIntervalRatioBoost;\n\n            const baseArmor = 0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.armor;\n            this.combatDetails.totalArmor = baseArmor;\n            const armorBoosts = this.getBuffBoosts('/buff_types/armor');\n            for (const boost of armorBoosts) {\n                this.combatDetails.totalArmor += boost.flatBoost;\n                this.combatDetails.totalArmor += baseArmor * boost.ratioBoost;\n            }\n\n            const baseWaterResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.waterResistance;\n            this.combatDetails.totalWaterResistance = baseWaterResistance;\n            const waterResistanceBoosts = this.getBuffBoosts('/buff_types/water_resistance');\n            for (const boost of waterResistanceBoosts) {\n                this.combatDetails.totalWaterResistance += boost.flatBoost;\n                this.combatDetails.totalWaterResistance += baseWaterResistance * boost.ratioBoost;\n            }\n\n            const baseNatureResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.natureResistance;\n            this.combatDetails.totalNatureResistance = baseNatureResistance;\n            const natureResistanceBoosts = this.getBuffBoosts('/buff_types/nature_resistance');\n            for (const boost of natureResistanceBoosts) {\n                this.combatDetails.totalNatureResistance += boost.flatBoost;\n                this.combatDetails.totalNatureResistance += baseNatureResistance * boost.ratioBoost;\n            }\n\n            const baseFireResistance =\n                0.2 * this.combatDetails.defenseLevel + this.combatDetails.combatStats.fireResistance;\n            this.combatDetails.totalFireResistance = baseFireResistance;\n            const fireResistanceBoosts = this.getBuffBoosts('/buff_types/fire_resistance');\n            for (const boost of fireResistanceBoosts) {\n                this.combatDetails.totalFireResistance += boost.flatBoost;\n                this.combatDetails.totalFireResistance += baseFireResistance * boost.ratioBoost;\n            }\n\n            const hpRegenBoosts = this.getBuffBoost('/buff_types/hp_regen');\n            this.combatDetails.combatStats.hpRegenPer10 +=\n                this.combatDetails.combatStats.hpRegenPer10 * hpRegenBoosts.ratioBoost;\n            this.combatDetails.combatStats.hpRegenPer10 += hpRegenBoosts.flatBoost;\n\n            const mpRegenBoosts = this.getBuffBoost('/buff_types/mp_regen');\n            this.combatDetails.combatStats.mpRegenPer10 +=\n                this.combatDetails.combatStats.mpRegenPer10 * mpRegenBoosts.ratioBoost;\n            this.combatDetails.combatStats.mpRegenPer10 += mpRegenBoosts.flatBoost;\n\n            this.combatDetails.combatStats.lifeSteal += this.getBuffBoost('/buff_types/life_steal').flatBoost;\n            this.combatDetails.combatStats.physicalThorns += this.getBuffBoost('/buff_types/physical_thorns').flatBoost;\n            this.combatDetails.combatStats.elementalThorns += this.getBuffBoost('/buff_types/elemental_thorns').flatBoost;\n            this.combatDetails.combatStats.combatExperience += this.getBuffBoost('/buff_types/wisdom').flatBoost;\n            this.combatDetails.combatStats.criticalRate += this.getBuffBoost('/buff_types/critical_rate').flatBoost;\n            this.combatDetails.combatStats.criticalDamage += this.getBuffBoost('/buff_types/critical_damage').flatBoost;\n\n            this.combatDetails.combatStats.castSpeed += this.getBuffBoost('/buff_types/cast_speed').flatBoost;\n            this.combatDetails.combatStats.castSpeed += this.combatDetails['attackLevel'] / 2000;\n\n            const combatDropRateBoosts = this.getBuffBoost('/buff_types/combat_drop_rate');\n            this.combatDetails.combatStats.combatDropRate +=\n                (1 + this.combatDetails.combatStats.combatDropRate) * combatDropRateBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatDropRate += combatDropRateBoosts.flatBoost;\n            const combatRareFindBoosts = this.getBuffBoost('/buff_types/rare_find');\n            this.combatDetails.combatStats.combatRareFind +=\n                (1 + this.combatDetails.combatStats.combatRareFind) * combatRareFindBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatRareFind += combatRareFindBoosts.flatBoost;\n            const combatDropQuantityBoosts = this.getBuffBoost('/buff_types/combat_drop_quantity');\n            this.combatDetails.combatStats.combatDropQuantity +=\n                (1 + this.combatDetails.combatStats.combatDropQuantity) * combatDropQuantityBoosts.ratioBoost;\n            this.combatDetails.combatStats.combatDropQuantity += combatDropQuantityBoosts.flatBoost;\n\n            const baseThreat = 100 + this.combatDetails.combatStats.threat;\n            this.combatDetails.totalThreat = baseThreat;\n            const threatBoosts = this.getBuffBoost('/buff_types/threat');\n            if (threatBoosts.ratioBoost !== 0) {\n                this.combatDetails.combatStats.threat += baseThreat * threatBoosts.ratioBoost;\n            } else {\n                this.combatDetails.combatStats.threat = baseThreat;\n            }\n            this.combatDetails.combatStats.threat += threatBoosts.flatBoost;\n\n            this.combatDetails.combatStats.retaliation += this.getBuffBoost('/buff_types/retaliation').flatBoost;\n            this.combatDetails.combatStats.tenacity += this.getBuffBoost('/buff_types/tenacity').flatBoost;\n        }\n\n        addBuff(buff, currentTime) {\n            // Clone: buff definitions are shared across aura targets and sim runs\n            const instance = structuredClone(buff);\n            instance.startTime = currentTime;\n\n            let sources = this.buffSources.get(instance.uniqueHrid);\n            if (!sources) {\n                sources = [];\n                this.buffSources.set(instance.uniqueHrid, sources);\n            }\n\n            // Drop expired sources, then refresh-in-place when the same-strength\n            // source reapplies (recast/re-tick) so lists stay bounded\n            const active = sources.filter((b) => b.startTime + b.duration > currentTime);\n            const sameStrength = active.findIndex(\n                (b) => b.ratioBoost === instance.ratioBoost && b.flatBoost === instance.flatBoost\n            );\n            if (sameStrength !== -1) {\n                active[sameStrength] = instance;\n            } else {\n                active.push(instance);\n            }\n            this.buffSources.set(instance.uniqueHrid, active);\n\n            this.combatBuffs[instance.uniqueHrid] = this.strongestBuff(active);\n\n            this.updateCombatDetails();\n        }\n\n        /**\n         * Pick the strongest source of a buff (largest magnitude — debuffs like\n         * curse carry negative boosts, so compare absolute values).\n         * @param {Array<Object>} sources - Active buff instances for one uniqueHrid\n         * @returns {Object} The strongest buff instance\n         */\n        strongestBuff(sources) {\n            let strongest = sources[0];\n            for (let i = 1; i < sources.length; i++) {\n                const b = sources[i];\n                const ratioDiff = Math.abs(b.ratioBoost) - Math.abs(strongest.ratioBoost);\n                if (ratioDiff > 0 || (ratioDiff === 0 && Math.abs(b.flatBoost) > Math.abs(strongest.flatBoost))) {\n                    strongest = b;\n                }\n            }\n            return strongest;\n        }\n\n        removeBuff(buff) {\n            if (!this.combatBuffs[buff.uniqueHrid]) {\n                return;\n            }\n            delete this.combatBuffs[buff.uniqueHrid];\n            this.buffSources.delete(buff.uniqueHrid);\n\n            this.updateCombatDetails();\n        }\n\n        /**\n         * Update fury accuracy and damage buffs in a single batch, calling updateCombatDetails() once.\n         * @param {number} furyAmount - Current fury stack count (0-5)\n         * @param {number} furyStat - Fury combat stat value\n         * @param {number} currentTime - Simulation time for buff start\n         * @param {number} duration - Buff duration (fury expire time)\n         */\n        updateFuryBuffs(furyAmount, furyStat, currentTime, duration) {\n            if (furyAmount > 0) {\n                this.combatBuffs['/buff_uniques/fury_accuracy'] = {\n                    uniqueHrid: '/buff_uniques/fury_accuracy',\n                    typeHrid: '/buff_types/fury_accuracy',\n                    ratioBoost: furyAmount * furyStat,\n                    ratioBoostLevelBonus: 0,\n                    flatBoost: 0,\n                    flatBoostLevelBonus: 0,\n                    startTime: currentTime,\n                    duration: duration,\n                };\n                this.combatBuffs['/buff_uniques/fury_damage'] = {\n                    uniqueHrid: '/buff_uniques/fury_damage',\n                    typeHrid: '/buff_types/fury_damage',\n                    ratioBoost: furyAmount * furyStat,\n                    ratioBoostLevelBonus: 0,\n                    flatBoost: 0,\n                    flatBoostLevelBonus: 0,\n                    startTime: currentTime,\n                    duration: duration,\n                };\n            } else {\n                delete this.combatBuffs['/buff_uniques/fury_accuracy'];\n                delete this.combatBuffs['/buff_uniques/fury_damage'];\n            }\n            this.updateCombatDetails();\n        }\n\n        addPermanentBuff(buff) {\n            if (this.permanentBuffs[buff.typeHrid]) {\n                this.permanentBuffs[buff.typeHrid].flatBoost += buff.flatBoost;\n                this.permanentBuffs[buff.typeHrid].ratioBoost += buff.ratioBoost;\n            } else {\n                // Clone: buff objects can be shared across party members (extraBuffs/zoneBuffs), so never mutate them\n                this.permanentBuffs[buff.typeHrid] = structuredClone(buff);\n            }\n        }\n\n        generatePermanentBuffs() {\n            for (let i = 0; i < this.houseRooms.length; i++) {\n                const houseRoom = this.houseRooms[i];\n                houseRoom.buffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n            if (this.zoneBuffs) {\n                this.zoneBuffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n            if (this.extraBuffs) {\n                this.extraBuffs.forEach((buff) => {\n                    this.addPermanentBuff(buff);\n                });\n            }\n        }\n\n        removeExpiredBuffs(currentTime) {\n            for (const [uniqueHrid, sources] of this.buffSources) {\n                const active = sources.filter((b) => b.startTime + b.duration > currentTime);\n                if (active.length === sources.length) {\n                    continue;\n                }\n                if (active.length === 0) {\n                    this.buffSources.delete(uniqueHrid);\n                    delete this.combatBuffs[uniqueHrid];\n                } else {\n                    // Strongest source expired → fall back to the next strongest\n                    this.buffSources.set(uniqueHrid, active);\n                    this.combatBuffs[uniqueHrid] = this.strongestBuff(active);\n                }\n            }\n\n            // Buffs written directly to combatBuffs (fury) have no source list\n            for (const buff of Object.values(this.combatBuffs)) {\n                if (!this.buffSources.has(buff.uniqueHrid) && buff.startTime + buff.duration <= currentTime) {\n                    delete this.combatBuffs[buff.uniqueHrid];\n                }\n            }\n\n            this.updateCombatDetails();\n        }\n\n        clearBuffs() {\n            this.combatBuffs = structuredClone(this.permanentBuffs);\n            this.buffSources = new Map();\n            this.furyAmount = 0;\n            this.furyExpireTime = 0;\n            this.updateCombatDetails();\n        }\n\n        clearCCs() {\n            this.isStunned = false;\n            this.stunExpireTime = null;\n            this.isSilenced = false;\n            this.silenceExpireTime = null;\n            this.isBlinded = false;\n            this.blindExpireTime = null;\n            this.combatDetails.combatStats.damageTaken = 0;\n        }\n\n        getBuffBoosts(type) {\n            const boosts = [];\n            Object.values(this.combatBuffs)\n                .filter((buff) => buff.typeHrid === type)\n                .forEach((buff) => {\n                    boosts.push({ ratioBoost: buff.ratioBoost, flatBoost: buff.flatBoost });\n                });\n\n            return boosts;\n        }\n\n        getBuffBoost(type) {\n            const boosts = this.getBuffBoosts(type);\n\n            const boost = {\n                ratioBoost: 0,\n                flatBoost: 0,\n            };\n\n            for (let i = 0; i < boosts.length; i++) {\n                boost.ratioBoost += boosts[i]?.ratioBoost ?? 0;\n                boost.flatBoost += boosts[i]?.flatBoost ?? 0;\n            }\n\n            return boost;\n        }\n\n        reset(currentTime = 0) {\n            this.clearCCs();\n\n            if (currentTime === 0 || !this.isPlayer) {\n                // First combat start or enemy reset: full reset\n                this.clearBuffs();\n                this.resetCooldowns(currentTime);\n            } else {\n                // Dungeon wipe restart (players only): remove expired buffs, keep cooldowns\n                this.removeExpiredBuffs(currentTime);\n            }\n\n            this.updateCombatDetails();\n            this.combatDetails.currentHitpoints = this.combatDetails.maxHitpoints;\n            this.combatDetails.currentManapoints = this.combatDetails.maxManapoints;\n        }\n\n        resetCooldowns(currentTime = 0) {\n            this.food.filter((food) => food !== null).forEach((food) => (food.lastUsed = Number.MIN_SAFE_INTEGER));\n            this.drinks.filter((drink) => drink !== null).forEach((drink) => (drink.lastUsed = Number.MIN_SAFE_INTEGER));\n\n            const haste = this.combatDetails.combatStats.abilityHaste;\n\n            this.abilities\n                .filter((ability) => ability !== null)\n                .forEach((ability) => {\n                    if (this.isPlayer) {\n                        ability.lastUsed = Number.MIN_SAFE_INTEGER;\n                    } else {\n                        let cooldownDuration = ability.cooldownDuration;\n                        if (haste > 0) {\n                            cooldownDuration = (cooldownDuration * 100) / (100 + haste);\n                        }\n                        ability.lastUsed =\n                            currentTime -\n                            Math.floor(cooldownDuration * 0.5) +\n                            Math.floor(randomSetup() * cooldownDuration * 0.5);\n                    }\n                });\n        }\n\n        addHitpoints(hitpoints) {\n            let hitpointsAdded = 0;\n\n            if (this.combatDetails.currentHitpoints >= this.combatDetails.maxHitpoints) {\n                return hitpointsAdded;\n            }\n\n            const newHitpoints = Math.min(this.combatDetails.currentHitpoints + hitpoints, this.combatDetails.maxHitpoints);\n            hitpointsAdded = newHitpoints - this.combatDetails.currentHitpoints;\n            this.combatDetails.currentHitpoints = newHitpoints;\n\n            return hitpointsAdded;\n        }\n\n        addManapoints(manapoints) {\n            let manapointsAdded = 0;\n\n            if (this.combatDetails.currentManapoints >= this.combatDetails.maxManapoints) {\n                return manapointsAdded;\n            }\n\n            const newManapoints = Math.min(\n                this.combatDetails.currentManapoints + manapoints,\n                this.combatDetails.maxManapoints\n            );\n            manapointsAdded = newManapoints - this.combatDetails.currentManapoints;\n            this.combatDetails.currentManapoints = newManapoints;\n\n            return manapointsAdded;\n        }\n    }\n\n    const LABYRINTH_BASE_ROOM_LEVEL = 100;\n\n    class Monster extends CombatUnit {\n        difficultyTier = 0;\n        roomLevel = 0;\n\n        constructor(hrid, difficultyTier = 0, roomLevel = 0) {\n            super();\n\n            this.isPlayer = false;\n            this.hrid = hrid;\n            this.difficultyTier = difficultyTier;\n            this.roomLevel = roomLevel;\n\n            const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;\n            const gameMonster = combatMonsterDetailMap[this.hrid];\n            if (!gameMonster) {\n                throw new Error('No monster found for hrid: ' + this.hrid);\n            }\n\n            this.enrageTime = gameMonster.enrageTime;\n\n            // Labyrinth scaling: ability levels scale by roomLevel / 100\n            const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;\n\n            for (let i = 0; i < gameMonster.abilities.length; i++) {\n                if (gameMonster.abilities[i].minDifficultyTier > this.difficultyTier) {\n                    continue;\n                }\n                const baseLevel = gameMonster.abilities[i].level;\n                const scaledLevel = this.roomLevel > 0 ? Math.floor(baseLevel * labyrinthScaleFactor) : baseLevel;\n                this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, scaledLevel);\n            }\n        }\n\n        updateCombatDetails() {\n            const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;\n            const gameMonster = combatMonsterDetailMap[this.hrid];\n\n            const levelMultiplier = 1.0 + 0.25 * this.difficultyTier;\n            const defLevelMultiplier = 1.0 + 0.15 * this.difficultyTier;\n            const levelBonus = 20.0 * this.difficultyTier;\n\n            // Labyrinth scaling: all levels multiply by roomLevel / 100\n            const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;\n\n            this.staminaLevel =\n                levelMultiplier * (gameMonster.combatDetails.staminaLevel + levelBonus) * labyrinthScaleFactor;\n            this.intelligenceLevel =\n                levelMultiplier * (gameMonster.combatDetails.intelligenceLevel + levelBonus) * labyrinthScaleFactor;\n            this.attackLevel =\n                levelMultiplier * (gameMonster.combatDetails.attackLevel + levelBonus) * labyrinthScaleFactor;\n            this.meleeLevel = levelMultiplier * (gameMonster.combatDetails.meleeLevel + levelBonus) * labyrinthScaleFactor;\n            this.defenseLevel =\n                defLevelMultiplier * (gameMonster.combatDetails.defenseLevel + levelBonus) * labyrinthScaleFactor;\n            this.rangedLevel =\n                levelMultiplier * (gameMonster.combatDetails.rangedLevel + levelBonus) * labyrinthScaleFactor;\n            this.magicLevel = levelMultiplier * (gameMonster.combatDetails.magicLevel + levelBonus) * labyrinthScaleFactor;\n\n            const expMultiplier = 1.0 + 0.5 * this.difficultyTier;\n            const expBonus = 5.0 * this.difficultyTier;\n\n            this.experience = expMultiplier * (gameMonster.experience + expBonus);\n\n            this.combatDetails.combatStats.combatStyleHrid = gameMonster.combatDetails.combatStats.combatStyleHrids[0];\n\n            for (const [key, value] of Object.entries(gameMonster.combatDetails.combatStats)) {\n                this.combatDetails.combatStats[key] = value;\n            }\n\n            [\n                'stabAccuracy',\n                'slashAccuracy',\n                'smashAccuracy',\n                'rangedAccuracy',\n                'magicAccuracy',\n                'stabDamage',\n                'slashDamage',\n                'smashDamage',\n                'rangedDamage',\n                'magicDamage',\n                'defensiveDamage',\n                'taskDamage',\n                'physicalAmplify',\n                'waterAmplify',\n                'natureAmplify',\n                'fireAmplify',\n                'healingAmplify',\n                'stabEvasion',\n                'slashEvasion',\n                'smashEvasion',\n                'rangedEvasion',\n                'magicEvasion',\n                'armor',\n                'waterResistance',\n                'natureResistance',\n                'fireResistance',\n                'maxHitpoints',\n                'maxManapoints',\n                'lifeSteal',\n                'hpRegenPer10',\n                'mpRegenPer10',\n                'physicalThorns',\n                'elementalThorns',\n                'combatDropRate',\n                'combatRareFind',\n                'combatDropQuantity',\n                'combatExperience',\n                'criticalRate',\n                'criticalDamage',\n                'armorPenetration',\n                'waterPenetration',\n                'naturePenetration',\n                'firePenetration',\n                'abilityHaste',\n                'tenacity',\n                'manaLeech',\n                'castSpeed',\n                'threat',\n                'parry',\n                'mayhem',\n                'pierce',\n                'curse',\n                'fury',\n                'weaken',\n                'ripple',\n                'bloom',\n                'blaze',\n                'attackSpeed',\n                'foodHaste',\n                'drinkConcentration',\n                'autoAttackDamage',\n                'abilityDamage',\n                'retaliation',\n            ].forEach((stat) => {\n                if (gameMonster.combatDetails.combatStats[stat] == null) {\n                    this.combatDetails.combatStats[stat] = 0;\n                }\n            });\n\n            if (this.combatDetails.combatStats.attackInterval === 0) {\n                this.combatDetails.combatStats.attackInterval = gameMonster.combatDetails.attackInterval;\n            }\n\n            super.updateCombatDetails();\n\n            // Labyrinth: armor/resistances scale linearly from base values. defenseLevel already includes\n            // the room scale, so recompute from unscaled defense instead of multiplying the totals again\n            // (which would compound the room-level factor on the defense-derived component).\n            if (this.roomLevel > 0) {\n                const scaleFactor = this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL;\n                const unscaledDefense = this.defenseLevel / scaleFactor;\n                const combatStats = this.combatDetails.combatStats;\n                this.combatDetails.totalArmor = (0.2 * unscaledDefense + combatStats.armor) * scaleFactor;\n                this.combatDetails.totalWaterResistance =\n                    (0.2 * unscaledDefense + combatStats.waterResistance) * scaleFactor;\n                this.combatDetails.totalNatureResistance =\n                    (0.2 * unscaledDefense + combatStats.natureResistance) * scaleFactor;\n                this.combatDetails.totalFireResistance = (0.2 * unscaledDefense + combatStats.fireResistance) * scaleFactor;\n            }\n        }\n    }\n\n    const ONE_SECOND = 1e9;\n    const HOT_TICK_INTERVAL = 5 * ONE_SECOND;\n    const DOT_TICK_INTERVAL = 3 * ONE_SECOND;\n    const REGEN_TICK_INTERVAL = 10 * ONE_SECOND;\n    const ENEMY_RESPAWN_INTERVAL = 3 * ONE_SECOND;\n    const PLAYER_RESPAWN_INTERVAL = 150 * ONE_SECOND;\n    const RESTART_INTERVAL = 3 * ONE_SECOND;\n    const ENRAGE_TICK_INTERVAL = 60 * ONE_SECOND;\n\n    class CombatSimulator {\n        /**\n         * @param {Array} players\n         * @param {Object} zone\n         * @param {Function} [onProgress] - Optional progress callback receiving { zone, difficultyTier, progress }\n         * @param {Labyrinth} [labyrinth] - Optional labyrinth encounter manager (replaces zone encounter logic)\n         */\n        constructor(players, zone, onProgress, labyrinth) {\n            this.players = players;\n            this.zone = zone;\n            this.labyrinth = labyrinth || null;\n            this.onProgress = onProgress;\n            this.eventQueue = new EventQueue();\n            this.simResult = new SimResult(zone, players.length);\n            this.allPlayersDead = false;\n            this.encounterIndex = 0;\n\n            this.wipeLogs = {\n                buffer: new Array(200),\n                index: 0,\n                count: 0,\n                maxSize: 200,\n            };\n        }\n\n        addToWipeLogs(logEntry) {\n            const { buffer, maxSize } = this.wipeLogs;\n\n            buffer[this.wipeLogs.index] = logEntry;\n            this.wipeLogs.index = (this.wipeLogs.index + 1) % maxSize;\n            this.wipeLogs.count = Math.min(this.wipeLogs.count + 1, maxSize);\n        }\n\n        logAndResetWipeLogs() {\n            const logs = this.getOrderedWipeLogs();\n\n            logs.forEach((log) => {\n                if (log.error) {\n                    console.log(log.error);\n                }\n            });\n\n            this.wipeLogs.index = 0;\n            this.wipeLogs.count = 0;\n        }\n\n        buildCombatLog(source, ability, target, damageDone) {\n            try {\n                const sourceHrid = source?.hrid || 'UNKNOWN_SOURCE';\n                const targetHrid = target?.hrid || 'UNKNOWN_TARGET';\n\n                const afterHp = target?.combatDetails?.currentHitpoints || 0;\n                const beforeHp = Math.max(0, afterHp + damageDone);\n\n                const playersHp = this.players.map((p) => ({\n                    hrid: p.hrid || 'UNKNOWN_PLAYER',\n                    current: p.combatDetails?.currentHitpoints ?? 0,\n                    max: p.combatDetails?.maxHitpoints ?? 0,\n                }));\n\n                return {\n                    time: this.simulationTime,\n                    wave: this.zone.encountersKilled - 1,\n                    source: sourceHrid,\n                    ability: ability,\n                    target: targetHrid,\n                    damage: damageDone,\n                    beforeHp: beforeHp,\n                    afterHp: afterHp,\n                    playersHp: playersHp,\n                    isCrit: false,\n                };\n            } catch (e) {\n                return {\n                    error: `[Log generation error] ${e.message}`,\n                };\n            }\n        }\n\n        generateCombatLog(source, ability, target, attackResult) {\n            try {\n                const sourceHrid = source?.hrid || 'UNKNOWN_SOURCE';\n                const targetHrid = target?.hrid || 'UNKNOWN_TARGET';\n                const damage = attackResult?.damageDone || 0;\n\n                const afterHp = target?.combatDetails?.currentHitpoints || 0;\n                const beforeHp = Math.max(0, afterHp + damage);\n\n                const playersHp = this.players.map((p) => ({\n                    hrid: p.hrid || 'UNKNOWN_PLAYER',\n                    current: p.combatDetails?.currentHitpoints ?? 0,\n                    max: p.combatDetails?.maxHitpoints ?? 0,\n                }));\n\n                return {\n                    time: this.simulationTime,\n                    wave: this.zone.encountersKilled - 1,\n                    source: sourceHrid,\n                    ability: ability,\n                    target: targetHrid,\n                    damage: damage,\n                    beforeHp: beforeHp,\n                    afterHp: afterHp,\n                    playersHp: playersHp,\n                    isCrit: attackResult?.isCrit || false,\n                };\n            } catch (e) {\n                return {\n                    error: `[Log generation error] ${e.message}`,\n                };\n            }\n        }\n\n        getOrderedWipeLogs() {\n            const { buffer, maxSize, count } = this.wipeLogs;\n            const logs = [];\n\n            for (let i = 0; i < count; i++) {\n                const idx = (this.wipeLogs.index - count + maxSize + i) % maxSize;\n                logs.push(buffer[idx]);\n            }\n\n            return logs;\n        }\n\n        saveWipeLogsToSimResult(wave) {\n            const logs = this.getOrderedWipeLogs();\n            this.simResult.addWipeEvent(logs, this.simulationTime, wave);\n        }\n\n        /**\n         * Run the combat simulation synchronously.\n         * @param {number} simulationTimeLimit - Simulation time limit in nanoseconds\n         * @returns {SimResult}\n         */\n        simulate(simulationTimeLimit) {\n            this.reset();\n\n            let ticks = 0;\n\n            const combatStartEvent = new CombatStartEvent(0);\n            this.eventQueue.addEvent(combatStartEvent);\n\n            while (this.simulationTime < simulationTimeLimit) {\n                const nextEvent = this.eventQueue.getNextEvent();\n                this.processEvent(nextEvent);\n\n                ticks++;\n                if (ticks === 50000) {\n                    ticks = 0;\n                    if (this.onProgress) {\n                        this.onProgress({\n                            zone: this.zone.hrid,\n                            difficultyTier: this.zone.difficultyTier,\n                            progress: Math.min(this.simulationTime / simulationTimeLimit, 1),\n                        });\n                    }\n                }\n            }\n\n            this.simResult.isDungeon = this.zone.isDungeon;\n            if (this.simResult.isDungeon) {\n                this.simResult.dungeonsCompleted = this.zone.dungeonsCompleted;\n                this.simResult.dungeonsFailed = this.zone.dungeonsFailed;\n                if (this.simResult.dungeonsCompleted < 1) {\n                    this.simResult.maxWaveReached = 0;\n                    for (let i = 1; i <= this.zone.dungeonSpawnInfo.maxWaves; i++) {\n                        const waveName = '#' + i.toString();\n                        const idx = this.simResult.timeSpentAlive.findIndex((e) => e.name === waveName);\n                        if (idx === -1 || this.simResult.timeSpentAlive[idx].count === 0) {\n                            break;\n                        }\n                        this.simResult.maxWaveReached = i;\n                    }\n                } else {\n                    this.simResult.maxWaveReached = this.zone.dungeonSpawnInfo.maxWaves;\n                }\n            }\n\n            // Labyrinth result tracking\n            if (this.labyrinth) {\n                this.simResult.isLabyrinth = true;\n                this.simResult.labyAttemptCount = this.labyrinth.attemptCount;\n                this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;\n                this.simResult.roomLevel = this.labyrinth.roomLevel;\n            }\n\n            this.simResult.simulatedTime = this.simulationTime;\n\n            for (let i = 0; i < this.players.length; i++) {\n                this.simResult.setDropRateMultipliers(this.players[i]);\n                this.simResult.setManaUsed(this.players[i]);\n            }\n\n            if (this.zone.isDungeon) {\n                Object.entries(this.zone.dungeonSpawnInfo.fixedSpawnsMap).forEach(([wave, monsters]) => {\n                    let waveName = '#' + wave.toString();\n                    monsters.forEach((monster) => {\n                        waveName += ',' + monster.combatMonsterHrid;\n                    });\n                    this.simResult.bossSpawns.push(waveName);\n                });\n            }\n            if (this.zone.monsterSpawnInfo.bossSpawns) {\n                for (const boss of this.zone.monsterSpawnInfo.bossSpawns) {\n                    this.simResult.bossSpawns.push(boss.combatMonsterHrid);\n                }\n            }\n\n            return this.simResult;\n        }\n\n        reset() {\n            this.tempDungeonCount = 0;\n            this.simulationTime = 0;\n            this.encounterIndex = 0;\n            this.eventQueue.clear();\n            this.simResult = new SimResult(this.zone, this.players.length);\n        }\n\n        processEvent(event) {\n            this.simulationTime = event.time;\n\n            switch (event.type) {\n                case CombatStartEvent.type:\n                    this.processCombatStartEvent(event);\n                    break;\n                case PlayerRespawnEvent.type:\n                    this.processPlayerRespawnEvent(event);\n                    break;\n                case EnemyRespawnEvent.type:\n                    this.processEnemyRespawnEvent(event);\n                    break;\n                case AutoAttackEvent.type:\n                    this.processAutoAttackEvent(event);\n                    break;\n                case ConsumableTickEvent.type:\n                    this.processConsumableTickEvent(event);\n                    break;\n                case DamageOverTimeEvent.type:\n                    this.processDamageOverTimeTickEvent(event);\n                    break;\n                case CheckBuffExpirationEvent.type:\n                    this.processCheckBuffExpirationEvent(event);\n                    break;\n                case RegenTickEvent.type:\n                    this.processRegenTickEvent(event);\n                    break;\n                case StunExpirationEvent.type:\n                    this.processStunExpirationEvent(event);\n                    break;\n                case BlindExpirationEvent.type:\n                    this.processBlindExpirationEvent(event);\n                    break;\n                case SilenceExpirationEvent.type:\n                    this.processSilenceExpirationEvent(event);\n                    break;\n                case CurseExpirationEvent.type:\n                    this.processCurseExpirationEvent(event);\n                    break;\n                case WeakenExpirationEvent.type:\n                    this.processWeakenExpirationEvent(event);\n                    break;\n                case FuryExpirationEvent.type:\n                    this.processFuryExpirationEvent(event);\n                    break;\n                case EnrageTickEvent.type:\n                    this.processEnrageTickEvent(event);\n                    break;\n                case AbilityCastEndEvent.type:\n                    this.tryUseAbility(event.source, event.ability);\n                    break;\n                case AwaitCooldownEvent.type:\n                    this.addNextAttackEvent(event.source);\n                    break;\n            }\n\n            this.checkTriggers();\n        }\n\n        processCombatStartEvent(event) {\n            for (let i = 0; i < this.players.length; i++) {\n                if (event.time === 0) {\n                    // First combat start event\n                    this.players[i].generatePermanentBuffs();\n                }\n                if (this.labyrinth) {\n                    // Labyrinth: full reset every encounter (independent fights)\n                    this.players[i].reset(0);\n                } else {\n                    this.players[i].reset(this.simulationTime);\n                }\n            }\n\n            const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);\n            this.eventQueue.addEvent(regenTickEvent);\n\n            this.startNewEncounter();\n        }\n\n        processPlayerRespawnEvent(event) {\n            const respawningPlayer = this.players.find((player) => player.hrid === event.hrid);\n            respawningPlayer.combatDetails.currentHitpoints = respawningPlayer.combatDetails.maxHitpoints;\n            respawningPlayer.combatDetails.currentManapoints = respawningPlayer.combatDetails.maxManapoints;\n            respawningPlayer.clearBuffs();\n            respawningPlayer.clearCCs();\n            if (this.allPlayersDead) {\n                this.allPlayersDead = false;\n                this.startAttacks();\n            } else {\n                this.addNextAttackEvent(respawningPlayer);\n            }\n        }\n\n        processEnemyRespawnEvent(_event) {\n            this.startNewEncounter();\n        }\n\n        startNewEncounter() {\n            // Restart the combat/setup streams so this encounter begins from the same\n            // random state in every run sharing the seed (no-op when unseeded)\n            syncEncounterRng(this.encounterIndex++);\n\n            if (this.allPlayersDead) {\n                this.allPlayersDead = false;\n                if (!this.labyrinth) {\n                    this.zone.failWave();\n                }\n            }\n\n            if (this.labyrinth) {\n                this.enemies = this.labyrinth.getMonster();\n                this.labyrinth.updateEncounterStartTime(this.simulationTime);\n            } else if (!this.zone.isDungeon) {\n                this.enemies = this.zone.getRandomEncounter();\n            } else {\n                this.enemies = this.zone.getNextWave();\n                this.simResult.updateTimeSpentAlive(\n                    '#' + (this.zone.encountersKilled - 1).toString(),\n                    true,\n                    this.simulationTime\n                );\n                const currentDungeonCount = this.zone.dungeonsCompleted;\n                if (currentDungeonCount > this.tempDungeonCount) {\n                    this.tempDungeonCount = currentDungeonCount;\n                    for (let i = 0; i < this.players.length; i++) {\n                        this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;\n                        this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;\n                    }\n                }\n            }\n\n            this.enemies.forEach((enemy) => {\n                enemy.reset(this.simulationTime);\n                this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);\n            });\n\n            this.eventQueue.clearEventsOfType(EnrageTickEvent.type);\n            const enrageTickEvent = new EnrageTickEvent(this.simulationTime + ENRAGE_TICK_INTERVAL, ENRAGE_TICK_INTERVAL);\n            this.eventQueue.addEvent(enrageTickEvent);\n            this.enrageBeginTime = this.simulationTime;\n\n            this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n\n            this.checkTriggers();\n            this.startAttacks();\n        }\n\n        startAttacks() {\n            const units = [...this.players];\n            if (this.enemies) {\n                units.push(...this.enemies);\n            }\n\n            for (const unit of units) {\n                if (unit.combatDetails.currentHitpoints <= 0) {\n                    continue;\n                }\n\n                this.addNextAttackEvent(unit);\n            }\n        }\n\n        checkParry(targets) {\n            const parryUnits = targets.filter(\n                (unit) => unit && unit.combatDetails.currentHitpoints > 0 && unit.combatDetails.combatStats.parry > 0\n            );\n            if (parryUnits.length <= 0) {\n                return undefined;\n            }\n            const randomIndex = Math.floor(random() * parryUnits.length);\n            if (parryUnits[randomIndex].combatDetails.combatStats.parry > random()) {\n                return parryUnits[randomIndex];\n            }\n            return undefined;\n        }\n\n        processAutoAttackEvent(event) {\n            const targets = event.source.isPlayer ? this.enemies : this.players;\n\n            if (!targets) {\n                return;\n            }\n\n            const aliveTargets = targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0);\n\n            for (let i = 0; i < aliveTargets.length; i++) {\n                let target = aliveTargets[i];\n                if (!event.source.isPlayer && aliveTargets.length > 1) {\n                    let cumulativeThreat = 0;\n                    const cumulativeRanges = [];\n                    aliveTargets.forEach((player) => {\n                        const playerThreat = player.combatDetails.combatStats.threat;\n                        cumulativeThreat += playerThreat;\n                        cumulativeRanges.push({\n                            player: player,\n                            rangeStart: cumulativeThreat - playerThreat,\n                            rangeEnd: cumulativeThreat,\n                        });\n                    });\n                    const randomValueHit = random() * cumulativeThreat;\n                    target = cumulativeRanges.find(\n                        (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd\n                    ).player;\n                }\n                let source = event.source;\n\n                const parryTarget = this.checkParry(targets);\n                if (parryTarget) {\n                    target = source;\n                    source = parryTarget;\n                }\n\n                const attackResult = CombatUtilities.processAttack(source, target);\n                if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {\n                    const log = this.generateCombatLog(source, 'autoAttack', target, attackResult);\n                    this.addToWipeLogs(log);\n                }\n\n                const mayhem = source.combatDetails.combatStats.mayhem > random();\n\n                if (attackResult.didHit && source.combatDetails.combatStats.curse > 0) {\n                    const curseExpireTime = 15000000000;\n                    const currentCurseEvent = this.eventQueue.getByTypeAndSource(CurseExpirationEvent.type, target);\n                    let currentCurseAmount = 0;\n                    if (currentCurseEvent) currentCurseAmount = currentCurseEvent.curseAmount;\n                    this.eventQueue.clearByTypeAndSource(CurseExpirationEvent.type, target);\n\n                    const curseExpirationEvent = new CurseExpirationEvent(\n                        this.simulationTime + curseExpireTime,\n                        currentCurseAmount,\n                        target\n                    );\n                    const curseBuff = {\n                        uniqueHrid: '/buff_uniques/curse',\n                        typeHrid: '/buff_types/damage_taken',\n                        ratioBoost: 0,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: source.combatDetails.combatStats.curse * curseExpirationEvent.curseAmount,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: curseExpireTime,\n                    };\n                    target.addBuff(curseBuff, this.simulationTime);\n                    this.eventQueue.addEvent(curseExpirationEvent);\n                }\n\n                if (source.combatDetails.combatStats.fury > 0) {\n                    this._processFuryUpdate(source, attackResult.didHit);\n                }\n\n                if (target.combatDetails.combatStats.weaken > 0) {\n                    const weakenExpireTime = 15000000000;\n                    const currentWeakenEvent = this.eventQueue.getByTypeAndSource(WeakenExpirationEvent.type, source);\n                    let weakenAmount = 0;\n                    if (currentWeakenEvent) weakenAmount = currentWeakenEvent.weakenAmount;\n                    this.eventQueue.clearByTypeAndSource(WeakenExpirationEvent.type, source);\n                    const weakenExpirationEvent = new WeakenExpirationEvent(\n                        this.simulationTime + 15000000000,\n                        weakenAmount,\n                        source\n                    );\n                    const weakenBuff = {\n                        uniqueHrid: '/buff_uniques/weaken',\n                        typeHrid: '/buff_types/damage',\n                        ratioBoost: -1 * target.combatDetails.combatStats.weaken * weakenExpirationEvent.weakenAmount,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: weakenExpireTime,\n                    };\n                    source.addBuff(weakenBuff, this.simulationTime);\n                    this.eventQueue.addEvent(weakenExpirationEvent);\n                }\n\n                if (!mayhem || (mayhem && attackResult.didHit) || (mayhem && i === aliveTargets.length - 1)) {\n                    this.simResult.addAttack(\n                        source,\n                        target,\n                        'autoAttack',\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n                }\n\n                if (attackResult.lifeStealHeal > 0) {\n                    this.simResult.addHitpointsGained(source, 'lifesteal', attackResult.lifeStealHeal);\n                }\n\n                if (attackResult.manaLeechMana > 0) {\n                    this.simResult.addManapointsGained(source, 'manaLeech', attackResult.manaLeechMana);\n                }\n\n                if (attackResult.thornDamageDone > 0) {\n                    this.simResult.addAttack(target, source, attackResult.thornType, attackResult.thornDamageDone);\n                }\n                if (this.zone.isDungeon && attackResult.thornDamageDone > 0 && source.isPlayer) {\n                    const log = this.buildCombatLog(target, attackResult.thornType, source, attackResult.thornDamageDone);\n                    this.addToWipeLogs(log);\n                }\n\n                if (target.combatDetails.combatStats.retaliation > 0) {\n                    this.simResult.addAttack(\n                        target,\n                        source,\n                        'retaliation',\n                        attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                    );\n                }\n                if (this.zone.isDungeon && attackResult.retaliationDamageDone > 0 && source.isPlayer) {\n                    const log = this.buildCombatLog(target, 'retaliation', source, attackResult.retaliationDamageDone);\n                    this.addToWipeLogs(log);\n                }\n\n                if (target.combatDetails.currentHitpoints === 0) {\n                    this.eventQueue.clearEventsForUnit(target);\n                    this.simResult.addDeath(target);\n                    if (!target.isPlayer) {\n                        this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);\n                    }\n                }\n\n                // Could die from reflect damage\n                if (\n                    source.combatDetails.currentHitpoints === 0 &&\n                    (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)\n                ) {\n                    this.eventQueue.clearEventsForUnit(source);\n                    this.simResult.addDeath(source);\n                    if (!source.isPlayer) {\n                        this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                    }\n                    break;\n                }\n\n                if (mayhem && !attackResult.didHit) {\n                    continue;\n                }\n\n                if (!attackResult.didHit || parryTarget || source.combatDetails.combatStats.pierce <= random()) {\n                    break;\n                }\n            }\n\n            // checkEncounterEnd must run first (side effects); a source dead from thorns/parry must not re-queue\n            if (!this.checkEncounterEnd() && event.source.combatDetails.currentHitpoints > 0) {\n                this.addNextAttackEvent(event.source);\n            }\n        }\n\n        checkEncounterEnd() {\n            // Labyrinth timeout check\n            if (this.labyrinth && this.enemies && this.labyrinth.checkTimeout(this.simulationTime)) {\n                // Timeout = loss. Clear everything and immediately restart.\n                this.enemies = null;\n                this.eventQueue.clear();\n                const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                this.eventQueue.addEvent(combatStartEvent);\n                return true;\n            }\n\n            if (this.enemies) {\n                const deadEnemies = this.enemies.filter(\n                    (enemy) => enemy.combatDetails.currentHitpoints <= 0 && enemy.experienceRate === 0\n                );\n                if (deadEnemies.length > 0) {\n                    deadEnemies.forEach((enemy) => {\n                        let aliveDuration = this.simulationTime - this.enrageBeginTime;\n                        if (aliveDuration > enemy.enrageTime) {\n                            aliveDuration = enemy.enrageTime;\n                        }\n                        enemy.experienceRate = 1.0 + aliveDuration / enemy.enrageTime;\n                    });\n                }\n            }\n\n            let encounterEnded = false;\n\n            if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {\n                this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n\n                if (this.labyrinth) {\n                    // Labyrinth win: immediate restart (no respawn delay)\n                    this.enemies = null;\n                    this.simResult.addEncounterEnd();\n                    this.eventQueue.clear();\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                    this.eventQueue.addEvent(combatStartEvent);\n                    return true;\n                }\n\n                const enemyRespawnEvent = new EnemyRespawnEvent(this.simulationTime + ENEMY_RESPAWN_INTERVAL);\n                this.eventQueue.addEvent(enemyRespawnEvent);\n\n                // calc exp before clear\n                if (this.enemies.some((enemy) => enemy.experienceRate <= 0)) {\n                    console.warn('[CombatSimulator] Some enemies have no experience rate');\n                }\n\n                const totalExp = this.enemies\n                    .map((enemy) => enemy.experience * enemy.experienceRate)\n                    .reduce((a, b) => a + b, 0);\n                this.players.forEach((player) => {\n                    this.simResult.addExperienceGain(player, totalExp / this.players.length);\n                });\n\n                this.enemies = null;\n\n                if (this.zone.isDungeon) {\n                    this.simResult.updateTimeSpentAlive(\n                        '#' + (this.zone.encountersKilled - 1).toString(),\n                        false,\n                        this.simulationTime\n                    );\n                }\n                this.simResult.addEncounterEnd();\n\n                encounterEnded = true;\n            }\n\n            this.players.forEach((player) => {\n                if (\n                    player.combatDetails.currentHitpoints <= 0 &&\n                    !this.eventQueue.containsEventOfTypeAndHrid(PlayerRespawnEvent.type, player.hrid)\n                ) {\n                    if (!this.zone.isDungeon && !this.labyrinth) {\n                        const playerRespawnEvent = new PlayerRespawnEvent(\n                            this.simulationTime + PLAYER_RESPAWN_INTERVAL,\n                            player.hrid\n                        );\n                        this.eventQueue.addEvent(playerRespawnEvent);\n                    }\n                    this.simResult.addRanOutOfManaCount(player, false, this.simulationTime);\n                }\n            });\n\n            if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {\n                if (this.labyrinth) {\n                    // Labyrinth death = loss. Immediate restart.\n                    this.enemies = null;\n                    this.eventQueue.clear();\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime);\n                    this.eventQueue.addEvent(combatStartEvent);\n                    return true;\n                } else if (this.zone.isDungeon) {\n                    this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);\n                    this.wipeLogs.index = 0;\n                    this.wipeLogs.count = 0;\n\n                    // Clear combat events but preserve buff expiration and cooldown events\n                    this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n                    this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n                    this.eventQueue.clearEventsOfType(DamageOverTimeEvent.type);\n                    this.eventQueue.clearEventsOfType(ConsumableTickEvent.type);\n                    this.eventQueue.clearEventsOfType(RegenTickEvent.type);\n                    this.eventQueue.clearEventsOfType(EnrageTickEvent.type);\n                    this.eventQueue.clearEventsOfType(StunExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(BlindExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(SilenceExpirationEvent.type);\n                    this.eventQueue.clearEventsOfType(AwaitCooldownEvent.type);\n                    this.enemies = null;\n\n                    const combatStartEvent = new CombatStartEvent(this.simulationTime + RESTART_INTERVAL);\n                    this.eventQueue.addEvent(combatStartEvent);\n                } else {\n                    this.eventQueue.clearEventsOfType(AutoAttackEvent.type);\n                    this.eventQueue.clearEventsOfType(AbilityCastEndEvent.type);\n                }\n                encounterEnded = true;\n                this.allPlayersDead = true;\n            }\n\n            return encounterEnded;\n        }\n\n        addNextAttackEvent(source) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return;\n            }\n            // Check both event types via indexed lookups instead of O(n) getMatching\n            if (\n                this.eventQueue.getByTypeAndSource(AbilityCastEndEvent.type, source) ||\n                this.eventQueue.getByTypeAndSource(AutoAttackEvent.type, source)\n            ) {\n                return;\n            }\n\n            let target;\n            let friendlies;\n            let enemies;\n            if (source.isPlayer) {\n                target = CombatUtilities.getTarget(this.enemies);\n                friendlies = this.players;\n                enemies = this.enemies;\n            } else {\n                target = CombatUtilities.getTarget(this.players);\n                friendlies = this.enemies;\n                enemies = this.players;\n            }\n\n            let usedAbility = false;\n            let skipNextAbility = false;\n\n            source.abilities\n                .filter((ability) => ability != null)\n                .forEach((ability) => {\n                    if (\n                        !usedAbility &&\n                        !skipNextAbility &&\n                        ability.shouldTrigger(this.simulationTime, source, target, friendlies, enemies)\n                    ) {\n                        if (!this.canUseAbility(source, ability, true)) {\n                            skipNextAbility = true;\n                        }\n\n                        if (!skipNextAbility) {\n                            let castDuration = ability.castDuration;\n                            castDuration /= 1 + source.combatDetails.combatStats.castSpeed;\n                            const abilityCastEndEvent = new AbilityCastEndEvent(\n                                this.simulationTime + castDuration,\n                                source,\n                                ability\n                            );\n                            this.eventQueue.addEvent(abilityCastEndEvent);\n                            usedAbility = true;\n                        }\n                    }\n                });\n\n            if (usedAbility) {\n                source.isOutOfMana = false;\n                return;\n            }\n\n            if (!enemies) {\n                return;\n            }\n\n            if (!source.isBlinded) {\n                const autoAttackEvent = new AutoAttackEvent(\n                    this.simulationTime + source.combatDetails.combatStats.attackInterval,\n                    source\n                );\n                this.eventQueue.addEvent(autoAttackEvent);\n            } else {\n                source.isOutOfMana = true;\n            }\n        }\n\n        processConsumableTickEvent(event) {\n            if (event.consumable.hitpointRestore > 0) {\n                const tickValue = CombatUtilities.calculateTickValue(\n                    event.consumable.hitpointRestore,\n                    event.totalTicks,\n                    event.currentTick\n                );\n                const hitpointsAdded = event.source.addHitpoints(tickValue);\n                this.simResult.addHitpointsGained(event.source, event.consumable.hrid, hitpointsAdded);\n            }\n\n            if (event.consumable.manapointRestore > 0) {\n                const tickValue = CombatUtilities.calculateTickValue(\n                    event.consumable.manapointRestore,\n                    event.totalTicks,\n                    event.currentTick\n                );\n                const manapointsAdded = event.source.addManapoints(tickValue);\n                this.simResult.addManapointsGained(event.source, event.consumable.hrid, manapointsAdded);\n\n                // when oom check ability trigger\n                if (event.source.isOutOfMana) {\n                    const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, event.source);\n                    this.eventQueue.addEvent(awaitCooldownEvent);\n                }\n            }\n\n            if (event.currentTick < event.totalTicks) {\n                const consumableTickEvent = new ConsumableTickEvent(\n                    this.simulationTime + HOT_TICK_INTERVAL,\n                    event.source,\n                    event.consumable,\n                    event.totalTicks,\n                    event.currentTick + 1\n                );\n                this.eventQueue.addEvent(consumableTickEvent);\n            }\n        }\n\n        processDamageOverTimeTickEvent(event) {\n            const tickDamage = CombatUtilities.calculateTickValue(event.damage, event.totalTicks, event.currentTick);\n            const damage = Math.min(tickDamage, event.target.combatDetails.currentHitpoints);\n\n            event.target.combatDetails.currentHitpoints -= damage;\n            this.simResult.addAttack(event.sourceRef, event.target, 'damageOverTime', damage);\n\n            const log = this.buildCombatLog('', 'damageOverTime', event.target, damage);\n            this.addToWipeLogs(log);\n\n            if (event.currentTick < event.totalTicks) {\n                const damageOverTimeTickEvent = new DamageOverTimeEvent(\n                    this.simulationTime + DOT_TICK_INTERVAL,\n                    event.sourceRef,\n                    event.target,\n                    event.damage,\n                    event.totalTicks,\n                    event.currentTick + 1,\n                    event.combatStyleHrid\n                );\n                this.eventQueue.addEvent(damageOverTimeTickEvent);\n            }\n\n            if (event.target.combatDetails.currentHitpoints === 0) {\n                this.eventQueue.clearEventsForUnit(event.target);\n                this.simResult.addDeath(event.target);\n                if (!event.target.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(event.target.hrid, false, this.simulationTime);\n                }\n            }\n\n            this.checkEncounterEnd();\n        }\n\n        processRegenTickEvent(_event) {\n            const units = [...this.players];\n            // Enemy regen is always 0 in game data — skip enemies\n\n            for (const unit of units) {\n                if (unit.combatDetails.currentHitpoints <= 0) {\n                    continue;\n                }\n\n                const hitpointRegen = Math.floor(\n                    unit.combatDetails.maxHitpoints * unit.combatDetails.combatStats.hpRegenPer10\n                );\n                const hitpointsAdded = unit.addHitpoints(hitpointRegen);\n                this.simResult.addHitpointsGained(unit, 'regen', hitpointsAdded);\n\n                const manapointRegen = Math.floor(\n                    unit.combatDetails.maxManapoints * unit.combatDetails.combatStats.mpRegenPer10\n                );\n                const manapointsAdded = unit.addManapoints(manapointRegen);\n                this.simResult.addManapointsGained(unit, 'regen', manapointsAdded);\n\n                // when oom check ability trigger\n                if (unit.isOutOfMana) {\n                    const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, unit);\n                    this.eventQueue.addEvent(awaitCooldownEvent);\n                }\n            }\n\n            const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);\n            this.eventQueue.addEvent(regenTickEvent);\n        }\n\n        processCheckBuffExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processStunExpirationEvent(event) {\n            event.source.isStunned = false;\n            this.addNextAttackEvent(event.source);\n        }\n\n        processBlindExpirationEvent(event) {\n            event.source.isBlinded = false;\n            this.addNextAttackEvent(event.source);\n        }\n\n        processSilenceExpirationEvent(event) {\n            event.source.isSilenced = false;\n        }\n\n        processCurseExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processWeakenExpirationEvent(event) {\n            event.source.removeExpiredBuffs(this.simulationTime);\n        }\n\n        processFuryExpirationEvent(event) {\n            event.source.furyAmount = 0;\n            event.source.furyExpireTime = 0;\n            event.source.updateFuryBuffs(0, 0, 0, 0);\n        }\n\n        _processFuryUpdate(source, didHit) {\n            const FURY_EXPIRE_TIME = 15000000000;\n            const MAX_FURY_STACK = 5;\n\n            const oldAmount = source.furyAmount;\n            const newAmount = didHit ? Math.min(oldAmount + 1, MAX_FURY_STACK) : Math.floor(oldAmount / 2);\n\n            source.furyAmount = newAmount;\n\n            // Always reschedule expiration (resets the 15s timer)\n            this.eventQueue.clearByTypeAndSource(FuryExpirationEvent.type, source);\n            if (newAmount > 0) {\n                source.furyExpireTime = this.simulationTime + FURY_EXPIRE_TIME;\n                this.eventQueue.addEvent(new FuryExpirationEvent(source.furyExpireTime, newAmount, source));\n            }\n\n            // Only recalculate combat stats if stacks actually changed\n            if (newAmount !== oldAmount) {\n                source.updateFuryBuffs(\n                    newAmount,\n                    source.combatDetails.combatStats.fury,\n                    this.simulationTime,\n                    FURY_EXPIRE_TIME\n                );\n            }\n        }\n\n        processEnrageTickEvent(event) {\n            if (!this.enemies) return;\n            const maxEnrageStack = 10;\n            this.enemies\n                .filter((enemy) => enemy.combatDetails.currentHitpoints > 0)\n                .forEach((enemy) => {\n                    const nowStack = Math.min(maxEnrageStack, Math.floor(event.encounterTime / enemy.enrageTime));\n\n                    if (nowStack <= 0) {\n                        return;\n                    }\n\n                    const enrageDamageBuff = {\n                        uniqueHrid: '/buff_uniques/enrage_damage',\n                        typeHrid: '/buff_types/damage',\n                        ratioBoost: nowStack * 0.1,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: ENRAGE_TICK_INTERVAL,\n                    };\n                    const enrageAccuracyBuff = {\n                        uniqueHrid: '/buff_uniques/enrage_accuracy',\n                        typeHrid: '/buff_types/accuracy',\n                        ratioBoost: nowStack * 0.1,\n                        ratioBoostLevelBonus: 0,\n                        flatBoost: 0,\n                        flatBoostLevelBonus: 0,\n                        startTime: '0001-01-01T00:00:00Z',\n                        duration: ENRAGE_TICK_INTERVAL,\n                    };\n                    enemy.addBuff(enrageDamageBuff, this.simulationTime);\n                    enemy.addBuff(enrageAccuracyBuff, this.simulationTime);\n\n                    this.simResult.maxEnrageStack = Math.max(this.simResult.maxEnrageStack, nowStack);\n                });\n\n            const enrageTickEvent = new EnrageTickEvent(\n                this.simulationTime + ENRAGE_TICK_INTERVAL,\n                event.encounterTime + ENRAGE_TICK_INTERVAL\n            );\n            this.eventQueue.addEvent(enrageTickEvent);\n        }\n\n        checkTriggers() {\n            let triggeredSomething;\n\n            do {\n                triggeredSomething = false;\n\n                for (const player of this.players) {\n                    if (player.combatDetails.currentHitpoints > 0) {\n                        if (this.checkTriggersForUnit(player, this.players, this.enemies)) {\n                            triggeredSomething = true;\n                        }\n                    }\n                }\n\n                if (this.enemies) {\n                    for (const enemy of this.enemies) {\n                        if (enemy.combatDetails.currentHitpoints > 0) {\n                            if (this.checkTriggersForUnit(enemy, this.enemies, this.players)) {\n                                triggeredSomething = true;\n                            }\n                        }\n                    }\n                }\n            } while (triggeredSomething);\n        }\n\n        checkTriggersForUnit(unit, friendlies, enemies) {\n            if (unit.combatDetails.currentHitpoints <= 0) {\n                throw new Error('Checking triggers for a dead unit');\n            }\n\n            let triggeredSomething = false;\n            const target = CombatUtilities.getTarget(enemies);\n\n            for (const food of unit.food) {\n                if (food && food.shouldTrigger(this.simulationTime, unit, target, friendlies, enemies)) {\n                    const result = this.tryUseConsumable(unit, food);\n                    if (result) {\n                        triggeredSomething = true;\n                    }\n                }\n            }\n\n            for (const drink of unit.drinks) {\n                if (drink && drink.shouldTrigger(this.simulationTime, unit, target, friendlies, enemies)) {\n                    const result = this.tryUseConsumable(unit, drink);\n                    if (result) {\n                        triggeredSomething = true;\n                    }\n                }\n            }\n\n            return triggeredSomething;\n        }\n\n        tryUseConsumable(source, consumable) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return false;\n            }\n\n            consumable.lastUsed = this.simulationTime;\n            let consumeCooldown = consumable.cooldownDuration;\n            if (source.combatDetails.combatStats.drinkConcentration > 0 && consumable.catagoryHrid.includes('drink')) {\n                consumeCooldown = consumeCooldown / (1 + source.combatDetails.combatStats.drinkConcentration);\n            } else if (source.combatDetails.combatStats.foodHaste > 0 && consumable.catagoryHrid.includes('food')) {\n                consumeCooldown = consumeCooldown / (1 + source.combatDetails.combatStats.foodHaste);\n            }\n            const cooldownReadyEvent = new CooldownReadyEvent(this.simulationTime + consumeCooldown);\n            this.eventQueue.addEvent(cooldownReadyEvent);\n\n            this.simResult.addConsumableUse(source, consumable);\n\n            if (consumable.recoveryDuration === 0) {\n                if (consumable.hitpointRestore > 0) {\n                    const hitpointsAdded = source.addHitpoints(consumable.hitpointRestore);\n                    this.simResult.addHitpointsGained(source, consumable.hrid, hitpointsAdded);\n                }\n\n                if (consumable.manapointRestore > 0) {\n                    const manapointsAdded = source.addManapoints(consumable.manapointRestore);\n                    this.simResult.addManapointsGained(source, consumable.hrid, manapointsAdded);\n\n                    // when oom check ability trigger\n                    if (source.isOutOfMana) {\n                        const awaitCooldownEvent = new AwaitCooldownEvent(this.simulationTime, source);\n                        this.eventQueue.addEvent(awaitCooldownEvent);\n                    }\n                }\n            } else {\n                const consumableTickEvent = new ConsumableTickEvent(\n                    this.simulationTime + HOT_TICK_INTERVAL,\n                    source,\n                    consumable,\n                    consumable.recoveryDuration / HOT_TICK_INTERVAL,\n                    1\n                );\n                this.eventQueue.addEvent(consumableTickEvent);\n            }\n\n            for (const buff of consumable.buffs) {\n                const currentBuff = structuredClone(buff);\n                if (source.combatDetails.combatStats.drinkConcentration > 0 && consumable.catagoryHrid.includes('drink')) {\n                    currentBuff.ratioBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;\n                    currentBuff.flatBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;\n                    currentBuff.duration = currentBuff.duration / (1 + source.combatDetails.combatStats.drinkConcentration);\n                }\n                source.addBuff(currentBuff, this.simulationTime);\n                const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                    this.simulationTime + currentBuff.duration,\n                    source\n                );\n                this.eventQueue.addEvent(checkBuffExpirationEvent);\n            }\n\n            return true;\n        }\n\n        canUseAbility(source, ability, oomCheck) {\n            if (source.combatDetails.currentHitpoints <= 0) {\n                return false;\n            }\n\n            if (source.combatDetails.currentManapoints < ability.manaCost) {\n                if (source.isPlayer && oomCheck) {\n                    this.simResult.addRanOutOfManaCount(source, true, this.simulationTime);\n                }\n                return false;\n            }\n            if (source.isPlayer && oomCheck) {\n                this.simResult.addRanOutOfManaCount(source, false, this.simulationTime);\n            }\n            return true;\n        }\n\n        tryUseAbility(source, ability) {\n            if (!this.canUseAbility(source, ability, true)) {\n                return false;\n            }\n\n            if (source.isPlayer) {\n                if (source.abilityManaCosts.has(ability.hrid)) {\n                    source.abilityManaCosts.set(ability.hrid, source.abilityManaCosts.get(ability.hrid) + ability.manaCost);\n                } else {\n                    source.abilityManaCosts.set(ability.hrid, ability.manaCost);\n                }\n            }\n\n            source.combatDetails.currentManapoints -= ability.manaCost;\n\n            ability.lastUsed = this.simulationTime;\n\n            source.combatDetails.combatStats.abilityHaste;\n            ability.cooldownDuration;\n\n            const todoAbilities = [ability];\n\n            if (source.combatDetails.combatStats.blaze > 0 && random() < source.combatDetails.combatStats.blaze) {\n                todoAbilities.push(new Ability('blaze'));\n            }\n\n            if (source.combatDetails.combatStats.bloom > 0 && random() < source.combatDetails.combatStats.bloom) {\n                todoAbilities.push(new Ability('bloom'));\n            }\n\n            for (const todoAbility of todoAbilities) {\n                for (const abilityEffect of todoAbility.abilityEffects) {\n                    switch (abilityEffect.effectType) {\n                        case '/ability_effect_types/buff':\n                            this.processAbilityBuffEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/damage':\n                            this.processAbilityDamageEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/heal':\n                            this.processAbilityHealEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/spend_hp':\n                            this.processAbilitySpendHpEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/revive':\n                            this.processAbilityReviveEffect(source, todoAbility, abilityEffect);\n                            break;\n                        case '/ability_effect_types/promote': {\n                            this.eventQueue.clearEventsForUnit(source);\n                            const promotedMonster = this.processAbilityPromoteEffect(source, todoAbility, abilityEffect);\n                            promotedMonster.reset(this.simulationTime);\n                            const enemyIndex = this.enemies.indexOf(source);\n                            if (enemyIndex !== -1) {\n                                this.enemies[enemyIndex] = promotedMonster;\n                                this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                                this.simResult.updateTimeSpentAlive(promotedMonster.hrid, true, this.simulationTime);\n                            }\n                            source = promotedMonster;\n                            this.addNextAttackEvent(source);\n                            break;\n                        }\n                        default:\n                            throw new Error(\n                                'Unsupported effect type for ability: ' +\n                                    todoAbility.hrid +\n                                    ' effectType: ' +\n                                    abilityEffect.effectType\n                            );\n                    }\n                }\n            }\n\n            if (source.combatDetails.combatStats.ripple > 0 && random() < source.combatDetails.combatStats.ripple) {\n                const manapointsAdded = source.addManapoints(10);\n                this.simResult.addManapointsGained(source, 'ripple', manapointsAdded);\n                for (const ab of source.abilities) {\n                    if (ab && ab.lastUsed) {\n                        const remainingCooldown = ab.lastUsed + ab.cooldownDuration - this.simulationTime;\n                        if (remainingCooldown > 0) {\n                            ab.lastUsed = Math.max(ab.lastUsed - ONE_SECOND * 2, this.simulationTime - ab.cooldownDuration);\n                        }\n                    }\n                }\n            }\n\n            this.addNextAttackEvent(source);\n\n            // Could die from reflect damage\n            if (source.combatDetails.currentHitpoints === 0) {\n                this.eventQueue.clearEventsForUnit(source);\n                this.simResult.addDeath(source);\n                if (!source.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);\n                }\n            }\n\n            this.checkEncounterEnd();\n\n            return true;\n        }\n\n        processAbilityBuffEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType === 'allAllies') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    for (const buff of abilityEffect.buffs) {\n                        if (ability.isSpecialAbility && buff.multiplierForSkillHrid && buff.multiplierPerSkillLevel > 0) {\n                            const multiplier =\n                                1.0 +\n                                source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] *\n                                    buff.multiplierPerSkillLevel;\n                            const currentBuff = structuredClone(buff);\n                            currentBuff.flatBoost *= multiplier;\n                            currentBuff.ratioBoost *= multiplier;\n                            target.addBuff(currentBuff, this.simulationTime);\n                        } else {\n                            target.addBuff(buff, this.simulationTime);\n                        }\n                        const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                            this.simulationTime + buff.duration,\n                            target\n                        );\n                        this.eventQueue.addEvent(checkBuffExpirationEvent);\n                    }\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for buff ability effect: ' + ability.hrid);\n            }\n\n            for (const buff of abilityEffect.buffs) {\n                source.addBuff(buff, this.simulationTime);\n                const checkBuffExpirationEvent = new CheckBuffExpirationEvent(this.simulationTime + buff.duration, source);\n                this.eventQueue.addEvent(checkBuffExpirationEvent);\n            }\n        }\n\n        processAbilityDamageEffect(source, ability, abilityEffect) {\n            let targets;\n            switch (abilityEffect.targetType) {\n                case 'enemy':\n                case 'allEnemies':\n                    targets = source.isPlayer ? this.enemies : this.players;\n                    break;\n                default:\n                    throw new Error('Unsupported target type for damage ability effect: ' + ability.hrid);\n            }\n\n            if (!targets) {\n                return;\n            }\n\n            const avoidTarget = [];\n\n            let isSkipParry = false;\n\n            for (let target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                let parryTarget;\n                if (!isSkipParry) {\n                    parryTarget = this.checkParry(targets);\n                    isSkipParry = true; // parry check only once on first target\n                }\n\n                if (parryTarget) {\n                    const tempTarget = source;\n                    const tempSource = parryTarget;\n\n                    const attackResult = CombatUtilities.processAttack(tempSource, tempTarget);\n\n                    this.simResult.addAttack(\n                        tempSource,\n                        tempTarget,\n                        'parry',\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n\n                    if (attackResult.lifeStealHeal > 0) {\n                        this.simResult.addHitpointsGained(tempSource, 'lifesteal', attackResult.lifeStealHeal);\n                    }\n\n                    if (attackResult.manaLeechMana > 0) {\n                        this.simResult.addManapointsGained(tempSource, 'manaLeech', attackResult.manaLeechMana);\n                    }\n\n                    if (attackResult.thornDamageDone > 0) {\n                        this.simResult.addAttack(\n                            tempTarget,\n                            tempSource,\n                            attackResult.thornType,\n                            attackResult.thornDamageDone\n                        );\n                    }\n                    if (tempTarget.combatDetails.combatStats.retaliation > 0) {\n                        this.simResult.addAttack(\n                            tempTarget,\n                            tempSource,\n                            'retaliation',\n                            attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                        );\n                    }\n\n                    if (tempTarget.combatDetails.currentHitpoints === 0) {\n                        this.eventQueue.clearEventsForUnit(tempTarget);\n                        this.simResult.addDeath(tempTarget);\n                        if (!tempTarget.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(tempTarget.hrid, false, this.simulationTime);\n                        }\n                    }\n\n                    // Could die from reflect damage\n                    if (\n                        tempSource.combatDetails.currentHitpoints === 0 &&\n                        (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)\n                    ) {\n                        this.eventQueue.clearEventsForUnit(tempSource);\n                        this.simResult.addDeath(tempSource);\n                        if (!tempSource.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(tempSource.hrid, false, this.simulationTime);\n                        }\n                    }\n                } else {\n                    targets = targets.filter(\n                        (unit) => unit && !avoidTarget.includes(unit.hrid) && unit.combatDetails.currentHitpoints > 0\n                    );\n                    if (!source.isPlayer && targets.length > 0 && abilityEffect.targetType === 'enemy') {\n                        let cumulativeThreat = 0;\n                        const cumulativeRanges = [];\n                        targets.forEach((player) => {\n                            const playerThreat = player.combatDetails.combatStats.threat;\n                            cumulativeThreat += playerThreat;\n                            cumulativeRanges.push({\n                                player: player,\n                                rangeStart: cumulativeThreat - playerThreat,\n                                rangeEnd: cumulativeThreat,\n                            });\n                        });\n                        const randomValueHit = random() * cumulativeThreat;\n                        target = cumulativeRanges.find(\n                            (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd\n                        ).player;\n                        avoidTarget.push(target.hrid);\n                    }\n                    if (targets.length <= 0) {\n                        break;\n                    }\n\n                    const attackResult = CombatUtilities.processAttack(source, target, abilityEffect);\n\n                    if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {\n                        const log = this.generateCombatLog(source, ability.hrid, target, attackResult);\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (attackResult.hpDrain > 0) {\n                        this.simResult.addHitpointsGained(source, ability.hrid, attackResult.hpDrain);\n                    }\n\n                    if (attackResult.didHit && abilityEffect.buffs) {\n                        for (const buff of abilityEffect.buffs) {\n                            target.addBuff(buff, this.simulationTime);\n                            const checkBuffExpirationEvent = new CheckBuffExpirationEvent(\n                                this.simulationTime + buff.duration,\n                                target\n                            );\n                            this.eventQueue.addEvent(checkBuffExpirationEvent);\n                        }\n                    }\n\n                    if (abilityEffect.damageOverTimeRatio > 0 && attackResult.damageDone > 0) {\n                        const damageOverTimeEvent = new DamageOverTimeEvent(\n                            this.simulationTime + DOT_TICK_INTERVAL,\n                            source,\n                            target,\n                            attackResult.damageDone * abilityEffect.damageOverTimeRatio,\n                            abilityEffect.damageOverTimeDuration / DOT_TICK_INTERVAL,\n                            1,\n                            abilityEffect.combatStyleHrid\n                        );\n                        this.eventQueue.addEvent(damageOverTimeEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.stunChance > 0 &&\n                        random() < (abilityEffect.stunChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isStunned = true;\n                        target.stunExpireTime = this.simulationTime + abilityEffect.stunDuration;\n                        // Clear all 3 event types via indexed lookups instead of O(n) clearMatching\n                        this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, target);\n                        this.eventQueue.clearByTypeAndSource(AbilityCastEndEvent.type, target);\n                        this.eventQueue.clearByTypeAndSource(StunExpirationEvent.type, target);\n                        const stunExpirationEvent = new StunExpirationEvent(target.stunExpireTime, target);\n                        this.eventQueue.addEvent(stunExpirationEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.blindChance > 0 &&\n                        random() < (abilityEffect.blindChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isBlinded = true;\n                        target.blindExpireTime = this.simulationTime + abilityEffect.blindDuration;\n                        this.eventQueue.clearByTypeAndSource(BlindExpirationEvent.type, target);\n                        if (this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, target)) {\n                            this.addNextAttackEvent(target);\n                        }\n                        const blindExpirationEvent = new BlindExpirationEvent(target.blindExpireTime, target);\n                        this.eventQueue.addEvent(blindExpirationEvent);\n                    }\n\n                    if (\n                        attackResult.didHit &&\n                        abilityEffect.silenceChance > 0 &&\n                        random() < (abilityEffect.silenceChance * 100) / (100 + target.combatDetails.combatStats.tenacity)\n                    ) {\n                        target.isSilenced = true;\n                        target.silenceExpireTime = this.simulationTime + abilityEffect.silenceDuration;\n                        this.eventQueue.clearByTypeAndSource(SilenceExpirationEvent.type, target);\n                        if (this.eventQueue.clearByTypeAndSource(AbilityCastEndEvent.type, target)) {\n                            this.addNextAttackEvent(target);\n                        }\n                        const silenceExpirationEvent = new SilenceExpirationEvent(target.silenceExpireTime, target);\n                        this.eventQueue.addEvent(silenceExpirationEvent);\n                    }\n\n                    if (attackResult.didHit && source.combatDetails.combatStats.curse > 0) {\n                        const curseExpireTime = 15000000000;\n                        const currentCurseEvent = this.eventQueue.getByTypeAndSource(CurseExpirationEvent.type, target);\n                        let currentCurseAmount = 0;\n                        if (currentCurseEvent) currentCurseAmount = currentCurseEvent.curseAmount;\n                        this.eventQueue.clearByTypeAndSource(CurseExpirationEvent.type, target);\n\n                        const curseExpirationEvent = new CurseExpirationEvent(\n                            this.simulationTime + curseExpireTime,\n                            currentCurseAmount,\n                            target\n                        );\n                        const curseBuff = {\n                            uniqueHrid: '/buff_uniques/curse',\n                            typeHrid: '/buff_types/damage_taken',\n                            ratioBoost: 0,\n                            ratioBoostLevelBonus: 0,\n                            flatBoost: source.combatDetails.combatStats.curse * curseExpirationEvent.curseAmount,\n                            flatBoostLevelBonus: 0,\n                            startTime: '0001-01-01T00:00:00Z',\n                            duration: curseExpireTime,\n                        };\n                        target.addBuff(curseBuff, this.simulationTime);\n                        this.eventQueue.addEvent(curseExpirationEvent);\n                    }\n\n                    if (target.combatDetails.combatStats.weaken > 0) {\n                        const weakenExpireTime = 15000000000;\n                        const currentWeakenEvent = this.eventQueue.getByTypeAndSource(WeakenExpirationEvent.type, source);\n                        let weakenAmount = 0;\n                        if (currentWeakenEvent) weakenAmount = currentWeakenEvent.weakenAmount;\n                        this.eventQueue.clearByTypeAndSource(WeakenExpirationEvent.type, source);\n                        const weakenExpirationEvent = new WeakenExpirationEvent(\n                            this.simulationTime + weakenExpireTime,\n                            weakenAmount,\n                            source\n                        );\n                        const weakenBuff = {\n                            uniqueHrid: '/buff_uniques/weaken',\n                            typeHrid: '/buff_types/damage',\n                            ratioBoost: -1 * target.combatDetails.combatStats.weaken * weakenExpirationEvent.weakenAmount,\n                            ratioBoostLevelBonus: 0,\n                            flatBoost: 0,\n                            flatBoostLevelBonus: 0,\n                            startTime: '0001-01-01T00:00:00Z',\n                            duration: weakenExpireTime,\n                        };\n                        source.addBuff(weakenBuff, this.simulationTime);\n                        this.eventQueue.addEvent(weakenExpirationEvent);\n                    }\n\n                    if (source.combatDetails.combatStats.fury > 0) {\n                        this._processFuryUpdate(source, attackResult.didHit);\n                    }\n\n                    this.simResult.addAttack(\n                        source,\n                        target,\n                        ability.hrid,\n                        attackResult.didHit ? attackResult.damageDone : 'miss'\n                    );\n\n                    if (attackResult.thornDamageDone > 0) {\n                        this.simResult.addAttack(target, source, attackResult.thornType, attackResult.thornDamageDone);\n                    }\n                    if (this.zone.isDungeon && attackResult.thornDamageDone > 0 && source.isPlayer) {\n                        const log = this.buildCombatLog(\n                            target,\n                            attackResult.thornType,\n                            source,\n                            attackResult.thornDamageDone\n                        );\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (target.combatDetails.combatStats.retaliation > 0) {\n                        this.simResult.addAttack(\n                            target,\n                            source,\n                            'retaliation',\n                            attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 'miss'\n                        );\n                    }\n                    if (this.zone.isDungeon && attackResult.retaliationDamageDone > 0 && source.isPlayer) {\n                        const log = this.buildCombatLog(target, 'retaliation', source, attackResult.retaliationDamageDone);\n                        this.addToWipeLogs(log);\n                    }\n\n                    if (target.combatDetails.currentHitpoints === 0) {\n                        this.eventQueue.clearEventsForUnit(target);\n                        this.simResult.addDeath(target);\n                        if (!target.isPlayer) {\n                            this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);\n                        }\n                    }\n\n                    if (attackResult.didHit && abilityEffect.pierceChance > random()) {\n                        continue;\n                    }\n                }\n\n                if (parryTarget) {\n                    break;\n                }\n\n                if (abilityEffect.targetType === 'enemy') {\n                    break;\n                }\n            }\n        }\n\n        processAbilityHealEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType === 'allAllies') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    const amountHealed = CombatUtilities.processHeal(source, abilityEffect, target);\n                    this.simResult.addHitpointsGained(target, ability.hrid, amountHealed);\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType === 'lowestHpAlly') {\n                const targets = source.isPlayer ? this.players : this.enemies;\n                let healTarget;\n                for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {\n                    if (!healTarget) {\n                        healTarget = target;\n                        continue;\n                    }\n                    if (\n                        target.combatDetails.currentHitpoints / target.combatDetails.maxHitpoints <\n                        healTarget.combatDetails.currentHitpoints / healTarget.combatDetails.maxHitpoints\n                    ) {\n                        healTarget = target;\n                    }\n                }\n\n                if (healTarget) {\n                    const amountHealed = CombatUtilities.processHeal(source, abilityEffect, healTarget);\n                    this.simResult.addHitpointsGained(healTarget, ability.hrid, amountHealed);\n                }\n                return;\n            }\n\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for heal ability effect: ' + ability.hrid);\n            }\n\n            const amountHealed = CombatUtilities.processHeal(source, abilityEffect, source);\n            this.simResult.addHitpointsGained(source, ability.hrid, amountHealed);\n        }\n\n        processAbilityReviveEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType !== 'deadAlly') {\n                throw new Error('Unsupported target type for revive ability effect: ' + ability.hrid);\n            }\n\n            const targets = source.isPlayer ? this.players : this.enemies;\n            const reviveTarget = targets.find((unit) => unit && unit.combatDetails.currentHitpoints <= 0);\n\n            if (reviveTarget) {\n                this.eventQueue.clearByTypeAndHrid(PlayerRespawnEvent.type, reviveTarget.hrid);\n\n                reviveTarget.removeExpiredBuffs(this.simulationTime);\n\n                const amountHealed = CombatUtilities.processRevive(source, abilityEffect, reviveTarget);\n                this.simResult.addHitpointsGained(reviveTarget, ability.hrid, amountHealed);\n\n                this.addNextAttackEvent(reviveTarget);\n\n                if (!source.isPlayer) {\n                    this.simResult.updateTimeSpentAlive(reviveTarget.hrid, true, this.simulationTime);\n                }\n            }\n        }\n\n        processAbilityPromoteEffect(source, _ability, _abilityEffect) {\n            const promotionHrids = ['/monsters/enchanted_rook', '/monsters/enchanted_knight', '/monsters/enchanted_bishop'];\n            const randomPromotionIndex = Math.floor(random() * promotionHrids.length);\n            return new Monster(promotionHrids[randomPromotionIndex], source.difficultyTier);\n        }\n\n        processAbilitySpendHpEffect(source, ability, abilityEffect) {\n            if (abilityEffect.targetType !== 'self') {\n                throw new Error('Unsupported target type for spend hp ability effect: ' + ability.hrid);\n            }\n\n            const hpSpent = CombatUtilities.processSpendHp(source, abilityEffect);\n            this.simResult.addHitpointsSpent(source, ability.hrid, hpSpent);\n        }\n    }\n\n    const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds\n\n    /**\n     * Labyrinth encounter manager.\n     * Each encounter is a single monster at a given roomLevel.\n     * Timeout (120s) or player death = loss; enemy killed = win.\n     */\n    class Labyrinth {\n        constructor(monsterHrid, roomLevel, crateHrids = []) {\n            this.monsterHrid = monsterHrid;\n            this.hrid = monsterHrid;\n            this.roomLevel = roomLevel;\n            this.buffs = [];\n            this.attemptCount = 0;\n            this.encounterStartTime = 0;\n\n            // Resolve crate buffs from game data\n            if (crateHrids.length > 0) {\n                const gameData = getGameData();\n                const crateMap = gameData.labyrinthCrateDetailMap;\n                if (crateMap) {\n                    for (const hrid of crateHrids) {\n                        if (crateMap[hrid]) {\n                            this.buffs = this.buffs.concat(crateMap[hrid]);\n                        }\n                    }\n                }\n            }\n        }\n\n        /**\n         * Spawn a new monster for the next encounter.\n         * @returns {Monster[]} Single-element array with the scaled monster\n         */\n        getMonster() {\n            this.attemptCount++;\n            return [new Monster(this.monsterHrid, 0, this.roomLevel)];\n        }\n\n        /**\n         * Record when a new encounter begins.\n         * @param {number} time - Current simulation time in nanoseconds\n         */\n        updateEncounterStartTime(time) {\n            this.encounterStartTime = time;\n        }\n\n        /**\n         * Check if the current encounter has exceeded the 120s timeout.\n         * @param {number} currentTime - Current simulation time in nanoseconds\n         * @returns {boolean}\n         */\n        checkTimeout(currentTime) {\n            return currentTime - this.encounterStartTime > LABYRINTH_TIMEOUT;\n        }\n    }\n\n    class Consumable {\n        constructor(hrid, triggers = null) {\n            this.hrid = hrid;\n\n            const itemDetailMap = getGameData().itemDetailMap;\n            const gameConsumable = itemDetailMap[this.hrid];\n            if (!gameConsumable) {\n                throw new Error('No consumable found for hrid: ' + this.hrid);\n            }\n\n            this.cooldownDuration = gameConsumable.consumableDetail.cooldownDuration;\n            this.hitpointRestore = gameConsumable.consumableDetail.hitpointRestore;\n            this.manapointRestore = gameConsumable.consumableDetail.manapointRestore;\n            this.recoveryDuration = gameConsumable.consumableDetail.recoveryDuration;\n            this.catagoryHrid = gameConsumable.categoryHrid;\n\n            this.buffs = [];\n            if (gameConsumable.consumableDetail.buffs) {\n                for (const consumableBuff of gameConsumable.consumableDetail.buffs) {\n                    const buff = new Buff(consumableBuff);\n                    this.buffs.push(buff);\n                }\n            }\n\n            if (triggers) {\n                this.triggers = triggers;\n            } else {\n                this.triggers = [];\n                for (const defaultTrigger of gameConsumable.consumableDetail.defaultCombatTriggers) {\n                    const trigger = new Trigger(\n                        defaultTrigger.dependencyHrid,\n                        defaultTrigger.conditionHrid,\n                        defaultTrigger.comparatorHrid,\n                        defaultTrigger.value\n                    );\n                    this.triggers.push(trigger);\n                }\n            }\n\n            this.lastUsed = Number.MIN_SAFE_INTEGER;\n        }\n\n        static createFromDTO(dto) {\n            const triggers = dto.triggers ? dto.triggers.map((trigger) => Trigger.createFromDTO(trigger)) : null;\n            const consumable = new Consumable(dto.hrid, triggers);\n\n            return consumable;\n        }\n\n        shouldTrigger(currentTime, source, target, friendlies, enemies) {\n            if (source.isStunned) {\n                return false;\n            }\n            let consumableHaste;\n            if (this.catagoryHrid.includes('food')) {\n                consumableHaste = source.combatDetails.combatStats.foodHaste;\n            } else {\n                consumableHaste = source.combatDetails.combatStats.drinkConcentration;\n            }\n            let cooldownDuration = this.cooldownDuration;\n            if (consumableHaste > 0) {\n                cooldownDuration = cooldownDuration / (1 + consumableHaste);\n            }\n\n            if (this.lastUsed + cooldownDuration > currentTime) {\n                return false;\n            }\n\n            if (this.triggers.length === 0) {\n                return true;\n            }\n\n            let shouldTrigger = true;\n            for (const trigger of this.triggers) {\n                if (!trigger.isActive(source, target, friendlies, enemies, currentTime)) {\n                    shouldTrigger = false;\n                }\n            }\n\n            return shouldTrigger;\n        }\n    }\n\n    class Equipment {\n        constructor(hrid, enhancementLevel) {\n            this.hrid = hrid;\n            const gameData = getGameData();\n            const gameItem = gameData.itemDetailMap[this.hrid];\n            if (!gameItem) {\n                throw new Error('No equipment found for hrid: ' + this.hrid);\n            }\n            this.gameItem = gameItem;\n            this.enhancementLevel = enhancementLevel;\n        }\n\n        static createFromDTO(dto) {\n            const equipment = new Equipment(dto.hrid, dto.enhancementLevel);\n\n            return equipment;\n        }\n\n        getCombatStat(combatStat) {\n            const gameData = getGameData();\n            const multiplier = gameData.enhancementLevelTotalBonusMultiplierTable[this.enhancementLevel];\n            if (this.gameItem.equipmentDetail.combatStats[combatStat]) {\n                const enhancementBonus = this.gameItem.equipmentDetail.combatEnhancementBonuses[combatStat] || 0;\n                const stat = this.gameItem.equipmentDetail.combatStats[combatStat] + multiplier * enhancementBonus;\n                return stat;\n            }\n            return 0;\n        }\n\n        getCombatStyle() {\n            return this.gameItem.equipmentDetail.combatStats.combatStyleHrids[0];\n        }\n\n        getDamageType() {\n            return this.gameItem.equipmentDetail.combatStats.damageType;\n        }\n\n        getPrimaryTraining() {\n            return this.gameItem.equipmentDetail.combatStats.primaryTraining;\n        }\n\n        getFocusTraining() {\n            return this.gameItem.equipmentDetail.combatStats.focusTraining;\n        }\n    }\n\n    class HouseRoom {\n        constructor(hrid, level) {\n            this.hrid = hrid;\n            this.level = level;\n\n            const gameData = getGameData();\n            const gameHouseRoom = gameData.houseRoomDetailMap[this.hrid];\n            if (!gameHouseRoom) {\n                throw new Error('No house room found for hrid: ' + this.hrid);\n            }\n\n            this.buffs = [];\n            if (gameHouseRoom.actionBuffs) {\n                for (const actionBuff of gameHouseRoom.actionBuffs) {\n                    const buff = new Buff(actionBuff, level);\n                    this.buffs.push(buff);\n                }\n            }\n            if (gameHouseRoom.globalBuffs) {\n                for (const globalBuff of gameHouseRoom.globalBuffs) {\n                    const buff = new Buff(globalBuff, level);\n                    this.buffs.push(buff);\n                }\n            }\n        }\n    }\n\n    class Player extends CombatUnit {\n        equipment = {\n            '/equipment_types/head': null,\n            '/equipment_types/body': null,\n            '/equipment_types/legs': null,\n            '/equipment_types/feet': null,\n            '/equipment_types/hands': null,\n            '/equipment_types/main_hand': null,\n            '/equipment_types/two_hand': null,\n            '/equipment_types/off_hand': null,\n            '/equipment_types/pouch': null,\n            '/equipment_types/back': null,\n            '/equipment_types/neck': null,\n            '/equipment_types/earrings': null,\n            '/equipment_types/ring': null,\n            '/equipment_types/charm': null,\n        };\n\n        constructor() {\n            super();\n\n            this.isPlayer = true;\n            this.hrid = 'player';\n        }\n\n        static createFromDTO(dto) {\n            const player = new Player();\n\n            player.staminaLevel = dto.staminaLevel;\n            player.intelligenceLevel = dto.intelligenceLevel;\n            player.attackLevel = dto.attackLevel;\n            player.meleeLevel = dto.meleeLevel;\n            player.defenseLevel = dto.defenseLevel;\n            player.rangedLevel = dto.rangedLevel;\n            player.magicLevel = dto.magicLevel;\n\n            player.hrid = dto.hrid;\n\n            for (const [key, value] of Object.entries(dto.equipment)) {\n                player.equipment[key] = value ? Equipment.createFromDTO(value) : null;\n            }\n\n            player.food = dto.food.map((food) => (food ? Consumable.createFromDTO(food) : null));\n            player.drinks = dto.drinks.map((drink) => (drink ? Consumable.createFromDTO(drink) : null));\n            player.abilities = dto.abilities.map((ability) => (ability ? Ability.createFromDTO(ability) : null));\n            Object.entries(dto.houseRooms).forEach((houseRoom) => {\n                if (houseRoom[1] > 0) {\n                    player.houseRooms.push(new HouseRoom(houseRoom[0], houseRoom[1]));\n                }\n            });\n\n            player.debuffOnLevelGap = dto.debuffOnLevelGap;\n\n            return player;\n        }\n\n        updateCombatDetails() {\n            if (this.equipment['/equipment_types/main_hand']) {\n                this.combatDetails.combatStats.combatStyleHrid =\n                    this.equipment['/equipment_types/main_hand'].getCombatStyle();\n                this.combatDetails.combatStats.damageType = this.equipment['/equipment_types/main_hand'].getDamageType();\n                this.combatDetails.combatStats.attackInterval =\n                    this.equipment['/equipment_types/main_hand'].getCombatStat('attackInterval');\n                this.combatDetails.combatStats.primaryTraining =\n                    this.equipment['/equipment_types/main_hand'].getPrimaryTraining();\n            } else if (this.equipment['/equipment_types/two_hand']) {\n                this.combatDetails.combatStats.combatStyleHrid =\n                    this.equipment['/equipment_types/two_hand'].getCombatStyle();\n                this.combatDetails.combatStats.damageType = this.equipment['/equipment_types/two_hand'].getDamageType();\n                this.combatDetails.combatStats.attackInterval =\n                    this.equipment['/equipment_types/two_hand'].getCombatStat('attackInterval');\n                this.combatDetails.combatStats.primaryTraining =\n                    this.equipment['/equipment_types/two_hand'].getPrimaryTraining();\n            } else {\n                this.combatDetails.combatStats.combatStyleHrid = '/combat_styles/smash';\n                this.combatDetails.combatStats.damageType = '/damage_types/physical';\n                this.combatDetails.combatStats.attackInterval = 3000000000;\n                this.combatDetails.combatStats.primaryTraining = '/skills/melee';\n            }\n\n            if (this.equipment['/equipment_types/charm']) {\n                this.combatDetails.combatStats.focusTraining = this.equipment['/equipment_types/charm'].getFocusTraining();\n            } else {\n                this.combatDetails.combatStats.focusTraining = '';\n            }\n\n            [\n                'stabAccuracy',\n                'slashAccuracy',\n                'smashAccuracy',\n                'rangedAccuracy',\n                'magicAccuracy',\n                'stabDamage',\n                'slashDamage',\n                'smashDamage',\n                'rangedDamage',\n                'magicDamage',\n                'defensiveDamage',\n                'taskDamage',\n                'physicalAmplify',\n                'waterAmplify',\n                'natureAmplify',\n                'fireAmplify',\n                'healingAmplify',\n                'stabEvasion',\n                'slashEvasion',\n                'smashEvasion',\n                'rangedEvasion',\n                'magicEvasion',\n                'armor',\n                'waterResistance',\n                'natureResistance',\n                'fireResistance',\n                'maxHitpoints',\n                'maxManapoints',\n                'lifeSteal',\n                'hpRegenPer10',\n                'mpRegenPer10',\n                'physicalThorns',\n                'elementalThorns',\n                'combatDropRate',\n                'combatRareFind',\n                'combatDropQuantity',\n                'combatExperience',\n                'criticalRate',\n                'criticalDamage',\n                'armorPenetration',\n                'waterPenetration',\n                'naturePenetration',\n                'firePenetration',\n                'abilityHaste',\n                'tenacity',\n                'manaLeech',\n                'castSpeed',\n                'threat',\n                'parry',\n                'mayhem',\n                'pierce',\n                'curse',\n                'fury',\n                'weaken',\n                'ripple',\n                'bloom',\n                'blaze',\n                'attackSpeed',\n                'foodHaste',\n                'drinkConcentration',\n                'autoAttackDamage',\n                'abilityDamage',\n                'staminaExperience',\n                'intelligenceExperience',\n                'attackExperience',\n                'defenseExperience',\n                'meleeExperience',\n                'rangedExperience',\n                'magicExperience',\n                'retaliation',\n                'maxHitpointsRatio',\n                'maxManapointsRatio',\n            ].forEach((stat) => {\n                this.combatDetails.combatStats[stat] = Object.values(this.equipment)\n                    .filter((equipment) => equipment != null)\n                    .map((equipment) => equipment.getCombatStat(stat))\n                    .reduce((prev, cur) => prev + cur, 0);\n            });\n\n            if (this.equipment['/equipment_types/pouch']) {\n                this.combatDetails.combatStats.foodSlots =\n                    1 + this.equipment['/equipment_types/pouch'].getCombatStat('foodSlots');\n                this.combatDetails.combatStats.drinkSlots =\n                    1 + this.equipment['/equipment_types/pouch'].getCombatStat('drinkSlots');\n            } else {\n                this.combatDetails.combatStats.foodSlots = 1;\n                this.combatDetails.combatStats.drinkSlots = 1;\n            }\n\n            super.updateCombatDetails();\n        }\n    }\n\n    class Zone {\n        constructor(hrid, difficultyTier) {\n            this.hrid = hrid;\n            this.difficultyTier = difficultyTier;\n\n            const actionDetailMap = getGameData().actionDetailMap;\n            const gameZone = actionDetailMap[this.hrid];\n            this.monsterSpawnInfo = gameZone.combatZoneInfo.fightInfo;\n            this.dungeonSpawnInfo = gameZone.combatZoneInfo.dungeonInfo;\n            this.encountersKilled = 1;\n            this.buffs = gameZone.buffs;\n            this.isDungeon = gameZone.combatZoneInfo.isDungeon;\n            this.dungeonsCompleted = 0;\n            this.dungeonsFailed = 0;\n            this.finalWave = false;\n\n            if (this.monsterSpawnInfo) {\n                this.monsterSpawnInfo.battlesPerBoss = 10;\n            }\n        }\n\n        getRandomEncounter() {\n            if (!this.monsterSpawnInfo) {\n                return [];\n            }\n\n            if (this.monsterSpawnInfo.bossSpawns && this.encountersKilled === this.monsterSpawnInfo.battlesPerBoss) {\n                this.encountersKilled = 1;\n                return this.monsterSpawnInfo.bossSpawns.map(\n                    (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)\n                );\n            }\n\n            if (!this.monsterSpawnInfo.randomSpawnInfo || !this.monsterSpawnInfo.randomSpawnInfo.spawns) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const totalWeight = this.monsterSpawnInfo.randomSpawnInfo.spawns.reduce((prev, cur) => prev + cur.rate, 0);\n\n            const encounterHrids = [];\n            let totalStrength = 0;\n\n            outer: for (let i = 0; i < this.monsterSpawnInfo.randomSpawnInfo.maxSpawnCount; i++) {\n                const randomWeight = totalWeight * randomSpawn();\n                let cumulativeWeight = 0;\n\n                for (const spawn of this.monsterSpawnInfo.randomSpawnInfo.spawns) {\n                    cumulativeWeight += spawn.rate;\n                    if (randomWeight <= cumulativeWeight) {\n                        totalStrength += spawn.strength;\n\n                        if (totalStrength <= this.monsterSpawnInfo.randomSpawnInfo.maxTotalStrength) {\n                            encounterHrids.push({ hrid: spawn.combatMonsterHrid, difficultyTier: spawn.difficultyTier });\n                        } else {\n                            break outer;\n                        }\n                        break;\n                    }\n                }\n            }\n            this.encountersKilled++;\n            return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));\n        }\n\n        failWave() {\n            this.dungeonsFailed++;\n            this.encountersKilled = 1;\n        }\n\n        getNextWave() {\n            if (this.encountersKilled > this.dungeonSpawnInfo.maxWaves) {\n                this.dungeonsCompleted++;\n                this.encountersKilled = 1;\n            }\n\n            const waveNum = this.encountersKilled;\n            const fixedSpawns = this.dungeonSpawnInfo.fixedSpawnsMap[waveNum.toString()];\n\n            if (fixedSpawns) {\n                this.encountersKilled++;\n                return fixedSpawns.map(\n                    (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)\n                );\n            }\n\n            // Random spawn path\n            const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;\n\n            if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const waveKeys = Object.keys(randomSpawnInfoMap)\n                .map(Number)\n                .sort((a, b) => a - b);\n\n            if (waveKeys.length === 0) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            let monsterSpawns = null;\n\n            if (waveNum >= waveKeys[waveKeys.length - 1]) {\n                monsterSpawns = randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];\n            } else {\n                for (let i = 0; i < waveKeys.length - 1; i++) {\n                    if (waveNum >= waveKeys[i] && waveNum < waveKeys[i + 1]) {\n                        monsterSpawns = randomSpawnInfoMap[waveKeys[i]];\n                        break;\n                    }\n                }\n            }\n\n            // Fallback to first available spawn info if no range matched\n            if (!monsterSpawns || !monsterSpawns.spawns) {\n                monsterSpawns = randomSpawnInfoMap[waveKeys[0]];\n            }\n\n            // Final safety — if still broken, skip wave instead of crashing\n            if (!monsterSpawns?.spawns) {\n                this.encountersKilled++;\n                return [];\n            }\n\n            const totalWeight = monsterSpawns.spawns.reduce((prev, cur) => prev + cur.rate, 0);\n\n            const encounterHrids = [];\n            let totalStrength = 0;\n\n            outer: for (let i = 0; i < monsterSpawns.maxSpawnCount; i++) {\n                const randomWeight = totalWeight * randomSpawn();\n                let cumulativeWeight = 0;\n\n                for (const spawn of monsterSpawns.spawns) {\n                    cumulativeWeight += spawn.rate;\n                    if (randomWeight <= cumulativeWeight) {\n                        totalStrength += spawn.strength;\n\n                        if (totalStrength <= monsterSpawns.maxTotalStrength) {\n                            encounterHrids.push({\n                                hrid: spawn.combatMonsterHrid,\n                                difficultyTier: spawn.difficultyTier,\n                            });\n                        } else {\n                            break outer;\n                        }\n                        break;\n                    }\n                }\n            }\n            this.encountersKilled++;\n            return encounterHrids.map((hrid) => new Monster(hrid.hrid, hrid.difficultyTier + this.difficultyTier));\n        }\n    }\n\n    /**\n     * Combat Simulator Worker Entry\n     *\n     * This file is bundled into a string at build time by the workerBundlePlugin\n     * and runs inside a Web Worker. It receives simulation parameters via\n     * postMessage and returns results.\n     */\n\n\n    onmessage = function (event) {\n        const { type, taskId } = event.data;\n\n        if (type !== 'start_simulation') return;\n\n        try {\n            const {\n                gameData,\n                playerDTOs,\n                zoneHrid,\n                difficultyTier,\n                simulationTimeLimit,\n                extraBuffs,\n                labyrinth: labyrinthData,\n                seed,\n            } = event.data;\n\n            // Set game data for the engine singleton\n            setGameData(gameData);\n\n            // Seed this worker's RNG streams. Runs compared against each other pass\n            // the same seed so their shared random draws cancel out of the delta;\n            // with no seed the engine stays on Math.random().\n            seedSimRng(seed);\n\n            // Create Zone (used as fallback even in labyrinth mode for SimResult constructor)\n            const zone = new Zone(zoneHrid, difficultyTier);\n\n            // Create Labyrinth if specified\n            let labyrinth = null;\n            if (labyrinthData) {\n                labyrinth = new Labyrinth(labyrinthData.monsterHrid, labyrinthData.roomLevel, labyrinthData.crates || []);\n            }\n\n            // Create Players\n            const players = playerDTOs.map((dto) => {\n                const cloned = structuredClone(dto);\n                if (labyrinth) {\n                    cloned.food = cloned.food.map(() => null);\n                    cloned.drinks = cloned.drinks.map(() => null);\n                }\n                const player = Player.createFromDTO(cloned);\n                // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs\n                player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;\n                player.extraBuffs = extraBuffs;\n                return player;\n            });\n\n            // Create simulator with progress callback\n            const combatSimulator = new CombatSimulator(\n                players,\n                zone,\n                (progressData) => {\n                    postMessage({\n                        type: 'progress',\n                        taskId,\n                        progress: Math.round(progressData.progress * 100),\n                    });\n                },\n                labyrinth\n            );\n\n            // Run simulation\n            const simResult = combatSimulator.simulate(simulationTimeLimit);\n\n            postMessage({\n                type: 'result',\n                taskId,\n                simResult,\n            });\n        } catch (error) {\n            postMessage({\n                type: 'error',\n                taskId,\n                error: error.message || String(error),\n            });\n        }\n    };\n\n})();\n";
+
+    /**
+     * Seeded RNG for the combat simulator.
+     *
+     * The engine draws random numbers constantly — spawn composition, hit and crit
+     * rolls, parry, threat targeting, stun chance, proc chances. Left unseeded, two
+     * sims of the same setup are independent samples, so an upgrade comparison
+     * measures the upgrade's effect *plus* the gap between two random draws. That's
+     * why sub-0.1% deltas flip sign between runs.
+     *
+     * Seeding both sims from one value gives them common random numbers: the shared
+     * part of the stream cancels out of the difference and only the upgrade's real
+     * effect is left. Draws are split into independent streams by purpose so a
+     * player-side change can't shift monster-side draws — both sims walk the same
+     * spawn sequence even after their combat rolls have diverged.
+     *
+     * With no seed set every draw falls through to Math.random(), which is the
+     * previous behavior, so paths that want a fresh sample per run are untouched.
+     */
+
+    /** Odd 32-bit constant (2^32 / golden ratio) used to space stream seeds apart. */
+    const STREAM_STRIDE = 0x9e3779b9;
+
+    /**
+     * Mix a seed with an index into a well-separated 32-bit seed (murmur3 finalizer).
+     * @param {number} seed - Base seed
+     * @param {number} index - Stream or chunk index
+     * @returns {number} Derived 32-bit seed
+     */
+    function mixSeed(seed, index) {
+        let h = (seed ^ Math.imul(index + 1, STREAM_STRIDE)) >>> 0;
+        h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+        h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+        return (h ^ (h >>> 16)) >>> 0;
+    }
+
+    /**
+     * Normalize a seed input to a 32-bit integer.
+     * @param {*} seed
+     * @returns {number|null} 32-bit seed, or null if not a usable number
+     */
+    function normalizeSeed(seed) {
+        if (seed === null || seed === undefined || seed === '') return null;
+        const numeric = Number(seed);
+        if (!Number.isFinite(numeric)) return null;
+        return Math.floor(Math.abs(numeric)) >>> 0;
+    }
+
+    /**
+     * Monster-setup roll. Falls through to Math.random() when unseeded.
+     * @returns {number} [0, 1)
+     */
+    function randomSetup() {
+        return Math.random();
+    }
+
+    /**
+     * Derive a distinct sub-seed from a base seed and an index — for the chunks of a
+     * split simulation, or for the separate sims of one analysis (per fight, per
+     * zone). Sub-run N must not replay sub-run M, but sub-run N of two compared
+     * analyses must match, so the derivation is deterministic in (seed, index).
+     * @param {number|null} seed - Base seed
+     * @param {number} index - Zero-based sub-run index
+     * @returns {number|null} Derived seed, or null when there is no base seed
+     */
+    function deriveSeed(seed, index) {
+        const base = normalizeSeed(seed);
+        if (base === null) return null;
+        return mixSeed(base, 0x100 + index);
+    }
+
+    /**
+     * Fresh random base seed for one analysis run. Held constant across that run's
+     * baseline and candidate sims; different on the next run, so repeating an
+     * analysis still resamples instead of reprinting the same numbers.
+     * @returns {number} 31-bit seed
+     */
+    function randomSeed() {
+        return Math.floor(Math.random() * 0x7fffffff);
+    }
 
     /**
      * Combat Simulator Runner
@@ -9000,11 +9081,14 @@
      * @param {number} params.difficultyTier - Difficulty tier (0+)
      * @param {number} params.hours - Hours to simulate
      * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+     * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
+     *   random numbers, so comparing them measures the change instead of sampling
+     *   noise. Omit for an independent random sample (the default).
      * @param {Function} [onProgress] - Called with (percent: 0-100)
      * @returns {Promise<Object>} Merged SimResult
      */
     async function runSimulation(params, onProgress) {
-        const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs } = params;
+        const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
 
         const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
         const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
@@ -9048,6 +9132,10 @@
                 difficultyTier,
                 simulationTimeLimit: chunkHours * ONE_HOUR_NS,
                 extraBuffs,
+                // Each chunk needs its own stream or all four would replay the same
+                // fights, but chunk N must match across compared runs — so the
+                // per-chunk seed is derived from (seed, index), not randomized.
+                seed: deriveSeed(seed, i),
             };
 
             return runWorkerChunk(message, (percent) => {
@@ -9074,6 +9162,8 @@
      * @param {string[]} params.crates - Crate item HRIDs
      * @param {number} params.hours - Hours to simulate
      * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
+     * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
+     *   an independent random sample (the default).
      * @param {Function} [onProgress] - Called with (percent: 0-100)
      * @returns {Promise<Object>} SimResult with labyrinth fields
      */
@@ -9088,6 +9178,7 @@
             hours,
             communityBuffs,
             labyrinthCombatBuffs,
+            seed,
         } = params;
 
         const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
@@ -9114,6 +9205,7 @@
                 roomLevel,
                 crates: crates || [],
             },
+            seed: deriveSeed(seed, 0),
         };
 
         const result = await runWorkerChunk(message, onProgress);
@@ -10177,7 +10269,7 @@
                         ability.lastUsed =
                             currentTime -
                             Math.floor(cooldownDuration * 0.5) +
-                            Math.floor(Math.random() * cooldownDuration * 0.5);
+                            Math.floor(randomSetup() * cooldownDuration * 0.5);
                     }
                 });
         }
@@ -16955,6 +17047,468 @@
     }
 
     /**
+     * Cheapest Viable Food Solver
+     *
+     * Finds the cheapest food setup that still keeps you alive and out of mana
+     * trouble at a zone — without changing what *kind* of food you run. Each of your
+     * equipped food slots is a template: an HP-instant slot only ever tries other
+     * HP-instant foods, an MP-over-time slot only other MP-over-time drinks, and
+     * buff-only foods are never touched. The search varies the tier within each
+     * type, so the slot structure that made your current setup work is preserved.
+     *
+     * The search is anchored at what you have equipped. If the current setup
+     * survives, each slot walks DOWN one tier at a time within its type until
+     * survival breaks, then settles on the last tier that held — so the answer is
+     * always a downgrade path from your own setup, never a rebuild from scratch. If
+     * the current setup does not survive, the failing dimension's slots (HP slots
+     * for deaths, mana slots for running dry) climb a tier at a time until it does;
+     * only when even the top tiers can't meet the bar do the targets relax to the
+     * best achievable. Slots are walked in order, each fixed before the next moves,
+     * so slots feeding the same budget (two mana sources) are measured against each
+     * other's real choices. The final combination is one the search itself simmed
+     * and passed. Cost gets one final say: within a type, anything restoring at
+     * least the settled amount is equally survivable, so the cheapest per point
+     * wins, with a confirming sim guarding the swap. And keeping your current food
+     * always competes — if it's viable and no more expensive, that's the answer.
+     *
+     * Shares the analysis seed with the rest of the upgrade run, so a tier that
+     * looks survivable did not merely get a lucky sample.
+     */
+
+
+    /** Food slot count for combat */
+    const FOOD_SLOTS = 3;
+
+    /** Out-of-mana time above this fraction of the run counts as running out */
+    const OOM_TOLERANCE = 0.005;
+
+    /** Deaths per hour under this count as not dying */
+    const DEATH_TOLERANCE = 0.005;
+
+    /**
+     * Classify what a consumable restores and how it delivers it.
+     * Two foods are interchangeable candidates only when they share this signature —
+     * swapping an instant heal for a heal-over-time changes survival mechanics, not
+     * just the amount, so tiers are only compared within a signature.
+     * @param {Object} detail - consumableDetail from game data
+     * @returns {string|null} e.g. 'hp_instant', 'mp_overtime', 'hpmp_instant'; null for buff-only
+     */
+    function restoreSignature(detail) {
+        const hp = Number(detail?.hitpointRestore) > 0;
+        const mp = Number(detail?.manapointRestore) > 0;
+        if (!hp && !mp) return null;
+        const overTime = (Number(detail?.recoveryDuration) || 0) > 0;
+        return `${hp ? 'hp' : ''}${mp ? 'mp' : ''}_${overTime ? 'overtime' : 'instant'}`;
+    }
+
+    /**
+     * Build the candidate pools from game data, one per restore signature, each
+     * sorted by restore amount ascending (the axis the binary search runs on).
+     * @param {Object} gameData - Game data payload (itemDetailMap)
+     * @returns {Map<string, Array<Object>>} signature → sorted priced entries
+     */
+    function buildConsumablePools(gameData) {
+        const pools = new Map();
+
+        for (const [hrid, item] of Object.entries(gameData?.itemDetailMap || {})) {
+            const detail = item?.consumableDetail;
+            if (!detail) continue;
+            if (!(item.categoryHrid || '').includes('food')) continue;
+
+            const signature = restoreSignature(detail);
+            if (!signature) continue;
+
+            const { price } = profitHelpers_js.resolveItemPrice(hrid, { side: 'buy' });
+            if (!price || price <= 0) continue;
+
+            const hpRestore = Number(detail.hitpointRestore) || 0;
+            const mpRestore = Number(detail.manapointRestore) || 0;
+            const totalRestore = hpRestore + mpRestore;
+
+            if (!pools.has(signature)) pools.set(signature, []);
+            pools.get(signature).push({
+                hrid,
+                name: item.name || hrid.split('/').pop().replace(/_/g, ' '),
+                signature,
+                hpRestore,
+                mpRestore,
+                totalRestore,
+                price,
+                pricePerPoint: price / totalRestore,
+                triggers: detail.defaultCombatTriggers || null,
+            });
+        }
+
+        for (const pool of pools.values()) {
+            pool.sort((a, b) => a.totalRestore - b.totalRestore || a.pricePerPoint - b.pricePerPoint);
+        }
+        return pools;
+    }
+
+    /**
+     * Cheapest entry (per restore point) that restores at least as much as a
+     * reference, on every stat the reference restores. More restore never hurts
+     * survival, so a higher tier that costs less per point is still viable — this is
+     * where cost finally decides.
+     * @param {Array<Object>} pool - Same-signature pool
+     * @param {Object} reference - Minimum viable entry
+     * @returns {Object} Chosen entry
+     */
+    function cheapestAtLeast(pool, reference) {
+        let best = reference;
+        for (const entry of pool) {
+            if (entry.hpRestore < reference.hpRestore || entry.mpRestore < reference.mpRestore) continue;
+            if (entry.pricePerPoint < best.pricePerPoint) best = entry;
+        }
+        return best;
+    }
+
+    /**
+     * Map the player's equipped food onto searchable slots. Each restore food slot
+     * becomes a template bound to its signature's pool; buff-only foods and slots
+     * whose type has no priced alternatives are left exactly as equipped.
+     * @param {Array<Object|null>} originalFood - The player's configured food slots
+     * @param {Object} itemDetailMap - Game item details
+     * @param {Map<string, Array<Object>>} pools - From buildConsumablePools
+     * @returns {Array<Object>} [{ index, signature, currentHrid, pool }]
+     */
+    function buildSearchSlots(originalFood, itemDetailMap, pools) {
+        const slots = [];
+        (originalFood || []).forEach((slot, index) => {
+            const detail = slot?.hrid ? itemDetailMap?.[slot.hrid]?.consumableDetail : null;
+            if (!detail) return;
+            const signature = restoreSignature(detail);
+            if (!signature) return; // buff-only food: never touched
+            const pool = pools.get(signature) || [];
+            if (pool.length === 0) return; // nothing priced of this type: keep as equipped
+            slots.push({ index, signature, currentHrid: slot.hrid, pool });
+        });
+        return slots;
+    }
+
+    /**
+     * Read the survival verdict out of a sim result.
+     * @param {Object} simResult - SimResult
+     * @param {string} playerHrid - Player HRID
+     * @returns {{deathsPerHour: number, oomFraction: number}}
+     */
+    function readViability(simResult, playerHrid) {
+        const simHours = (simResult?.simulatedTime || 0) / (3600 * 1e9) || 1;
+        const deathsPerHour = (simResult?.deaths?.[playerHrid] || 0) / simHours;
+
+        const oomStat = simResult?.playerRanOutOfManaTime?.[playerHrid];
+        let oomTime = oomStat?.totalTimeForOutOfMana || 0;
+        if (oomStat?.isOutOfMana) {
+            oomTime += (simResult.simulatedTime || 0) - (oomStat.startTimeForOutOfMana || 0);
+        }
+        const oomFraction = simResult?.simulatedTime > 0 ? oomTime / simResult.simulatedTime : 0;
+
+        return { deathsPerHour, oomFraction };
+    }
+
+    /**
+     * Consumable spend per hour implied by a sim result.
+     * @param {Object} simResult - SimResult
+     * @param {string} playerHrid - Player HRID
+     * @param {Object} priceCache - hrid → unit price
+     * @returns {number} Gold per hour
+     */
+    function consumableCostPerHour(simResult, playerHrid, priceCache) {
+        const simHours = (simResult?.simulatedTime || 0) / (3600 * 1e9) || 1;
+        const used = simResult?.consumablesUsed?.[playerHrid] || {};
+        let total = 0;
+        for (const [hrid, count] of Object.entries(used)) {
+            if (priceCache[hrid] === undefined) {
+                priceCache[hrid] = profitHelpers_js.resolveItemPrice(hrid, { side: 'buy' }).price || 0;
+            }
+            total += (count / simHours) * priceCache[hrid];
+        }
+        return total;
+    }
+
+    /**
+     * Slot payload for a chosen consumable, carrying the item's default combat
+     * triggers so the sim eats it the way the game would out of the box.
+     * @param {Object|null} entry - Pool entry
+     * @returns {Object|null} Food slot DTO
+     */
+    function toSlot(entry) {
+        if (!entry) return null;
+        return { hrid: entry.hrid, triggers: entry.triggers };
+    }
+
+    /**
+     * How many sims the food search will need, for progress accounting: the descent
+     * from each equipped tier (worst case: every rung below it, plus the empty
+     * rung), with slack for the repair climb and the price-swap confirmation.
+     * @param {Object} gameData - Game data payload
+     * @param {Array<Object|null>} [playerFood] - The player's configured food slots
+     * @returns {number} Estimated sim count
+     */
+    function estimateFoodSimCount(gameData, playerFood = []) {
+        const itemDetailMap = gameData?.itemDetailMap || {};
+        const pools = buildConsumablePools(gameData);
+        const slots = buildSearchSlots(playerFood, itemDetailMap, pools);
+        const descentSteps = slots.reduce((sum, slot) => {
+            const detail = itemDetailMap[slot.currentHrid]?.consumableDetail;
+            const equippedRestore = (Number(detail?.hitpointRestore) || 0) + (Number(detail?.manapointRestore) || 0);
+            const below = slot.pool.filter((entry) => entry.totalRestore < equippedRestore).length;
+            return sum + below + 1;
+        }, 0);
+        return 2 + descentSteps;
+    }
+
+    /**
+     * Find the cheapest food setup — keeping the player's food types per slot — that
+     * avoids deaths and mana starvation.
+     * @param {Object} params - { gameData, playerDTOs, playerIndex, zoneHrid, difficultyTier,
+     *   hours, communityBuffs, seed, baselineResult }
+     * @param {Function} [onProgress] - Called with { description }
+     * @param {Object} [options] - { abortSignal: () => boolean }
+     * @returns {Promise<Object|null>} Recommendation, or null when there is nothing to search
+     */
+    async function runFoodOptimization(params, onProgress, options = {}) {
+        const { gameData, playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, seed, baselineResult } =
+            params;
+        const { abortSignal } = options;
+
+        const playerHrid = playerDTOs[playerIndex].hrid;
+        const itemDetailMap = gameData?.itemDetailMap || {};
+        const originalFood = playerDTOs[playerIndex].food || [];
+        const pools = buildConsumablePools(gameData);
+        const searchSlots = buildSearchSlots(originalFood, itemDetailMap, pools);
+        if (searchSlots.length === 0) return null;
+
+        const priceCache = {};
+        let simCount = 0;
+
+        /**
+         * Sim one assignment of the searchable slots. Untouched slots (buff foods,
+         * types with no alternatives) always stay exactly as equipped.
+         * @param {Map<number, Object|null>} choices - slot index → pool entry or null (slot emptied)
+         * @param {string} label - Progress label
+         * @returns {Promise<Object|null>} Trial record
+         */
+        const trial = async (choices, label) => {
+            if (abortSignal?.()) return null;
+            onProgress?.({ description: `Food: ${label}` });
+
+            const dtos = JSON.parse(JSON.stringify(playerDTOs));
+            const food = dtos[playerIndex].food || [];
+            while (food.length < FOOD_SLOTS) food.push(null);
+            for (const slot of searchSlots) {
+                food[slot.index] = toSlot(choices.get(slot.index));
+            }
+            dtos[playerIndex].food = food;
+
+            const simResult = await runSimulation(
+                { gameData, playerDTOs: dtos, zoneHrid, difficultyTier, hours, communityBuffs, seed },
+                null
+            );
+            simCount++;
+
+            const { deathsPerHour, oomFraction } = readViability(simResult, playerHrid);
+            return {
+                label,
+                deathsPerHour,
+                oomFraction,
+                costPerHour: consumableCostPerHour(simResult, playerHrid, priceCache),
+            };
+        };
+
+        /**
+         * The equipped item as a pool entry — the real entry when it's priced, or a
+         * pseudo-entry (infinite price per point) when it isn't, so the search can
+         * still anchor on it and any priced same-type equivalent wins the price pass.
+         * @param {Object} slot - Search slot
+         * @returns {Object} Entry for the equipped item
+         */
+        const equippedEntry = (slot) => {
+            const inPool = slot.pool.find((entry) => entry.hrid === slot.currentHrid);
+            if (inPool) return inPool;
+            const detail = itemDetailMap[slot.currentHrid]?.consumableDetail || {};
+            const hpRestore = Number(detail.hitpointRestore) || 0;
+            const mpRestore = Number(detail.manapointRestore) || 0;
+            return {
+                hrid: slot.currentHrid,
+                name: itemDetailMap[slot.currentHrid]?.name || slot.currentHrid.split('/').pop().replace(/_/g, ' '),
+                signature: slot.signature,
+                hpRestore,
+                mpRestore,
+                totalRestore: hpRestore + mpRestore,
+                price: null,
+                pricePerPoint: Infinity,
+                triggers: detail.defaultCombatTriggers || null,
+            };
+        };
+
+        // Anchor: every slot starts at exactly what's equipped
+        const choices = new Map();
+        for (const slot of searchSlots) choices.set(slot.index, equippedEntry(slot));
+
+        let deathTarget = DEATH_TOLERANCE;
+        let oomTarget = OOM_TOLERANCE;
+        const viable = (record) => record.deathsPerHour <= deathTarget && record.oomFraction <= oomTarget;
+
+        // Trial 0 is the current setup — free when the analysis baseline is available,
+        // since the baseline sim ran this exact food on the same seed
+        let record;
+        if (baselineResult) {
+            const viability = readViability(baselineResult, playerHrid);
+            record = {
+                label: 'current food',
+                deathsPerHour: viability.deathsPerHour,
+                oomFraction: viability.oomFraction,
+                costPerHour: consumableCostPerHour(baselineResult, playerHrid, priceCache),
+            };
+        } else {
+            record = await trial(choices, 'current food');
+            if (!record) return null;
+        }
+        const currentRecord = record;
+        const trials = [record];
+
+        // Repair climb: if the current setup fails, raise the failing dimension's
+        // slots (HP types for deaths, mana types for running dry) one tier at a time
+        // until it holds. Only when nothing is left to raise do the targets relax to
+        // the best this food structure can do.
+        let ceilingDies = false;
+        let ceilingOoms = false;
+        while (!viable(record)) {
+            if (abortSignal?.()) return null;
+            const needHp = record.deathsPerHour > deathTarget;
+            const needMp = record.oomFraction > oomTarget;
+            let raised = false;
+            for (const slot of searchSlots) {
+                if (!((needHp && slot.signature.includes('hp')) || (needMp && slot.signature.includes('mp')))) continue;
+                const current = choices.get(slot.index);
+                const next = slot.pool.find((entry) => entry.totalRestore > (current?.totalRestore ?? 0));
+                if (next) {
+                    choices.set(slot.index, next);
+                    raised = true;
+                }
+            }
+            if (!raised) {
+                ceilingDies = record.deathsPerHour > DEATH_TOLERANCE;
+                ceilingOoms = record.oomFraction > OOM_TOLERANCE;
+                deathTarget = Math.max(deathTarget, record.deathsPerHour);
+                oomTarget = Math.max(oomTarget, record.oomFraction);
+                break;
+            }
+            record = await trial(choices, 'raising tiers to survive');
+            if (!record) return null;
+            trials.push(record);
+        }
+        let finalRecord = record;
+
+        // Descent: slot by slot, step down one tier at a time (ending at empty) until
+        // survival breaks, then settle on the last tier that held. Slots are walked in
+        // order and fixed as they settle, so a shared budget like mana is always
+        // measured against the other slots' real choices — and every accepted step is
+        // a combination that was actually simmed.
+        for (const slot of searchSlots) {
+            if (abortSignal?.()) break;
+            const start = choices.get(slot.index);
+            const ladder = [
+                ...slot.pool.filter((entry) => entry.totalRestore < (start?.totalRestore ?? 0)).reverse(),
+                null,
+            ];
+            for (const entry of ladder) {
+                if (abortSignal?.()) break;
+                const candidate = new Map(choices);
+                candidate.set(slot.index, entry);
+                const stepRecord = await trial(candidate, entry ? `trying ${entry.name}` : `slot ${slot.index + 1} empty`);
+                if (!stepRecord) break;
+                trials.push(stepRecord);
+                if (!viable(stepRecord)) break;
+                choices.set(slot.index, entry);
+                finalRecord = stepRecord;
+            }
+        }
+        if (abortSignal?.()) return null;
+
+        // Price pass: within each slot's type, anything restoring at least the settled
+        // amount is equally survivable — swap to the cheapest per point. Swaps leave
+        // the proven combination, so they get one confirming sim; if that fails
+        // (noise), revert to the tiers the descent actually proved.
+        const provenChoices = new Map(choices);
+        let swapped = false;
+        for (const slot of searchSlots) {
+            const entry = choices.get(slot.index);
+            if (!entry) continue;
+            const cheaper = cheapestAtLeast(slot.pool, entry);
+            if (cheaper.hrid !== entry.hrid) {
+                choices.set(slot.index, cheaper);
+                swapped = true;
+            }
+        }
+
+        let final = finalRecord;
+        if (swapped) {
+            const confirm = await trial(choices, 'cheapest viable combination');
+            if (!confirm && abortSignal?.()) return null;
+            if (confirm) {
+                trials.push(confirm);
+                if (viable(confirm)) {
+                    final = confirm;
+                } else {
+                    // The cheaper same-or-better swap didn't hold up — keep the tiers
+                    // the descent actually proved
+                    for (const [index, entry] of provenChoices) choices.set(index, entry);
+                }
+            }
+        }
+        if (!final) return null;
+        const finalChoices = choices;
+
+        const slotName = (hrid) => itemDetailMap[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+        const currentItems = originalFood.filter(Boolean).map((slot) => slotName(slot.hrid));
+
+        // Keeping the current food is always a candidate: if it's viable and no more
+        // expensive than the searched pick, recommend leaving things alone.
+        const keepCurrent =
+            currentRecord.deathsPerHour <= deathTarget &&
+            currentRecord.oomFraction <= oomTarget &&
+            currentRecord.costPerHour <= final.costPerHour;
+
+        const slots = searchSlots.map((slot) => {
+            const choice = finalChoices.get(slot.index) ?? null;
+            return {
+                index: slot.index,
+                fromHrid: slot.currentHrid,
+                fromName: slotName(slot.currentHrid),
+                hrid: choice?.hrid ?? null,
+                name: choice?.name ?? null,
+                hpRestore: choice?.hpRestore ?? 0,
+                mpRestore: choice?.mpRestore ?? 0,
+                changed: choice?.hrid !== slot.currentHrid,
+            };
+        });
+
+        return {
+            simCount,
+            deathTarget,
+            oomTarget,
+            ceilingDies,
+            ceilingOoms,
+            keepCurrent,
+            recommendation: {
+                slots,
+                costPerHour: final.costPerHour,
+                deathsPerHour: final.deathsPerHour,
+                oomFraction: final.oomFraction,
+            },
+            current: {
+                items: currentItems,
+                costPerHour: currentRecord.costPerHour,
+                deathsPerHour: currentRecord.deathsPerHour,
+                oomFraction: currentRecord.oomFraction,
+            },
+            trials,
+        };
+    }
+
+    /**
      * Enhancement Tooltip Module
      *
      * Provides enhancement analysis for item tooltips.
@@ -17321,7 +17875,25 @@
 
     const JEWELRY_SLOTS = new Set(['/equipment_types/earrings', '/equipment_types/ring', '/equipment_types/neck']);
 
+    /** Philosopher's accessories are always offered from this enhancement level */
+    const PHILO_START_LEVEL = 5;
+    const PHILO_HRID_PREFIX = '/items/philosophers_';
+
     const CHARM_SLOT = '/equipment_types/charm';
+
+    /** Highest level a house room can reach */
+    const MAX_HOUSE_LEVEL = 8;
+
+    /**
+     * Seed for one analysis run, or null to leave every sim on independent randomness.
+     * Sharing a seed across the baseline and all candidates cancels the shared random
+     * draws out of each delta; the setting exists because it also freezes the luck of
+     * one particular sample into the absolute numbers.
+     * @returns {number|null} Analysis seed
+     */
+    function analysisSeed() {
+        return config.getSettingValue('combatSim_sharedSeed', true) ? randomSeed() : null;
+    }
 
     /** Combat skills evaluated by the Combat Levels advisor mode */
     const COMBAT_LEVEL_SKILLS = [
@@ -17476,6 +18048,69 @@
     }
 
     /**
+     * Find the Philosopher's accessory for a jewelry slot.
+     * @param {string} slot - Equipment type hrid
+     * @param {Object} gameData
+     * @returns {{hrid: string, name: string}|null}
+     */
+    function findPhiloAccessory(slot, gameData) {
+        for (const [hrid, detail] of Object.entries(gameData.itemDetailMap || {})) {
+            if (!hrid.startsWith(PHILO_HRID_PREFIX)) continue;
+            if (detail?.equipmentDetail?.type !== slot) continue;
+            return { hrid, name: detail.name || hrid.split('/').pop() };
+        }
+        return null;
+    }
+
+    /**
+     * Offer Philosopher's accessories at +5 for every jewelry slot, regardless of
+     * how enhanced the current accessory is. The normal tier/enhancement paths only
+     * propose swaps at the current enhancement level, which hides the cheap +5
+     * entry point behind, say, a +12 rebuy for someone wearing +12 jewelry.
+     * @param {Object} playerDTO
+     * @param {Object} gameData
+     * @param {Array} candidates - Candidate list (mutated)
+     */
+    function addPhiloAccessoryCandidates(playerDTO, gameData, candidates) {
+        for (const slot of JEWELRY_SLOTS) {
+            const equip = playerDTO.equipment?.[slot];
+            // Empty slots aren't supported by candidate application (it matches on
+            // the current item's hrid), so only suggest swaps for worn accessories
+            if (!equip?.hrid) continue;
+
+            const philo = findPhiloAccessory(slot, gameData);
+            if (!philo || philo.hrid === equip.hrid) continue;
+
+            const currentLevel = equip.enhancementLevel || 0;
+            const alreadyQueued = candidates.some(
+                (c) => c.slot === slot && c.upgradeHrid === philo.hrid && c.upgradeLevel === PHILO_START_LEVEL
+            );
+            if (alreadyQueued) continue;
+
+            // Drop any same-slot swap to this philo item at a higher level: the
+            // tier path proposes it at the worn enhancement level (a +12 rebuy for
+            // +12 jewelry), which is the expensive version of this same upgrade
+            for (let i = candidates.length - 1; i >= 0; i--) {
+                const c = candidates[i];
+                if (c.slot === slot && c.upgradeHrid === philo.hrid && c.upgradeLevel > PHILO_START_LEVEL) {
+                    candidates.splice(i, 1);
+                }
+            }
+
+            const currentName = gameData.itemDetailMap[equip.hrid]?.name || equip.hrid.split('/').pop();
+            candidates.push({
+                slot,
+                currentHrid: equip.hrid,
+                currentLevel,
+                upgradeHrid: philo.hrid,
+                upgradeLevel: PHILO_START_LEVEL,
+                description: `${currentName} +${currentLevel} → ${philo.name} +${PHILO_START_LEVEL}`,
+                type: 'tier',
+            });
+        }
+    }
+
+    /**
      * Get the player's primary combat style from their weapon.
      * @param {Object} playerDTO
      * @param {Object} gameData
@@ -17591,9 +18226,16 @@
      * @returns {number} Expected gold cost
      */
     function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, options = {}) {
-        const itemDetails = gameData.itemDetailMap[itemHrid];
-        if (!itemDetails?.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+        // Genuine no-op: nothing to enhance
+        if (targetLevel <= startLevel) {
             return 0;
+        }
+
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+        // No enhancement recipe: cost is unknown, not free. Reporting 0 here would
+        // rank the upgrade as the best value in the list (gold-per-improvement 0).
+        if (!itemDetails?.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+            return null;
         }
 
         // Back items are non-tradeable, always use player's actual enhancing stats
@@ -17670,7 +18312,11 @@
                 }
             }
 
-            fullCost[level] = bestCost === Infinity ? 0 : bestCost;
+            // Every protection strategy failed for this level — unknown, not free
+            if (bestCost === Infinity) {
+                return null;
+            }
+            fullCost[level] = bestCost;
         }
 
         // Incremental cost = cost to reach targetLevel - cost to reach startLevel
@@ -18000,7 +18646,9 @@
         abilityLevelType = 'increment',
         skipBackSlot = false,
         combatLevelTargets = null,
-        abilityTargets = null
+        abilityTargets = null,
+        houseTargetLevel = 0,
+        houseTargets = null
     ) {
         const candidates = [];
 
@@ -18071,25 +18719,45 @@
                     if (slotItems) {
                         const currentIdx = slotItems.findIndex((item) => item.hrid === currentHrid);
                         if (currentIdx >= 0 && currentIdx < slotItems.length - 1) {
-                            const nextTier = slotItems[currentIdx + 1];
-                            const nextName = nextTier.name || nextTier.hrid.split('/').pop();
-                            candidates.push({
-                                slot,
-                                currentHrid,
-                                currentLevel,
-                                upgradeHrid: nextTier.hrid,
-                                upgradeLevel: currentLevel,
-                                description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
-                                type: 'tier',
-                            });
-                            offensiveCandidateHrids.add(nextTier.hrid);
+                            const currentItemLevel = itemDetails?.itemLevel || 0;
+                            const currentIsRefined = currentHrid.endsWith('_refined');
+
+                            // The group is item-level sorted, so the immediate neighbour can be
+                            // a same-level sibling — a paid sidegrade, not an upgrade. Walk
+                            // forward to the first genuinely better entry: a higher item level,
+                            // or the refined variant of a non-refined item (same level, better
+                            // stats). Refined → another refined at the same level is a sidegrade.
+                            let nextTier = null;
+                            for (let i = currentIdx + 1; i < slotItems.length; i++) {
+                                const contender = slotItems[i];
+                                const isUpgrade =
+                                    contender.itemLevel > currentItemLevel ||
+                                    (!currentIsRefined && contender.hrid.endsWith('_refined'));
+                                if (isUpgrade) {
+                                    nextTier = contender;
+                                    break;
+                                }
+                            }
+
+                            if (nextTier) {
+                                const nextName = nextTier.name || nextTier.hrid.split('/').pop();
+                                candidates.push({
+                                    slot,
+                                    currentHrid,
+                                    currentLevel,
+                                    upgradeHrid: nextTier.hrid,
+                                    upgradeLevel: currentLevel,
+                                    description: `${offensiveCurrentName} → ${nextName} (+${currentLevel})`,
+                                    type: 'tier',
+                                });
+                                offensiveCandidateHrids.add(nextTier.hrid);
+                            }
 
                             // Also suggest the highest non-refined item in the same slot|role
                             // when the player is already wearing high-tier gear (T60+). This
                             // surfaces direct T95 jumps (e.g. Sighted → Marksman) that the
                             // single-step progression would otherwise hide behind T75 stepping
                             // stones.
-                            const currentItemLevel = itemDetails?.itemLevel || 0;
                             if (currentItemLevel >= 60) {
                                 let highestNonRefined = null;
                                 for (let i = slotItems.length - 1; i >= 0; i--) {
@@ -18101,7 +18769,7 @@
                                 if (
                                     highestNonRefined &&
                                     highestNonRefined.hrid !== currentHrid &&
-                                    highestNonRefined.hrid !== nextTier.hrid &&
+                                    highestNonRefined.hrid !== nextTier?.hrid &&
                                     highestNonRefined.itemLevel > currentItemLevel
                                 ) {
                                     const highestName = highestNonRefined.name || highestNonRefined.hrid.split('/').pop();
@@ -18256,6 +18924,8 @@
                     }
                 }
             }
+
+            addPhiloAccessoryCandidates(playerDTO, gameData, candidates);
         } else if (mode === 'ability_level' || mode === 'ability_swap') {
             const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
             const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
@@ -18353,8 +19023,177 @@
             }
         }
 
+        if (mode === 'house') {
+            candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets));
+        }
+
         candidates.forEach(clampRefinedCandidateToMinLevel);
         return candidates;
+    }
+
+    /**
+     * Buff types the combat engine actually reads (see engine/combat-unit.js and
+     * combat-utilities.js). A house room whose buffs land in this set changes a fight
+     * no matter how the game labels the room.
+     */
+    const COMBAT_BUFF_TYPES = new Set([
+        '/buff_types/accuracy',
+        '/buff_types/armor',
+        '/buff_types/attack_speed',
+        '/buff_types/cast_speed',
+        '/buff_types/combat_drop_quantity',
+        '/buff_types/combat_drop_rate',
+        '/buff_types/critical_damage',
+        '/buff_types/critical_rate',
+        '/buff_types/damage',
+        '/buff_types/damage_taken',
+        '/buff_types/elemental_thorns',
+        '/buff_types/evasion',
+        '/buff_types/fire_amplify',
+        '/buff_types/fire_resistance',
+        '/buff_types/fury_accuracy',
+        '/buff_types/fury_damage',
+        '/buff_types/healing_amplify',
+        '/buff_types/hp_regen',
+        '/buff_types/life_steal',
+        '/buff_types/mp_regen',
+        '/buff_types/nature_amplify',
+        '/buff_types/nature_resistance',
+        '/buff_types/physical_amplify',
+        '/buff_types/physical_thorns',
+        '/buff_types/rare_find',
+        '/buff_types/retaliation',
+        '/buff_types/tenacity',
+        '/buff_types/threat',
+        '/buff_types/water_amplify',
+        '/buff_types/water_resistance',
+        '/buff_types/wisdom',
+    ]);
+
+    const COMBAT_ACTION_TYPE = '/action_types/combat';
+
+    /**
+     * Does this house room change a combat sim?
+     *
+     * Three independent signals, because the game exposes the action-type tag in more
+     * than one place and a global buff carries no tag at all: the room's own
+     * usableInActionTypeMap, a per-buff usableInActionTypeMap, or a buff type the
+     * combat engine reads. Any of them is enough. Over-including a room only costs a
+     * sim that comes back at 0.00%; under-including hides a real upgrade, which is
+     * how the first version produced an empty list.
+     * @param {Object} roomDetail - Entry from houseRoomDetailMap
+     * @returns {boolean}
+     */
+    function houseRoomAffectsCombat(roomDetail) {
+        const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+        if (buffs.length === 0) return false;
+
+        if (roomDetail?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE]) return true;
+        return buffs.some(
+            (buff) => buff?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE] || COMBAT_BUFF_TYPES.has(buff?.typeHrid)
+        );
+    }
+
+    /**
+     * Count what the house scan saw, so an empty candidate list can explain itself
+     * instead of reading as "no upgrades available".
+     * @param {Object} playerDTO - Player DTO
+     * @param {Object} gameData - Game data payload
+     * @returns {{rooms: number, withBuffs: number, combatRelevant: number, belowCap: number}}
+     */
+    function describeHouseScan(playerDTO, gameData) {
+        const roomMap = gameData?.houseRoomDetailMap || {};
+        let withBuffs = 0;
+        let combatRelevant = 0;
+        let belowCap = 0;
+
+        for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
+            const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+            if (buffs.length > 0) withBuffs++;
+            if (!houseRoomAffectsCombat(roomDetail)) continue;
+            combatRelevant++;
+            const level = Math.max(0, Math.floor(Number(playerDTO?.houseRooms?.[roomHrid]) || 0));
+            if (level < MAX_HOUSE_LEVEL) belowCap++;
+        }
+
+        return { rooms: Object.keys(roomMap).length, withBuffs, combatRelevant, belowCap };
+    }
+
+    /**
+     * Generate house room upgrade candidates for every combat-relevant room.
+     * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
+     * @param {Object} gameData - Game data payload (houseRoomDetailMap)
+     * @param {number} [targetLevel] - Level to sim every room at; 0/unset means one level up
+     * @param {Object|null} [perRoomTargets] - roomHrid → target level; takes precedence
+     *   over targetLevel, and a room absent from it is skipped (blank means skip)
+     * @returns {Array<Object>} Candidates of type 'house'
+     */
+    function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null) {
+        const roomMap = gameData?.houseRoomDetailMap;
+        if (!roomMap) return [];
+
+        const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
+        const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
+
+        const candidates = [];
+        for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
+            if (!houseRoomAffectsCombat(roomDetail)) continue;
+
+            const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
+            if (currentLevel >= MAX_HOUSE_LEVEL) continue;
+
+            // Per-room target wins; then the uniform target; otherwise one level up.
+            // With per-room targets open, a room left blank is deliberately skipped.
+            let upgradeLevel;
+            if (explicit) {
+                upgradeLevel = Math.min(MAX_HOUSE_LEVEL, Math.floor(Number(explicit[roomHrid]) || 0));
+            } else {
+                upgradeLevel = target > 0 ? target : currentLevel + 1;
+            }
+            if (upgradeLevel <= currentLevel) continue;
+
+            const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
+            candidates.push({
+                type: 'house',
+                slot: `house|${roomHrid}`,
+                roomHrid,
+                currentLevel,
+                upgradeLevel,
+                description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
+            });
+        }
+        return candidates;
+    }
+
+    /**
+     * Market cost of a house room upgrade: every level from the current one up to the
+     * target, counting coins at face value and materials at their buy price.
+     * @param {Object} candidate - House candidate
+     * @param {Object} gameData - Game data payload
+     * @returns {number|null} Total cost, or null when a level or material has no price
+     */
+    function calculateHouseUpgradeCost(candidate, gameData) {
+        const costsMap = gameData?.houseRoomDetailMap?.[candidate.roomHrid]?.upgradeCostsMap;
+        if (!costsMap) return null;
+
+        let total = 0;
+        for (let level = candidate.currentLevel + 1; level <= candidate.upgradeLevel; level++) {
+            const costs = costsMap[level] ?? costsMap[String(level)];
+            if (!Array.isArray(costs) || costs.length === 0) return null;
+
+            for (const entry of costs) {
+                const count = Number(entry?.count) || 0;
+                if (!entry?.itemHrid || count <= 0) continue;
+                if (entry.itemHrid === '/items/coin') {
+                    total += count;
+                    continue;
+                }
+                const { price } = profitHelpers_js.resolveItemPrice(entry.itemHrid, { side: 'buy' });
+                if (!price || price <= 0) return null; // Unknown material cost must not rank as free
+                total += price * count;
+            }
+        }
+        return total > 0 ? total : null;
     }
 
     /**
@@ -18419,6 +19258,10 @@
         // Combat skill levels cost XP and time, not gold
         if (candidate.type === 'combat_level') {
             return null;
+        }
+
+        if (candidate.type === 'house') {
+            return calculateHouseUpgradeCost(candidate, gameData);
         }
 
         if (candidate.type === 'ability_level') {
@@ -18519,6 +19362,11 @@
             // No listing at the target level: base item price + enhancement cost
             const basePrice = profitHelpers_js.resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
             const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot });
+            // Unknown enhancement cost must stay unknown — pricing the item as a
+            // bare +0 craft would understate an enhanced buy by the whole enhance path
+            if (enhanceCost == null) {
+                return null;
+            }
             const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
             return total > 0 ? total : null;
         }
@@ -18528,12 +19376,30 @@
     }
 
     /**
+     * Resolve the candidate sets to generate. The Upgrade tab passes a list of
+     * checked sets; older single-mode callers pass one mode string ('combined' being
+     * shorthand for equipment plus ability levels).
+     * @param {string[]|undefined} upgradeModes - Checked candidate sets
+     * @param {string|undefined} upgradeMode - Legacy single mode
+     * @returns {string[]} Modes to generate candidates for
+     */
+    function resolveCandidateModes(upgradeModes, upgradeMode) {
+        if (Array.isArray(upgradeModes) && upgradeModes.length > 0) {
+            // 'food' is a separate optimizer, not a ranked candidate set
+            return [...new Set(upgradeModes.filter((mode) => mode !== 'food'))];
+        }
+        if (upgradeMode === 'combined') return ['equipment', 'ability_level'];
+        return upgradeMode ? [upgradeMode] : ['equipment'];
+    }
+
+    /**
      * Run the full upgrade analysis: baseline sim + one sim per candidate.
-     * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeMode,
-     *   abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier }
+     * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
+     *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
+     *   houseTargetLevel, houseTargets, optimizeFood }
      * @param {Function} onProgress - Called with { current, total, description }
      * @param {Object} [options] - { abortSignal: () => boolean }
-     * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
+     * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
      */
     async function runUpgradeAnalysis(params, onProgress, options = {}) {
         const {
@@ -18543,6 +19409,7 @@
             difficultyTier,
             hours,
             communityBuffs,
+            upgradeModes,
             upgradeMode,
             abilityLevelType,
             abilityTargetLevel,
@@ -18550,6 +19417,9 @@
             combatLevelTargets,
             abilityTargets,
             charmTier,
+            houseTargetLevel = 0,
+            houseTargets = null,
+            optimizeFood = false,
         } = params;
         const { abortSignal } = options;
         const gameData = buildGameDataPayload();
@@ -18558,9 +19428,12 @@
         const playerDTO = playerDTOs[playerIndex];
         const playerHrid = playerDTO.hrid;
 
-        // Generate candidates and compute costs.
-        // 'combined' runs equipment and ability-level candidates together in one ranked list.
-        const candidateModes = upgradeMode === 'combined' ? ['equipment', 'ability_level'] : [upgradeMode];
+        // One seed for the whole analysis: baseline and every candidate draw the same
+        // random numbers, so a delta reflects the upgrade rather than the gap between
+        // two independent samples. A fresh seed per analysis keeps re-runs resampling.
+        const simSeed = analysisSeed();
+
+        const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
         const candidates = candidateModes.flatMap((mode) =>
             generateCandidates(
                 playerDTO,
@@ -18570,7 +19443,9 @@
                 abilityLevelType,
                 skipBackSlot,
                 combatLevelTargets,
-                abilityTargets
+                abilityTargets,
+                houseTargetLevel,
+                houseTargets
             )
         );
         const candidatesWithCost = candidates.map((c) => ({
@@ -18579,13 +19454,15 @@
         }));
 
         const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
-        const total = candidatesWithCost.length + combatLevelCount + 1; // +1 baseline, + XP-rate sims
+        const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
+        // +1 baseline, + XP-rate sims for combat levels, + the food search
+        const total = candidatesWithCost.length + combatLevelCount + foodSimCount + 1;
         let current = 0;
 
         // Run baseline sim
         onProgress?.({ current: 0, total, description: 'Running baseline...' });
         const baselineResult = await runSimulation(
-            { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+            { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
             null
         );
         current++;
@@ -18629,6 +19506,10 @@
             } else if (candidate.type === 'combat_level') {
                 // Combat skill level boost (simulated charm)
                 modifiedDTOs[playerIndex][candidate.skillKey] = candidate.upgradeLevel;
+            } else if (candidate.type === 'house') {
+                // House room level (a room at level 0 isn't in the map yet)
+                if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
+                modifiedDTOs[playerIndex].houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
             } else if (candidate.type === 'cross_slot') {
                 // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
                 // clear the replaced slots and equip every added item
@@ -18647,7 +19528,7 @@
             }
 
             const simResult = await runSimulation(
-                { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+                { gameData, playerDTOs: modifiedDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
                 null
             );
 
@@ -18667,7 +19548,7 @@
                 const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData, charmTier);
                 xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
                 const xpSimResult = await runSimulation(
-                    { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+                    { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
                     null
                 );
                 current++;
@@ -18725,7 +19606,41 @@
             return aVal - bVal;
         });
 
-        return { baseline: baselineMetrics, results };
+        // Food is not a ranked upgrade — it is a cost floor at fixed survival, so it
+        // gets its own search and its own result shape
+        let food = null;
+        if (optimizeFood && !abortSignal?.()) {
+            try {
+                food = await runFoodOptimization(
+                    {
+                        gameData,
+                        playerDTOs,
+                        playerIndex,
+                        zoneHrid,
+                        difficultyTier,
+                        hours,
+                        communityBuffs,
+                        seed: simSeed,
+                        baselineResult,
+                    },
+                    ({ description }) => {
+                        current++;
+                        onProgress?.({ current, total, description });
+                    },
+                    { abortSignal }
+                );
+            } catch (error) {
+                console.error('[UpgradeAdvisor] Food optimization failed:', error);
+            }
+        }
+
+        return {
+            baseline: baselineMetrics,
+            results,
+            food,
+            // Explains an empty house result rather than leaving it as "no upgrades"
+            houseScan: candidateModes.includes('house') ? describeHouseScan(playerDTO, gameData) : null,
+        };
     }
 
     /**
@@ -19035,6 +19950,10 @@
 
         const playerDTO = playerDTOs[playerIndex];
 
+        // Shared across baseline and every candidate so win-rate deltas measure the
+        // upgrade, not the gap between two independent random samples
+        const simSeed = analysisSeed();
+
         const zoneHrid =
             Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
@@ -19057,12 +19976,11 @@
             cost: calculateUpgradeCost(c, gameData),
         }));
 
-        // Generate buff candidates (skilling buffs handled in skilling tab)
+        // Generate buff candidates (skilling buffs handled in skilling tab, experience excluded — no combat impact)
         const buffCandidates = generateLabyrinthBuffCandidates();
         const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
-        const experienceBuffCandidates = buffCandidates.filter((c) => c.category === 'experience');
 
-        const total = candidatesWithCost.length + combatBuffCandidates.length + experienceBuffCandidates.length + 1;
+        const total = candidatesWithCost.length + combatBuffCandidates.length + 1;
         let current = 0;
 
         // Run baseline labyrinth sim
@@ -19077,6 +19995,7 @@
             hours,
             communityBuffs,
             labyrinthCombatBuffs,
+            seed: simSeed,
         });
         current++;
 
@@ -19141,6 +20060,7 @@
                 hours,
                 communityBuffs,
                 labyrinthCombatBuffs,
+                seed: simSeed,
             });
 
             if (abortSignal?.()) break;
@@ -19181,6 +20101,7 @@
                 hours,
                 communityBuffs,
                 labyrinthCombatBuffs: modifiedBuffs,
+                seed: simSeed,
             });
 
             if (abortSignal?.()) break;
@@ -19202,28 +20123,11 @@
             onProgress?.({ current, total, description: buffCandidate.description });
         }
 
-        // ── Experience buff (flat % increase, no sim needed) ──
-        for (const buffCandidate of experienceBuffCandidates) {
-            const currentBonus = buffCandidate.currentLevel * buffCandidate.step;
-            const newBonus = (buffCandidate.currentLevel + 1) * buffCandidate.step;
-            const xpDeltaPct = ((1 + newBonus) / (1 + currentBonus) - 1) * 100;
-
-            results.push({
-                candidate: buffCandidate,
-                costType: 'token',
-                tokenCost: buffCandidate.tokenCost,
-                xpDeltaPct,
-                metricType: 'experience',
-            });
-            current++;
-            onProgress?.({ current, total, description: buffCandidate.description });
-        }
-
         // Sort: token results first, then gold; within each group by best delta descending
         results.sort((a, b) => {
             if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
-            const aDelta = a.winRateDelta ?? a.clearRateDelta ?? a.xpDeltaPct ?? 0;
-            const bDelta = b.winRateDelta ?? b.clearRateDelta ?? b.xpDeltaPct ?? 0;
+            const aDelta = a.winRateDelta ?? a.clearRateDelta ?? 0;
+            const bDelta = b.winRateDelta ?? b.clearRateDelta ?? 0;
             return bDelta - aDelta;
         });
 
@@ -19304,7 +20208,13 @@
         const total = fights.length * (candidates.length + 1);
         let current = 0;
 
-        const simFightWinRate = async (fight, dtoOverride) => {
+        // Per-fight seeds derived from one analysis seed: fight N is simmed with the
+        // same random draws in the baseline pass and in every candidate pass, so a
+        // win-rate delta is the level boost rather than two independent samples
+        const simSeed = analysisSeed();
+        const fightSeed = (fightIndex) => deriveSeed(simSeed, fightIndex);
+
+        const simFightWinRate = async (fight, dtoOverride, seed) => {
             const simResult = await runLabyrinthSimulation({
                 gameData,
                 playerDTOs: [dtoOverride || fight.dto],
@@ -19315,6 +20225,7 @@
                 hours,
                 communityBuffs,
                 labyrinthCombatBuffs,
+                seed,
             });
             const attempts = simResult.labyAttemptCount || 1;
             return (simResult.encounters || 0) / attempts;
@@ -19329,10 +20240,11 @@
 
         // Baseline pass: every fight with its current levels
         const baselineFights = [];
-        for (const fight of fights) {
+        for (let i = 0; i < fights.length; i++) {
+            const fight = fights[i];
             if (abortSignal?.()) return { baseline: null, results: [] };
             onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-            const winRate = await simFightWinRate(fight);
+            const winRate = await simFightWinRate(fight, null, fightSeed(i));
             baselineFights.push({ ...fightMeta(fight), winRate });
             current++;
         }
@@ -19352,7 +20264,7 @@
                 onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
                 const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
                 boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
-                const winRate = await simFightWinRate(fights[i], boostedDTO);
+                const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i));
                 fightResults.push({
                     ...fightMeta(fights[i]),
                     winRate,
@@ -19639,6 +20551,18 @@
                 candidate.cost = calculateUpgradeCost(candidate, gameData);
                 candidates.push(candidate);
             }
+
+            // Philosopher's accessories at +5, even when the worn jewelry is
+            // enhanced higher — same reasoning as the combat advisor
+            const philoCandidates = [];
+            addPhiloAccessoryCandidates({ equipment }, gameData, philoCandidates);
+            for (const candidate of philoCandidates) {
+                const dedupKey = `philo:${candidate.slot}:${candidate.upgradeHrid}:${candidate.currentHrid}`;
+                if (seen.has(dedupKey)) continue;
+                seen.add(dedupKey);
+                candidate.cost = calculateUpgradeCost(candidate, gameData);
+                candidates.push(candidate);
+            }
         }
 
         return candidates;
@@ -19793,7 +20717,11 @@
                 cost: evalCandidate.cost,
                 clearRate: modifiedClearRate,
                 clearRateDelta,
-                goldPerClearRate: clearRateDelta > 0 ? evalCandidate.cost / (clearRateDelta * 100) : Infinity,
+                // Unknown cost (null) must rank as Infinity, never as free
+                goldPerClearRate:
+                    clearRateDelta > 0 && evalCandidate.cost != null
+                        ? evalCandidate.cost / (clearRateDelta * 100)
+                        : Infinity,
                 metricType: 'clearRate',
             });
             current++;
@@ -21665,6 +22593,134 @@
     const ACCENT_BTN_BG$1 = 'rgba(74, 158, 255, 0.2)';
     const ACCENT_BTN_BORDER$1 = 'rgba(74, 158, 255, 0.4)';
 
+    /** Storage key for the remembered Upgrade-tab candidate sets */
+    const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
+
+    /**
+     * Sort result rows by a computed key, treating Infinity as "worst" so unknown
+     * values land at the end rather than dominating the comparison.
+     * @param {Array<Object>} rows - Result rows
+     * @param {Function} keyOf - (row) => number|string
+     * @param {boolean} asc - Ascending when true
+     * @returns {Array<Object>} New sorted array
+     */
+    function sortRowsBy(rows, keyOf, asc) {
+        return [...rows].sort((a, b) => {
+            const va = keyOf(a);
+            const vb = keyOf(b);
+            let cmp;
+            if (typeof va === 'string') {
+                cmp = va.localeCompare(vb);
+            } else {
+                const na = va === Infinity ? Number.MAX_VALUE : va;
+                const nb = vb === Infinity ? Number.MAX_VALUE : vb;
+                cmp = na - nb;
+            }
+            return asc ? cmp : -cmp;
+        });
+    }
+
+    /** Shared styling for the small inputs inside a mode chip */
+    const CHIP_INPUT_STYLE =
+        'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
+    const CHIP_BUTTON_STYLE =
+        'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
+        'font-size:11px; cursor:pointer; font-family:inherit;';
+
+    /**
+     * Options that belong to a specific candidate set. Each lives inside that set's
+     * chip in the controls row, so it's visible which checkbox an option modifies —
+     * Skip Back sits with Equipment, the level boost with Ability Lv, and so on.
+     * Options stay in the DOM when their set is unchecked and are hidden by
+     * `_onUpgradeModesChanged`.
+     */
+    const MODE_OPTIONS = {
+        equipment: `
+        <span data-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
+                Skip Back
+            </label>
+        </span>`,
+        ability_level: `
+        <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <select id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
+                <option value="increment">+Levels</option>
+                <option value="target">Target Lv</option>
+            </select>
+            <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="200" value="5" placeholder="+5" style="
+                width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Number of levels to add to each ability">
+            <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+        combat_level: `
+        <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Charm</label>
+            <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${CHIP_INPUT_STYLE}"></select>
+            <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+            <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
+                Main time
+            </label>
+        </span>`,
+        house: `
+        <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Lv</label>
+            <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
+            <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    };
+
+    /**
+     * Candidate sets the Upgrade tab can include. Each is independent, so several can
+     * run in one analysis and land in one ranked list.
+     */
+    const UPGRADE_MODES = [
+        {
+            key: 'equipment',
+            label: 'Equipment',
+            defaultOn: true,
+            title: 'Enhancement breakpoints and tier swaps for every combat slot',
+        },
+        {
+            key: 'ability_level',
+            label: 'Ability Lv',
+            defaultOn: true,
+            title: 'Leveling the abilities you already have equipped',
+        },
+        {
+            key: 'ability_swap',
+            label: 'Ability Swaps',
+            defaultOn: false,
+            title:
+                'Replacing an equipped ability with a different one.\n\n' +
+                'Slow and rough. It sims every style-compatible ability for every slot, so it adds far more sims than ' +
+                'the other sets — expect a long run. And a swapped-in ability is simmed at the level of the ability it ' +
+                'replaces with that ability book’s default triggers, so it gets none of the trigger tuning your ' +
+                'equipped abilities have, and its cost assumes leveling a fresh book from scratch. Treat the ranking ' +
+                'as a hint about which abilities are worth trying by hand, not a verdict.',
+        },
+        {
+            key: 'combat_level',
+            label: 'Combat Lv',
+            defaultOn: false,
+            title: 'Raising combat skill levels. Levels cost grind time rather than gold, so they get their own results box below the gold-cost list.',
+        },
+        { key: 'house', label: 'House', defaultOn: false, title: 'One level on each combat-relevant house room' },
+        {
+            key: 'food',
+            label: 'Food',
+            defaultOn: false,
+            title: 'Search for the cheapest food that still avoids deaths and running out of mana',
+        },
+    ];
+
     /**
      * Format elapsed seconds as "Xs" or "Xm Ys".
      * @param {number} seconds
@@ -22052,44 +23108,20 @@
             upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
             <select id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
-            <label style="color:#888; font-size:12px;">Mode</label>
-            <select id="mwi-csim-upgrade-mode" style="${upgradeSelectStyle}">
-                <option value="equipment">Equipment</option>
-                <option value="ability_level">Ability Levels</option>
-                <option value="ability_swap">Ability Swaps</option>
-                <option value="combined">Equipment + Abilities</option>
-                <option value="combat_level">Combat Levels</option>
-            </select>
-            <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
-                <select id="mwi-csim-upgrade-level-type" style="
-                    background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px;">
-                    <option value="increment">+Levels</option>
-                    <option value="target">Target Lv</option>
-                </select>
-                <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="200" value="5" placeholder="+5" style="
-                    width:55px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
-                    title="Number of levels to add to each ability">
-                <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="
-                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-            </span>
-            <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
-                <label style="color:#888; font-size:12px;">Charm</label>
-                <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${upgradeSelectStyle}"></select>
-                <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
-                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-                <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                    <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
-                    Main time
+            <label style="color:#888; font-size:12px;">Include</label>
+            ${UPGRADE_MODES.map(
+                (mode) => `
+            <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
+                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
+                        mode.defaultOn ? ' checked' : ''
+                    }>
+                    ${mode.label}
                 </label>
-            </span>
-            <label id="mwi-csim-skip-back-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
-                Skip Back
-            </label>
+                ${MODE_OPTIONS[mode.key] || ''}
+            </span>`
+            ).join('')}
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG$1};
                 color: ${ACCENT$1};
@@ -22117,9 +23149,11 @@
             const combatTargets = document.createElement('div');
             combatTargets.id = 'mwi-csim-combat-targets';
             combatTargets.style.cssText =
-                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+                ACCENT_BTN_BORDER$1 +
+                ';';
             combatTargets.innerHTML =
-                '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
+                '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Combat Lv</b> target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
                 [
                     ['staminaLevel', 'Stamina'],
                     ['intelligenceLevel', 'Int'],
@@ -22146,7 +23180,9 @@
             const abilityTargetsGrid = document.createElement('div');
             abilityTargetsGrid.id = 'mwi-csim-ability-targets';
             abilityTargetsGrid.style.cssText =
-                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+                ACCENT_BTN_BORDER$1 +
+                ';';
 
             const upgradeProgress = document.createElement('div');
             upgradeProgress.id = 'mwi-csim-upgrade-progress';
@@ -22164,9 +23200,19 @@
             upgradeResults.id = 'mwi-csim-upgrade-results';
             upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
 
+            // Per-room target levels for House mode (hidden until toggled; inputs
+            // built from the combat-relevant rooms in game data when opened)
+            const houseTargetsGrid = document.createElement('div');
+            houseTargetsGrid.id = 'mwi-csim-house-targets';
+            houseTargetsGrid.style.cssText =
+                'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+                ACCENT_BTN_BORDER$1 +
+                ';';
+
             upgradeContent.appendChild(upgradeControls);
             upgradeContent.appendChild(combatTargets);
             upgradeContent.appendChild(abilityTargetsGrid);
+            upgradeContent.appendChild(houseTargetsGrid);
             upgradeContent.appendChild(upgradeProgress);
             upgradeContent.appendChild(upgradeResults);
 
@@ -22222,48 +23268,13 @@
             this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
                 this._upgradeAborted = true;
             });
-            this.panel.querySelector('#mwi-csim-upgrade-mode').addEventListener('change', (e) => {
-                const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-                const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
-                const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
-                const charmGroup = this.panel.querySelector('#mwi-csim-charm-group');
-                const skipBackLabel = this.panel.querySelector('#mwi-csim-skip-back-label');
-                const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-                const isCombatLevelMode = e.target.value === 'combat_level';
-
-                // Combat Levels: the +Levels input drives the simulated boost; the
-                // charm selector picks which charm family gets swapped in per skill
-                // for the leveling-time estimates
-                charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
-                skipBackLabel.style.display = isCombatLevelMode ? 'none' : 'flex';
-                if (!isCombatLevelMode) {
-                    this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
-                }
-                levelType.style.display = isCombatLevelMode ? 'none' : '';
-                levelInput.title = isCombatLevelMode
-                    ? 'Levels added to each combat skill'
-                    : 'Number of levels to add to each ability';
-
-                if (isCombatLevelMode) {
-                    this._populateCharmSelect();
-                    levelGroup.style.display = 'inline-flex';
-                    if (!parseInt(levelInput.value)) {
-                        levelInput.value = '5';
-                        levelInput.placeholder = '+5';
-                    }
-                } else {
-                    levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
-                }
-                // Per-ability targets only apply to ability-level candidates
-                const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
-                if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
-                if (!isLevelMode) {
-                    this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
-                }
-                if (isLevelMode) {
-                    this._setDefaultAbilityTargetLevel();
-                }
+            this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+                box.addEventListener('change', () => {
+                    this._onUpgradeModesChanged();
+                    this._saveUpgradeModes();
+                });
             });
+            this._restoreUpgradeModes();
             this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
                 const grid = this.panel.querySelector('#mwi-csim-ability-targets');
                 const opening = grid.style.display === 'none';
@@ -22278,6 +23289,14 @@
                 grid.style.display = opening ? 'flex' : 'none';
                 if (opening) {
                     this._prefillCombatTargets();
+                }
+            });
+            this.panel.querySelector('#mwi-csim-house-targets-toggle').addEventListener('click', () => {
+                const grid = this.panel.querySelector('#mwi-csim-house-targets');
+                const opening = grid.style.display === 'none';
+                grid.style.display = opening ? 'flex' : 'none';
+                if (opening) {
+                    this._buildHouseTargets();
                 }
             });
             this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
@@ -24880,7 +25899,7 @@
             }
 
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
+                '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Ability Lv</b> target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
                 abilities
                     .map((ability) => {
                         const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
@@ -24925,6 +25944,183 @@
         }
 
         /**
+         * Candidate sets currently checked on the Upgrade tab.
+         * @returns {string[]}
+         * @private
+         */
+        _getUpgradeModes() {
+            return [...this.panel.querySelectorAll('[data-upgrade-mode]')]
+                .filter((box) => box.checked)
+                .map((box) => box.getAttribute('data-upgrade-mode'));
+        }
+
+        /**
+         * Show only the controls the checked candidate sets actually use.
+         * @private
+         */
+        _onUpgradeModesChanged() {
+            const modes = new Set(this._getUpgradeModes());
+            const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
+            const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
+
+            const isLevelMode = modes.has('ability_level');
+            const isCombatLevelMode = modes.has('combat_level');
+
+            // Light up the chip of each checked set and reveal the options it owns, so
+            // it reads as "these controls belong to this checkbox"
+            this.panel.querySelectorAll('[data-mode-chip]').forEach((chip) => {
+                const on = modes.has(chip.getAttribute('data-mode-chip'));
+                chip.style.borderColor = on ? ACCENT_BTN_BORDER$1 : '#2a2a4a';
+                chip.style.background = on ? ACCENT_BG$1 : 'transparent';
+                const label = chip.querySelector('label');
+                if (label) label.style.color = on ? '#e0e0e0' : '#888';
+            });
+            this.panel.querySelectorAll('[data-mode-options]').forEach((group) => {
+                group.style.display = modes.has(group.getAttribute('data-mode-options')) ? 'inline-flex' : 'none';
+            });
+
+            // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
+            // since one number drives both; show that chip's options in either case
+            const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
+            if (levelGroup) {
+                levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+            }
+            levelType.style.display = isLevelMode ? '' : 'none';
+            levelInput.title =
+                isLevelMode && isCombatLevelMode
+                    ? 'Levels added to each ability and each combat skill'
+                    : isCombatLevelMode
+                      ? 'Levels added to each combat skill'
+                      : 'Number of levels to add to each ability';
+            if (isCombatLevelMode && !parseInt(levelInput.value)) {
+                levelInput.value = '5';
+                levelInput.placeholder = '+5';
+            }
+
+            if (isCombatLevelMode) {
+                this._populateCharmSelect();
+            } else {
+                this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
+            }
+
+            // Per-ability targets only apply to ability-level candidates
+            const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
+            if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
+            if (!isLevelMode) {
+                this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
+            } else {
+                this._setDefaultAbilityTargetLevel();
+            }
+
+            if (!modes.has('house')) {
+                this.panel.querySelector('#mwi-csim-house-targets').style.display = 'none';
+            }
+        }
+
+        /**
+         * Build the per-room house target inputs from the combat-relevant rooms in
+         * game data, prefilled to the uniform House Lv value (or one level up).
+         * @private
+         */
+        _buildHouseTargets() {
+            const grid = this.panel.querySelector('#mwi-csim-house-targets');
+            if (!grid) return;
+
+            const roomMap = dataManager.getInitClientData()?.houseRoomDetailMap || {};
+            const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+            const editedDTOs = this._editor?.getEditedDTOs();
+            const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+            const uniform = Math.min(
+                8,
+                Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
+            );
+
+            const rooms = Object.entries(roomMap)
+                .filter(([, detail]) => houseRoomAffectsCombat(detail))
+                .map(([hrid, detail]) => ({
+                    hrid,
+                    name: detail.name || hrid.split('/').pop().replace(/_/g, ' '),
+                    level: Math.max(
+                        0,
+                        Math.floor(Number(dto?.houseRooms?.[hrid] ?? dataManager.getHouseRoomLevel?.(hrid)) || 0)
+                    ),
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name));
+
+            if (rooms.length === 0) {
+                grid.innerHTML =
+                    '<span style="color:#666; font-size:11px;">No combat-relevant house rooms found in game data.</span>';
+                return;
+            }
+
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ current level skips the room; used instead of the Lv value while open):</span>' +
+                rooms
+                    .map(
+                        (room) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
+                    <input type="number" min="1" max="8" data-house-target="${room.hrid}"
+                        value="${room.level >= 8 ? '' : Math.min(8, Math.max(uniform, room.level + 1))}"
+                        ${room.level >= 8 ? 'disabled title="Already at max level"' : ''} style="
+                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                    )
+                    .join('');
+        }
+
+        /**
+         * Per-room house target levels, or null when the grid is closed.
+         * @returns {Object|null} roomHrid → target level
+         * @private
+         */
+        _getHouseTargets() {
+            const grid = this.panel.querySelector('#mwi-csim-house-targets');
+            if (!grid || grid.style.display === 'none') return null;
+            const targets = {};
+            grid.querySelectorAll('[data-house-target]').forEach((input) => {
+                const value = parseInt(input.value);
+                if (Number.isFinite(value) && value > 0) {
+                    targets[input.dataset.houseTarget] = Math.min(8, value);
+                }
+            });
+            return Object.keys(targets).length > 0 ? targets : null;
+        }
+
+        /**
+         * Persist the checked candidate sets so the next Analyze starts where you left off.
+         * @private
+         */
+        async _saveUpgradeModes() {
+            try {
+                await storage.set(UPGRADE_MODES_KEY, this._getUpgradeModes());
+            } catch (error) {
+                console.error('[CombatSimUI] Failed to save upgrade modes:', error);
+            }
+        }
+
+        /**
+         * Restore the remembered candidate sets, leaving the defaults in place when
+         * nothing has been saved yet.
+         * @private
+         */
+        async _restoreUpgradeModes() {
+            try {
+                const saved = await storage.get(UPGRADE_MODES_KEY, 'settings', null);
+                if (Array.isArray(saved) && saved.length > 0) {
+                    const wanted = new Set(saved);
+                    this.panel?.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+                        box.checked = wanted.has(box.getAttribute('data-upgrade-mode'));
+                    });
+                }
+            } catch (error) {
+                console.error('[CombatSimUI] Failed to restore upgrade modes:', error);
+            }
+            this._onUpgradeModesChanged();
+        }
+
+        /**
          * Run upgrade analysis when Analyze button is clicked.
          * @private
          */
@@ -24940,17 +26136,22 @@
                 )
             );
             const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
-            const upgradeMode = this.panel.querySelector('#mwi-csim-upgrade-mode')?.value || 'equipment';
+            const upgradeModes = this._getUpgradeModes();
             const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
             let abilityTargetLevel = Math.min(
                 200,
                 parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
             );
             let charmTier = null;
-            if (upgradeMode === 'combat_level') {
+            if (upgradeModes.includes('combat_level')) {
                 if (!abilityTargetLevel) abilityTargetLevel = 5;
                 charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
                 this._showMainSkillTimes = this.panel.querySelector('#mwi-csim-main-time')?.checked || false;
+            }
+
+            if (!upgradeModes.length) {
+                this._setStatus('Check at least one upgrade type to include.');
+                return;
             }
 
             if (!zoneHrid) {
@@ -24994,11 +26195,18 @@
 
             try {
                 const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
-                const combatLevelTargets = upgradeMode === 'combat_level' ? this._getCombatLevelTargets() : null;
-                const abilityTargets =
-                    upgradeMode === 'ability_level' || upgradeMode === 'combined'
-                        ? this._getAbilityTargets('#mwi-csim-ability-targets')
-                        : null;
+                const isHouseMode = upgradeModes.includes('house');
+                const houseTargetLevel = isHouseMode
+                    ? Math.min(
+                          8,
+                          Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
+                      )
+                    : 0;
+                const houseTargets = isHouseMode ? this._getHouseTargets() : null;
+                const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
+                const abilityTargets = upgradeModes.includes('ability_level')
+                    ? this._getAbilityTargets('#mwi-csim-ability-targets')
+                    : null;
                 const results = await runUpgradeAnalysis(
                     {
                         playerDTOs,
@@ -25007,19 +26215,23 @@
                         difficultyTier,
                         hours,
                         communityBuffs,
-                        upgradeMode,
+                        upgradeModes,
+                        optimizeFood: upgradeModes.includes('food'),
                         abilityLevelType,
                         abilityTargetLevel,
                         skipBackSlot,
                         combatLevelTargets,
                         abilityTargets,
                         charmTier,
+                        houseTargetLevel,
+                        houseTargets,
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
                         const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
                         const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
-                        const pct = Math.round((current / total) * 100);
+                        // The food search's sim count is an estimate, so cap the bar
+                        const pct = Math.min(100, Math.round((current / total) * 100));
                         if (fill) fill.style.width = pct + '%';
                         if (text) text.textContent = `${current} / ${total}`;
                         this._setStatus(description);
@@ -25031,7 +26243,8 @@
                     this._setStatus('Analysis cancelled.');
                 } else {
                     this._renderUpgradeResults(results);
-                    this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.`);
+                    const foodNote = results.food ? ' Food search complete.' : '';
+                    this._setStatus(`Analysis complete. ${results.results.length} upgrades evaluated.${foodNote}`);
                 }
             } catch (error) {
                 console.error('[CombatSimUI] Upgrade analysis failed:', error);
@@ -25044,48 +26257,186 @@
         }
 
         /**
-         * Render upgrade analysis results as an expandable table.
-         * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
+         * Explain an empty House result: whether the game data was readable, whether
+         * any room looked combat-relevant, and whether they're simply all maxed.
+         * @param {Object|null} scan - houseScan from the analysis
+         * @returns {string} HTML fragment, empty when House wasn't part of the run
          * @private
          */
-        _renderUpgradeResults(results) {
-            const container = this.panel.querySelector('#mwi-csim-upgrade-results');
-            if (!container) return;
-
-            if (!results.results.length) {
-                container.innerHTML =
-                    '<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.</div>';
-                return;
+        _houseScanNote(scan) {
+            if (!scan) return '';
+            if (scan.rooms === 0) {
+                return '<br><span style="font-size:11px;">House: no house room data available.</span>';
             }
-
-            this._upgradeResultsData = results;
-            // Combat Levels mode has no gold costs — rank by raw improvement instead
-            const isCombatLevelMode =
-                results.results.length > 0 && results.results.every((r) => r.candidate?.type === 'combat_level');
-            if (!this._upgradeSort) {
-                this._upgradeSort = { key: 'dps', asc: true };
+            if (scan.combatRelevant === 0) {
+                return `<br><span style="font-size:11px;">House: none of ${scan.rooms} rooms (${scan.withBuffs} with buffs) look combat-relevant — the game's buff data may have changed shape.</span>`;
             }
-            const sortKey = this._upgradeSort.key;
-            const sortAsc = this._upgradeSort.asc;
-            const sortValue = (r) => {
-                if (isCombatLevelMode) {
-                    // Negated deltas so ascending sort puts the biggest gain first
-                    switch (sortKey) {
-                        case 'upgrade':
-                            return r.candidate.description.toLowerCase();
-                        case 'time':
-                            return r.levelTimeHours ?? Infinity;
-                        case 'main':
-                            // Focused main skills (no entries) sort first
-                            return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
-                        case 'xp':
-                            return -(r.metrics.xpPerHour - results.baseline.xpPerHour);
-                        case 'profit':
-                            return -(r.metrics.profitPerHour - results.baseline.profitPerHour);
-                        default:
-                            return -(r.metrics.dps - results.baseline.dps);
+            if (scan.belowCap === 0) {
+                return `<br><span style="font-size:11px;">House: all ${scan.combatRelevant} combat rooms are already at max level.</span>`;
+            }
+            return '';
+        }
+
+        /**
+         * Render the cheapest-viable-food card.
+         * Food isn't a ranked upgrade — it's a spend floor at fixed survival — so it
+         * gets its own block above the table instead of a gold-per-improvement row.
+         * @param {Object} food - Result from runFoodOptimization
+         * @returns {string} HTML
+         * @private
+         */
+        _renderFoodRecommendation(food) {
+            const rec = food.recommendation;
+            const current = food.current;
+            const pct = (fraction) => `${((fraction || 0) * 100).toFixed(1)}%`;
+
+            const restoreLabel = (slot) => {
+                const parts = [];
+                if (slot.hpRestore > 0) parts.push(`${formatters_js.formatKMB(slot.hpRestore)} HP`);
+                if (slot.mpRestore > 0) parts.push(`${formatters_js.formatKMB(slot.mpRestore)} MP`);
+                return parts.join(' / ');
+            };
+
+            let picksText;
+            if (food.keepCurrent) {
+                picksText =
+                    '<span style="color:#4caf50;">Keep your current food</span> — it already survives this zone and nothing cheaper of the same types does.';
+            } else {
+                const lines = rec.slots.map((slot) => {
+                    if (!slot.hrid) {
+                        return `${slot.fromName} → <span style="color:#4caf50;">empty</span> <span style="color:#666;">(not needed here)</span>`;
                     }
+                    if (!slot.changed) {
+                        return `${slot.fromName} <span style="color:#666;">(kept, ${restoreLabel(slot)})</span>`;
+                    }
+                    return `${slot.fromName} → <span style="color:#e0e0e0;">${slot.name}</span> <span style="color:#666;">(${restoreLabel(slot)})</span>`;
+                });
+                picksText = lines.join('<br>');
+            }
+
+            const savings = current.costPerHour != null ? current.costPerHour - rec.costPerHour : null;
+            let savingsText = '';
+            if (savings != null && !food.keepCurrent) {
+                if (savings > 1) {
+                    savingsText = `<span style="color:#4caf50;">saves ${formatters_js.formatKMB(savings)}/hr</span>`;
+                } else if (savings < -1) {
+                    savingsText = `<span style="color:#f44336;">costs ${formatters_js.formatKMB(-savings)}/hr more</span>`;
+                } else {
+                    savingsText = '<span style="color:#888;">same spend as your current food</span>';
                 }
+            }
+
+            const currentLine =
+                current.items.length > 0
+                    ? `Current: ${current.items.join(' + ')} — ${
+                      current.costPerHour != null ? formatters_js.formatKMB(current.costPerHour) + '/hr' : 'cost unknown'
+                  }, ${(current.deathsPerHour ?? 0).toFixed(2)} deaths/hr, ${pct(current.oomFraction)} out of mana`
+                    : 'Current: no food equipped';
+
+            const shortfalls = [];
+            if (food.ceilingDies) {
+                shortfalls.push(`deaths (target relaxed to ${food.deathTarget.toFixed(2)}/hr)`);
+            }
+            if (food.ceilingOoms) {
+                shortfalls.push(`mana (target relaxed to ${pct(food.oomTarget)} out of mana)`);
+            }
+            const caveat = shortfalls.length
+                ? `<div style="color:#ff9800; font-size:10px; margin-top:4px;">Even the best tiers of your food types fall short on ${shortfalls.join(' and ')} at this zone.</div>`
+                : '';
+
+            const statsLine = food.keepCurrent
+                ? ''
+                : `<div style="color:#aaa; font-size:11px; margin-top:4px;">
+                ${formatters_js.formatKMB(rec.costPerHour)}/hr in consumables ${savingsText ? '— ' + savingsText : ''}
+                <span style="color:#666;">
+                    · ${rec.deathsPerHour.toFixed(2)} deaths/hr · ${pct(rec.oomFraction)} out of mana
+                </span>
+            </div>`;
+
+            return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT$1}; font-size:12px; font-weight:600; margin-bottom:4px;">Cheapest viable food</div>
+            <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
+            ${statsLine}
+            <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
+            <div style="color:#666; font-size:10px; margin-top:2px;">
+                ${food.simCount} sims searched. Starting from your equipped foods, each slot steps down a tier at a
+                time within its own food type until survival breaks (or climbs until it holds). Buff foods stay
+                equipped.
+            </div>
+            ${caveat}
+        </div>`;
+        }
+
+        /**
+         * Metric grid shown when an upgrade row is expanded. Identical for gold-cost
+         * and combat-level rows, so both tables share it.
+         * @param {Object} r - Result row
+         * @param {Object} baseline - Baseline metrics
+         * @returns {string} HTML for the detail cell contents
+         * @private
+         */
+        _renderUpgradeDetailCells(r, baseline) {
+            const dpsValueDelta = r.metrics.dps - baseline.dps;
+            const xpValueDelta = r.metrics.xpPerHour - baseline.xpPerHour;
+            const profitValueDelta = r.metrics.profitPerHour - baseline.profitPerHour;
+            const ephDelta = r.metrics.encountersPerHour - baseline.encountersPerHour;
+            const dphDelta = r.metrics.deathsPerHour - baseline.deathsPerHour;
+            const fmtDelta = (val) => {
+                if (Math.abs(val) < 0.5) return '—';
+                return (val >= 0 ? '+' : '') + formatters_js.formatKMB(val);
+            };
+            const fmtDeltaSmall = (val) => {
+                if (Math.abs(val) < 0.01) return '—';
+                return (val >= 0 ? '+' : '') + val.toFixed(1);
+            };
+            const deltaColor = (val) => (val > 0.5 ? '#4caf50' : val < -0.5 ? '#f44336' : '#888');
+            // For deaths, lower is better (inverted color)
+            const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
+
+            return `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
+                <div>
+                    <div style="color:#888;">DPS</div>
+                    <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.dps)}</div>
+                    <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">EXP/hr</div>
+                    <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.xpPerHour)}</div>
+                    <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">Profit/hr</div>
+                    <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.profitPerHour)}</div>
+                    <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">EPH</div>
+                    <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
+                    <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">DPH</div>
+                    <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
+                    <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)</div>
+                </div>
+            </div>
+            <div style="margin-top:6px; color:#666; font-size:10px;">
+                Baseline: DPS ${formatters_js.formatKMB(baseline.dps)} | EXP ${formatters_js.formatKMB(baseline.xpPerHour)} | Profit ${formatters_js.formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
+            </div>`;
+        }
+
+        /**
+         * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.1%.
+         * @param {Array<Object>} rows - Non-combat-level results
+         * @param {Object} baseline - Baseline metrics
+         * @returns {string} HTML
+         * @private
+         */
+        _renderUpgradeGoldTable(rows, baseline) {
+            if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
+            const { key: sortKey, asc: sortAsc } = this._upgradeSort;
+
+            const sortValue = (r) => {
                 switch (sortKey) {
                     case 'upgrade':
                         return r.candidate.description.toLowerCase();
@@ -25099,46 +26450,23 @@
                         return r.goldPer.dps;
                 }
             };
-            const sortedResults = [...results.results].sort((a, b) => {
-                const va = sortValue(a);
-                const vb = sortValue(b);
-                let cmp;
-                if (typeof va === 'string') {
-                    cmp = va.localeCompare(vb);
-                } else {
-                    const na = va === Infinity ? Number.MAX_VALUE : va;
-                    const nb = vb === Infinity ? Number.MAX_VALUE : vb;
-                    cmp = na - nb;
-                }
-                return sortAsc ? cmp : -cmp;
-            });
+            const sorted = sortRowsBy(rows, sortValue, sortAsc);
 
-            const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
             const thStyle =
                 'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
             const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
-            // Value cells stay on one line; wide free-text cells (Main Time) may wrap
-            const nowrapTd = `${tdStyle} white-space:nowrap;`;
+            const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
 
-            const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
-            const showMainTimes = isCombatLevelMode && this._showMainSkillTimes;
-            const detailColspan = showMainTimes ? 6 : 5;
-            let html;
-            if (isCombatLevelMode) {
-                const mainTimeHeader = showMainTimes
-                    ? `<th style="${thStyle}" data-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
-                    : '';
-                html = `<table style="${tableStyle}">
-            <thead><tr>
-                <th style="${thStyle}" data-sort-key="upgrade">Skill${arrow('upgrade')}</th>
-                <th style="${thStyle}" data-sort-key="time">Level Time${arrow('time')}</th>
-                ${mainTimeHeader}
-                <th style="${thStyle}" data-sort-key="dps">\u0394DPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-sort-key="xp">\u0394EXP/hr${arrow('xp')}</th>
-                <th style="${thStyle}" data-sort-key="profit">\u0394Profit/hr${arrow('profit')}</th>
-            </tr></thead><tbody>`;
-            } else {
-                html = `<table style="${tableStyle}">
+            let bestDps = Infinity;
+            let bestXp = Infinity;
+            let bestProfit = Infinity;
+            for (const r of rows) {
+                if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
+                if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
+                if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
+            }
+
+            let html = `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
@@ -25146,190 +26474,219 @@
                 <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
                 <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
             </tr></thead><tbody>`;
-            }
 
-            // Find best (lowest non-Infinity) value in each gold/0.1% column
-            let bestDps = Infinity;
-            let bestXp = Infinity;
-            let bestProfit = Infinity;
-            for (const r of results.results) {
-                if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
-                if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
-                if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
-            }
+            sorted.forEach((r, i) => {
+                const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+                const fmtGoldPer = (val) => (val === Infinity ? '—' : formatters_js.formatKMB(val));
+                const bestStyle = (val, best) =>
+                    val === best && best !== Infinity ? 'color:#4caf50; font-weight:700;' : '';
 
-            // Best (largest) raw deltas for Combat Levels mode highlighting
-            let bestDpsDelta = -Infinity;
-            let bestXpDelta = -Infinity;
-            let bestProfitDelta = -Infinity;
-            if (isCombatLevelMode) {
-                for (const r of results.results) {
-                    bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - results.baseline.dps);
-                    bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - results.baseline.xpPerHour);
-                    bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - results.baseline.profitPerHour);
+                html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}">${r.cost == null ? '?' : formatters_js.formatKMB(r.cost)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.dps, bestDps)}">${fmtGoldPer(r.goldPer.dps)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.xp, bestXp)}">${fmtGoldPer(r.goldPer.xp)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.profit, bestProfit)}">${fmtGoldPer(r.goldPer.profit)}</td>
+            </tr>
+            <tr data-upgrade-detail="${i}" style="display:none;">
+                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    ${this._renderUpgradeDetailCells(r, baseline)}
+                </td>
+            </tr>`;
+            });
+
+            return html + '</tbody></table>';
+        }
+
+        /**
+         * Combat-level table, in its own box below the gold-cost list. Levels are not
+         * purchasable, so they get grind time and raw deltas instead of a gold column
+         * and can't be ranked against gear on the same axis.
+         * @param {Array<Object>} rows - combat_level results
+         * @param {Object} baseline - Baseline metrics
+         * @returns {string} HTML
+         * @private
+         */
+        _renderUpgradeLevelTable(rows, baseline) {
+            if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'dps', asc: true };
+            const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
+            const showMainTimes = this._showMainSkillTimes;
+
+            const sortValue = (r) => {
+                // Negated deltas so ascending sort puts the biggest gain first
+                switch (sortKey) {
+                    case 'upgrade':
+                        return r.candidate.description.toLowerCase();
+                    case 'time':
+                        return r.levelTimeHours ?? Infinity;
+                    case 'main':
+                        // Focused main skills (no entries) sort first
+                        return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
+                    case 'xp':
+                        return -(r.metrics.xpPerHour - baseline.xpPerHour);
+                    case 'profit':
+                        return -(r.metrics.profitPerHour - baseline.profitPerHour);
+                    default:
+                        return -(r.metrics.dps - baseline.dps);
                 }
-            }
+            };
+            const sorted = sortRowsBy(rows, sortValue, sortAsc);
 
+            const thStyle =
+                'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
+            const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+            const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
             const fmtLevelTime = (h) => {
                 if (!Number.isFinite(h)) return '—';
                 if (h < 24) return `${h.toFixed(1)}h`;
                 return `${(h / 24).toFixed(1)}d`;
             };
 
-            sortedResults.forEach((r, i) => {
-                const bestColor = '#4caf50';
+            let bestDpsDelta = -Infinity;
+            let bestXpDelta = -Infinity;
+            let bestProfitDelta = -Infinity;
+            for (const r of rows) {
+                bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - baseline.dps);
+                bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - baseline.xpPerHour);
+                bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - baseline.profitPerHour);
+            }
+
+            const mainTimeHeader = showMainTimes
+                ? `<th style="${thStyle}" data-level-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
+                : '';
+            const detailColspan = showMainTimes ? 6 : 5;
+
+            let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT$1}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
+            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+                Levels can't be bought, so these are ranked by improvement and the grind time to earn them — not
+                against the gold costs above.
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
+                ${mainTimeHeader}
+                <th style="${thStyle}" data-level-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-level-sort-key="xp">ΔEXP/hr${arrow('xp')}</th>
+                <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
+            </tr></thead><tbody>`;
+
+            sorted.forEach((r, i) => {
+                const dpsDelta = r.metrics.dps - baseline.dps;
+                const xpDelta = r.metrics.xpPerHour - baseline.xpPerHour;
+                const profitDelta = r.metrics.profitPerHour - baseline.profitPerHour;
                 const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+                const fmtCell = (delta, pct) => {
+                    if (Math.abs(delta) < 1e-9) return '—';
+                    const sign = delta >= 0 ? '+' : '';
+                    return `${sign}${formatters_js.formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
+                };
+                const deltaStyle = (delta, best) => {
+                    if (delta === best && Number.isFinite(best) && best > 0) return 'color:#4caf50; font-weight:700;';
+                    if (delta > 0) return 'color:#8bc34a;';
+                    if (delta < 0) return 'color:#f44336;';
+                    return 'color:#888;';
+                };
+                const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
+                const timeTitle = Number.isFinite(r.levelTimeHours)
+                    ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
+                    : `No XP accrues in this skill at this zone${charmNote}`;
 
-                if (isCombatLevelMode) {
-                    const dpsDelta = r.metrics.dps - results.baseline.dps;
-                    const xpDelta = r.metrics.xpPerHour - results.baseline.xpPerHour;
-                    const profitDelta = r.metrics.profitPerHour - results.baseline.profitPerHour;
-                    const fmtCell = (delta, pct) => {
-                        if (Math.abs(delta) < 1e-9) return '—';
-                        const sign = delta >= 0 ? '+' : '';
-                        return `${sign}${formatters_js.formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
-                    };
-                    const deltaStyle = (delta, best) => {
-                        if (delta === best && Number.isFinite(best) && best > 0)
-                            return `color:${bestColor}; font-weight:700;`;
-                        if (delta > 0) return 'color:#8bc34a;';
-                        if (delta < 0) return 'color:#f44336;';
-                        return 'color:#888;';
-                    };
-                    const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
-                    const timeTitle = Number.isFinite(r.levelTimeHours)
-                        ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
-                        : `No XP accrues in this skill at this zone${charmNote}`;
-
-                    let mainTimeCell = '';
-                    if (showMainTimes) {
-                        if (r.mainSkillTimes?.length) {
-                            const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
-                            const mainDetail = r.mainSkillTimes
-                                .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
-                                .join(', ');
-                            const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
-                            mainTimeCell = `<td style="${tdStyle}" title="${mainTitle}">${mainText}</td>`;
-                        } else {
-                            const mainTitle = r.isMainSkill
-                                ? 'This is a main training skill of your weapon'
-                                : 'No target set for the main training skill(s)';
-                            mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
-                        }
+                let mainTimeCell = '';
+                if (showMainTimes) {
+                    if (r.mainSkillTimes?.length) {
+                        const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
+                        const mainDetail = r.mainSkillTimes
+                            .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
+                            .join(', ');
+                        const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
+                        mainTimeCell = `<td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;" title="${mainTitle}">${mainText}</td>`;
+                    } else {
+                        const mainTitle = r.isMainSkill
+                            ? 'This is a main training skill of your weapon'
+                            : 'No target set for the main training skill(s)';
+                        mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
                     }
-
-                    html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                    <td style="${nowrapTd}">${r.candidate.description}</td>
-                    <td style="${nowrapTd}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
-                    ${mainTimeCell}
-                    <td style="${nowrapTd} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
-                    <td style="${nowrapTd} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
-                    <td style="${nowrapTd} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
-                </tr>`;
-                } else {
-                    const costStr = r.cost == null ? '?' : formatters_js.formatKMB(r.cost);
-                    const fmtGoldPer = (val) => (val === Infinity ? '—' : formatters_js.formatKMB(val));
-                    const dpsGoldStr = fmtGoldPer(r.goldPer.dps);
-                    const xpGoldStr = fmtGoldPer(r.goldPer.xp);
-                    const profitGoldStr = fmtGoldPer(r.goldPer.profit);
-                    const dpsStyle =
-                        r.goldPer.dps === bestDps && bestDps !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-                    const xpStyle =
-                        r.goldPer.xp === bestXp && bestXp !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-                    const profitStyle =
-                        r.goldPer.profit === bestProfit && bestProfit !== Infinity
-                            ? `color:${bestColor}; font-weight:700;`
-                            : '';
-
-                    html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                    <td style="${tdStyle}">${r.candidate.description}</td>
-                    <td style="${tdStyle}">${costStr}</td>
-                    <td style="${tdStyle} ${dpsStyle}">${dpsGoldStr}</td>
-                    <td style="${tdStyle} ${xpStyle}">${xpGoldStr}</td>
-                    <td style="${tdStyle} ${profitStyle}">${profitGoldStr}</td>
-                </tr>`;
                 }
 
-                // Expanded detail row with deltas (hidden by default)
-                const dpsValueDelta = r.metrics.dps - results.baseline.dps;
-                const xpValueDelta = r.metrics.xpPerHour - results.baseline.xpPerHour;
-                const profitValueDelta = r.metrics.profitPerHour - results.baseline.profitPerHour;
-                const ephDelta = r.metrics.encountersPerHour - results.baseline.encountersPerHour;
-                const dphDelta = r.metrics.deathsPerHour - results.baseline.deathsPerHour;
-                const fmtDelta = (val) => {
-                    if (Math.abs(val) < 0.5) return '—';
-                    return (val >= 0 ? '+' : '') + formatters_js.formatKMB(val);
-                };
-                const fmtDeltaSmall = (val) => {
-                    if (Math.abs(val) < 0.01) return '—';
-                    return (val >= 0 ? '+' : '') + val.toFixed(1);
-                };
-                const deltaColor = (val) => (val > 0.5 ? '#4caf50' : val < -0.5 ? '#f44336' : '#888');
-                // For deaths, lower is better (inverted color)
-                const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
-
-                html += `<tr data-upgrade-detail="${i}" style="display:none;">
-                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
-                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
-                        <div>
-                            <div style="color:#888;">DPS</div>
-                            <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.dps)}</div>
-                            <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">EXP/hr</div>
-                            <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.xpPerHour)}</div>
-                            <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">Profit/hr</div>
-                            <div style="color:#e0e0e0;">${formatters_js.formatKMB(r.metrics.profitPerHour)}</div>
-                            <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">EPH</div>
-                            <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
-                            <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">DPH</div>
-                            <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
-                            <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)</div>
-                        </div>
-                    </div>
-                    <div style="margin-top:6px; color:#666; font-size:10px;">
-                        Baseline: DPS ${formatters_js.formatKMB(results.baseline.dps)} | EXP ${formatters_js.formatKMB(results.baseline.xpPerHour)} | Profit ${formatters_js.formatKMB(results.baseline.profitPerHour)} | EPH ${results.baseline.encountersPerHour.toFixed(1)} | DPH ${results.baseline.deathsPerHour.toFixed(1)}
-                    </div>
+                html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                ${mainTimeCell}
+                <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
+                <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
+                <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
+            </tr>
+            <tr data-level-detail="${i}" style="display:none;">
+                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                    ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
             });
 
-            html += '</tbody></table>';
+            return html + '</tbody></table></div>';
+        }
+
+        /**
+         * Render upgrade analysis results: the food card, the gold-cost table, and
+         * combat levels in their own box.
+         * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
+         * @private
+         */
+        _renderUpgradeResults(results) {
+            const container = this.panel.querySelector('#mwi-csim-upgrade-results');
+            if (!container) return;
+
+            const foodHtml = results.food ? this._renderFoodRecommendation(results.food) : '';
+
+            if (!results.results.length) {
+                container.innerHTML =
+                    foodHtml ||
+                    `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
+                return;
+            }
+
+            this._upgradeResultsData = results;
+            const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
+            const goldRows = results.results.filter((r) => r.candidate?.type !== 'combat_level');
+
+            let html = foodHtml;
+            if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
+            if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
             container.innerHTML = html;
 
-            // Wire up row click to expand/collapse
-            container.querySelectorAll('[data-upgrade-row]').forEach((row) => {
-                row.addEventListener('click', () => {
-                    const idx = row.getAttribute('data-upgrade-row');
-                    const detail = container.querySelector(`[data-upgrade-detail="${idx}"]`);
-                    if (detail) {
-                        detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
-                    }
+            // Row click expands the metric detail; the two tables keep separate
+            // namespaces so a row in one never toggles a row in the other
+            const wireRows = (rowAttr, detailAttr) => {
+                container.querySelectorAll(`[${rowAttr}]`).forEach((row) => {
+                    row.addEventListener('click', () => {
+                        const detail = container.querySelector(`[${detailAttr}="${row.getAttribute(rowAttr)}"]`);
+                        if (detail) {
+                            detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                        }
+                    });
                 });
-            });
+            };
+            wireRows('data-upgrade-row', 'data-upgrade-detail');
+            wireRows('data-level-row', 'data-level-detail');
 
-            // Wire up header click to sort by column (second click flips direction)
-            container.querySelectorAll('[data-sort-key]').forEach((th) => {
-                th.addEventListener('click', () => {
-                    const key = th.getAttribute('data-sort-key');
-                    if (this._upgradeSort.key === key) {
-                        this._upgradeSort.asc = !this._upgradeSort.asc;
-                    } else {
-                        this._upgradeSort = { key, asc: true };
-                    }
-                    this._renderUpgradeResults(this._upgradeResultsData);
+            // Header click sorts that table (second click flips direction)
+            const wireSort = (attr, stateKey) => {
+                container.querySelectorAll(`[${attr}]`).forEach((th) => {
+                    th.addEventListener('click', () => {
+                        const key = th.getAttribute(attr);
+                        if (this[stateKey].key === key) {
+                            this[stateKey].asc = !this[stateKey].asc;
+                        } else {
+                            this[stateKey] = { key, asc: true };
+                        }
+                        this._renderUpgradeResults(this._upgradeResultsData);
+                    });
                 });
-            });
+            };
+            wireSort('data-sort-key', '_upgradeSort');
+            wireSort('data-level-sort-key', '_upgradeLevelSort');
         }
     }
 
@@ -27005,10 +28362,6 @@
                     rateVal = (r.clearRate || 0) * 100;
                     deltaVal = (r.clearRateDelta || 0) * 100;
                     rateStr = rateVal.toFixed(1) + '%';
-                } else if (r.metricType === 'experience') {
-                    rateVal = 0;
-                    deltaVal = r.xpDeltaPct || 0;
-                    rateStr = 'XP';
                 } else {
                     rateVal = (r.winRate || 0) * 100;
                     deltaVal = (r.winRateDelta || 0) * 100;
@@ -30311,7 +31664,7 @@
      * Get game object via React fiber
      * @returns {Object|null} Game component instance
      */
-    function getGameObject() {
+    function getGameObject$1() {
         const rootEl = document.getElementById('root');
         const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
         if (!rootFiber) return null;
@@ -30331,7 +31684,7 @@
      * @param {number} enhancementLevel - Enhancement level (default 0)
      */
     function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
-        const game = getGameObject();
+        const game = getGameObject$1();
         if (game?.handleGoToMarketplace) {
             game.handleGoToMarketplace(itemHrid, enhancementLevel);
         }
@@ -30874,6 +32227,200 @@
 
     const abilityBookCalculator = new AbilityBookCalculator();
     abilityBookCalculator.setupSettingListener();
+
+    /**
+     * Item Navigation Utilities
+     * Handles Alt+click navigation to crafting/gathering actions or item dictionary
+     */
+
+
+    /**
+     * Get game object via React fiber tree traversal
+     * @returns {Object|null} Game component instance
+     */
+    function getGameObject() {
+        const rootEl = document.getElementById('root');
+        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+        if (!rootFiber) return null;
+
+        function find(fiber) {
+            if (!fiber) return null;
+            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
+            return find(fiber.child) || find(fiber.sibling);
+        }
+
+        return find(rootFiber);
+    }
+
+    /**
+     * Open the game's Item Dictionary for an item.
+     * @param {string} itemHrid - Item HRID to open
+     * @returns {boolean} True if the dictionary was opened
+     */
+    function openItemDictionary(itemHrid) {
+        const game = getGameObject();
+        if (!game?.handleOpenItemDictionary) {
+            return false;
+        }
+        // Validate HRID exists before passing to game (invalid HRIDs crash renderDescription)
+        if (!dataManager.getItemDetails(itemHrid)) {
+            return false;
+        }
+        game.handleOpenItemDictionary(itemHrid);
+        return true;
+    }
+
+    /**
+     * Ability Dictionary Button
+     * Adds an "Open Item Dictionary" button to the ability action menu (the popup
+     * shown when clicking an ability in the Abilities panel), opening the
+     * dictionary entry for that ability's book item.
+     *
+     * The popup's class name is unknown and varies with game builds, so menus are
+     * found purely by content: a container holding a "Link to Chat" button plus a
+     * "Lv.N <Ability Name>" heading whose name resolves to a real ability. Item
+     * action menus are left alone — they already have this button.
+     */
+
+
+    const BTN_CLASS = 'mwi-ability-dictionary-btn';
+
+    class AbilityDictionaryButton {
+        constructor() {
+            this.isInitialized = false;
+            this.unregisterHandlers = [];
+            this._abilityNameToHrid = null;
+        }
+
+        initialize() {
+            if (this.isInitialized) return;
+            if (!config.getSetting('abilities_dictionaryButton')) return;
+            this.isInitialized = true;
+
+            // Class-agnostic: scan added subtrees for the popup's "Link to Chat"
+            // button and work up to its menu container
+            const unregister = domObserver.register('AbilityDictionaryButton', (node) => this._scan(node));
+            this.unregisterHandlers.push(unregister);
+
+            this._scan(document.body);
+        }
+
+        /**
+         * Find ability menus inside an added subtree via their Link to Chat button.
+         * @param {HTMLElement} root
+         * @private
+         */
+        _scan(root) {
+            if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
+            const buttons = [];
+            if (root.tagName === 'BUTTON') buttons.push(root);
+            if (root.childElementCount > 0) buttons.push(...root.querySelectorAll('button'));
+
+            for (const btn of buttons) {
+                if (btn.textContent.trim() !== 'Link to Chat') continue;
+                // The menu is the nearest ancestor that also holds the "Lv.N" heading
+                let menu = btn.parentElement;
+                for (let depth = 0; menu && depth < 4; depth++) {
+                    if (/Lv\.\s*\d+/.test(menu.textContent || '')) break;
+                    menu = menu.parentElement;
+                }
+                if (menu) this._injectButton(menu, btn);
+            }
+        }
+
+        /**
+         * Lazy ability-name → hrid lookup built from game data.
+         * @returns {Map<string, string>}
+         * @private
+         */
+        _getAbilityNameMap() {
+            if (this._abilityNameToHrid) return this._abilityNameToHrid;
+            const map = new Map();
+            const abilityMap = dataManager.getInitClientData()?.abilityDetailMap || {};
+            for (const [hrid, details] of Object.entries(abilityMap)) {
+                if (details?.name) map.set(details.name.toLowerCase(), hrid);
+            }
+            // Only cache once game data is actually loaded
+            if (map.size > 0) this._abilityNameToHrid = map;
+            return map;
+        }
+
+        /**
+         * Resolve the ability an action menu belongs to via its "Lv.N Name" heading.
+         * @param {HTMLElement} menu
+         * @returns {string|null} Ability HRID
+         * @private
+         */
+        _findAbilityHrid(menu) {
+            // Item menus carry an item name node — never treat those as abilities
+            if (menu.querySelector('[class*="Item_name"]')) return null;
+
+            const match = (menu.textContent || '').match(/Lv\.\s*\d+\s*([^\n]+?)\s*(?:Link to Chat|$)/);
+            if (!match) return null;
+            return this._getAbilityNameMap().get(match[1].trim().toLowerCase()) || null;
+        }
+
+        /**
+         * Inject the dictionary button into an ability action menu.
+         * @param {HTMLElement} menu - Menu container
+         * @param {HTMLElement} referenceBtn - The menu's Link to Chat button (style + anchor)
+         * @private
+         */
+        _injectButton(menu, referenceBtn) {
+            if (!menu || menu.querySelector(`.${BTN_CLASS}`)) return;
+
+            const abilityHrid = this._findAbilityHrid(menu);
+            if (!abilityHrid) return;
+
+            // Ability books share the ability's slug: /abilities/puncture → /items/puncture
+            const bookHrid = abilityHrid.replace('/abilities/', '/items/');
+            if (!dataManager.getItemDetails(bookHrid)?.abilityBookDetail) return;
+
+            const btn = document.createElement('button');
+            btn.className = `${referenceBtn?.className || ''} ${BTN_CLASS}`.trim();
+            btn.textContent = 'Open Item Dictionary';
+            btn.style.cssText = 'cursor: pointer; width: 100%; margin-top: 4px;';
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!openItemDictionary(bookHrid)) {
+                    console.warn('[AbilityDictionaryButton] Could not open dictionary for', bookHrid);
+                }
+            });
+
+            // Place directly under Link to Chat, at whatever depth it lives
+            if (referenceBtn?.parentElement) {
+                referenceBtn.insertAdjacentElement('afterend', btn);
+            } else {
+                menu.appendChild(btn);
+            }
+        }
+
+        disable() {
+            for (const unregister of this.unregisterHandlers) {
+                unregister();
+            }
+            this.unregisterHandlers = [];
+            document.querySelectorAll(`.${BTN_CLASS}`).forEach((btn) => btn.remove());
+            this._abilityNameToHrid = null;
+            this.isInitialized = false;
+        }
+    }
+
+    const abilityDictionaryButton = new AbilityDictionaryButton();
+
+    var abilityDictionaryButton$1 = {
+        name: 'Ability Dictionary Button',
+        initialize: () => {
+            abilityDictionaryButton.initialize();
+        },
+        cleanup: () => {
+            abilityDictionaryButton.disable();
+        },
+        disable: () => {
+            abilityDictionaryButton.disable();
+        },
+    };
 
     /**
      * Worker Pool Manager
@@ -33980,6 +35527,7 @@ self.onmessage = function (e) {
         },
         combatStats,
         abilityBookCalculator,
+        abilityDictionaryButton: abilityDictionaryButton$1,
         combatScore,
         characterCardButton,
         combatSim,

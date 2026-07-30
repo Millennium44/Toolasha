@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.85.0
+ * Version: 2.86.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -1638,7 +1638,7 @@
                     id: 'market_bulkSellAssistant',
                     label: 'Market: Bulk Sell Assistant',
                     type: 'checkbox',
-                    default: true,
+                    default: false,
                     help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling every tradable inventory item — most valuable stack first, optionally limited to one Toolasha inventory tab — via a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells per the queue-age and supply-ratio rules below; otherwise posts a sell listing.',
                 },
                 market_bulkSellQueueDays: {
@@ -1658,6 +1658,21 @@
                     min: 0,
                     max: 100,
                     help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
+                },
+                market_bulkSellVendorCheck: {
+                    id: 'market_bulkSellVendorCheck',
+                    label: 'Market: Bulk sell to vendor when market is no better',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'When the game vendor pays at least as much per item as the market would net after the 2% tax (e.g. vendor 48 vs ask 49 → 48 net), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                },
+                market_bulkSellMinListingValue: {
+                    id: 'market_bulkSellMinListingValue',
+                    label: 'Market: Bulk sell minimum stack value for a sell listing',
+                    type: 'number',
+                    default: 1500000,
+                    min: 0,
+                    help: 'Stacks worth less than this (count × ask price) are insta-sold to the best bid instead of using up a sell listing slot. 0 turns this rule off. Default: 1,500,000.',
                 },
                 market_tradeHistory: {
                     id: 'market_tradeHistory',
@@ -2105,6 +2120,13 @@
                     default: true,
                     help: 'Displays equipped abilities, consumables, and their combat triggers below the profile',
                 },
+                abilities_dictionaryButton: {
+                    id: 'abilities_dictionaryButton',
+                    label: 'Abilities: Add Open Item Dictionary to ability menus',
+                    type: 'checkbox',
+                    default: true,
+                    help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, opening that ability's book entry.",
+                },
                 characterCard: {
                     id: 'characterCard',
                     label: 'Profile panel: Show View Card button',
@@ -2333,6 +2355,13 @@
                     min: 0,
                     max: 32,
                     help: 'Maximum Web Worker threads for simulations (0 = auto, uses all available cores)',
+                },
+                combatSim_sharedSeed: {
+                    id: 'combatSim_sharedSeed',
+                    label: 'Combat Simulator: Shared random seed for upgrade comparisons',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
                 },
                 combatStats: {
                     id: 'combatStats',
@@ -2670,6 +2699,13 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Displays XP/hr rates, rankings, and a weekly chart on the Guild Overview, Members, and Guild Leaderboard tabs. Disable the standalone Guild XP/h userscript if using this.',
+                },
+                guildIdleDisplay: {
+                    id: 'guildIdleDisplay',
+                    label: 'Guild Overview: Show idle members list',
+                    type: 'checkbox',
+                    default: true,
+                    help: 'Displays a list of guild members with no action running on the Guild Overview tab (actions keep running while offline, so offline members without one count too — shown dimmed). Members hiding their online status are included; only their action state is shown, never their presence.',
                 },
                 guildTrialSignupDisplay: {
                     id: 'guildTrialSignupDisplay',

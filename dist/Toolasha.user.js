@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      2.85.0
+// @version      2.86.0
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
 // @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tib for his generous contribution of the Character Cards. Thank you to Sapnas for -deeply- testing and singlehandedly help me improve performance. Special thanks to Zaeter for the name.
 // @license      CC-BY-NC-SA-4.0
@@ -19,12 +19,12 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@b49c45aca1260fa3d21c17e07442e4c3fb548aba/dist/libraries/toolasha-ui.js
+// @require      https://UPDATE-THIS-URL/toolasha-core.js
+// @require      https://UPDATE-THIS-URL/toolasha-utils.js
+// @require      https://UPDATE-THIS-URL/toolasha-market.js
+// @require      https://UPDATE-THIS-URL/toolasha-actions.js
+// @require      https://UPDATE-THIS-URL/toolasha-combat.js
+// @require      https://UPDATE-THIS-URL/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -387,6 +387,13 @@
                 name: 'Ability Book Calculator',
                 category: 'Combat',
                 module: Combat.abilityBookCalculator,
+                async: false,
+            },
+            {
+                key: 'abilityDictionaryButton',
+                name: 'Ability Dictionary Button',
+                category: 'Combat',
+                module: Combat.abilityDictionaryButton,
                 async: false,
             },
             { key: 'zoneIndices', name: 'Zone Indices', category: 'Combat', module: Combat.zoneIndices, async: false },
@@ -949,7 +956,7 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '2.85.0';
+        targetWindow.Toolasha.version = '2.86.0';
 
         // Feature toggle API (for users to manage settings via console)
         targetWindow.Toolasha.features = {
@@ -964,6 +971,7 @@
         // Guild XP data management
         targetWindow.Toolasha.guild = {
             resetMemberXP: () => UI.guildXPTracker.resetMemberData(),
+            memberSample: (name) => UI.guildXPTracker.getRawMemberSample(name),
         };
 
         // Debug utilities (for diagnosing issues via console)

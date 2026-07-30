@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.85.0
+ * Version: 2.86.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -14840,22 +14840,46 @@ self.onmessage = function (e) {
         }
 
         /**
-         * Tab-bar toggle button (Lab Sim style) that shows/hides the floating
-         * panel, next to the Market History tab when present.
+         * Tab-bar toggle that shows/hides the floating panel. Cloned from a
+         * native tab (same approach as the Market History tab) so it looks like
+         * part of the game's tab bar.
          */
         _ensureButton(tabBar) {
-            if (this.toggleBtn && tabBar.contains(this.toggleBtn)) return;
+            if (this.toggleBtn && tabBar.contains(this.toggleBtn)) {
+                // The Market History tab is injected by its own feature and can
+                // land after us — keep our button on its right
+                const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
+                if (
+                    historyTab &&
+                    historyTab.nextElementSibling !== this.toggleBtn &&
+                    historyTab.compareDocumentPosition(this.toggleBtn) & Node.DOCUMENT_POSITION_PRECEDING
+                ) {
+                    historyTab.after(this.toggleBtn);
+                }
+                return;
+            }
             if (this.toggleBtn) this.toggleBtn.remove();
 
-            const button = document.createElement('div');
+            const referenceTab = Array.from(tabBar.children).find((btn) => btn.textContent.includes('My Listings'));
+            if (!referenceTab) return;
+
+            const button = referenceTab.cloneNode(true);
             button.id = BUTTON_ID;
-            button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-1q2h7u5';
-            button.textContent = 'Bulk Sell';
             button.title = 'Show / hide the Bulk Sell panel';
-            button.style.cssText =
-                'cursor:pointer; background:linear-gradient(135deg, #3a7bd5, #5f3dc4); color:#fff; border-radius:4px; ' +
-                'padding:4px 10px; font-size:12px; white-space:nowrap; align-self:center; margin:0 4px;';
-            button.addEventListener('click', () => this._togglePanel());
+            const badge = button.querySelector('[class*="TabsComponent_badge"]');
+            if (badge) {
+                badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
+            } else {
+                button.textContent = 'Bulk Sell';
+            }
+            button.classList.remove('Mui-selected');
+            button.setAttribute('aria-selected', 'false');
+            button.setAttribute('tabindex', '-1');
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this._togglePanel();
+            });
 
             const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
             const firstCustomTab = Array.from(tabBar.children).find(
@@ -14883,9 +14907,10 @@ self.onmessage = function (e) {
             this._syncButton();
         }
 
+        /** Underline the tab while the panel is open, like an active tab */
         _syncButton() {
             if (!this.toggleBtn) return;
-            this.toggleBtn.style.outline = this.panelVisible ? '1px solid #9ec4ff' : '';
+            this.toggleBtn.style.boxShadow = this.panelVisible ? 'inset 0 -2px 0 0 #4a9eff' : '';
         }
 
         _removeButton() {
@@ -15037,8 +15062,9 @@ self.onmessage = function (e) {
                 mainBtn.title = 'Skip this item';
             } else if (this.state === 'awaiting_confirm') {
                 const d = this.decision;
-                const verb = d?.insta ? 'Insta-sell' : 'List';
-                status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatters_js.formatKMB(d?.price || 0)} (${d?.reason}) — confirm in modal`;
+                const verb = d?.vendor ? 'Vendor-sell' : d?.insta ? 'Insta-sell' : 'List';
+                const confirmHint = d?.vendor ? 'click Sell For in the item menu' : 'confirm in modal';
+                status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatters_js.formatKMB(d?.price || 0)} (${d?.reason}) — ${confirmHint}`;
                 mainBtn.textContent = '⏭ Skip';
                 mainBtn.title = 'Close the modal and skip this item';
             }
@@ -15141,9 +15167,46 @@ self.onmessage = function (e) {
             this.state = 'preparing';
             this._render();
 
+            // Vendor check runs BEFORE any marketplace navigation: the item action
+            // menu must be the only thing touching the UI, or the navigation's
+            // trailing clicks/re-renders dismiss it right after it opens
+            if (this._tryVendorSell()) return;
+
             navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
             // No order book within the timeout → item isn't marketable right now
             this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
+        }
+
+        /**
+         * Vendor beats the market when its flat price matches or exceeds the
+         * cached market price net of the 2% tax (e.g. ask 49 → 48 net = 48
+         * vendor). Cached prices are plenty accurate for this comparison and let
+         * the decision happen without navigating the marketplace.
+         * @returns {boolean} True when the vendor flow was opened
+         */
+        _tryVendorSell() {
+            if (!config.getSetting('market_bulkSellVendorCheck')) return false;
+            if (this.current.enhancementLevel !== 0) return false;
+            const vendorPrice = dataManager.getInitClientData()?.itemDetailMap?.[this.current.itemHrid]?.sellPrice || 0;
+            if (vendorPrice <= 0) return false;
+            const cached = marketAPI.getPrice(this.current.itemHrid, 0);
+            const ask = cached?.ask ?? null;
+            const bid = cached?.bid ?? null;
+            if (ask === null && bid === null) return false;
+
+            // Vendor must beat the market path the decision rules would actually
+            // take: below the minimum listing value the insta path is forced, so
+            // vendor competes with the bid; otherwise with the ask a listing
+            // would target
+            const rawMin = Number(config.getSettingValue('market_bulkSellMinListingValue', 1500000));
+            const minListingValue = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : 1500000;
+            const stackValue = this.current.count * (ask ?? bid);
+            const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
+            const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
+            if (referencePrice <= 0) return false;
+            const marketNet = Math.floor(referencePrice * 0.98);
+            if (vendorPrice < marketNet) return false;
+            return this._openVendorSell(vendorPrice, marketNet);
         }
 
         _onOrderBook(data) {
@@ -15162,9 +15225,10 @@ self.onmessage = function (e) {
         /**
          * Decide insta-sell vs listing per the order book, then open the matching
          * game modal (the quantity is prefilled when it appears).
-         * Two configurable insta-sell rules (either one triggers, 0 disables it):
-         * ask supply exceeds bid demand × the supply ratio, or the front ask
-         * listing has waited longer than the queue-age limit (queue isn't moving).
+         * Three configurable insta-sell rules (any one triggers, 0 disables it):
+         * ask supply exceeds bid demand × the supply ratio, the front ask listing
+         * has waited longer than the queue-age limit (queue isn't moving), or the
+         * stack is worth less than the minimum listing value (not worth a slot).
          */
         _decideAndOpen(book) {
             const asks = book?.asks || [];
@@ -15188,6 +15252,7 @@ self.onmessage = function (e) {
             };
             const queueDaysLimit = readNumberSetting('market_bulkSellQueueDays', 2);
             const supplyRatio = readNumberSetting('market_bulkSellSupplyRatio', 1);
+            const minListingValue = readNumberSetting('market_bulkSellMinListingValue', 1500000);
 
             let frontAskDays = 0;
             const created = asks[0]?.createdTimestamp;
@@ -15195,15 +15260,21 @@ self.onmessage = function (e) {
                 frontAskDays = Math.max(0, (Date.now() - new Date(created).getTime()) / MS_PER_DAY);
             }
 
+            // Value the stack at the ask (what a listing would target)
+            const stackValue = this.current.count * (asks[0]?.price ?? bids[0]?.price ?? 0);
             const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
             const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
-            const insta = (supplyTriggered || ageTriggered) && bids.length > 0;
+            const valueTriggered = minListingValue > 0 && stackValue < minListingValue;
+            const insta = (supplyTriggered || ageTriggered || valueTriggered) && bids.length > 0;
             const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
+
             const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
             const reason = insta
                 ? supplyTriggered
                     ? `supply ${formatters_js.formatKMB(askQty)} > demand ${formatters_js.formatKMB(bidQty)}${ratioLabel}`
-                    : `ask queue ~${frontAskDays.toFixed(1)}d`
+                    : ageTriggered
+                      ? `ask queue ~${frontAskDays.toFixed(1)}d`
+                      : `stack ${formatters_js.formatKMB(stackValue)} < ${formatters_js.formatKMB(minListingValue)} min`
                 : 'queue ok';
             this.decision = { insta, price, reason };
 
@@ -15214,8 +15285,69 @@ self.onmessage = function (e) {
                 if (this.state !== 'preparing') return;
                 this.state = 'awaiting_confirm';
                 this._render();
-                this._watchModalClose();
+                this._watchClose();
             }).catch(() => this._skip('sell button not found'));
+        }
+
+        /**
+         * Vendor path: open the item's inventory action menu, click "All" so the
+         * whole stack is entered, and wait for the user's click on the game's
+         * "Sell For … Coins" button (the one server action). Falls back to the
+         * normal market flow when the inventory tile or menu can't be found.
+         * @param {number} vendorPrice - Per-item vendor price
+         * @param {number} marketNet - Per-item market price net of the 2% tax
+         * @returns {boolean} Whether the vendor flow was opened
+         */
+        _openVendorSell(vendorPrice, marketNet) {
+            const iconName = this.current.itemHrid.split('/').pop();
+            const tiles = document.querySelectorAll('[class*="Inventory_items"] [class*="Item_itemContainer"]');
+            let tile = null;
+            for (const container of tiles) {
+                const href = container.querySelector('svg use')?.getAttribute('href') || '';
+                if (!href.endsWith(`#${iconName}`)) continue;
+                // Vendor path only runs for +0 items — skip enhanced variants
+                if (container.querySelector('[class*="Item_enhancementLevel"]')) continue;
+                tile = container;
+                break;
+            }
+            // Tile not visible (inventory panel closed / filtered) — let the
+            // caller fall back to the normal market flow
+            if (!tile) return false;
+
+            (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
+                new MouseEvent('click', { bubbles: true, cancelable: true })
+            );
+
+            // Wait for the menu, retrying once — clicking the tile again reopens
+            // it if something dismissed the first attempt
+            const awaitMenu = (attempt) => {
+                if (this.state !== 'preparing') return;
+                const menu = document.querySelector('[class*="Item_actionMenu"]');
+                if (!menu) {
+                    if (attempt < 2) {
+                        (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
+                            new MouseEvent('click', { bubbles: true, cancelable: true })
+                        );
+                        setTimeout(() => awaitMenu(attempt + 1), 400);
+                    } else {
+                        this._skip('item menu did not open');
+                    }
+                    return;
+                }
+                const allBtn = Array.from(menu.querySelectorAll('button')).find((b) => b.textContent.trim() === 'All');
+                allBtn?.click();
+                this.decision = {
+                    insta: false,
+                    vendor: true,
+                    price: vendorPrice,
+                    reason: `vendor ${formatters_js.formatKMB(vendorPrice)} ≥ market net ${formatters_js.formatKMB(marketNet)}`,
+                };
+                this.state = 'awaiting_confirm';
+                this._render();
+                this._watchClose('[class*="Item_actionMenu"]');
+            };
+            setTimeout(() => awaitMenu(1), 350);
+            return true;
         }
 
         /** Prefill the quantity when the sell modal opens during a run */
@@ -15236,10 +15368,11 @@ self.onmessage = function (e) {
         }
 
         /**
-         * Advance to the next item when the modal closes — confirmed or dismissed,
-         * either way this item is dealt with.
+         * Advance to the next item when the given element closes — confirmed or
+         * dismissed, either way this item is dealt with.
+         * @param {string} [selector] - Element whose disappearance means done
          */
-        _watchModalClose() {
+        _watchClose(selector = '[class*="Modal_modalContainer"]') {
             let seen = false;
             this.modalPoll = setInterval(() => {
                 if (this.state !== 'awaiting_confirm') {
@@ -15247,7 +15380,7 @@ self.onmessage = function (e) {
                     this.modalPoll = null;
                     return;
                 }
-                const open = !!document.querySelector('[class*="Modal_modalContainer"]');
+                const open = !!document.querySelector(selector);
                 if (open) {
                     seen = true;
                 } else if (seen) {
@@ -15263,6 +15396,20 @@ self.onmessage = function (e) {
             this._clearTransient();
             // Close any modal the run opened so it can't linger over the next item
             document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+            // Dismiss an open item action menu (vendor path) the same way the
+            // game does — via Escape
+            if (document.querySelector('[class*="Item_actionMenu"]')) {
+                document.dispatchEvent(
+                    new KeyboardEvent('keydown', {
+                        key: 'Escape',
+                        code: 'Escape',
+                        keyCode: 27,
+                        which: 27,
+                        bubbles: true,
+                        cancelable: true,
+                    })
+                );
+            }
             this.statusNote = note || '';
             this.index++;
             this.state = 'preparing';
