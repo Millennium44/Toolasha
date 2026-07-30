@@ -36,6 +36,30 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 
+/**
+ * Sort result rows by a computed key, treating Infinity as "worst" so unknown
+ * values land at the end rather than dominating the comparison.
+ * @param {Array<Object>} rows - Result rows
+ * @param {Function} keyOf - (row) => number|string
+ * @param {boolean} asc - Ascending when true
+ * @returns {Array<Object>} New sorted array
+ */
+function sortRowsBy(rows, keyOf, asc) {
+    return [...rows].sort((a, b) => {
+        const va = keyOf(a);
+        const vb = keyOf(b);
+        let cmp;
+        if (typeof va === 'string') {
+            cmp = va.localeCompare(vb);
+        } else {
+            const na = va === Infinity ? Number.MAX_VALUE : va;
+            const nb = vb === Infinity ? Number.MAX_VALUE : vb;
+            cmp = na - nb;
+        }
+        return asc ? cmp : -cmp;
+    });
+}
+
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
     'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
@@ -110,12 +134,23 @@ const UPGRADE_MODES = [
         defaultOn: true,
         title: 'Leveling the abilities you already have equipped',
     },
-    { key: 'ability_swap', label: 'Ability Swaps', defaultOn: false, title: 'Replacing an equipped ability' },
+    {
+        key: 'ability_swap',
+        label: 'Ability Swaps',
+        defaultOn: false,
+        title:
+            'Replacing an equipped ability with a different one.\n\n' +
+            'Slow and rough. It sims every style-compatible ability for every slot, so it adds far more sims than ' +
+            'the other sets — expect a long run. And a swapped-in ability is simmed at the level of the ability it ' +
+            'replaces with that ability book’s default triggers, so it gets none of the trigger tuning your ' +
+            'equipped abilities have, and its cost assumes leveling a fresh book from scratch. Treat the ranking ' +
+            'as a hint about which abilities are worth trying by hand, not a verdict.',
+    },
     {
         key: 'combat_level',
         label: 'Combat Lv',
         defaultOn: false,
-        title: 'Raising combat skill levels — these cost grind time, not gold, so check this one on its own for level-time estimates',
+        title: 'Raising combat skill levels. Levels cost grind time rather than gold, so they get their own results box below the gold-cost list.',
     },
     { key: 'house', label: 'House', defaultOn: false, title: 'One level on each combat-relevant house room' },
     {
@@ -3773,8 +3808,270 @@ class CombatSimUI {
     }
 
     /**
-     * Render upgrade analysis results as an expandable table.
-     * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}] }
+     * Metric grid shown when an upgrade row is expanded. Identical for gold-cost
+     * and combat-level rows, so both tables share it.
+     * @param {Object} r - Result row
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML for the detail cell contents
+     * @private
+     */
+    _renderUpgradeDetailCells(r, baseline) {
+        const dpsValueDelta = r.metrics.dps - baseline.dps;
+        const xpValueDelta = r.metrics.xpPerHour - baseline.xpPerHour;
+        const profitValueDelta = r.metrics.profitPerHour - baseline.profitPerHour;
+        const ephDelta = r.metrics.encountersPerHour - baseline.encountersPerHour;
+        const dphDelta = r.metrics.deathsPerHour - baseline.deathsPerHour;
+        const fmtDelta = (val) => {
+            if (Math.abs(val) < 0.5) return '—';
+            return (val >= 0 ? '+' : '') + formatKMB(val);
+        };
+        const fmtDeltaSmall = (val) => {
+            if (Math.abs(val) < 0.01) return '—';
+            return (val >= 0 ? '+' : '') + val.toFixed(1);
+        };
+        const deltaColor = (val) => (val > 0.5 ? '#4caf50' : val < -0.5 ? '#f44336' : '#888');
+        // For deaths, lower is better (inverted color)
+        const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
+
+        return `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
+                <div>
+                    <div style="color:#888;">DPS</div>
+                    <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
+                    <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">EXP/hr</div>
+                    <div style="color:#e0e0e0;">${formatKMB(r.metrics.xpPerHour)}</div>
+                    <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">Profit/hr</div>
+                    <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour)}</div>
+                    <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">EPH</div>
+                    <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
+                    <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)</div>
+                </div>
+                <div>
+                    <div style="color:#888;">DPH</div>
+                    <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
+                    <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)</div>
+                </div>
+            </div>
+            <div style="margin-top:6px; color:#666; font-size:10px;">
+                Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit ${formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
+            </div>`;
+    }
+
+    /**
+     * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.1%.
+     * @param {Array<Object>} rows - Non-combat-level results
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUpgradeGoldTable(rows, baseline) {
+        if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
+        const { key: sortKey, asc: sortAsc } = this._upgradeSort;
+
+        const sortValue = (r) => {
+            switch (sortKey) {
+                case 'upgrade':
+                    return r.candidate.description.toLowerCase();
+                case 'cost':
+                    return r.cost == null ? Infinity : r.cost;
+                case 'xp':
+                    return r.goldPer.xp;
+                case 'profit':
+                    return r.goldPer.profit;
+                default:
+                    return r.goldPer.dps;
+            }
+        };
+        const sorted = sortRowsBy(rows, sortValue, sortAsc);
+
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+
+        let bestDps = Infinity;
+        let bestXp = Infinity;
+        let bestProfit = Infinity;
+        for (const r of rows) {
+            if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
+            if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
+            if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
+        }
+
+        let html = `<table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
+                <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
+                <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
+            </tr></thead><tbody>`;
+
+        sorted.forEach((r, i) => {
+            const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+            const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
+            const bestStyle = (val, best) =>
+                val === best && best !== Infinity ? 'color:#4caf50; font-weight:700;' : '';
+
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}">${r.cost == null ? '?' : formatKMB(r.cost)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.dps, bestDps)}">${fmtGoldPer(r.goldPer.dps)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.xp, bestXp)}">${fmtGoldPer(r.goldPer.xp)}</td>
+                <td style="${tdStyle} ${bestStyle(r.goldPer.profit, bestProfit)}">${fmtGoldPer(r.goldPer.profit)}</td>
+            </tr>
+            <tr data-upgrade-detail="${i}" style="display:none;">
+                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    ${this._renderUpgradeDetailCells(r, baseline)}
+                </td>
+            </tr>`;
+        });
+
+        return html + '</tbody></table>';
+    }
+
+    /**
+     * Combat-level table, in its own box below the gold-cost list. Levels are not
+     * purchasable, so they get grind time and raw deltas instead of a gold column
+     * and can't be ranked against gear on the same axis.
+     * @param {Array<Object>} rows - combat_level results
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUpgradeLevelTable(rows, baseline) {
+        if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'dps', asc: true };
+        const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
+        const showMainTimes = this._showMainSkillTimes;
+
+        const sortValue = (r) => {
+            // Negated deltas so ascending sort puts the biggest gain first
+            switch (sortKey) {
+                case 'upgrade':
+                    return r.candidate.description.toLowerCase();
+                case 'time':
+                    return r.levelTimeHours ?? Infinity;
+                case 'main':
+                    // Focused main skills (no entries) sort first
+                    return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
+                case 'xp':
+                    return -(r.metrics.xpPerHour - baseline.xpPerHour);
+                case 'profit':
+                    return -(r.metrics.profitPerHour - baseline.profitPerHour);
+                default:
+                    return -(r.metrics.dps - baseline.dps);
+            }
+        };
+        const sorted = sortRowsBy(rows, sortValue, sortAsc);
+
+        const thStyle =
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        const fmtLevelTime = (h) => {
+            if (!Number.isFinite(h)) return '—';
+            if (h < 24) return `${h.toFixed(1)}h`;
+            return `${(h / 24).toFixed(1)}d`;
+        };
+
+        let bestDpsDelta = -Infinity;
+        let bestXpDelta = -Infinity;
+        let bestProfitDelta = -Infinity;
+        for (const r of rows) {
+            bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - baseline.dps);
+            bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - baseline.xpPerHour);
+            bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - baseline.profitPerHour);
+        }
+
+        const mainTimeHeader = showMainTimes
+            ? `<th style="${thStyle}" data-level-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
+            : '';
+        const detailColspan = showMainTimes ? 6 : 5;
+
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
+            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+                Levels can't be bought, so these are ranked by improvement and the grind time to earn them — not
+                against the gold costs above.
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
+                ${mainTimeHeader}
+                <th style="${thStyle}" data-level-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-level-sort-key="xp">ΔEXP/hr${arrow('xp')}</th>
+                <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
+            </tr></thead><tbody>`;
+
+        sorted.forEach((r, i) => {
+            const dpsDelta = r.metrics.dps - baseline.dps;
+            const xpDelta = r.metrics.xpPerHour - baseline.xpPerHour;
+            const profitDelta = r.metrics.profitPerHour - baseline.profitPerHour;
+            const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+            const fmtCell = (delta, pct) => {
+                if (Math.abs(delta) < 1e-9) return '—';
+                const sign = delta >= 0 ? '+' : '';
+                return `${sign}${formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
+            };
+            const deltaStyle = (delta, best) => {
+                if (delta === best && Number.isFinite(best) && best > 0) return 'color:#4caf50; font-weight:700;';
+                if (delta > 0) return 'color:#8bc34a;';
+                if (delta < 0) return 'color:#f44336;';
+                return 'color:#888;';
+            };
+            const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
+            const timeTitle = Number.isFinite(r.levelTimeHours)
+                ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
+                : `No XP accrues in this skill at this zone${charmNote}`;
+
+            let mainTimeCell = '';
+            if (showMainTimes) {
+                if (r.mainSkillTimes?.length) {
+                    const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
+                    const mainDetail = r.mainSkillTimes
+                        .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
+                        .join(', ');
+                    const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
+                    mainTimeCell = `<td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;" title="${mainTitle}">${mainText}</td>`;
+                } else {
+                    const mainTitle = r.isMainSkill
+                        ? 'This is a main training skill of your weapon'
+                        : 'No target set for the main training skill(s)';
+                    mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
+                }
+            }
+
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}">
+                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
+                ${mainTimeCell}
+                <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
+                <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
+                <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
+            </tr>
+            <tr data-level-detail="${i}" style="display:none;">
+                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                    ${this._renderUpgradeDetailCells(r, baseline)}
+                </td>
+            </tr>`;
+        });
+
+        return html + '</tbody></table></div>';
+    }
+
+    /**
+     * Render upgrade analysis results: the food card, the gold-cost table, and
+     * combat levels in their own box.
+     * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
      * @private
      */
     _renderUpgradeResults(results) {
@@ -3791,284 +4088,45 @@ class CombatSimUI {
         }
 
         this._upgradeResultsData = results;
-        // Combat Levels mode has no gold costs — rank by raw improvement instead
-        const isCombatLevelMode =
-            results.results.length > 0 && results.results.every((r) => r.candidate?.type === 'combat_level');
-        if (!this._upgradeSort) {
-            this._upgradeSort = { key: 'dps', asc: true };
-        }
-        const sortKey = this._upgradeSort.key;
-        const sortAsc = this._upgradeSort.asc;
-        const sortValue = (r) => {
-            if (isCombatLevelMode) {
-                // Negated deltas so ascending sort puts the biggest gain first
-                switch (sortKey) {
-                    case 'upgrade':
-                        return r.candidate.description.toLowerCase();
-                    case 'time':
-                        return r.levelTimeHours ?? Infinity;
-                    case 'main':
-                        // Focused main skills (no entries) sort first
-                        return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
-                    case 'xp':
-                        return -(r.metrics.xpPerHour - results.baseline.xpPerHour);
-                    case 'profit':
-                        return -(r.metrics.profitPerHour - results.baseline.profitPerHour);
-                    default:
-                        return -(r.metrics.dps - results.baseline.dps);
-                }
-            }
-            switch (sortKey) {
-                case 'upgrade':
-                    return r.candidate.description.toLowerCase();
-                case 'cost':
-                    return r.cost == null ? Infinity : r.cost;
-                case 'xp':
-                    return r.goldPer.xp;
-                case 'profit':
-                    return r.goldPer.profit;
-                default:
-                    return r.goldPer.dps;
-            }
-        };
-        const sortedResults = [...results.results].sort((a, b) => {
-            const va = sortValue(a);
-            const vb = sortValue(b);
-            let cmp;
-            if (typeof va === 'string') {
-                cmp = va.localeCompare(vb);
-            } else {
-                const na = va === Infinity ? Number.MAX_VALUE : va;
-                const nb = vb === Infinity ? Number.MAX_VALUE : vb;
-                cmp = na - nb;
-            }
-            return sortAsc ? cmp : -cmp;
-        });
+        const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
+        const goldRows = results.results.filter((r) => r.candidate?.type !== 'combat_level');
 
-        const tableStyle = 'width:100%; border-collapse:collapse; font-size:11px;';
-        const thStyle =
-            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
-        // Value cells stay on one line; wide free-text cells (Main Time) may wrap
-        const nowrapTd = `${tdStyle} white-space:nowrap;`;
+        let html = foodHtml;
+        if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
+        if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
+        container.innerHTML = html;
 
-        const arrow = (key) => (sortKey === key ? (sortAsc ? ' \u25B4' : ' \u25BE') : '');
-        const showMainTimes = isCombatLevelMode && this._showMainSkillTimes;
-        const detailColspan = showMainTimes ? 6 : 5;
-        let html;
-        if (isCombatLevelMode) {
-            const mainTimeHeader = showMainTimes
-                ? `<th style="${thStyle}" data-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
-                : '';
-            html = `<table style="${tableStyle}">
-            <thead><tr>
-                <th style="${thStyle}" data-sort-key="upgrade">Skill${arrow('upgrade')}</th>
-                <th style="${thStyle}" data-sort-key="time">Level Time${arrow('time')}</th>
-                ${mainTimeHeader}
-                <th style="${thStyle}" data-sort-key="dps">\u0394DPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-sort-key="xp">\u0394EXP/hr${arrow('xp')}</th>
-                <th style="${thStyle}" data-sort-key="profit">\u0394Profit/hr${arrow('profit')}</th>
-            </tr></thead><tbody>`;
-        } else {
-            html = `<table style="${tableStyle}">
-            <thead><tr>
-                <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
-                <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
-                <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
-                <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
-            </tr></thead><tbody>`;
-        }
-
-        // Find best (lowest non-Infinity) value in each gold/0.1% column
-        let bestDps = Infinity;
-        let bestXp = Infinity;
-        let bestProfit = Infinity;
-        for (const r of results.results) {
-            if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
-            if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
-            if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
-        }
-
-        // Best (largest) raw deltas for Combat Levels mode highlighting
-        let bestDpsDelta = -Infinity;
-        let bestXpDelta = -Infinity;
-        let bestProfitDelta = -Infinity;
-        if (isCombatLevelMode) {
-            for (const r of results.results) {
-                bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - results.baseline.dps);
-                bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - results.baseline.xpPerHour);
-                bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - results.baseline.profitPerHour);
-            }
-        }
-
-        const fmtLevelTime = (h) => {
-            if (!Number.isFinite(h)) return '—';
-            if (h < 24) return `${h.toFixed(1)}h`;
-            return `${(h / 24).toFixed(1)}d`;
-        };
-
-        sortedResults.forEach((r, i) => {
-            const bestColor = '#4caf50';
-            const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
-
-            if (isCombatLevelMode) {
-                const dpsDelta = r.metrics.dps - results.baseline.dps;
-                const xpDelta = r.metrics.xpPerHour - results.baseline.xpPerHour;
-                const profitDelta = r.metrics.profitPerHour - results.baseline.profitPerHour;
-                const fmtCell = (delta, pct) => {
-                    if (Math.abs(delta) < 1e-9) return '—';
-                    const sign = delta >= 0 ? '+' : '';
-                    return `${sign}${formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
-                };
-                const deltaStyle = (delta, best) => {
-                    if (delta === best && Number.isFinite(best) && best > 0)
-                        return `color:${bestColor}; font-weight:700;`;
-                    if (delta > 0) return 'color:#8bc34a;';
-                    if (delta < 0) return 'color:#f44336;';
-                    return 'color:#888;';
-                };
-                const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
-                const timeTitle = Number.isFinite(r.levelTimeHours)
-                    ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
-                    : `No XP accrues in this skill at this zone${charmNote}`;
-
-                let mainTimeCell = '';
-                if (showMainTimes) {
-                    if (r.mainSkillTimes?.length) {
-                        const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
-                        const mainDetail = r.mainSkillTimes
-                            .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
-                            .join(', ');
-                        const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
-                        mainTimeCell = `<td style="${tdStyle}" title="${mainTitle}">${mainText}</td>`;
-                    } else {
-                        const mainTitle = r.isMainSkill
-                            ? 'This is a main training skill of your weapon'
-                            : 'No target set for the main training skill(s)';
-                        mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
+        // Row click expands the metric detail; the two tables keep separate
+        // namespaces so a row in one never toggles a row in the other
+        const wireRows = (rowAttr, detailAttr) => {
+            container.querySelectorAll(`[${rowAttr}]`).forEach((row) => {
+                row.addEventListener('click', () => {
+                    const detail = container.querySelector(`[${detailAttr}="${row.getAttribute(rowAttr)}"]`);
+                    if (detail) {
+                        detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                     }
-                }
-
-                html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                    <td style="${nowrapTd}">${r.candidate.description}</td>
-                    <td style="${nowrapTd}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
-                    ${mainTimeCell}
-                    <td style="${nowrapTd} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
-                    <td style="${nowrapTd} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
-                    <td style="${nowrapTd} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
-                </tr>`;
-            } else {
-                // Combat levels cost grind time rather than gold; say so instead of
-                // showing an unknown-cost '?' next to real prices
-                const isLevelRow = r.candidate?.type === 'combat_level';
-                const costStr = isLevelRow
-                    ? '<span title="Combat levels cost grind time, not gold — check only Combat Lv to see level-time estimates" style="color:#666;">levels</span>'
-                    : r.cost == null
-                      ? '?'
-                      : formatKMB(r.cost);
-                const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
-                const dpsGoldStr = fmtGoldPer(r.goldPer.dps);
-                const xpGoldStr = fmtGoldPer(r.goldPer.xp);
-                const profitGoldStr = fmtGoldPer(r.goldPer.profit);
-                const dpsStyle =
-                    r.goldPer.dps === bestDps && bestDps !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-                const xpStyle =
-                    r.goldPer.xp === bestXp && bestXp !== Infinity ? `color:${bestColor}; font-weight:700;` : '';
-                const profitStyle =
-                    r.goldPer.profit === bestProfit && bestProfit !== Infinity
-                        ? `color:${bestColor}; font-weight:700;`
-                        : '';
-
-                html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                    <td style="${tdStyle}">${r.candidate.description}</td>
-                    <td style="${tdStyle}">${costStr}</td>
-                    <td style="${tdStyle} ${dpsStyle}">${dpsGoldStr}</td>
-                    <td style="${tdStyle} ${xpStyle}">${xpGoldStr}</td>
-                    <td style="${tdStyle} ${profitStyle}">${profitGoldStr}</td>
-                </tr>`;
-            }
-
-            // Expanded detail row with deltas (hidden by default)
-            const dpsValueDelta = r.metrics.dps - results.baseline.dps;
-            const xpValueDelta = r.metrics.xpPerHour - results.baseline.xpPerHour;
-            const profitValueDelta = r.metrics.profitPerHour - results.baseline.profitPerHour;
-            const ephDelta = r.metrics.encountersPerHour - results.baseline.encountersPerHour;
-            const dphDelta = r.metrics.deathsPerHour - results.baseline.deathsPerHour;
-            const fmtDelta = (val) => {
-                if (Math.abs(val) < 0.5) return '—';
-                return (val >= 0 ? '+' : '') + formatKMB(val);
-            };
-            const fmtDeltaSmall = (val) => {
-                if (Math.abs(val) < 0.01) return '—';
-                return (val >= 0 ? '+' : '') + val.toFixed(1);
-            };
-            const deltaColor = (val) => (val > 0.5 ? '#4caf50' : val < -0.5 ? '#f44336' : '#888');
-            // For deaths, lower is better (inverted color)
-            const deathDeltaColor = (val) => (val < -0.01 ? '#4caf50' : val > 0.01 ? '#f44336' : '#888');
-
-            html += `<tr data-upgrade-detail="${i}" style="display:none;">
-                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
-                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
-                        <div>
-                            <div style="color:#888;">DPS</div>
-                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
-                            <div style="color:${deltaColor(dpsValueDelta)};">${fmtDelta(dpsValueDelta)} (${r.deltas.dps >= 0 ? '+' : ''}${r.deltas.dps.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">EXP/hr</div>
-                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.xpPerHour)}</div>
-                            <div style="color:${deltaColor(xpValueDelta)};">${fmtDelta(xpValueDelta)} (${r.deltas.xp >= 0 ? '+' : ''}${r.deltas.xp.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">Profit/hr</div>
-                            <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour)}</div>
-                            <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">EPH</div>
-                            <div style="color:#e0e0e0;">${r.metrics.encountersPerHour.toFixed(1)}</div>
-                            <div style="color:${deltaColor(ephDelta)};">${fmtDeltaSmall(ephDelta)} (${r.deltas.encounters >= 0 ? '+' : ''}${r.deltas.encounters.toFixed(2)}%)</div>
-                        </div>
-                        <div>
-                            <div style="color:#888;">DPH</div>
-                            <div style="color:#e0e0e0;">${r.metrics.deathsPerHour.toFixed(1)}</div>
-                            <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)</div>
-                        </div>
-                    </div>
-                    <div style="margin-top:6px; color:#666; font-size:10px;">
-                        Baseline: DPS ${formatKMB(results.baseline.dps)} | EXP ${formatKMB(results.baseline.xpPerHour)} | Profit ${formatKMB(results.baseline.profitPerHour)} | EPH ${results.baseline.encountersPerHour.toFixed(1)} | DPH ${results.baseline.deathsPerHour.toFixed(1)}
-                    </div>
-                </td>
-            </tr>`;
-        });
-
-        html += '</tbody></table>';
-        container.innerHTML = foodHtml + html;
-
-        // Wire up row click to expand/collapse
-        container.querySelectorAll('[data-upgrade-row]').forEach((row) => {
-            row.addEventListener('click', () => {
-                const idx = row.getAttribute('data-upgrade-row');
-                const detail = container.querySelector(`[data-upgrade-detail="${idx}"]`);
-                if (detail) {
-                    detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
-                }
+                });
             });
-        });
+        };
+        wireRows('data-upgrade-row', 'data-upgrade-detail');
+        wireRows('data-level-row', 'data-level-detail');
 
-        // Wire up header click to sort by column (second click flips direction)
-        container.querySelectorAll('[data-sort-key]').forEach((th) => {
-            th.addEventListener('click', () => {
-                const key = th.getAttribute('data-sort-key');
-                if (this._upgradeSort.key === key) {
-                    this._upgradeSort.asc = !this._upgradeSort.asc;
-                } else {
-                    this._upgradeSort = { key, asc: true };
-                }
-                this._renderUpgradeResults(this._upgradeResultsData);
+        // Header click sorts that table (second click flips direction)
+        const wireSort = (attr, stateKey) => {
+            container.querySelectorAll(`[${attr}]`).forEach((th) => {
+                th.addEventListener('click', () => {
+                    const key = th.getAttribute(attr);
+                    if (this[stateKey].key === key) {
+                        this[stateKey].asc = !this[stateKey].asc;
+                    } else {
+                        this[stateKey] = { key, asc: true };
+                    }
+                    this._renderUpgradeResults(this._upgradeResultsData);
+                });
             });
-        });
+        };
+        wireSort('data-sort-key', '_upgradeSort');
+        wireSort('data-level-sort-key', '_upgradeLevelSort');
     }
 }
 
