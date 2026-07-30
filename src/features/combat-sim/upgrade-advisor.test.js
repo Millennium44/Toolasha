@@ -44,6 +44,8 @@ const {
     computeEconomics,
     assignRankScores,
     RANK_PLACES,
+    SCORE_METRICS,
+    DEFAULT_SCORE_KEYS,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -1287,5 +1289,66 @@ describe('assignRankScores', () => {
 
         expect(rows[RANK_PLACES - 1].score).toBe(4); // last scoring place, 1 point per metric
         expect(rows[RANK_PLACES].score).toBe(0);
+    });
+});
+
+describe('ROI and configurable scoring', () => {
+    const base = { profitPerHour: 1000 };
+
+    test('ROI annualises the profit gain against the outlay', () => {
+        // 500/hr extra on a 10,000 outlay = 4,380,000 a year = 43,800%
+        const e = computeEconomics(10_000, base, { profitPerHour: 1500 });
+        expect(e.roiAnnualPct).toBeCloseTo(43_800, 5);
+    });
+
+    test('ROI is unknown rather than zero when the cost is unknown', () => {
+        expect(computeEconomics(null, base, { profitPerHour: 1500 }).roiAnnualPct).toBeNull();
+    });
+
+    test('ROI ranks identically to repay time, which is why scoring both double-counts', () => {
+        const rows = [10_000, 50_000, 25_000].map((cost) => computeEconomics(cost, base, { profitPerHour: 1500 }));
+
+        const byRepay = [...rows].sort((a, b) => a.repayHours - b.repayHours);
+        const byRoi = [...rows].sort((a, b) => b.roiAnnualPct - a.roiAnnualPct);
+        expect(byRoi).toEqual(byRepay);
+    });
+
+    test('only the selected metrics contribute to the score', () => {
+        const row = (dps, xp) => ({
+            candidate: {},
+            goldPer: { dps, xp, profit: Infinity, encounters: Infinity, deaths: Infinity },
+            economics: { repayHours: Infinity, roiAnnualPct: null },
+        });
+        const rows = [row(1, 900), row(900, 1)];
+
+        assignRankScores(rows, { keys: ['dps'] });
+        expect(rows[0].score).toBe(RANK_PLACES);
+        expect(rows[1].score).toBe(RANK_PLACES - 1);
+        expect(rows[0].rankPoints.xp).toBeUndefined();
+
+        // Scoring the other metric alone flips the order
+        assignRankScores(rows, { keys: ['xp'] });
+        expect(rows[1].score).toBe(RANK_PLACES);
+    });
+
+    test('higher-is-better metrics rank downward', () => {
+        const row = (roi) => ({ candidate: {}, goldPer: {}, economics: { roiAnnualPct: roi } });
+        const rows = [row(100), row(900)];
+
+        assignRankScores(rows, { keys: ['roi'] });
+        expect(rows[1].score).toBe(RANK_PLACES); // the bigger return places first
+        expect(rows[0].score).toBe(RANK_PLACES - 1);
+    });
+
+    test('an empty selection scores nothing rather than throwing', () => {
+        const rows = [{ candidate: {}, goldPer: { dps: 1 }, economics: { repayHours: 1 } }];
+        assignRankScores(rows, { keys: [] });
+        expect(rows[0].score).toBe(0);
+    });
+
+    test('every default score key is a real metric, and ROI is not among them', () => {
+        const known = SCORE_METRICS.map((m) => m.key);
+        for (const key of DEFAULT_SCORE_KEYS) expect(known).toContain(key);
+        expect(DEFAULT_SCORE_KEYS).not.toContain('roi');
     });
 });

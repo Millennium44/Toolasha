@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Sticky headers, eight more columns, and a configurable Score
+
+- The upgrade table's **header row now sticks** to the top of the results pane, so the columns stay labelled however far you scroll.
+- **New columns**: ΔDPS, ΔEXP/hr, ΔProfit/hr, ΔEPH and ΔDPH as raw per-hour changes, plus **Gold/0.01% EPH** and **Gold/0.01% DPH** — both already computed and previously thrown away — and **ROI (1yr)**, a year of the added profit against the outlay.
+- **⚙ Columns** above the table chooses which of those are shown and, separately, which count toward the Score. Hiding a column is about screen width; dropping one from the score changes the ranking, so the two lists are independent — you can read a metric without scoring it. Choices persist.
+- Changing what the score counts re-ranks instantly. Scoring is pure ranking over figures already measured, so nothing is re-simulated.
+- **ROI is off by default in the score.** It is `profit gain / cost` while repay time is `cost / profit gain` — the same ratio inverted, ranking candidates identically — so counting both would weigh one signal twice. The popover says so, and a test pins the two orderings together.
+- Raw deltas are shown but cannot be scored: ranking by ΔDPS alone rewards whatever is most expensive, which is the opposite of what a value score is for.
+
 ### Gold-per columns now quote 0.01% instead of 0.1%
 
 - The three **Gold/0.01%** columns quote the cost of a ten-times-finer improvement step, so the figures are a tenth of what they were. The step is only a rescaling — it divides every row by the same constant — so nothing reorders and no ranking or score changes.
