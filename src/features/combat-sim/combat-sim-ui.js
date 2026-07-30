@@ -46,6 +46,10 @@ const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 const PANEL_SIZE_KEY = 'combatSimPanelSize';
 
+/** Floor sizes the resize grips will not take the panel below. */
+const MIN_PANEL_WIDTH = 400;
+const MIN_PANEL_HEIGHT = 300;
+
 /**
  * Columns hidden until asked for.
  *
@@ -699,13 +703,20 @@ class CombatSimUI {
             this._setupResize(grip, axis);
         };
 
-        addGrip('top:44px; bottom:16px; right:0; width:8px; cursor:ew-resize;', 'x');
-        addGrip('left:0; right:16px; bottom:0; height:8px; cursor:ns-resize;', 'y');
+        addGrip('top:44px; bottom:18px; right:0; width:8px; cursor:ew-resize;', 'e');
+        addGrip('top:44px; bottom:18px; left:0; width:8px; cursor:ew-resize;', 'w');
+        addGrip('left:18px; right:18px; bottom:0; height:8px; cursor:ns-resize;', 's');
         addGrip(
             `bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; z-index:2;
              background:linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
              border-radius:0 0 8px 0;`,
-            'both'
+            'se'
+        );
+        addGrip(
+            `bottom:0; left:0; width:18px; height:18px; cursor:nesw-resize; z-index:2;
+             background:linear-gradient(225deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
+             border-radius:0 0 0 8px;`,
+            'sw'
         );
 
         document.body.appendChild(this.panel);
@@ -3107,25 +3118,38 @@ class CombatSimUI {
     /**
      * @private
      */
-    _setupResize(handle, axis = 'both') {
+    _setupResize(handle, mode = 'se') {
         handle.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            const rect = this.panel.getBoundingClientRect();
             const startX = e.clientX;
             const startY = e.clientY;
-            const startWidth = this.panel.offsetWidth;
-            const startHeight = this.panel.offsetHeight;
+            const { width: startWidth, height: startHeight, right: startRight } = rect;
             bringPanelToFront(this.panel);
+
+            // The panel opens anchored to its right edge, which makes a widening
+            // drag push the *opposite* side across the screen. Pin it by the left
+            // edge before resizing so each grip moves the side you grabbed.
+            this.panel.style.left = `${rect.left}px`;
+            this.panel.style.right = 'auto';
+
             // Without this, dragging over the page selects text instead of resizing
             const priorSelect = document.body.style.userSelect;
             document.body.style.userSelect = 'none';
 
             const onMove = (ev) => {
-                if (axis !== 'y') {
-                    this.panel.style.width = `${Math.max(400, startWidth + (ev.clientX - startX))}px`;
+                if (mode.includes('e')) {
+                    this.panel.style.width = `${Math.max(MIN_PANEL_WIDTH, startWidth + (ev.clientX - startX))}px`;
                 }
-                if (axis !== 'x') {
-                    this.panel.style.height = `${Math.max(300, startHeight + (ev.clientY - startY))}px`;
+                if (mode.includes('w')) {
+                    const width = Math.max(MIN_PANEL_WIDTH, startWidth - (ev.clientX - startX));
+                    this.panel.style.width = `${width}px`;
+                    // Hold the right edge still while the left one follows the cursor
+                    this.panel.style.left = `${startRight - width}px`;
+                }
+                if (mode.includes('s')) {
+                    this.panel.style.height = `${Math.max(MIN_PANEL_HEIGHT, startHeight + (ev.clientY - startY))}px`;
                 }
             };
             const onUp = () => {
@@ -4131,7 +4155,7 @@ class CombatSimUI {
             },
             {
                 key: 'payback',
-                label: 'Payback',
+                label: 'Time',
                 numeric: true,
                 title:
                     'How long you grind at your current profit rate to afford this. Every row divides by ' +

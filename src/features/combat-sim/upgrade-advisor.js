@@ -2066,9 +2066,9 @@ export const SCORE_METRICS = [
  *
  * ROI is off by default because it is `profit gain / cost` and repay time is
  * `cost / profit gain` — the same ratio inverted. Scoring both counts one
- * signal twice, exactly the trap that keeps Payback out of the list.
+ * signal twice, exactly the trap that keeps the Time column out of the list.
  */
-export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'repay'];
+export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'encounters', 'deaths', 'repay'];
 
 /**
  * Score every candidate by how often it places well across the value metrics.
@@ -2081,10 +2081,11 @@ export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'repay'];
  * a metric by a mile scores exactly what winning it by a hair scores. It is a
  * shortlisting aid, not a verdict, which is why it is not the default sort.
  *
- * Payback is excluded on purpose. Baseline profit is one number shared by every
- * row, so dividing each cost by it preserves the cost ordering exactly — payback
- * is the Cost column in hours, and scoring it would count cost twice. Repay is
- * the one that carries new information, dividing by a gain that differs per row.
+ * The Time column (cost over current profit rate) is excluded on purpose.
+ * Baseline profit is one number shared by every row, so dividing each cost by it
+ * preserves the cost ordering exactly — Time is the Cost column in hours, and
+ * scoring it would count cost twice. Repay is the one that carries new
+ * information, dividing by a gain that differs per row.
  *
  * Ties share a placing, so two candidates that measure identically cannot be
  * separated by list order.
