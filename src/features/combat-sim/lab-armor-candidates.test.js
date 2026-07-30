@@ -7,8 +7,10 @@ import { describe, test, expect } from 'vitest';
 import {
     ANCHORBOUND_HRIDS,
     DEFAULT_ARMOR_ENHANCEMENT,
+    findElementalArmor,
     findTopTierArmor,
     generateLabArmorCandidates,
+    getLoadoutElements,
     getWeaponStyleFamily,
     resolveArmorEnhancement,
     styleFamilyOfStats,
@@ -284,5 +286,133 @@ describe('generateLabArmorCandidates', () => {
 
     test('exports the Anchorbound pieces it forces', () => {
         expect(ANCHORBOUND_HRIDS).toEqual(['/items/anchorbound_plate_body', '/items/anchorbound_plate_legs']);
+    });
+});
+
+describe('elemental magic armor', () => {
+    const NATURE = '/damage_types/nature';
+    const FIRE = '/damage_types/fire';
+
+    /** Mirrors the reported loadout: a Nature trident cast alongside Fireball. */
+    function magicGameData() {
+        return {
+            itemDetailMap: {
+                '/items/anchorbound_plate_body': armor('Anchorbound Plate Body', BODY, 95, { armor: 50 }),
+                '/items/anchorbound_plate_legs': armor('Anchorbound Plate Legs', LEGS, 95, { armor: 40 }),
+                '/items/royal_fire_robe_top': armor('Royal Fire Robe Top', BODY, 95, { fireAmplify: 0.12 }),
+                '/items/royal_fire_robe_bottoms': armor('Royal Fire Robe Bottoms', LEGS, 95, { fireAmplify: 0.1 }),
+                '/items/royal_nature_robe_top': armor('Royal Nature Robe Top', BODY, 95, { natureAmplify: 0.12 }),
+                '/items/royal_nature_robe_bottoms': armor('Royal Nature Robe Bottoms', LEGS, 95, {
+                    natureAmplify: 0.1,
+                }),
+                '/items/old_nature_robe_top': armor('Old Nature Robe Top', BODY, 70, { natureAmplify: 0.2 }),
+                '/items/blooming_trident': armor('Blooming Trident', '/equipment_types/main_hand', 95, {
+                    magicDamage: 0.5,
+                    natureAmplify: 0.3,
+                    damageType: NATURE,
+                }),
+            },
+            abilityDetailMap: {
+                '/abilities/fireball': { abilityEffects: [{ damageType: FIRE }] },
+                '/abilities/firestorm': { abilityEffects: [{ damageType: FIRE }] },
+                '/abilities/entangle': { abilityEffects: [{ damageType: NATURE }] },
+                '/abilities/haste': { abilityEffects: [{ damageType: '' }] },
+            },
+        };
+    }
+
+    const natureTridentWithFireSpells = () => ({
+        hrid: 'player1',
+        equipment: { '/equipment_types/main_hand': { hrid: '/items/blooming_trident' } },
+        abilities: [{ hrid: '/abilities/fireball' }, { hrid: '/abilities/firestorm' }, null],
+    });
+
+    describe('getLoadoutElements', () => {
+        test('reports the weapon element first, then ability elements', () => {
+            expect(getLoadoutElements(natureTridentWithFireSpells(), magicGameData())).toEqual([NATURE, FIRE]);
+        });
+
+        test('collapses to one element when weapon and spells agree', () => {
+            const dto = {
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/blooming_trident' } },
+                abilities: [{ hrid: '/abilities/entangle' }],
+            };
+            expect(getLoadoutElements(dto, magicGameData())).toEqual([NATURE]);
+        });
+
+        test('orders ability elements by how many abilities use them', () => {
+            const dto = {
+                equipment: {},
+                abilities: [
+                    { hrid: '/abilities/fireball' },
+                    { hrid: '/abilities/firestorm' },
+                    { hrid: '/abilities/entangle' },
+                ],
+            };
+            expect(getLoadoutElements(dto, magicGameData())).toEqual([FIRE, NATURE]);
+        });
+
+        test('ignores abilities that deal no elemental damage', () => {
+            const dto = { equipment: {}, abilities: [{ hrid: '/abilities/haste' }] };
+            expect(getLoadoutElements(dto, magicGameData())).toEqual([]);
+        });
+
+        test('returns nothing for a physical loadout', () => {
+            expect(
+                getLoadoutElements(player({ '/equipment_types/two_hand': { hrid: '/items/bow' } }), gameData())
+            ).toEqual([]);
+        });
+    });
+
+    describe('findElementalArmor', () => {
+        test('picks the top-tier piece amplifying that element', () => {
+            expect(findElementalArmor(BODY, NATURE, magicGameData()).hrid).toBe('/items/royal_nature_robe_top');
+            expect(findElementalArmor(BODY, FIRE, magicGameData()).hrid).toBe('/items/royal_fire_robe_top');
+        });
+
+        test('does not drop a tier for a bigger amplify', () => {
+            // Old Nature Robe Top amplifies more but is 25 levels down
+            expect(findElementalArmor(BODY, NATURE, magicGameData()).itemLevel).toBe(95);
+        });
+
+        test('returns null when nothing amplifies the element', () => {
+            expect(findElementalArmor(BODY, '/damage_types/water', magicGameData())).toBe(null);
+            expect(findElementalArmor(BODY, '/damage_types/physical', magicGameData())).toBe(null);
+        });
+    });
+
+    test('offers both robe sets when the weapon and spells differ', () => {
+        const candidates = generateLabArmorCandidates(natureTridentWithFireSpells(), magicGameData(), []);
+        const bodyHrids = new Set(candidates.map((c) => c.addedSlots[BODY]?.hrid).filter(Boolean));
+
+        expect(bodyHrids).toContain('/items/royal_nature_robe_top');
+        expect(bodyHrids).toContain('/items/royal_fire_robe_top');
+        expect(bodyHrids).toContain('/items/anchorbound_plate_body');
+
+        // 3 body options x 3 legs options
+        expect(candidates.filter((c) => Object.keys(c.addedSlots).length === 2)).toHaveLength(9);
+    });
+
+    test('offers only the matching set when weapon and spells agree', () => {
+        const dto = {
+            equipment: { '/equipment_types/main_hand': { hrid: '/items/blooming_trident' } },
+            abilities: [{ hrid: '/abilities/entangle' }],
+        };
+        const candidates = generateLabArmorCandidates(dto, magicGameData(), []);
+        const bodyHrids = new Set(candidates.map((c) => c.addedSlots[BODY]?.hrid).filter(Boolean));
+
+        expect(bodyHrids).toContain('/items/royal_nature_robe_top');
+        expect(bodyHrids).not.toContain('/items/royal_fire_robe_top');
+    });
+
+    test('pairs each robe set with itself and across sets', () => {
+        const candidates = generateLabArmorCandidates(natureTridentWithFireSpells(), magicGameData(), []);
+        const pairKeys = candidates
+            .filter((c) => Object.keys(c.addedSlots).length === 2)
+            .map((c) => `${c.addedSlots[BODY].hrid}+${c.addedSlots[LEGS].hrid}`);
+
+        expect(pairKeys).toContain('/items/royal_nature_robe_top+/items/royal_nature_robe_bottoms');
+        expect(pairKeys).toContain('/items/royal_fire_robe_top+/items/royal_fire_robe_bottoms');
+        expect(pairKeys).toContain('/items/anchorbound_plate_body+/items/royal_nature_robe_bottoms');
     });
 });

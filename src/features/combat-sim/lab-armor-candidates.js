@@ -23,6 +23,25 @@ const BODY_SLOT = '/equipment_types/body';
 const LEGS_SLOT = '/equipment_types/legs';
 const ARMOR_SLOTS = [BODY_SLOT, LEGS_SLOT];
 
+const WEAPON_SLOTS = ['/equipment_types/two_hand', '/equipment_types/main_hand'];
+
+/**
+ * Elemental damage types and the armor stat that amplifies each. Magic gear is
+ * split by element, so "magic robes" is not one answer — a nature weapon and a
+ * fire spell want different robes.
+ */
+const ELEMENT_AMPLIFY = {
+    '/damage_types/fire': 'fireAmplify',
+    '/damage_types/nature': 'natureAmplify',
+    '/damage_types/water': 'waterAmplify',
+};
+
+/**
+ * Cap on how many elements get their own armor set. Every set multiplies the
+ * pair combinations, and a build past two elements is vanishingly rare.
+ */
+const MAX_ELEMENTAL_SETS = 2;
+
 /**
  * Collapse an item role into the style family it serves.
  * @param {Object} combatStats - equipmentDetail.combatStats
@@ -58,7 +77,7 @@ export function styleFamilyOfStats(combatStats) {
  * @returns {string} 'melee', 'ranged', 'magic', or 'defensive' when unarmed
  */
 export function getWeaponStyleFamily(playerDTO, gameData) {
-    for (const slot of ['/equipment_types/two_hand', '/equipment_types/main_hand']) {
+    for (const slot of WEAPON_SLOTS) {
         const equipped = playerDTO?.equipment?.[slot];
         if (!equipped?.hrid) continue;
         const stats = gameData?.itemDetailMap?.[equipped.hrid]?.equipmentDetail?.combatStats;
@@ -66,6 +85,89 @@ export function getWeaponStyleFamily(playerDTO, gameData) {
         if (family !== 'defensive') return family;
     }
     return 'defensive';
+}
+
+/**
+ * Elements this loadout actually deals damage with, most important first.
+ *
+ * The weapon and the spells can disagree — a Nature trident paired with Fireball
+ * — and each wants its own robes, so both are reported. The weapon's element
+ * leads, then ability elements by how many equipped abilities use them.
+ * @param {Object} playerDTO - Player DTO
+ * @param {Object} gameData - Game data payload
+ * @returns {string[]} Damage type HRIDs, capped at MAX_ELEMENTAL_SETS
+ */
+export function getLoadoutElements(playerDTO, gameData) {
+    const weaponElement = (() => {
+        for (const slot of WEAPON_SLOTS) {
+            const equipped = playerDTO?.equipment?.[slot];
+            if (!equipped?.hrid) continue;
+            const damageType = gameData?.itemDetailMap?.[equipped.hrid]?.equipmentDetail?.combatStats?.damageType;
+            if (damageType && ELEMENT_AMPLIFY[damageType]) return damageType;
+        }
+        return null;
+    })();
+
+    const abilityCounts = new Map();
+    for (const ability of playerDTO?.abilities || []) {
+        if (!ability?.hrid) continue;
+        const effects = gameData?.abilityDetailMap?.[ability.hrid]?.abilityEffects || [];
+        const elements = new Set();
+        for (const effect of effects) {
+            if (effect?.damageType && ELEMENT_AMPLIFY[effect.damageType]) elements.add(effect.damageType);
+        }
+        for (const element of elements) {
+            abilityCounts.set(element, (abilityCounts.get(element) || 0) + 1);
+        }
+    }
+
+    const ordered = [...abilityCounts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([element]) => element);
+
+    const result = [];
+    for (const element of [weaponElement, ...ordered]) {
+        if (!element || result.includes(element)) continue;
+        result.push(element);
+        if (result.length >= MAX_ELEMENTAL_SETS) break;
+    }
+    return result;
+}
+
+/**
+ * Top-tier armor amplifying a specific element.
+ * @param {string} slot - Equipment slot HRID
+ * @param {string} element - Damage type HRID
+ * @param {Object} gameData - Game data payload
+ * @returns {Object|null} { hrid, name, itemLevel } or null when nothing amplifies it
+ */
+export function findElementalArmor(slot, element, gameData) {
+    const stat = ELEMENT_AMPLIFY[element];
+    if (!stat) return null;
+
+    const entries = [];
+    for (const [hrid, item] of Object.entries(gameData?.itemDetailMap || {})) {
+        const equipmentDetail = item?.equipmentDetail;
+        if (equipmentDetail?.type !== slot) continue;
+        const amplify = Number(equipmentDetail.combatStats?.[stat]) || 0;
+        if (amplify <= 0) continue;
+        if (hrid.endsWith('_refined')) continue;
+        entries.push({
+            hrid,
+            name: item.name || hrid.split('/').pop().replace(/_/g, ' '),
+            itemLevel: item.itemLevel || 0,
+            amplify,
+        });
+    }
+    if (entries.length === 0) return null;
+
+    const topLevel = Math.max(...entries.map((entry) => entry.itemLevel));
+    const ranked = entries
+        .filter((entry) => entry.itemLevel === topLevel)
+        .sort((a, b) => b.amplify - a.amplify || a.hrid.localeCompare(b.hrid));
+
+    const { hrid, name, itemLevel } = ranked[0];
+    return { hrid, name, itemLevel };
 }
 
 /**
@@ -197,17 +299,46 @@ export function generateLabArmorCandidates(playerDTO, gameData, inventory) {
         if (piece) anchorPieces[piece.slot] = piece;
     }
 
-    const topPieces = {};
-    for (const slot of ARMOR_SLOTS) {
-        const top = findTopTierArmor(slot, styleFamily, gameData);
-        if (!top) continue;
-        const piece = toPiece(top.hrid);
-        if (piece) topPieces[slot] = piece;
+    // Magic splits by element: a nature weapon with fire spells wants both robe
+    // sets compared, not one "magic" pick decided by a tiebreak
+    const elements = getLoadoutElements(playerDTO, gameData);
+    const setPieces = [];
+    for (const element of elements) {
+        const pieces = {};
+        for (const slot of ARMOR_SLOTS) {
+            const found = findElementalArmor(slot, element, gameData);
+            const piece = found && toPiece(found.hrid);
+            if (piece) pieces[slot] = piece;
+        }
+        if (Object.keys(pieces).length > 0) setPieces.push(pieces);
     }
 
-    // Each slot may be filled from either set; build every combination of the two
-    const bodyOptions = [anchorPieces[BODY_SLOT], topPieces[BODY_SLOT]].filter(Boolean);
-    const legsOptions = [anchorPieces[LEGS_SLOT], topPieces[LEGS_SLOT]].filter(Boolean);
+    // Without elemental gear in play (melee, ranged, or a weapon that deals
+    // physical damage) fall back to the best armor for the weapon's style
+    if (setPieces.length === 0) {
+        const pieces = {};
+        for (const slot of ARMOR_SLOTS) {
+            const top = findTopTierArmor(slot, styleFamily, gameData);
+            const piece = top && toPiece(top.hrid);
+            if (piece) pieces[slot] = piece;
+        }
+        if (Object.keys(pieces).length > 0) setPieces.push(pieces);
+    }
+
+    // Each slot may be filled from any set; build every combination across them
+    const optionsFor = (slot) => {
+        const options = [];
+        const seenHrids = new Set();
+        for (const pieces of [anchorPieces, ...setPieces]) {
+            const piece = pieces[slot];
+            if (!piece || seenHrids.has(piece.hrid)) continue;
+            seenHrids.add(piece.hrid);
+            options.push(piece);
+        }
+        return options;
+    };
+    const bodyOptions = optionsFor(BODY_SLOT);
+    const legsOptions = optionsFor(LEGS_SLOT);
 
     const assignments = [];
     for (const body of bodyOptions) assignments.push({ [BODY_SLOT]: body });
