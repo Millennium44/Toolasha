@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Resize from either side, and Payback is now Time
+
+- **The sim panel resizes from the left edge and bottom-left corner too**, alongside the right, bottom and bottom-right grips. Each grip now moves the side you grabbed: the panel opens anchored to its right edge, so widening it used to push the opposite side across the screen — resizing now pins the panel by whichever edge you are not dragging.
+- **Payback is renamed Time.** Shorter, and it matches what the figure is: how long you grind to afford the upgrade.
+- **Gold/0.01% EPH and DPH now count toward the Score by default**, joining DPS, EXP, Profit and Repay. ROI stays out, being repay time inverted.
+
 ### Easier panel resizing, tighter upgrade columns, and a Columns menu that stays put
 
 - **The sim panel resizes from its right and bottom edges**, not just the corner grip — the whole side is a target instead of sixteen square pixels. Dragging no longer selects page text, and **the size is remembered**, clamped to the viewport on restore so a size saved on a bigger monitor cannot open the panel off-screen.

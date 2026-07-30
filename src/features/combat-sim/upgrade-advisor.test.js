@@ -1352,3 +1352,14 @@ describe('ROI and configurable scoring', () => {
         expect(DEFAULT_SCORE_KEYS).not.toContain('roi');
     });
 });
+
+describe('default score selection', () => {
+    test('counts every gold-per metric plus repay, and not ROI', () => {
+        expect([...DEFAULT_SCORE_KEYS].sort()).toEqual(['deaths', 'dps', 'encounters', 'profit', 'repay', 'xp'].sort());
+    });
+
+    test('the Time column is not among the scored metrics', () => {
+        // It is cost divided by a constant, so it duplicates Cost exactly
+        expect(SCORE_METRICS.map((m) => m.key)).not.toContain('payback');
+    });
+});
