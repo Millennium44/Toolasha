@@ -22,7 +22,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
-import { runUpgradeAnalysis, getStyleExcludedSkills } from './upgrade-advisor.js';
+import { runUpgradeAnalysis, getStyleExcludedSkills, houseRoomAffectsCombat } from './upgrade-advisor.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
 
@@ -35,6 +35,63 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
+
+/** Shared styling for the small inputs inside a mode chip */
+const CHIP_INPUT_STYLE =
+    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
+const CHIP_BUTTON_STYLE =
+    'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
+    'font-size:11px; cursor:pointer; font-family:inherit;';
+
+/**
+ * Options that belong to a specific candidate set. Each lives inside that set's
+ * chip in the controls row, so it's visible which checkbox an option modifies —
+ * Skip Back sits with Equipment, the level boost with Ability Lv, and so on.
+ * Options stay in the DOM when their set is unchecked and are hidden by
+ * `_onUpgradeModesChanged`.
+ */
+const MODE_OPTIONS = {
+    equipment: `
+        <span data-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
+                Skip Back
+            </label>
+        </span>`,
+    ability_level: `
+        <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <select id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
+                <option value="increment">+Levels</option>
+                <option value="target">Target Lv</option>
+            </select>
+            <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="200" value="5" placeholder="+5" style="
+                width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Number of levels to add to each ability">
+            <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    combat_level: `
+        <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Charm</label>
+            <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${CHIP_INPUT_STYLE}"></select>
+            <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+            <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
+                Main time
+            </label>
+        </span>`,
+    house: `
+        <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Lv</label>
+            <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
+            <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+};
 
 /**
  * Candidate sets the Upgrade tab can include. Each is independent, so several can
@@ -459,50 +516,17 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;">Include</label>
             ${UPGRADE_MODES.map(
                 (mode) => `
-            <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
-                    mode.defaultOn ? ' checked' : ''
-                }>
-                ${mode.label}
-            </label>`
-            ).join('')}
-            <span id="mwi-csim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
-                <select id="mwi-csim-upgrade-level-type" style="
-                    background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px;">
-                    <option value="increment">+Levels</option>
-                    <option value="target">Target Lv</option>
-                </select>
-                <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="200" value="5" placeholder="+5" style="
-                    width:55px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
-                    title="Number of levels to add to each ability">
-                <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="
-                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-            </span>
-            <span id="mwi-csim-house-group" style="display:none; align-items:center; gap:4px;">
-                <label style="color:#888; font-size:12px;">House Lv</label>
-                <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
-                    width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
-                    title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
-            </span>
-            <span id="mwi-csim-charm-group" style="display:none; align-items:center; gap:4px;">
-                <label style="color:#888; font-size:12px;">Charm</label>
-                <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${upgradeSelectStyle}"></select>
-                <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
-                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-                <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                    <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
-                    Main time
+            <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
+                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
+                        mode.defaultOn ? ' checked' : ''
+                    }>
+                    ${mode.label}
                 </label>
-            </span>
-            <label id="mwi-csim-skip-back-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
-                Skip Back
-            </label>
+                ${MODE_OPTIONS[mode.key] || ''}
+            </span>`
+            ).join('')}
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -530,9 +554,11 @@ class CombatSimUI {
         const combatTargets = document.createElement('div');
         combatTargets.id = 'mwi-csim-combat-targets';
         combatTargets.style.cssText =
-            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+            ACCENT_BTN_BORDER +
+            ';';
         combatTargets.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Combat Lv</b> target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
             [
                 ['staminaLevel', 'Stamina'],
                 ['intelligenceLevel', 'Int'],
@@ -559,7 +585,9 @@ class CombatSimUI {
         const abilityTargetsGrid = document.createElement('div');
         abilityTargetsGrid.id = 'mwi-csim-ability-targets';
         abilityTargetsGrid.style.cssText =
-            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+            ACCENT_BTN_BORDER +
+            ';';
 
         const upgradeProgress = document.createElement('div');
         upgradeProgress.id = 'mwi-csim-upgrade-progress';
@@ -577,9 +605,19 @@ class CombatSimUI {
         upgradeResults.id = 'mwi-csim-upgrade-results';
         upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
 
+        // Per-room target levels for House mode (hidden until toggled; inputs
+        // built from the combat-relevant rooms in game data when opened)
+        const houseTargetsGrid = document.createElement('div');
+        houseTargetsGrid.id = 'mwi-csim-house-targets';
+        houseTargetsGrid.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+            ACCENT_BTN_BORDER +
+            ';';
+
         upgradeContent.appendChild(upgradeControls);
         upgradeContent.appendChild(combatTargets);
         upgradeContent.appendChild(abilityTargetsGrid);
+        upgradeContent.appendChild(houseTargetsGrid);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(upgradeResults);
 
@@ -656,6 +694,14 @@ class CombatSimUI {
             grid.style.display = opening ? 'flex' : 'none';
             if (opening) {
                 this._prefillCombatTargets();
+            }
+        });
+        this.panel.querySelector('#mwi-csim-house-targets-toggle').addEventListener('click', () => {
+            const grid = this.panel.querySelector('#mwi-csim-house-targets');
+            const opening = grid.style.display === 'none';
+            grid.style.display = opening ? 'flex' : 'none';
+            if (opening) {
+                this._buildHouseTargets();
             }
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
@@ -3258,7 +3304,7 @@ class CombatSimUI {
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Ability Lv</b> target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
             abilities
                 .map((ability) => {
                     const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
@@ -3319,31 +3365,31 @@ class CombatSimUI {
      */
     _onUpgradeModesChanged() {
         const modes = new Set(this._getUpgradeModes());
-        const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
         const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
         const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
-        const charmGroup = this.panel.querySelector('#mwi-csim-charm-group');
-        const skipBackLabel = this.panel.querySelector('#mwi-csim-skip-back-label');
 
         const isLevelMode = modes.has('ability_level');
         const isCombatLevelMode = modes.has('combat_level');
 
-        const houseGroup = this.panel.querySelector('#mwi-csim-house-group');
-        if (houseGroup) houseGroup.style.display = modes.has('house') ? 'inline-flex' : 'none';
+        // Light up the chip of each checked set and reveal the options it owns, so
+        // it reads as "these controls belong to this checkbox"
+        this.panel.querySelectorAll('[data-mode-chip]').forEach((chip) => {
+            const on = modes.has(chip.getAttribute('data-mode-chip'));
+            chip.style.borderColor = on ? ACCENT_BTN_BORDER : '#2a2a4a';
+            chip.style.background = on ? ACCENT_BG : 'transparent';
+            const label = chip.querySelector('label');
+            if (label) label.style.color = on ? '#e0e0e0' : '#888';
+        });
+        this.panel.querySelectorAll('[data-mode-options]').forEach((group) => {
+            group.style.display = modes.has(group.getAttribute('data-mode-options')) ? 'inline-flex' : 'none';
+        });
 
-        // Combat Levels: the +Levels input drives the simulated boost; the charm
-        // selector picks which charm family gets swapped in per skill for the
-        // leveling-time estimates
-        charmGroup.style.display = isCombatLevelMode ? 'inline-flex' : 'none';
-        skipBackLabel.style.display = modes.has('equipment') ? 'flex' : 'none';
-        if (!isCombatLevelMode) {
-            this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
-        } else {
-            this._populateCharmSelect();
+        // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
+        // since one number drives both; show that chip's options in either case
+        const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
+        if (levelGroup) {
+            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
         }
-
-        // The one +Levels box feeds both ability levels and combat levels; the
-        // type selector (increment vs target) only means something for abilities
         levelType.style.display = isLevelMode ? '' : 'none';
         levelInput.title =
             isLevelMode && isCombatLevelMode
@@ -3351,11 +3397,15 @@ class CombatSimUI {
                 : isCombatLevelMode
                   ? 'Levels added to each combat skill'
                   : 'Number of levels to add to each ability';
-
-        levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
         if (isCombatLevelMode && !parseInt(levelInput.value)) {
             levelInput.value = '5';
             levelInput.placeholder = '+5';
+        }
+
+        if (isCombatLevelMode) {
+            this._populateCharmSelect();
+        } else {
+            this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
         }
 
         // Per-ability targets only apply to ability-level candidates
@@ -3366,6 +3416,81 @@ class CombatSimUI {
         } else {
             this._setDefaultAbilityTargetLevel();
         }
+
+        if (!modes.has('house')) {
+            this.panel.querySelector('#mwi-csim-house-targets').style.display = 'none';
+        }
+    }
+
+    /**
+     * Build the per-room house target inputs from the combat-relevant rooms in
+     * game data, prefilled to the uniform House Lv value (or one level up).
+     * @private
+     */
+    _buildHouseTargets() {
+        const grid = this.panel.querySelector('#mwi-csim-house-targets');
+        if (!grid) return;
+
+        const roomMap = dataManager.getInitClientData()?.houseRoomDetailMap || {};
+        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const editedDTOs = this._editor?.getEditedDTOs();
+        const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
+        const uniform = Math.min(
+            8,
+            Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
+        );
+
+        const rooms = Object.entries(roomMap)
+            .filter(([, detail]) => houseRoomAffectsCombat(detail))
+            .map(([hrid, detail]) => ({
+                hrid,
+                name: detail.name || hrid.split('/').pop().replace(/_/g, ' '),
+                level: Math.max(
+                    0,
+                    Math.floor(Number(dto?.houseRooms?.[hrid] ?? dataManager.getHouseRoomLevel?.(hrid)) || 0)
+                ),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        if (rooms.length === 0) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No combat-relevant house rooms found in game data.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ current level skips the room; used instead of the Lv value while open):</span>' +
+            rooms
+                .map(
+                    (room) => `
+                <span style="display:inline-flex; align-items:center; gap:4px;">
+                    <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
+                    <input type="number" min="1" max="8" data-house-target="${room.hrid}"
+                        value="${room.level >= 8 ? '' : Math.min(8, Math.max(uniform, room.level + 1))}"
+                        ${room.level >= 8 ? 'disabled title="Already at max level"' : ''} style="
+                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
+                </span>`
+                )
+                .join('');
+    }
+
+    /**
+     * Per-room house target levels, or null when the grid is closed.
+     * @returns {Object|null} roomHrid → target level
+     * @private
+     */
+    _getHouseTargets() {
+        const grid = this.panel.querySelector('#mwi-csim-house-targets');
+        if (!grid || grid.style.display === 'none') return null;
+        const targets = {};
+        grid.querySelectorAll('[data-house-target]').forEach((input) => {
+            const value = parseInt(input.value);
+            if (Number.isFinite(value) && value > 0) {
+                targets[input.dataset.houseTarget] = Math.min(8, value);
+            }
+        });
+        return Object.keys(targets).length > 0 ? targets : null;
     }
 
     /**
@@ -3475,12 +3600,14 @@ class CombatSimUI {
 
         try {
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
-            const houseTargetLevel = upgradeModes.includes('house')
+            const isHouseMode = upgradeModes.includes('house');
+            const houseTargetLevel = isHouseMode
                 ? Math.min(
                       8,
                       Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
                   )
                 : 0;
+            const houseTargets = isHouseMode ? this._getHouseTargets() : null;
             const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
@@ -3502,6 +3629,7 @@ class CombatSimUI {
                     abilityTargets,
                     charmTier,
                     houseTargetLevel,
+                    houseTargets,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
