@@ -519,6 +519,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'panelSizeMemory',
+            name: 'Panel Size Memory',
+            category: 'UI',
+            module: UI.panelSizeMemory,
+            async: true,
+        },
+        {
             key: 'tabReorder',
             name: 'Tab Reorder',
             category: 'UI',

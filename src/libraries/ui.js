@@ -12,6 +12,7 @@ import skillExperiencePercentage from '../features/ui/skill-experience-percentag
 import externalLinks from '../features/ui/external-links.js';
 import hideLabyrinthBadge from '../features/ui/hide-labyrinth-badge.js';
 import hideGuildBadge from '../features/ui/hide-guild-badge.js';
+import panelSizeMemory from '../features/ui/panel-size-memory.js';
 import tabReorder from '../features/ui/tab-reorder.js';
 import draggableModals from '../features/ui/draggable-modals.js';
 
@@ -102,6 +103,7 @@ toolashaRoot.UI = {
     externalLinks,
     hideLabyrinthBadge,
     hideGuildBadge,
+    panelSizeMemory,
     tabReorder,
     draggableModals,
     altClickNavigation,

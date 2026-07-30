@@ -2068,6 +2068,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
             },
+            panelSizeMemory: {
+                id: 'panelSizeMemory',
+                label: 'Layout: Remember panel sizes you drag',
+                type: 'checkbox',
+                default: true,
+                help: 'The game forgets panel widths on reload. This records whatever a divider drag changes and reapplies it next session — only styles the game itself wrote in response to your own drag are replayed, and a remembered size is dropped if the layout changes shape.',
+            },
             tabReorder: {
                 id: 'tabReorder',
                 label: 'Character panel: Drag-and-drop tab reordering',
