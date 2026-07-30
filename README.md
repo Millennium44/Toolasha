@@ -239,4 +239,5 @@ npm test -- --coverage      # Coverage report
 
 **With thanks to jigglymoose**, author of
 [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator),
-for the original code this project builds on.
+for several of the ideas behind the upgrade advisor and the wider combat-sim
+tooling.

@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Credit jigglymoose for JIGS
 
-- The README's credits now thank jigglymoose, author of [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator), for the original code this project builds on, and link to the script. No module is singled out — the acknowledgement sits alongside the existing MWITools credit.
+- The README's credits now thank jigglymoose, author of [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator), for several of the ideas behind the upgrade advisor and the wider combat-sim tooling, and link to the script. The acknowledgement sits alongside the existing MWITools credit.
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
