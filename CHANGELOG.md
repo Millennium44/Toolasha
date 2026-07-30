@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Magic armor is chosen per element, from both the weapon and the spells
+
+- Magic loadouts always got Fire robes suggested. The style match only knew "magic", and every top-tier robe qualified equally, so the tie broke alphabetically and Fire won every time — regardless of what the loadout actually casts.
+- Element now comes from **both** sources: the weapon's damage type (`combatStats.damageType`) and the damage type of every equipped ability's effects. A Nature trident cast alongside Fireball reports both, and **both robe sets are offered** — each alone, each as a pair, and crossed with Anchorbound and with each other. When the weapon and spells agree on one element, only that set is offered.
+- Within an element, the piece with the highest matching `*Amplify` at the top item level wins — a lower-tier robe never gets picked just for a bigger amplify number.
+- Elements are ordered weapon-first, then by how many equipped abilities use them, and capped at two sets, since every extra set multiplies the pair combinations. Two elements means 3 sets: 6 single swaps and 9 pairs.
+- Melee, ranged and any weapon dealing physical damage are unaffected — with no elemental gear in play, the previous style-based pick still applies.
+
 ### Fixed: armor pairs never appeared, and single swaps appeared twice
 
 - The forced Lab Sim armor candidates were deduplicated on `slot|upgradeHrid|upgradeLevel|type`, which for a two-piece swap only described its **first** piece. So "Anchorbound body alone", "Anchorbound body + Anchorbound legs" and "Anchorbound body + other legs" all shared one key and the pairs were silently dropped — every armor row simmed one slot at a time. The same key also failed to match a single-slot `cross_slot` candidate against the equivalent `tier` candidate, so those rendered as duplicate rows with identical numbers.
