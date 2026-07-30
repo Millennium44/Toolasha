@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Cape swaps take the better of equal-level or what you own, and include refined
+
+- The cape comparison level is now **the worn cape's level, or a better copy you already own, whichever is higher**. Matching the worn level keeps the result about the cape rather than its enhancement, but a +10 cloak sitting in the bank against a +5 worn cape is what you'd actually equip, so that wins. A worse owned copy never drags the comparison down.
+- **Refined capes are simmed too**, alongside the plain version of each — refined back-slot gear is already exempt from the +10 floor other refined items have, so a refined cape at the compared level is a fair candidate. A refined variant the game doesn't have is skipped.
+
 ### Cape swaps go both ways, compared at equal enhancement
 
 - The melee cape trades offence for defence, which on a labyrinth run can be worth more to a ranged or magic loadout than its own style's cape. Every loadout is now offered **both** the cape matching its style and the melee cape — so a magic run sees Sinister Cape alongside Enchanted Cloak, and a ranged run sees it alongside the quiver.

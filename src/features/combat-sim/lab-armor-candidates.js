@@ -183,6 +183,21 @@ export function findElementalArmor(slot, element, gameData) {
  * @returns {number} Enhancement level
  */
 export function resolveItemEnhancement(itemHrid, playerDTO, inventory) {
+    const owned = findOwnedEnhancement(itemHrid, playerDTO, inventory);
+    return owned === null ? DEFAULT_ARMOR_ENHANCEMENT : owned;
+}
+
+/**
+ * The level this item is actually held at — equipped, else the best copy in
+ * inventory — or null when it isn't owned at all. Separate from
+ * resolveItemEnhancement so callers can tell "owned at +0" from "not owned",
+ * which the cape comparison needs to decide whether to assume a level.
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} playerDTO - Player DTO
+ * @param {Array<Object>} [inventory] - characterItems from dataManager
+ * @returns {number|null} Enhancement level, or null when not owned
+ */
+export function findOwnedEnhancement(itemHrid, playerDTO, inventory) {
     for (const equipped of Object.values(playerDTO?.equipment || {})) {
         if (equipped?.hrid === itemHrid) return Math.max(0, Math.floor(Number(equipped.enhancementLevel) || 0));
     }
@@ -196,9 +211,7 @@ export function resolveItemEnhancement(itemHrid, playerDTO, inventory) {
         const level = Math.max(0, Math.floor(Number(item.enhancementLevel) || 0));
         if (best === null || level > best) best = level;
     }
-    if (best !== null) return best;
-
-    return DEFAULT_ARMOR_ENHANCEMENT;
+    return best;
 }
 
 /**
@@ -318,18 +331,39 @@ export function findElementalWeapon(weapon, element, gameData) {
  * @param {Function} toPiece - (hrid, levelOverride) => piece
  * @returns {Array<Object>} Back-slot pieces
  */
-export function getCapeOptions(playerDTO, gameData, styleFamily, toPiece) {
+export function getCapeOptions(playerDTO, gameData, styleFamily, toPiece, inventory) {
     const equippedBack = playerDTO?.equipment?.[BACK_SLOT];
-    const comparisonLevel = equippedBack?.hrid ? equippedBack.enhancementLevel || 0 : null;
+    const equippedLevel = equippedBack?.hrid
+        ? Math.max(0, Math.floor(Number(equippedBack.enhancementLevel) || 0))
+        : null;
+
+    /**
+     * Level to sim a cape at: match the equipped cape so the comparison is about
+     * the cape, but never sim below one you already own at a higher level —
+     * that copy is what you would actually wear.
+     * @param {string} hrid - Cape HRID
+     * @returns {number|null} Level, or null to use the default rule
+     */
+    const levelFor = (hrid) => {
+        if (equippedLevel === null) return null;
+        const owned = findOwnedEnhancement(hrid, playerDTO, inventory);
+        return owned === null ? equippedLevel : Math.max(equippedLevel, owned);
+    };
 
     const options = [];
     const seen = new Set();
     for (const family of [styleFamily, 'melee']) {
         const found = findTopTierArmor(BACK_SLOT, family, gameData);
-        if (!found || seen.has(found.hrid)) continue;
-        seen.add(found.hrid);
-        const piece = toPiece(found.hrid, comparisonLevel);
-        if (piece) options.push(piece);
+        if (!found) continue;
+
+        // Refined capes are exempt from the +10 floor other refined gear has, so
+        // a refined cape at the compared level is a fair candidate too
+        for (const hrid of [found.hrid, `${found.hrid}_refined`]) {
+            if (seen.has(hrid) || !gameData?.itemDetailMap?.[hrid]) continue;
+            seen.add(hrid);
+            const piece = toPiece(hrid, levelFor(hrid));
+            if (piece) options.push(piece);
+        }
     }
     return options;
 }
@@ -472,7 +506,7 @@ export function generateLabArmorCandidates(playerDTO, gameData, inventory) {
     // labyrinth run, so both are always offered — and both at the level of the cape
     // currently worn, since a cape comparison decided by enhancement is no
     // comparison at all
-    for (const cape of getCapeOptions(playerDTO, gameData, styleFamily, toPiece)) {
+    for (const cape of getCapeOptions(playerDTO, gameData, styleFamily, toPiece, inventory)) {
         assignments.push({ [BACK_SLOT]: cape });
     }
     for (const body of bodyOptions) {
