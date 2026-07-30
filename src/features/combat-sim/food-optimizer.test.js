@@ -345,6 +345,102 @@ describe('runFoodOptimization', () => {
 
         expect(await runFoodOptimization(p, null, {})).toBe(null);
     });
+
+    test('minimizes shared-mana slots against each other, not a top-tier partner', async () => {
+        // Two slots both feed mana: a gummy (over-time) and a yogurt (instant).
+        // Mana holds only when their combined restore reaches 450. Minimizing each
+        // against a top-tier partner proves plum (100+350) and peach (280+200)
+        // separately, but plum+peach (300) fails together — the old search then
+        // fell back to top tiers of everything.
+        const manaData = {
+            itemDetailMap: {
+                '/items/plum_gummy': {
+                    name: 'Plum Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 100, recoveryDuration: 10 },
+                },
+                '/items/star_fruit_gummy': {
+                    name: 'Star Fruit Gummy',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 280, recoveryDuration: 10 },
+                },
+                '/items/donut': {
+                    name: 'Donut',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 60 },
+                },
+                '/items/peach_yogurt': {
+                    name: 'Peach Yogurt',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 200 },
+                },
+                '/items/star_fruit_yogurt': {
+                    name: 'Star Fruit Yogurt',
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: { hitpointRestore: 0, manapointRestore: 350 },
+                },
+            },
+        };
+        resolveItemPrice.mockImplementation(
+            (hrid) =>
+                ({
+                    '/items/plum_gummy': { price: 200 },
+                    '/items/star_fruit_gummy': { price: 2_000 },
+                    '/items/donut': { price: 100 },
+                    '/items/peach_yogurt': { price: 500 },
+                    '/items/star_fruit_yogurt': { price: 1_200 },
+                })[hrid] || { price: 0 }
+        );
+        runSimulation.mockImplementation(async ({ playerDTOs, hours }) => {
+            const food = playerDTOs[0].food.filter(Boolean);
+            const totalMp = food.reduce(
+                (sum, slot) => sum + (manaData.itemDetailMap[slot.hrid]?.consumableDetail?.manapointRestore || 0),
+                0
+            );
+            const simulatedTime = hours * HOUR_NS;
+            return {
+                simulatedTime,
+                deaths: { player1: 0 },
+                playerRanOutOfManaTime: {
+                    player1: {
+                        isOutOfMana: false,
+                        startTimeForOutOfMana: 0,
+                        totalTimeForOutOfMana: totalMp >= 450 ? 0 : simulatedTime * 0.49,
+                    },
+                },
+                consumablesUsed: { player1: Object.fromEntries(food.map((slot) => [slot.hrid, 100 * hours])) },
+            };
+        });
+
+        const result = await runFoodOptimization(
+            {
+                gameData: manaData,
+                playerDTOs: [
+                    { hrid: 'player1', food: [{ hrid: '/items/plum_gummy' }, { hrid: '/items/peach_yogurt' }, null] },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/x',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                seed: 1,
+                baselineResult: null,
+            },
+            null,
+            {}
+        );
+
+        expect(result.recommendation.oomFraction).toBeLessThanOrEqual(result.oomTarget);
+
+        // Sequential search fixes the gummy at plum first, then the yogurt search
+        // sees that fixed choice and lands on the tier that actually covers it —
+        // not the everything-at-top fallback
+        const gummy = result.recommendation.slots.find((s) => s.index === 0);
+        const yogurt = result.recommendation.slots.find((s) => s.index === 1);
+        expect(gummy.hrid).toBe('/items/plum_gummy');
+        expect(gummy.changed).toBe(false);
+        expect(yogurt.hrid).toBe('/items/star_fruit_yogurt');
+    });
 });
 
 describe('estimateFoodSimCount', () => {

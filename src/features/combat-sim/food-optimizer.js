@@ -11,11 +11,15 @@
  * Rather than pricing every combination (a full sim each), it leans on a
  * monotonic fact: within one food type, a higher tier never makes you die more
  * or run dry sooner. That turns "which tier does this slot actually need" into a
- * binary search over restore amount, and only then does cost enter — among
- * everything in the type at or above the needed amount, the cheapest per point
- * wins. A confirmation sim validates the combined pick, and the final answer is
- * never worse than simply keeping what you have: if your current food is viable
- * and cheaper, the recommendation is to keep it.
+ * binary search over restore amount, run slot by slot — each slot is fixed at
+ * its proven minimum before the next is searched, so slots that feed the same
+ * budget (two mana sources) are minimized against each other, not against a
+ * top-tier partner they won't actually have. The final combination is one the
+ * search itself simmed and passed. Only then does cost enter: within a type,
+ * anything restoring at least the proven amount is equally survivable, so the
+ * cheapest per point wins, with one confirming sim guarding the swap. The final
+ * answer is never worse than simply keeping what you have: if your current food
+ * is viable and cheaper, the recommendation is to keep it.
  *
  * Shares the analysis seed with the rest of the upgrade run, so a tier that
  * looks survivable did not merely get a lucky sample.
@@ -259,17 +263,14 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
     };
 
     /**
-     * Choice map with every slot at its pool's top tier, optionally overriding one.
-     * @param {number} [overrideIndex] - Slot to override
-     * @param {Object|null} [overrideEntry] - Entry for that slot
+     * Choice map with every slot at its pool's top tier.
      * @returns {Map<number, Object|null>}
      */
-    const ceilingChoices = (overrideIndex, overrideEntry) => {
+    const ceilingChoices = () => {
         const choices = new Map();
         for (const slot of searchSlots) {
             choices.set(slot.index, slot.pool[slot.pool.length - 1]);
         }
-        if (overrideIndex !== undefined) choices.set(overrideIndex, overrideEntry);
         return choices;
     };
 
@@ -285,28 +286,38 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
 
     const trials = [ceiling];
 
-    // Per-slot binary search: with every other slot held at its ceiling, find the
-    // lowest rung this slot can drop to. Rung 0 is the slot left empty — maybe the
-    // zone doesn't need this slot filled at all.
-    const finalChoices = new Map();
+    // Sequential per-slot minimization. Slots are searched in order, and each
+    // slot is FIXED at its proven minimum before the next slot is searched —
+    // never left at ceiling. This matters when two slots feed the same budget
+    // (a gummy and a yogurt both supplying mana): minimizing each against a
+    // top-tier partner would prove two minima that fail together, and the old
+    // fallback then jumped to top tiers of everything. Searched sequentially,
+    // every passing trial contains all the already-fixed choices, so the last
+    // slot's passing trial IS the final combination, already proven.
+    const finalChoices = ceilingChoices();
+    let finalRecord = null; // trial record matching finalChoices exactly, when one exists
     for (const slot of searchSlots) {
         if (abortSignal?.()) break;
         const rungs = [null, ...slot.pool];
         let low = 0;
         let high = rungs.length - 1;
         let foundRung = null;
+        let foundRecord = null;
         while (low <= high) {
             if (abortSignal?.()) break;
             const mid = Math.floor((low + high) / 2);
             const entry = rungs[mid];
+            const candidate = new Map(finalChoices);
+            candidate.set(slot.index, entry);
             const record = await trial(
-                ceilingChoices(slot.index, entry),
+                candidate,
                 entry ? `${entry.name} in slot ${slot.index + 1}` : `slot ${slot.index + 1} empty`
             );
             if (!record) break;
             trials.push(record);
             if (viable(record)) {
                 foundRung = mid;
+                foundRecord = record;
                 high = mid - 1;
             } else {
                 low = mid + 1;
@@ -314,32 +325,44 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
         }
 
         if (foundRung === null) {
-            // Nothing below the top passed; keep the ceiling tier
-            finalChoices.set(slot.index, slot.pool[slot.pool.length - 1]);
-        } else if (foundRung === 0) {
-            finalChoices.set(slot.index, null);
+            // Nothing passed below (or at) the top; the slot stays at ceiling and
+            // the running combination is no longer a simmed one
+            finalRecord = null;
         } else {
-            // Cost decides among everything in the type at or above the proven amount
-            finalChoices.set(slot.index, cheapestAtLeast(slot.pool, rungs[foundRung]));
+            finalChoices.set(slot.index, foundRung === 0 ? null : rungs[foundRung]);
+            finalRecord = foundRecord;
         }
     }
     if (abortSignal?.()) return null;
 
-    // The per-slot minima were each proven with the other slots at ceiling, so the
-    // combination is optimistic — confirm it, and fall back to the proven ceiling
-    // if the combined pick doesn't hold.
-    let final = await trial(finalChoices, 'cheapest viable combination');
-    if (final && !viable(final)) {
-        trials.push(final);
-        final = await trial(ceilingChoices(), 'fallback: best tiers');
-        if (final) {
-            for (const slot of searchSlots) {
-                finalChoices.set(slot.index, slot.pool[slot.pool.length - 1]);
-            }
+    // Price pass: within each slot's type, anything restoring at least the proven
+    // amount is equally survivable — swap to the cheapest per point. Swaps leave
+    // the proven combination, so they get one confirming sim; if that fails
+    // (noise), revert to the proven tiers rather than escalating.
+    const provenChoices = new Map(finalChoices);
+    let swapped = false;
+    for (const slot of searchSlots) {
+        const entry = finalChoices.get(slot.index);
+        if (!entry) continue;
+        const cheaper = cheapestAtLeast(slot.pool, entry);
+        if (cheaper.hrid !== entry.hrid) {
+            finalChoices.set(slot.index, cheaper);
+            swapped = true;
+        }
+    }
+
+    let final = finalRecord;
+    if (swapped || !final) {
+        final = await trial(finalChoices, 'cheapest viable combination');
+        if (final) trials.push(final);
+        if (final && !viable(final) && finalRecord) {
+            // The cheaper same-or-better swap didn't hold up — keep the tiers the
+            // search actually proved
+            for (const [index, entry] of provenChoices) finalChoices.set(index, entry);
+            final = finalRecord;
         }
     }
     if (!final) return null;
-    trials.push(final);
 
     const slotName = (hrid) => itemDetailMap[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     const currentItems = originalFood.filter(Boolean).map((slot) => slotName(slot.hrid));

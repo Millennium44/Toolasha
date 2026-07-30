@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Food search minimizes slots sequentially so shared mana budgets hold
+
+- The per-slot searches each ran with the _other_ slots held at their top tier. With two mana sources (a gummy and a yogurt), each got minimized against a top-tier partner it wasn't actually going to have — the two proven minima failed together, the confirming sim caught it, and the fallback then recommended the **top tier of every type at once** (the "upgrade all three, +90K/hr" card).
+- Slots are now minimized **sequentially**: each slot is fixed at its proven minimum before the next slot is searched, so later searches see the real, already-shrunk earlier choices. The final combination is one the search itself simmed and passed — no more optimistic combinations, and the everything-at-top fallback is gone (a slot only stays at top tier when nothing below it passes _in context_).
+- The cheapest-per-point swap after the search now guards itself: if the swapped combination fails its confirming sim, the result reverts to the proven tiers instead of escalating.
+- Regression-tested on the failing shape: two mana slots whose minima each pass beside a top-tier partner but fail together must resolve to a one-slot tier bump, never to top tiers across the board.
+
 ### Food search keeps your food types and refuses out-of-mana picks
 
 - The first version of the food search collapsed all three food slots down to one HP item plus one MP item. For setups that rely on more slots (two HP foods, or an extra mana source), even the "best available" probe ran out of mana — and since the search relaxes its targets to whatever the best probe achieves, a 49%-out-of-mana recommendation could "pass" while your real setup sat at 0%.
