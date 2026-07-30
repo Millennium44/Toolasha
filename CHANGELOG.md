@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
+### Clear button for the labyrinth path and beacon overlays
+
+- The labyrinth toolbar has a **Clear** button that removes the path highlight and the beacon plan together. Previously the only ways to get an unobstructed view of the map were to re-run a calculation or change floors.
+
 ### Cape swaps take the better of equal-level or what you own, and include refined
 
 - The cape comparison level is now **the worn cape's level, or a better copy you already own, whichever is higher**. Matching the worn level keeps the result about the cape rather than its enhancement, but a +10 cloak sitting in the bank against a +5 worn cape is what you'd actually equip, so that wins. A worse owned copy never drags the comparison down.

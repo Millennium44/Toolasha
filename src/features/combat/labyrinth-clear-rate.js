@@ -2373,6 +2373,16 @@ class LabyrinthClearRate {
         });
         container.appendChild(beaconInput);
 
+        const clearButton = document.createElement('button');
+        clearButton.className = `${TILE_CONTROLS_CLASS}-clear-button`;
+        clearButton.textContent = 'Clear';
+        clearButton.title = 'Remove the path highlight and the beacon plan from the map';
+        clearButton.style.cssText =
+            'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        clearButton.addEventListener('click', () => this.clearRecommendations());
+        container.appendChild(clearButton);
+
         if (config.getSetting('labyrinthRoomLogs')) {
             const logsButton = document.createElement('button');
             logsButton.textContent = 'Logs';
@@ -2879,6 +2889,17 @@ class LabyrinthClearRate {
     clearBeaconOverlays() {
         document.querySelectorAll(`.${BEACON_OVERLAY_CLASS}`).forEach((el) => el.remove());
         this._beaconPlanCells = null;
+    }
+
+    /**
+     * Wipe both recommendation overlays at once, so the bare map can be read
+     * without re-running a calculation or switching floors to clear them.
+     */
+    clearRecommendations() {
+        this.clearPathOverlays();
+        this.clearBeaconOverlays();
+        this.setTileProgress(0);
+        this.setTileStatus('Path and beacons cleared');
     }
 
     /**
