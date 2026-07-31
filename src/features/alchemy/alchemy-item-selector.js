@@ -4,15 +4,24 @@
  * Finding the "Alchemize Item" picker, and reading what is in it.
  *
  * Harder than it sounds, and worth having one definition of. The page carries
- * several item selectors — the catalyst has one, the guild has one — and they
- * are the same component with the same class names, so anything that goes
- * looking for "the item menu" will find the wrong one sooner or later. The
- * label is what distinguishes them, and even that has to be read carefully:
- * the menu is sometimes portalled out of its owner's subtree, and labels are
- * left mounted in hidden tab panels after you navigate away.
+ * more than one item selector — the alchemized item has one, the catalyst has
+ * another — and they are the same component with the same class names. Worse,
+ * the menu is **portalled**: it is rendered outside the selector that owns it,
+ * so it cannot be identified by what it sits inside.
  *
- * The finding logic here is the version the item dimming feature arrived at
- * against the live DOM; it lives here so there is only one of it.
+ * Two earlier attempts failed here and are worth recording, because both looked
+ * right:
+ *
+ * - Matching a label reading "Alchemize Item". There is no such label — the
+ *   alchemized-item slot is unlabelled, and only the catalyst names itself
+ *   ("Consumed Item").
+ * - Walking up from the menu for the nearest `ItemSelector_label`. The menu's
+ *   own "Remove" tile carries that class, so the search found the menu's own
+ *   contents and concluded the selector was called "Remove".
+ *
+ * What does work is watching which selector was clicked. A menu opens because
+ * something was clicked, and the thing clicked is in the DOM where it belongs
+ * whatever the menu does afterwards.
  */
 
 const MENU_SELECTOR = 'div[class*="ItemSelector_menu"]';
@@ -20,52 +29,81 @@ const LABEL_SELECTOR = 'div[class*="ItemSelector_label"]';
 const TILE_SELECTOR = 'div[class*="Item_itemContainer"]';
 /** The action panel's own name for the slot the alchemized item goes in */
 const PRIMARY_SELECTOR = '[class*="SkillActionDetail_primaryItemSelectorContainer"]';
-const ALCHEMIZE_LABEL = 'Alchemize Item';
+/** The one selector on the panel that does name itself */
+const CATALYST_LABEL = 'Consumed Item';
 
 /** The alchemy tabs, in the order the game lists them */
 export const ALCHEMY_ACTIONS = ['coinify', 'decompose', 'transmute', 'unrefine'];
 
+/** Which selector was opened last, since the menu itself will not say */
+let lastOpened = { primary: false, at: 0 };
+let tracking = false;
+
+/**
+ * Start remembering which item selector gets clicked.
+ *
+ * Installed on first use rather than by a caller, so that every reader of this
+ * module gets it without having to know it exists. Capture phase, because the
+ * game stops the event on its way back up.
+ */
+function trackSelectorClicks() {
+    if (tracking || typeof document === 'undefined') return;
+    tracking = true;
+
+    document.addEventListener(
+        'click',
+        (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            // A click inside an open menu is picking an item, not opening a
+            // selector, and must not overwrite which selector we are in
+            if (target.closest(MENU_SELECTOR)) return;
+
+            const primary = !!target.closest(PRIMARY_SELECTOR);
+            if (primary || target.closest('[class*="ItemSelector"]')) {
+                lastOpened = { primary, at: Date.now() };
+            }
+        },
+        true
+    );
+}
+
+/**
+ * The label of the selector that owns a menu, ignoring the menu's own contents.
+ *
+ * The "Remove" tile inside every menu carries the label class, so a plain
+ * subtree search finds it and reports the menu as being called "Remove".
+ *
+ * @param {HTMLElement} menu - An item selector menu
+ * @returns {string} Label text, or '' when the menu is portalled away from one
+ */
+function ownerLabel(menu) {
+    let ancestor = menu.parentElement;
+    while (ancestor && ancestor !== document.body) {
+        for (const label of ancestor.querySelectorAll(LABEL_SELECTOR)) {
+            if (!menu.contains(label)) return label.textContent.trim();
+        }
+        ancestor = ancestor.parentElement;
+    }
+    return '';
+}
+
 /**
  * The open "Alchemize Item" menu, if one is open.
- *
- * Structure first, label second. The panel marks the slot the alchemized item
- * goes in — `primaryItemSelectorContainer` — and that is what the catalyst
- * selector beside it is not, so a menu inside one needs no further proof. The
- * label text is only consulted for a menu that has been portalled out of its
- * owner's subtree, where the structure is no longer available to read.
- *
  * @returns {HTMLElement|null}
  */
 export function findAlchemizeMenu() {
+    trackSelectorClicks();
+
+    // Nothing to identify unless the alchemy panel is up
+    if (!document.querySelector(PRIMARY_SELECTOR) || !activeAlchemyAction()) return null;
+
     for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
+        // Not portalled after all: the structure answers it outright
         if (menu.closest(PRIMARY_SELECTOR)) return menu;
-    }
-
-    for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
-        // Scope to the selector that owns this menu: the nearest ancestor
-        // carrying a label identifies the owner, and the catalyst and guild
-        // selectors have labels of their own
-        let owned = false;
-        let ancestor = menu.parentElement;
-        while (ancestor && ancestor !== document.body) {
-            const label = ancestor.querySelector(LABEL_SELECTOR);
-            if (label) {
-                owned = true;
-                if (label.textContent.trim() === ALCHEMIZE_LABEL) return menu;
-                break;
-            }
-            ancestor = ancestor.parentElement;
-        }
-        if (owned) continue;
-
-        // Portalled menu, with no owning selector above it: accept only while a
-        // visible label exists. Labels left mounted in hidden tab panels must
-        // not claim a menu that belongs to something else.
-        for (const label of document.querySelectorAll(LABEL_SELECTOR)) {
-            if (label.textContent.trim() === ALCHEMIZE_LABEL && !label.closest('[class*="TabPanel_hidden"]')) {
-                return menu;
-            }
-        }
+        // The catalyst is the one selector that names itself
+        if (ownerLabel(menu) === CATALYST_LABEL) continue;
+        if (lastOpened.primary) return menu;
     }
     return null;
 }
@@ -96,8 +134,10 @@ export function activeAlchemyAction() {
 /**
  * The item tiles in a menu, and the element they all sit in.
  *
- * The grid holds more than items — the "Remove" button shares it — so the tiles
- * are picked out rather than the grid's children being taken wholesale.
+ * The grid is taken to be whichever parent holds the most tiles, not the parent
+ * of the first one. The "Remove" box is a tile too and sits in a wrapper of its
+ * own ahead of the grid, so keying off the first match found exactly one tile
+ * and left the other ninety unsorted.
  *
  * @param {HTMLElement} menu - An item selector menu
  * @returns {{grid: HTMLElement|null, tiles: HTMLElement[]}}
@@ -106,8 +146,22 @@ export function menuTiles(menu) {
     const all = Array.from(menu?.querySelectorAll(TILE_SELECTOR) || []);
     if (!all.length) return { grid: null, tiles: [] };
 
-    const grid = all[0].parentElement;
-    return { grid, tiles: all.filter((tile) => tile.parentElement === grid) };
+    const byParent = new Map();
+    for (const tile of all) {
+        const parent = tile.parentElement;
+        if (!parent) continue;
+        byParent.set(parent, [...(byParent.get(parent) || []), tile]);
+    }
+
+    let grid = null;
+    let tiles = [];
+    for (const [parent, group] of byParent) {
+        if (group.length > tiles.length) {
+            grid = parent;
+            tiles = group;
+        }
+    }
+    return { grid, tiles };
 }
 
 /**
@@ -127,42 +181,46 @@ export function tileItemHrid(tile) {
  * Everything here hangs off recognising one menu among several identical ones,
  * and when that recognition fails the feature does not break loudly — it simply
  * does nothing, which is indistinguishable from not being installed. This says
- * which step failed instead of leaving it to be guessed at.
+ * which step failed, and dumps the menu's ancestry so a wrong answer can be
+ * corrected rather than guessed at again.
  *
  * Console: open the alchemy item picker, then `Toolasha.Debug.alchemyMenu()`
  * @returns {Object} What was found
  */
 export function describeAlchemyMenus() {
     const menus = Array.from(document.querySelectorAll(MENU_SELECTOR));
+    const found = findAlchemizeMenu();
+
     const rows = menus.map((menu, index) => {
-        const owner = menu.closest(PRIMARY_SELECTOR);
-        let label = '';
+        const chain = [];
         let ancestor = menu.parentElement;
-        while (ancestor && ancestor !== document.body && !label) {
-            label = ancestor.querySelector(LABEL_SELECTOR)?.textContent.trim() || '';
+        while (ancestor && ancestor !== document.body && chain.length < 8) {
+            const cls = typeof ancestor.className === 'string' ? ancestor.className : '';
+            chain.push(`${ancestor.tagName.toLowerCase()}.${cls.split(' ')[0] || '(no class)'}`);
             ancestor = ancestor.parentElement;
         }
+        const { tiles } = menuTiles(menu);
         return {
             menu: index,
-            insidePrimarySlot: !!owner,
-            nearestLabel: label || '(none)',
-            tiles: menuTiles(menu).tiles.length,
-            classes: menu.className,
+            matched: menu === found,
+            insidePrimarySlot: !!menu.closest(PRIMARY_SELECTOR),
+            ownerLabel: ownerLabel(menu) || '(none)',
+            tiles: tiles.length,
+            ancestors: chain.join(' < ') || '(portalled to body)',
         };
     });
 
-    const found = findAlchemizeMenu();
-    const action = activeAlchemyAction();
     const labels = Array.from(document.querySelectorAll(LABEL_SELECTOR)).map((el) => el.textContent.trim());
-
     console.log(
         `[Toolasha] ${menus.length} item selector menu(s) open. ` +
             `findAlchemizeMenu() ${found ? `matched menu ${menus.indexOf(found)}` : 'matched nothing'}; ` +
-            `activeAlchemyAction() = ${action || '(none)'}.\n` +
+            `activeAlchemyAction() = ${activeAlchemyAction() || '(none)'}; ` +
+            `primary slot on page = ${!!document.querySelector(PRIMARY_SELECTOR)}; ` +
+            `last selector clicked was the primary one = ${lastOpened.primary}.\n` +
             `Every ItemSelector label on the page: ${labels.length ? labels.join(' | ') : '(none)'}\n` +
             'Open the Alchemize Item picker before running this — with no menu open there is nothing to find.'
     );
     if (rows.length) console.table(rows);
 
-    return { menus: rows, matched: menus.indexOf(found), action, labels };
+    return { menus: rows, matched: menus.indexOf(found), action: activeAlchemyAction(), labels, lastOpened };
 }
