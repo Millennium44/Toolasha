@@ -6,10 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
-### Skilling EXP / Hour now measures the same thing combat's does
+### Combat EXP / Hour now pays for the walk to the room, like skilling always did
 
-- Skilling and enhancing rooms computed experience per hour over the expected time to clear **plus one second of room-entry overhead per entry**, amortised over the entries a clear takes. Combat rooms charge no such overhead, so the two figures sat in the same panel measuring different things — and the term grows exactly where the comparison matters most, adding twenty seconds to a room you clear one time in twenty.
-- Both are now the room's award over the expected time to earn it, with nothing added. Skilling figures go **up** slightly, and further up the harder the room; a room cleared half the time gains about 2%.
+- Skilling and enhancing rooms charged **one second of travel per entry** — a room you clear one time in five is walked to five times over, so the second is amortised across the entries a clear takes. Combat rooms charged nothing, so the two figures sat in the same panel measuring different things.
+- Combat now charges it too, through the same shared calculation, so the numbers can be read side by side. Combat figures drop slightly, and further the harder the room: a room cleared one time in twenty pays twenty seconds of walking per clear.
+- Skilling and enhancing figures are unchanged from before this branch.
 
 ### Combat experience corrected, and the skip list's combat rows get the full card
 
