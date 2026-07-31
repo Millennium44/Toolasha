@@ -1998,6 +1998,37 @@ function computeGoldPerImprovement(cost, deltas) {
 const HOURS_PER_YEAR = 24 * 365;
 
 /**
+ * Extra simulated time a candidate may take to reach the baseline's fight
+ * count. Upgrades usually kill faster and need less, but a defensive swap can
+ * need more, and a run cut short by the clock is no longer paired.
+ */
+const PAIRED_TIME_HEADROOM = 3;
+
+/**
+ * Make every run in a comparison play exactly as many fights as the baseline
+ * did.
+ *
+ * The advisor ranks by the *difference* two loadouts make, and shares one seed
+ * across the baseline and every candidate so their random draws cancel out of
+ * that difference. That cancellation needs the runs to line up fight for fight.
+ * Stopping each on its own precision would end them at different points on
+ * different slices of the sequence and throw the pairing away, leaving a
+ * one-point delta to be read off two independently noisy numbers.
+ *
+ * A time budget breaks it more quietly: a candidate that kills faster fits more
+ * fights into the same hours, so the two runs cover different encounters
+ * altogether. Taking the count from the baseline keeps the sample the time
+ * budget would have bought, while making it identical across candidates.
+ *
+ * @param {Object} baselineResult - The baseline run's SimResult
+ * @returns {Object} A stopping rule pinned to that fight count
+ */
+function pairedTrialRule(baselineResult) {
+    const trials = Math.max(1, Math.floor(Number(baselineResult?.labyAttemptCount) || 0));
+    return { minTrials: trials, maxTrials: trials };
+}
+
+/**
  * How long the upgrade takes to afford, and how long it takes to pay for itself.
  *
  * Gold per 0.01% answers "which upgrade is the most efficient". These answer a
@@ -2425,6 +2456,9 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         seed: simSeed,
     });
     current++;
+    // Every candidate below plays exactly the baseline's fight count
+    const pairedRule = pairedTrialRule(baselineResult);
+    const pairedHours = hours * PAIRED_TIME_HEADROOM;
 
     if (abortSignal?.()) return { baseline: null, results: [] };
 
@@ -2484,7 +2518,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             monsterHrid,
             roomLevel,
             crates,
-            hours,
+            hours: pairedHours,
+            precision: pairedRule,
             communityBuffs,
             labyrinthCombatBuffs,
             seed: simSeed,
@@ -2526,7 +2561,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             monsterHrid,
             roomLevel,
             crates,
-            hours,
+            hours: pairedHours,
+            precision: pairedRule,
             communityBuffs,
             labyrinthCombatBuffs: modifiedBuffs,
             seed: simSeed,
@@ -2642,7 +2678,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const simSeed = analysisSeed();
     const fightSeed = (fightIndex) => deriveSeed(simSeed, fightIndex);
 
-    const simFightWinRate = async (fight, dtoOverride, seed) => {
+    // A fight's baseline pass sets the fight count every candidate pass for
+    // that fight must match, so each comparison stays paired
+    const pairedRules = new Map();
+    const simFightWinRate = async (fight, dtoOverride, seed, fightIndex) => {
+        const rule = pairedRules.get(fightIndex) || null;
         const simResult = await runLabyrinthSimulation({
             gameData,
             playerDTOs: [dtoOverride || fight.dto],
@@ -2650,12 +2690,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             monsterHrid: fight.monsterHrid,
             roomLevel: fight.roomLevel,
             crates,
-            hours,
+            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            precision: rule,
             communityBuffs,
             labyrinthCombatBuffs,
             seed,
         });
         const attempts = simResult.labyAttemptCount || 1;
+        if (!rule) pairedRules.set(fightIndex, pairedTrialRule(simResult));
         return (simResult.encounters || 0) / attempts;
     };
 
@@ -2672,7 +2714,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const fight = fights[i];
         if (abortSignal?.()) return { baseline: null, results: [] };
         onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-        const winRate = await simFightWinRate(fight, null, fightSeed(i));
+        const winRate = await simFightWinRate(fight, null, fightSeed(i), i);
         baselineFights.push({ ...fightMeta(fight), winRate });
         current++;
     }
@@ -2692,7 +2734,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
             const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
             boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
-            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i));
+            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
             fightResults.push({
                 ...fightMeta(fights[i]),
                 winRate,

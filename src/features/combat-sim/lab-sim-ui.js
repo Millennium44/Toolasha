@@ -15,6 +15,7 @@ import {
     getLabyrinthMonsters,
 } from './combat-sim-adapter.js';
 import { runLabyrinthSimulation, cancelSimulation } from './combat-sim-runner.js';
+import { wilsonInterval } from './engine/wilson.js';
 import { findMaxLabyrinthLevel } from './labyrinth-level-finder.js';
 import {
     runLabyrinthUpgradeAnalysis,
@@ -1015,6 +1016,17 @@ class LabSimUI {
                         roomLevel,
                         crates,
                         hours,
+                        // Same rule as the tile badges: stop once the win rate
+                        // is pinned down, with Hours as the ceiling
+                        precision: {
+                            targetHalfWidth:
+                                Math.min(
+                                    10,
+                                    Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))
+                                ) / 100,
+                            minTrials: 100,
+                            maxTrials: 20000,
+                        },
                         communityBuffs,
                         labyrinthCombatBuffs,
                     },
@@ -1053,6 +1065,12 @@ class LabSimUI {
         const deaths = simResult.deaths?.[playerHrid || 'player1'] || 0;
         const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
         const winRate = attempts > 0 ? ((encounters / attempts) * 100).toFixed(2) : '0.00';
+        // The win rate is a proportion off a sample, so the sample size and the
+        // band around it are part of the answer rather than trivia
+        const band = wilsonInterval(encounters, attempts);
+        const bandText = Number.isFinite(band.halfWidth)
+            ? `\u00b1${(band.halfWidth * 100).toFixed(2)}%${simResult.labyStoppedOnPrecision ? '' : ' (capped)'}`
+            : 'not enough fights';
 
         const monsterName = monsterHrid
             .split('/')
@@ -1066,7 +1084,7 @@ class LabSimUI {
                     ${monsterName} \u2014 Level ${roomLevel}
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 20px; font-size:12px;">
-                    <div><span style="color:#888;">Win Rate:</span> <span style="color:${parseFloat(winRate) >= 95 ? '#4caf50' : parseFloat(winRate) >= 50 ? '#ff9800' : '#f44336'}; font-weight:600;">${winRate}%</span></div>
+                    <div><span style="color:#888;">Win Rate:</span> <span style="color:${parseFloat(winRate) >= 95 ? '#4caf50' : parseFloat(winRate) >= 50 ? '#ff9800' : '#f44336'}; font-weight:600;">${winRate}%</span> <span style="color:#888;">${bandText}</span></div>
                     <div><span style="color:#888;">Encounters:</span> ${formatWithSeparator(attempts)}</div>
                     <div><span style="color:#888;">Deaths:</span> <span style="color:${deaths > 0 ? '#f44336' : '#4caf50'};">${formatWithSeparator(deaths)}</span></div>
                     <div><span style="color:#888;">Sim Time:</span> ${simHours.toFixed(1)}h</div>
