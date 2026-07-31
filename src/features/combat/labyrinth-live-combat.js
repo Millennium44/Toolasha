@@ -74,45 +74,81 @@ function spreadFor(elapsed) {
  * Fractions are of maximum, so 1 is untouched and 0 is dead. They are all this
  * needs: absolute hitpoints would not change any of the arithmetic.
  *
+ * Rates are measured over the window you have actually watched, not assumed to
+ * run back to a full health bar. Watching a fight from its start is the normal
+ * case but not a requirement — the first update can arrive with damage already
+ * done, and an estimator that insisted on full health would simply never
+ * appear. What being late costs you is the clock: the time already spent is
+ * invisible, so pass `remainingSeconds: null` and the timeout drops out of the
+ * estimate rather than being guessed at.
+ *
  * @param {Object} state - Fight in progress
- * @param {number} state.monsterHpFraction - Monster health remaining, 0..1
- * @param {number} state.playerHpFraction - Your health remaining, 0..1
- * @param {number} state.elapsedSeconds - Seconds since the fight started
+ * @param {number} state.monsterHpFraction - Monster health remaining now, 0..1
+ * @param {number} state.playerHpFraction - Your health remaining now, 0..1
+ * @param {number} [state.observedSeconds] - Length of the watched window;
+ *   defaults to elapsedSeconds
+ * @param {number} [state.elapsedSeconds] - Seconds since the fight started, for
+ *   the common case where those are the same thing
+ * @param {number} [state.monsterLostFraction] - Monster health lost over the
+ *   window; defaults to everything below full
+ * @param {number} [state.playerLostFraction] - Yours over the window
+ * @param {number|null} [state.remainingSeconds] - Time left on the room timer;
+ *   null when unknown, omitted to derive it from elapsedSeconds
  * @param {number} [state.timeoutSeconds] - Room timer, for the rare non-120s case
  * @returns {Object|null} { clearChance, reason, killSeconds, deathSeconds,
- *   remainingSeconds, confident } — null when the state is unusable
+ *   remainingSeconds, timerKnown, confident } — null when the state is unusable
  */
 export function estimateLiveClearChance(state) {
     const monsterHp = Number(state?.monsterHpFraction);
     const playerHp = Number(state?.playerHpFraction);
-    const elapsed = Number(state?.elapsedSeconds);
     const timeout = Number(state?.timeoutSeconds) || FIGHT_TIMEOUT_SECONDS;
-    if (![monsterHp, playerHp, elapsed].every(Number.isFinite)) return null;
-    if (monsterHp < 0 || monsterHp > 1 || playerHp < 0 || playerHp > 1 || elapsed < 0) return null;
+    const elapsed = Number(state?.elapsedSeconds);
+    const observed = Number.isFinite(Number(state?.observedSeconds)) ? Number(state.observedSeconds) : elapsed;
 
-    const remaining = Math.max(0, timeout - elapsed);
+    if (![monsterHp, playerHp, observed].every(Number.isFinite)) return null;
+    if (monsterHp < 0 || monsterHp > 1 || playerHp < 0 || playerHp > 1 || observed < 0) return null;
+
+    // Health lost over the window. Absent an explicit figure the fight was
+    // watched from full, so everything missing was lost while watching.
+    const monsterLost = Math.max(
+        0,
+        Number.isFinite(Number(state?.monsterLostFraction)) ? Number(state.monsterLostFraction) : 1 - monsterHp
+    );
+    const playerLost = Math.max(
+        0,
+        Number.isFinite(Number(state?.playerLostFraction)) ? Number(state.playerLostFraction) : 1 - playerHp
+    );
+
+    let remaining;
+    if (state?.remainingSeconds === null) {
+        remaining = null;
+    } else if (Number.isFinite(Number(state?.remainingSeconds))) {
+        remaining = Math.max(0, Number(state.remainingSeconds));
+    } else {
+        remaining = Number.isFinite(elapsed) ? Math.max(0, timeout - elapsed) : null;
+    }
 
     // Settled fights need no estimate, and must not be run through the rate
     // math — a dead monster has an undefined time-to-die
-    if (monsterHp <= 0)
-        return { clearChance: 1, reason: 'monster is down', remainingSeconds: remaining, confident: true };
-    if (playerHp <= 0) return { clearChance: 0, reason: 'you are down', remainingSeconds: remaining, confident: true };
-    if (remaining <= 0) return { clearChance: 0, reason: 'out of time', remainingSeconds: 0, confident: true };
+    const settled = { remainingSeconds: remaining, timerKnown: remaining !== null, confident: true };
+    if (monsterHp <= 0) return { clearChance: 1, reason: 'monster is down', ...settled };
+    if (playerHp <= 0) return { clearChance: 0, reason: 'you are down', ...settled };
+    if (remaining !== null && remaining <= 0) return { clearChance: 0, reason: 'out of time', ...settled };
 
-    if (elapsed < MIN_ELAPSED_SECONDS) {
+    if (observed < MIN_ELAPSED_SECONDS) {
         return {
             clearChance: null,
             reason: 'too early to tell',
             remainingSeconds: remaining,
+            timerKnown: remaining !== null,
             confident: false,
         };
     }
 
-    // Health lost per second, and the time each side has left at that rate
-    const monsterRate = (1 - monsterHp) / elapsed;
-    const playerRate = (1 - playerHp) / elapsed;
-    const killSeconds = monsterRate > 0 ? monsterHp / monsterRate : Infinity;
-    const deathSeconds = playerRate > 0 ? playerHp / playerRate : Infinity;
+    // Time each side has left at the rate measured over the window
+    const killSeconds = monsterLost > 0 ? (monsterHp * observed) / monsterLost : Infinity;
+    const deathSeconds = playerLost > 0 ? (playerHp * observed) / playerLost : Infinity;
+    const confident = observed >= FIGHT_TIMEOUT_SECONDS / 4;
 
     // Taking no damage at all is not evidence of invulnerability, but it is
     // evidence that death is not what ends this fight — the timer is
@@ -123,17 +159,18 @@ export function estimateLiveClearChance(state) {
             killSeconds,
             deathSeconds,
             remainingSeconds: remaining,
-            confident: elapsed >= FIGHT_TIMEOUT_SECONDS / 4,
+            timerKnown: remaining !== null,
+            confident,
         };
     }
 
-    const spread = spreadFor(elapsed);
+    const spread = spreadFor(observed);
     const killSigma = killSeconds * spread;
 
     // P(kill lands inside the time left). Both finish lines are uncertain, so
     // the race against death compares two spread-out times rather than two
     // numbers.
-    const beatsTimer = normalCdf((remaining - killSeconds) / Math.max(1e-6, killSigma));
+    const beatsTimer = remaining === null ? 1 : normalCdf((remaining - killSeconds) / Math.max(1e-6, killSigma));
     let beatsDeath = 1;
     if (deathSeconds !== Infinity) {
         const deathSigma = deathSeconds * spread;
@@ -151,7 +188,8 @@ export function estimateLiveClearChance(state) {
         killSeconds,
         deathSeconds,
         remainingSeconds: remaining,
-        confident: elapsed >= FIGHT_TIMEOUT_SECONDS / 4,
+        timerKnown: remaining !== null,
+        confident,
     };
 }
 

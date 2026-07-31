@@ -103,7 +103,10 @@ class CombatBattleCounter {
         }
         if (!pathCoords.length || !Array.isArray(roomRows)) return;
 
-        const active = pathCoords[pathCoords.length - 1];
+        // pathData is the queue, and [0] is the room being run — the last
+        // entry is the far end of what you lined up, which is routinely an
+        // unrevealed room and used to abandon the count entirely
+        const active = pathCoords[0];
         const room = roomRows?.[active.y]?.[active.x];
         if (!room || room.roomType !== '/labyrinth_room_types/combat') {
             // Moved to a non-combat room — the previous fight's attempt count
