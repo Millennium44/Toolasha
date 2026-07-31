@@ -8,10 +8,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Fixed: the alchemy pins never appeared
 
-- The picker was recognised by looking for a label reading "Alchemize Item", which nothing else in the codebase relies on and which the panel does not appear to render. It is now found by the container the panel marks the alchemized item's slot with — `primaryItemSelectorContainer` — which is exactly what the catalyst selector beside it is not, and which two other working features already use. The label is kept only for the case where the menu has been portalled away from its owner.
-- **Pins also vanished on the first keystroke in the filter box.** Typing replaces the tiles inside the menu without replacing the menu, so a watcher that only sees the menu appear decorates it once and never again. The menu's contents are watched now, with the decoration made idempotent so it cannot react to its own writes.
-- The same misrecognition would have stopped the existing item dimming working, since it shared the logic.
-- New diagnostic: `Toolasha.Debug.alchemyMenu()` lists every item selector menu on the page, which one the finder matched, the labels it can see and the active action — because when this fails it fails silently, which is indistinguishable from the feature not being installed.
+The picker could not be recognised at all, which also means the existing item dimming has been silently doing nothing — it shared the logic. Three things were wrong:
+
+- **There is no "Alchemize Item" label.** The recognition looked for one. The alchemized-item slot is unlabelled; only the catalyst names itself, as "Consumed Item".
+- **The menu's own "Remove" tile carries the label class.** So walking up from the menu for the nearest label found the menu's own contents and concluded the selector was called "Remove" — which then excluded it. This is why even the fallback failed.
+- **The menu is portalled**, rendered outside the selector that owns it, so it cannot be identified by what it sits inside either.
+
+It now watches **which selector was clicked**. A menu opens because something was clicked, and the thing clicked stays where it belongs in the DOM whatever the menu does afterwards. The structural check is kept for the case where the menu is not portalled, and the catalyst is excluded by its own label.
+
+- **Only one tile was ever being found**, so even a matched menu would have sorted nothing. The grid was taken to be the parent of the first tile, and the first match sits in a wrapper of its own ahead of the actual grid. It is now whichever parent holds the most tiles.
+- **Pins would have vanished on the first keystroke in the filter box.** Typing replaces the tiles inside the menu without replacing the menu, so a watcher that only sees the menu appear decorates it once and never again. The menu's contents are watched now, with the decoration made idempotent so it cannot react to its own writes.
+- `Toolasha.Debug.alchemyMenu()` now also dumps each menu's ancestry, its owning label, its tile count and which selector was last clicked — enough to correct a wrong answer rather than guess at it.
 
 ### Pin items in the alchemy picker
 
