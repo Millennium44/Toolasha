@@ -1,5 +1,5 @@
 import { random, syncEncounterRng } from './rng.js';
-import { hasConverged } from './wilson.js';
+import { hasConverged, isStoppingRule } from './wilson.js';
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -173,13 +173,14 @@ class CombatSimulator {
      * occasionally much later. Time remains the outer bound either way.
      *
      * @param {number} simulationTimeLimit - Simulation time limit in nanoseconds
-     * @param {Object} [stopRule] - Labyrinth precision rule: targetHalfWidth,
-     *   minTrials, maxTrials. Ignored outside labyrinth runs.
+     * @param {Object} [stopRule] - Labyrinth stopping rule: a hard trial count
+     *   (maxTrials), a decision against a bar (decideAgainst), or an interval
+     *   width (targetHalfWidth). Ignored outside labyrinth runs.
      * @returns {SimResult}
      */
     simulate(simulationTimeLimit, stopRule = null) {
         this.reset();
-        this.stopRule = this.labyrinth && stopRule?.targetHalfWidth > 0 ? stopRule : null;
+        this.stopRule = this.labyrinth && isStoppingRule(stopRule) ? stopRule : null;
         this.converged = false;
 
         let ticks = 0;

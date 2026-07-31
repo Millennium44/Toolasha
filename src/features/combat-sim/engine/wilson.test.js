@@ -1,5 +1,13 @@
 import { describe, test, expect } from 'vitest';
-import { wilsonHalfWidth, wilsonInterval, hasConverged, trialsNeeded, Z_95 } from './wilson.js';
+import {
+    wilsonHalfWidth,
+    wilsonInterval,
+    hasConverged,
+    decidedAgainst,
+    isStoppingRule,
+    trialsNeeded,
+    Z_95,
+} from './wilson.js';
 
 describe('wilsonHalfWidth', () => {
     test('matches the published figures', () => {
@@ -66,6 +74,61 @@ describe('hasConverged', () => {
     test('no target means precision never stops the run', () => {
         expect(hasConverged(0, 5000, { minTrials: 50 })).toBe(false);
         expect(hasConverged(0, 5000, { targetHalfWidth: 0, minTrials: 50 })).toBe(false);
+    });
+});
+
+describe('decidedAgainst', () => {
+    test('a clear answer is reached in a fraction of the trials a figure needs', () => {
+        // 90% against a 50% bar: settled almost at once, where measuring that
+        // 90% to a point takes nearly two thousand fights
+        expect(decidedAgainst(45, 50, 0.5)).toBe(true);
+        expect(trialsNeeded(0.9, 0.01)).toBeGreaterThan(1500);
+    });
+
+    test('a rate sitting on the bar never decides', () => {
+        expect(decidedAgainst(50, 100, 0.5)).toBe(false);
+        expect(decidedAgainst(5000, 10000, 0.5)).toBe(false);
+    });
+
+    test('decides below the bar as readily as above it', () => {
+        expect(decidedAgainst(5, 50, 0.5)).toBe(true);
+        expect(wilsonInterval(5, 50).high).toBeLessThan(0.5);
+    });
+
+    test('has nothing to say about no trials or no bar', () => {
+        expect(decidedAgainst(0, 0, 0.5)).toBe(false);
+        expect(decidedAgainst(10, 20, NaN)).toBe(false);
+    });
+});
+
+describe('hasConverged threshold mode', () => {
+    test('stops on a decision rather than on a width', () => {
+        const rule = { decideAgainst: 0.5, minTrials: 50, maxTrials: 8000 };
+        // Nowhere near ±1% precision, but the side is no longer in doubt
+        expect(wilsonHalfWidth(45, 50)).toBeGreaterThan(0.05);
+        expect(hasConverged(45, 50, rule)).toBe(true);
+        expect(hasConverged(25, 50, rule)).toBe(false);
+    });
+
+    test('a threshold outranks a width when both are set', () => {
+        const rule = { decideAgainst: 0.5, targetHalfWidth: 0.001, minTrials: 50 };
+        expect(hasConverged(45, 50, rule)).toBe(true);
+    });
+
+    test('a nonsensical bar falls back to the width', () => {
+        expect(hasConverged(45, 50, { decideAgainst: 0, targetHalfWidth: 0.5, minTrials: 10 })).toBe(true);
+        expect(hasConverged(45, 50, { decideAgainst: 1.5, targetHalfWidth: 0.001, minTrials: 10 })).toBe(false);
+    });
+});
+
+describe('isStoppingRule', () => {
+    test('recognises each of the three forms and nothing else', () => {
+        expect(isStoppingRule({ targetHalfWidth: 0.01 })).toBe(true);
+        expect(isStoppingRule({ maxTrials: 500 })).toBe(true);
+        expect(isStoppingRule({ decideAgainst: 0.5 })).toBe(true);
+        expect(isStoppingRule({ minTrials: 100 })).toBe(false);
+        expect(isStoppingRule({})).toBe(false);
+        expect(isStoppingRule(null)).toBe(false);
     });
 });
 

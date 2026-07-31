@@ -56,6 +56,31 @@ export function wilsonInterval(successes, trials, z = Z_95) {
 }
 
 /**
+ * Whether the sample has settled which side of a threshold the true rate is on.
+ *
+ * Answering "does this level clear at least half the time" is a cheaper
+ * question than "what is this level's clear rate", and the two should not be
+ * paid for at the same price. A level clearing 90% of the time is placed above
+ * a 50% bar within a few dozen fights, while measuring that 90% to the
+ * percentage point takes nearly two thousand. Only a level sitting genuinely on
+ * the bar is undecidable, and no amount of simulation fixes that one.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} threshold - The bar, as a proportion
+ * @param {number} [z=Z_95] - Normal quantile
+ * @returns {boolean} True once the interval sits wholly to one side
+ */
+export function decidedAgainst(successes, trials, threshold, z = Z_95) {
+    const n = Math.floor(Number(trials) || 0);
+    if (n <= 0) return false;
+    const bar = Number(threshold);
+    if (!Number.isFinite(bar)) return false;
+    const { low, high } = wilsonInterval(successes, n, z);
+    return low > bar || high < bar;
+}
+
+/**
  * Whether a run has learned enough to stop.
  *
  * The floor matters as much as the target: a run that opens with three straight
@@ -64,11 +89,15 @@ export function wilsonInterval(successes, trials, z = Z_95) {
  *
  * @param {number} successes - Trials won
  * @param {number} trials - Trials run
- * @param {Object} [rule] - Stopping rule
+ * @param {Object} [rule] - Stopping rule. Three ways to end a run, checked in
+ *   order: a hard trial count, a decision against a threshold, an interval
+ *   width. A rule may set any of them.
+ * @param {number} [rule.maxTrials] - Always stop at this many
+ * @param {number} [rule.minTrials=50] - Never stop before this many
+ * @param {number} [rule.decideAgainst] - Stop once the interval excludes this
+ *   proportion, for questions that only need a side rather than a figure
  * @param {number} [rule.targetHalfWidth] - Interval half-width to reach, in
  *   proportion units; 0 or absent means precision never stops the run
- * @param {number} [rule.minTrials=50] - Never stop before this many
- * @param {number} [rule.maxTrials] - Always stop at this many
  * @returns {boolean}
  */
 export function hasConverged(successes, trials, rule = {}) {
@@ -78,9 +107,28 @@ export function hasConverged(successes, trials, rule = {}) {
     if (Number.isFinite(maxTrials) && maxTrials > 0 && n >= maxTrials) return true;
     if (n < Math.max(1, minTrials)) return false;
 
+    const bar = Number(rule.decideAgainst);
+    if (Number.isFinite(bar) && bar > 0 && bar < 1) return decidedAgainst(successes, n, bar);
+
     const target = Number(rule.targetHalfWidth);
     if (!Number.isFinite(target) || target <= 0) return false;
     return wilsonHalfWidth(successes, n) <= target;
+}
+
+/**
+ * Whether a stopping rule can ever fire, so callers can tell a real rule from
+ * an empty object without knowing which of the three forms it uses.
+ * @param {Object} [rule] - Stopping rule
+ * @returns {boolean}
+ */
+export function isStoppingRule(rule) {
+    if (!rule) return false;
+    const bar = Number(rule.decideAgainst);
+    return (
+        Number(rule.targetHalfWidth) > 0 ||
+        (Number.isFinite(Number(rule.maxTrials)) && Number(rule.maxTrials) > 0) ||
+        (Number.isFinite(bar) && bar > 0 && bar < 1)
+    );
 }
 
 /**
