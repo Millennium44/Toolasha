@@ -1146,14 +1146,7 @@ export const settingsGroups = {
                 label: 'Market: Price history panel',
                 type: 'checkbox',
                 default: false,
-                help: 'A floating chart of an item\u2019s ask, bid, traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org \u2014 a third party, which is told which items you look up. Off until you turn it on for that reason.',
-            },
-            market_pooledHistoryContribute: {
-                id: 'market_pooledHistoryContribute',
-                label: 'Market: Contribute to the pooled price history',
-                type: 'checkbox',
-                default: false,
-                help: 'Sends the order books you open back to the pooled history server, which is where the history you read comes from \u2014 every reader is someone else\u2019s missing data point. It sends more than reading does: which items you opened and when. Needs the price history panel on.',
+                help: 'Adds a History tab to the marketplace: a floating chart of an item\u2019s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
             },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
