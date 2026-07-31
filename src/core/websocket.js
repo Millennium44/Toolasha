@@ -303,6 +303,10 @@ class WebSocketHook {
             messageType === 'profile_shared' ||
             messageType === 'battle_consumable_ability_updated' ||
             messageType === 'battle_unit_fetched' ||
+            // Consecutive combat ticks can open with identical text — same type,
+            // same battle, same unit ids — and differ only in hitpoints further
+            // in, so the 100-char hash would drop the update that matters
+            messageType === 'battle_updated' ||
             messageType === 'action_type_consumable_slots_updated' ||
             messageType === 'consumable_buffs_updated' ||
             messageType === 'character_info_updated' ||

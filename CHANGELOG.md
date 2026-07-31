@@ -6,10 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Attempt badge moved off the ETA
+
+- The `↻N` badge sits at the middle of the tile's left edge rather than the bottom-left corner, where it overlapped the clear-chance and ETA badge.
+
 ### Groundwork for a live clear chance in combat rooms
 
 - **`Toolasha.Debug.captureLab()`** records every WebSocket message for a minute and prints a digest: which message types arrive and how often, which hitpoint-like fields changed during the capture, and a shape sample of each payload. Run it from the console during a labyrinth fight to find out what the server actually pushes mid-combat. Nothing registers or schedules it — it runs only when typed.
 - **The estimator itself is in**, as pure math with tests: given how much of the monster and of you is left and how long the fight has run, it extrapolates both times-to-die and returns the chance the monster's runs out first, inside the 120-second timer. Both finish lines are treated as spread-out rather than exact, and the spread narrows as the fight supplies evidence, so an early number is marked `?` and a settled one is not.
+- **`battle_updated` is now exempt from message deduplication.** It is the message combat state arrives on, roughly twice a second during a fight, and consecutive ticks can open with identical text — same type, same battle, same unit ids — differing only in hitpoints further in. The 100-character content hash would have dropped exactly the updates a live estimate depends on.
 - **It is not wired to anything yet** — it has no data source until the capture says where hitpoints live.
 
 ### Room attempt counter
