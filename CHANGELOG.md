@@ -15,6 +15,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Simulated clear rates are now checked against what actually happens
+
+- Every labyrinth fight is recorded: the server counts entries per room and marks a room cleared, so a room beaten on the fifth try is one clear in five attempts, and a room walked away from is none in however many it took. Totals accumulate per monster and level, and persist.
+- **A combat tile's hover now shows `Actually Cleared 0/21 (0%) — sim too high`** whenever the record contradicts the prediction. A simulation can converge on a precise wrong answer and no number of extra trials will say so; only the game can.
+- **`Toolasha.Debug.labAccuracy()`** prints the whole comparison — predicted rate, observed clears, the observed range, and how often the sim's own rate would produce a record that lopsided. A likelihood of 0.28% means the sim is being contradicted, not that you were unlucky.
+- Rooms given up on still count their attempts. Counting only the rooms you finished would quietly discard the losing half of the sample and make every rate look better than it is.
+
 ### Fixed: guild leaderboard XP/h columns were blank
 
 - The guild leaderboard refreshes on its own 20-minute cycle, so opening the panel again inside that window hands back the **same snapshot**. Every one of those was being recorded, which left two identical readings at the end of each guild's history — and a rate measured across two identical readings is zero, so the column rendered blank. Clicking around the leaderboard actively made it worse. The own guild kept working because its history is fed by `guild_updated`, whose experience really does move.

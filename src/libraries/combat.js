@@ -80,6 +80,10 @@ toolashaRoot.Combat = {
 
 // Console-driven debug tools, kept out of the feature namespaces because
 // nothing registers or schedules them — they only run when typed
-toolashaRoot.Debug = { ...(toolashaRoot.Debug || {}), ...labyrinthCapture };
+toolashaRoot.Debug = {
+    ...(toolashaRoot.Debug || {}),
+    ...labyrinthCapture,
+    labAccuracy: () => labyrinthClearRate.labAccuracy(),
+};
 
 console.log('[Toolasha] Combat library loaded');

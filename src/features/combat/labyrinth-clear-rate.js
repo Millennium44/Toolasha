@@ -4,12 +4,14 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
+import { readCombatRooms, foldFloorOutcomes, compareToPrediction, outcomeKey } from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -54,6 +56,7 @@ const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
 const MAX_SIM_TRIALS = 20000;
 /** Deciding a side needs far fewer fights than measuring a rate */
+const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
@@ -702,6 +705,9 @@ class LabyrinthClearRate {
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
         this._pathData = null;
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._outcomesLoaded = false;
         this._fight = null;
         this._liveCombatTimeout = null;
         this._liveCombatDrawnAt = 0;
@@ -926,6 +932,80 @@ class LabyrinthClearRate {
     }
 
     // -------------------------------------------------------------------------
+    // Predicted against actual
+    //
+    // A simulation can converge on a precise wrong answer, and no number of
+    // extra trials will say so — only the game can. The server counts the
+    // fights for us: a room beaten on the fifth try is one clear in five, and a
+    // room walked away from is nought in however many. Set beside the rate the
+    // sim predicted, that is a test the sim can fail.
+    // -------------------------------------------------------------------------
+
+    /** Fold the current floor into the running record of how fights went */
+    async recordOutcomes(roomData) {
+        if (!roomData) return;
+        if (!this._outcomesLoaded) {
+            this._outcomesLoaded = true;
+            try {
+                this._outcomes = await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {});
+            } catch (error) {
+                console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
+            }
+        }
+
+        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readCombatRooms(roomData));
+        this._outcomes = folded.totals;
+        this._outcomesSeen = folded.seen;
+        if (!folded.changed) return;
+
+        try {
+            await storage.setJSON(OUTCOME_STORAGE_KEY, this._outcomes, 'settings');
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
+        }
+    }
+
+    /** What was actually observed for a monster at a level, if anything */
+    observedOutcome(monsterHrid, roomLevel) {
+        return this._outcomes[outcomeKey(monsterHrid, roomLevel)] || null;
+    }
+
+    /**
+     * Set every predicted rate beside the rate actually observed, and say which
+     * ones the record will not support.
+     *
+     * Console: Toolasha.Debug.labAccuracy()
+     * @returns {Array<Object>} One row per monster and level seen
+     */
+    labAccuracy() {
+        const rows = [];
+        for (const bucket of Object.values(this._outcomes)) {
+            const cached = this.getCachedCombatResult(bucket.monsterHrid, bucket.roomLevel);
+            const predicted = cached ? cached.clearChance : NaN;
+            const verdict = compareToPrediction(bucket.clears, bucket.attempts, predicted, wilsonInterval);
+            rows.push({
+                monster: String(bucket.monsterHrid).split('/').pop(),
+                level: bucket.roomLevel,
+                predicted: Number.isFinite(predicted) ? `${(predicted * 100).toFixed(1)}%` : 'not simmed',
+                observed: `${bucket.clears}/${bucket.attempts}`,
+                observedPct: `${(verdict.observed * 100).toFixed(1)}%`,
+                range: `${(verdict.low * 100).toFixed(0)}-${(verdict.high * 100).toFixed(0)}%`,
+                verdict: verdict.verdict,
+                likelihood: Number.isFinite(predicted) ? `${(verdict.likelihood * 100).toFixed(2)}%` : '',
+            });
+        }
+        rows.sort((a, b) => b.observed.split('/')[1] - a.observed.split('/')[1]);
+
+        console.log(
+            `[Toolasha] ${rows.length} fights recorded. "likelihood" is how often the sim's own rate would ` +
+                'produce a record this lopsided — a small number means the sim is being contradicted.\n' +
+                'Rows reading "not simmed" need their tile calculated first, so a prediction exists to compare against.'
+        );
+        console.table(rows);
+        return rows;
+    }
+
+    // -------------------------------------------------------------------------
     // Room attempts
     //
     // A room you fail to clear is one you come back to, and the map gives no
@@ -998,6 +1078,7 @@ class LabyrinthClearRate {
 
     onLabyrinthUpdated(data) {
         this._pathData = data.labyrinth?.pathData ?? null;
+        this.recordOutcomes(data.labyrinth?.roomData);
         const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
@@ -4030,6 +4111,18 @@ class LabyrinthClearRate {
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
+
+        // How the fight has actually gone, which is the only thing that can
+        // catch the sim being confidently wrong
+        const observed = this.observedOutcome(result.monsterHrid, result.roomLevel);
+        if (observed?.attempts > 0) {
+            const check = compareToPrediction(observed.clears, observed.attempts, result.clearChance, wilsonInterval);
+            const note = check.verdict === 'consistent' ? '' : ` — ${check.verdict}`;
+            addRow(
+                'Actually Cleared',
+                `${observed.clears}/${observed.attempts} (${(check.observed * 100).toFixed(0)}%)${note}`
+            );
         }
 
         if (monster) {
