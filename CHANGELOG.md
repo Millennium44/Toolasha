@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### The labyrinth room header says "Attempt #2" rather than "try 2"
+
+- Matches how the room log and the tile badges already word it, and reads as a count rather than an instruction.
+
 ### EXP / Hour pays for the walk to a room, once, on every room type
 
 - Combat rooms charged nothing for travel while skilling and enhancing rooms did, so the two figures sat in the same panel measuring different things. Both now go through one shared calculation and can be read side by side.
