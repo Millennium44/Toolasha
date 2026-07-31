@@ -125,6 +125,8 @@ class AlchemyItemPins {
         this.unregister = null;
         this.applying = false;
         this.styleEl = null;
+        this.menuObserver = null;
+        this.watchedMenu = null;
     }
 
     async initialize() {
@@ -139,8 +141,6 @@ class AlchemyItemPins {
         this.styleEl.textContent = CSS;
         document.head.appendChild(this.styleEl);
 
-        // The menu is rebuilt on every keystroke in the filter box, so the
-        // ordering has to be reapplied rather than done once
         this.unregister = domObserver.onClass('AlchemyItemPins', 'ItemSelector_menu', () => this.apply());
         this.apply();
     }
@@ -148,6 +148,9 @@ class AlchemyItemPins {
     disable() {
         this.unregister?.();
         this.unregister = null;
+        this.menuObserver?.disconnect();
+        this.menuObserver = null;
+        this.watchedMenu = null;
         this.styleEl?.remove();
         this.styleEl = null;
         document.querySelectorAll(`.${PIN_CLASS}`).forEach((el) => el.remove());
@@ -155,12 +158,40 @@ class AlchemyItemPins {
         this.isInitialized = false;
     }
 
+    /**
+     * Watch the open menu's contents.
+     *
+     * Typing in the filter box replaces the tiles inside the menu without
+     * replacing the menu itself, so a watcher that only sees the menu appear
+     * decorates it once and then never again — the pins vanish on the first
+     * keystroke and never come back.
+     *
+     * @param {HTMLElement} menu - The open menu
+     */
+    watchMenu(menu) {
+        if (this.watchedMenu === menu && this.menuObserver) return;
+
+        this.menuObserver?.disconnect();
+        this.watchedMenu = menu;
+        // Children only. Decoration writes classes and titles, and reacting to
+        // those would be reacting to itself.
+        this.menuObserver = new MutationObserver(() => this.apply());
+        this.menuObserver.observe(menu, { childList: true, subtree: true });
+    }
+
     /** Put the pins for the open action at the front of the open menu */
     apply() {
         if (this.applying) return;
 
         const menu = findAlchemizeMenu();
-        if (!menu) return;
+        if (!menu) {
+            this.menuObserver?.disconnect();
+            this.menuObserver = null;
+            this.watchedMenu = null;
+            return;
+        }
+        this.watchMenu(menu);
+
         const action = activeAlchemyAction();
         if (!action) return;
 
@@ -168,13 +199,13 @@ class AlchemyItemPins {
         if (!grid || !tiles.length) return;
 
         const pinned = this.pins[action] || [];
-        for (const tile of tiles) this.decorateTile(tile, action, pinned);
-
         const desired = orderTiles(tiles, pinned, tileItemHrid);
-        if (sameOrder(tiles, desired)) return;
 
         this.applying = true;
         try {
+            for (const tile of tiles) this.decorateTile(tile, action, pinned);
+            if (sameOrder(tiles, desired)) return;
+
             // Anchored on the first tile so anything else sharing the grid —
             // the Remove button sits ahead of them — keeps its place
             const marker = document.createComment('mwi-pins');
@@ -221,9 +252,13 @@ class AlchemyItemPins {
             );
             tile.appendChild(button);
         }
-        button.textContent = '📌';
-        button.title = isPinned ? `Unpin from ${action}` : `Pin to the front of ${action}`;
-        button.dataset.mwiPinAction = action;
+        // Written only when it would actually change. Assigning the same text
+        // still replaces the node, which the menu watcher would see as the menu
+        // changing, which would decorate again — forever.
+        if (button.textContent !== '📌') button.textContent = '📌';
+        const title = isPinned ? `Unpin from ${action}` : `Pin to the front of ${action}`;
+        if (button.title !== title) button.title = title;
+        if (button.dataset.mwiPinAction !== action) button.dataset.mwiPinAction = action;
     }
 
     /**

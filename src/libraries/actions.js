@@ -27,6 +27,7 @@ import drinkTimer from '../features/actions/drink-timer.js';
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
 import alchemyBestItems from '../features/alchemy/alchemy-best-items.js';
 import alchemyItemPins from '../features/alchemy/alchemy-item-pins.js';
+import { describeAlchemyMenus } from '../features/alchemy/alchemy-item-selector.js';
 
 // Skilling optimizer
 import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer-ui.js';
@@ -60,6 +61,13 @@ toolashaRoot.Actions = {
     pinnedActionsPage,
     drinkTimer,
     skillingOptimizer,
+};
+
+// Console-driven debug tools, kept out of the feature namespaces because
+// nothing registers or schedules them — they only run when typed
+toolashaRoot.Debug = {
+    ...(toolashaRoot.Debug || {}),
+    alchemyMenu: () => describeAlchemyMenus(),
 };
 
 console.log('[Toolasha] Actions library loaded');
