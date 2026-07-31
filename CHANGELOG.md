@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Skilling rooms get the same results check, and the log now shows what a floor is worth
+
+- **Skilling and enhancing rooms join the accuracy record.** A skilling room is failed by running out of the two minutes rather than by dying, but it is still a room the calculator gave a chance of clearing and still a room you either cleared or did not — so the same entry counting answers the same question. They can be judged from the first room you walk into, too, because a skilling forecast is closed-form maths rather than a simulation that has to be run first.
+- **Three numbers per action, not two.** The server states the success and double chance it is using with every action, so a skilling room can be checked twice over: **the calculator against the server's stated rate**, which needs no sample at all and is flagged `formula off` when they disagree by more than half a point, and **the stated rate against what the actions actually did**, which needs one. A formula that contradicts the server is a bug no amount of play will fix or reveal.
+- **Expected time against actual.** Each finished room's duration is recorded against the calculator's estimate, per room on the card and averaged in the accuracy tab (`74s vs 61s est`).
+- **Experience per hour, measured not derived.** Taken from the change in your skill totals across a room rather than from a formula — the formula is the thing being checked, and combat rooms have no formula here at all. Shown per room, and per floor.
+- **The room list is grouped by floor**, each with a header: rooms, how many cleared, time spent, and experience per hour across the floor. A floor is the unit a run is actually planned in, and throughput over one room says far less than throughput over the thirty you have to get through. Rate is measured over the rooms, not the floor's wall-clock — the time between rooms is spent reading the map, and charging that to the rooms would make a floor you thought about look slower than the same floor rushed.
+- **History length is now a setting**, default **120** rooms, up from a fixed 30. A floor is around thirty rooms, so the old cap showed barely one floor and nothing to compare it against; 120 keeps roughly three. The long-term accuracy record is separate and has never been trimmed.
+- `Toolasha.Debug.labAccuracy()` gains columns for the calculator/server/observed rates, the timing comparison and experience per hour.
+
 ### Fixed: the sim accuracy record counted every defeat and no victory
 
 - Every room read `0/N`. **Clearing a room strips it** — the server stops sending its monster, its skill and its type, leaving a cell that says only `isCleared` — and the scan that fed the record looked for rooms naming a monster. So it saw the room on every attempt you lost and never once on the attempt you won. Attempts piled up, clears never did, and the verdict could only ever be "sim too high".

@@ -20,11 +20,15 @@
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
+import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
 const STORAGE_KEY = 'labyrinthRoomLogs';
-const MAX_SESSIONS = 30;
+/** Used when the setting is unreadable; the setting itself is the real bound */
+const DEFAULT_SESSIONS = 120;
+/** However large the log is set, one room cannot fill it */
 const MAX_ACTIONS = 60;
 /** A room retried this many times has made its point */
 const MAX_ATTEMPTS = 40;
@@ -52,6 +56,65 @@ const VERDICT_COLORS = {
     consistent: '#8fe3b0',
 };
 
+/**
+ * Split a newest-first list of rooms into the floors they were run on.
+ *
+ * Grouped on consecutive runs of the same run-and-floor key rather than by
+ * collecting every session with that key, so a floor revisited on a later run
+ * reads as a second group instead of being silently merged into the first.
+ *
+ * @param {Array<Object>} sessions - Sessions, newest first
+ * @returns {Array<{runKey: string, floor: number, sessions: Array<Object>}>}
+ */
+export function groupByFloor(sessions) {
+    const groups = [];
+    for (const session of sessions || []) {
+        const runKey = String(session?.runKey || '');
+        const last = groups[groups.length - 1];
+        if (last && last.runKey === runKey) {
+            last.sessions.push(session);
+        } else {
+            groups.push({ runKey, floor: Math.max(0, Math.floor(Number(session?.floor) || 0)), sessions: [session] });
+        }
+    }
+    return groups;
+}
+
+/**
+ * What a floor cost and what it returned.
+ *
+ * Experience per hour is measured over the rooms on the floor, not over the
+ * whole floor's wall-clock: the time between rooms is spent reading the map and
+ * deciding where to go, and charging that to the rooms would make a floor you
+ * thought about look slower than the same floor rushed.
+ *
+ * @param {Array<Object>} sessions - The floor's rooms
+ * @returns {{rooms: number, cleared: number, seconds: number, xp: number, xpPerHour: number|null}}
+ */
+export function floorSummary(sessions) {
+    const list = sessions || [];
+    let seconds = 0;
+    let xp = 0;
+    let cleared = 0;
+
+    for (const session of list) {
+        const ended = session?.endedAt || 0;
+        // Only a finished room has a duration; one still running has not
+        // taken its time yet
+        if (ended > 0) seconds += Math.max(0, (ended - (Number(session.startedAt) || 0)) / 1000);
+        xp += Math.max(0, Number(session?.xp) || 0);
+        if (session?.completed) cleared++;
+    }
+
+    return {
+        rooms: list.length,
+        cleared,
+        seconds,
+        xp,
+        xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
+    };
+}
+
 class LabyrinthRoomLogs {
     constructor() {
         this.isInitialized = false;
@@ -69,6 +132,28 @@ class LabyrinthRoomLogs {
         this.fightTimer = null;
         this.renderToken = 0;
         this.resetArmed = false;
+    }
+
+    /** How many rooms of history to keep */
+    logSize() {
+        const raw = Number(config.getSettingValue('labyrinthRoomLogSize', DEFAULT_SESSIONS));
+        return Math.min(500, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
+    }
+
+    /**
+     * Total experience across every skill, right now.
+     *
+     * Measured rather than derived. The calculator has a formula for the
+     * experience a room is worth, but a formula is the thing being checked, and
+     * a combat room has no formula here at all. Summing every skill also picks
+     * up the combat experience a fight spreads over several of them.
+     *
+     * @returns {number|null} null when character data has not arrived
+     */
+    totalExperience() {
+        const skills = dataManager.getSkills();
+        if (!Array.isArray(skills)) return null;
+        return skills.reduce((sum, skill) => sum + (Number(skill?.experience) || 0), 0);
     }
 
     /**
@@ -92,7 +177,7 @@ class LabyrinthRoomLogs {
 
         const stored = await storage.getJSON(STORAGE_KEY, 'settings', null);
         if (Array.isArray(stored?.sessions)) {
-            this.sessions = stored.sessions.slice(0, MAX_SESSIONS);
+            this.sessions = stored.sessions.slice(0, this.logSize());
         }
 
         this.progressHandler = (data) => this.onRoomProgress(data);
@@ -146,13 +231,14 @@ class LabyrinthRoomLogs {
         // is the only reliable witness.
         if (labyrinth.roomData) this.roomData = labyrinth.roomData;
 
-        const runKey = `${labyrinth.startedAt || ''}|${Math.floor(Number(labyrinth.currentFloor) || 0)}`;
+        const floor = Math.floor(Number(labyrinth.currentFloor) || 0);
+        const runKey = `${labyrinth.startedAt || ''}|${floor}`;
         const path = this.parsePathData(labyrinth.pathData);
         const head = path?.[0];
         const roomKey = head && Number.isInteger(head.x) && Number.isInteger(head.y) ? `${head.x},${head.y}` : '';
         const room = roomKey ? labyrinth.roomData?.[head.y]?.[head.x] || null : null;
 
-        this.labContext = { runKey, roomKey, room };
+        this.labContext = { runKey, roomKey, room, floor };
 
         // Finalize the active session when the run or the current room changed
         if (this.activeSession && (this.activeSession.runKey !== runKey || this.activeSession.roomKey !== roomKey)) {
@@ -253,14 +339,23 @@ class LabyrinthRoomLogs {
 
         const room = context.room || {};
         const skillHrid = String(room.skillHrid || '');
+        const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
         this.activeSession = {
             id: `lab-log-${Date.now()}`,
             sessionKey,
             runKey: String(context.runKey || ''),
             roomKey: String(context.roomKey || ''),
+            floor: Math.max(0, Math.floor(Number(context.floor) || 0)),
             mode,
+            subjectHrid: skillHrid,
             skillName: this.prettySkillName(skillHrid, mode),
-            roomLevel: Math.max(0, Math.floor(Number(room.recommendedLevel) || 0)),
+            roomLevel,
+            forecast: this.forecastFor(skillHrid, roomLevel, 'skilling'),
+            xpAtStart: this.totalExperience(),
+            xp: 0,
+            actionCount: 0,
+            successCount: 0,
+            doubleCount: 0,
             startedAt: Date.now(),
             endedAt: 0,
             successRate: snapshot.successRate,
@@ -305,7 +400,16 @@ class LabyrinthRoomLogs {
             }
         }
 
-        session.actions.push(this.deriveAction(prev, snapshot));
+        const action = this.deriveAction(prev, snapshot);
+        // Counted here rather than from the drawn list, which is trimmed once a
+        // room runs long — the rate has to survive the trimming
+        session.actionCount = (session.actionCount || 0) + 1;
+        if (action.outcome === 'success' || action.outcome === 'double') {
+            session.successCount = (session.successCount || 0) + 1;
+        }
+        if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
+
+        session.actions.push(action);
         if (session.actions.length > MAX_ACTIONS) {
             session.incomplete = true;
             session.actions = session.actions.slice(session.actions.length - MAX_ACTIONS);
@@ -412,7 +516,8 @@ class LabyrinthRoomLogs {
         // a prediction that arrives during the fight is still a prediction made
         // before the outcome was known
         if (session.predicted === null) {
-            session.predicted = this.predictionFor(session.monsterHrid, session.roomLevel);
+            session.forecast = this.forecastFor(session.monsterHrid, session.roomLevel, 'combat');
+            session.predicted = session.forecast?.clearChance ?? null;
         }
         session.entryCount = Math.max(session.entryCount || 0, Math.floor(Number(room.entryCount) || 0));
 
@@ -422,13 +527,33 @@ class LabyrinthRoomLogs {
         if (isNewFight) this.renderIfOpen();
     }
 
-    /** The sim's claim for a room, or null when it has not made one */
-    predictionFor(monsterHrid, roomLevel) {
+    /**
+     * What the calculator claims about a room, captured on the way in.
+     *
+     * Taken once at the start rather than read when the room is drawn, because
+     * the claim being checked is the one that was on screen when you decided to
+     * walk in — not one recomputed later for gear you have since changed.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @param {number} roomLevel - Room level
+     * @param {string} kind - 'combat' or 'skilling'
+     * @returns {Object|null} Trimmed to the fields worth keeping
+     */
+    forecastFor(subjectHrid, roomLevel, kind) {
         try {
-            const rate = this.simSource?.predictedFor?.(monsterHrid, roomLevel);
-            return Number.isFinite(rate) ? rate : null;
+            const forecast = this.simSource?.forecast?.(subjectHrid, roomLevel, kind);
+            if (!forecast) return null;
+            const keep = (v) => (Number.isFinite(v) ? v : null);
+            return {
+                clearChance: keep(forecast.clearChance),
+                expectedSeconds: Number.isFinite(forecast.expectedSeconds) ? forecast.expectedSeconds : null,
+                successChance: keep(forecast.successChance),
+                doubleChance: keep(forecast.doubleChance),
+                xpPerRoom: keep(forecast.xpPerRoom),
+                xpPerHour: keep(forecast.xpPerHour),
+            };
         } catch (error) {
-            console.error('[LabyrinthRoomLogs] Reading the predicted clear chance failed:', error);
+            console.error('[LabyrinthRoomLogs] Reading the room forecast failed:', error);
             return null;
         }
     }
@@ -441,16 +566,22 @@ class LabyrinthRoomLogs {
 
         const monsterHrid = String(room.monsterHrid || '');
         const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+        const forecast = this.forecastFor(monsterHrid, roomLevel, 'combat');
         this.activeSession = {
             id: `lab-log-${Date.now()}`,
             sessionKey,
             runKey: String(context.runKey || ''),
             roomKey: String(context.roomKey || ''),
+            floor: Math.max(0, Math.floor(Number(context.floor) || 0)),
             mode: 'combat',
             monsterHrid,
+            subjectHrid: monsterHrid,
             skillName: this.prettyMonsterName(monsterHrid),
             roomLevel,
-            predicted: this.predictionFor(monsterHrid, roomLevel),
+            forecast,
+            predicted: forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null,
+            xpAtStart: this.totalExperience(),
+            xp: 0,
             entryCount: Math.max(0, Math.floor(Number(room.entryCount) || 0)),
             startedAt: Date.now(),
             endedAt: 0,
@@ -541,10 +672,54 @@ class LabyrinthRoomLogs {
         }
         delete session.lastSnapshot;
 
+        const after = this.totalExperience();
+        if (Number.isFinite(after) && Number.isFinite(session.xpAtStart)) {
+            session.xp = Math.max(0, after - session.xpAtStart);
+        }
+        this.reportRoomResult(session);
+
         this.sessions.unshift(session);
-        this.sessions = this.sessions.slice(0, MAX_SESSIONS);
+        this.sessions = this.sessions.slice(0, this.logSize());
         this.persist();
         this.renderIfOpen();
+    }
+
+    /**
+     * Hand a finished room to the long-term record.
+     *
+     * Only rooms that were actually finished are reported. A room you walked
+     * out of took as long as you stayed, not as long as it needed, and folding
+     * that into an average duration would make every room look faster the more
+     * often you gave up on one.
+     *
+     * @param {Object} session - The finalized session
+     */
+    reportRoomResult(session) {
+        if (!session.completed || !session.subjectHrid || !this.simSource?.record) return;
+
+        const seconds = Math.max(0, (session.endedAt - session.startedAt) / 1000);
+        const skilling = session.mode !== 'combat';
+
+        Promise.resolve(
+            this.simSource.record({
+                subjectHrid: session.subjectHrid,
+                roomLevel: session.roomLevel,
+                kind: skilling ? 'skilling' : 'combat',
+                seconds,
+                xp: session.xp,
+                actions: skilling ? session.actionCount : 0,
+                successes: skilling ? session.successCount : 0,
+                doubles: skilling ? session.doubleCount : 0,
+                predictedSeconds: session.forecast?.expectedSeconds,
+                predictedSuccess: session.forecast?.successChance,
+                predictedDouble: session.forecast?.doubleChance,
+                // The server states the rates it is using with every action, so
+                // the calculator's figure can be checked against the truth
+                // rather than only against a sample of outcomes
+                serverSuccess: skilling ? session.successRate : undefined,
+                serverDouble: skilling ? session.doubleChance : undefined,
+            })
+        ).catch((error) => console.error('[LabyrinthRoomLogs] Recording a finished room failed:', error));
     }
 
     persist() {
@@ -598,7 +773,7 @@ class LabyrinthRoomLogs {
         const tabs = document.createElement('div');
         tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
         this.tabButtons = {
-            rooms: this.makeTab(`Rooms (${MAX_SESSIONS})`, 'rooms'),
+            rooms: this.makeTab('Rooms', 'rooms'),
             accuracy: this.makeTab('Sim accuracy', 'accuracy'),
         };
         tabs.appendChild(this.tabButtons.rooms);
@@ -740,15 +915,58 @@ class LabyrinthRoomLogs {
         this.renderToken++;
         list.textContent = '';
 
-        const sessions = this.activeSession ? [this.activeSession, ...this.sessions] : this.sessions;
+        const sessions = (this.activeSession ? [this.activeSession, ...this.sessions] : this.sessions).slice(
+            0,
+            this.logSize()
+        );
         if (!sessions.length) {
             list.appendChild(this.makeNote('No logs yet'));
             return;
         }
 
-        for (const session of sessions.slice(0, MAX_SESSIONS)) {
-            list.appendChild(this.renderSessionCard(session));
+        // Grouped by floor because a floor is the unit a labyrinth run is
+        // actually planned in — throughput over one room says far less than
+        // throughput over the thirty of them you have to get through
+        for (const group of groupByFloor(sessions)) {
+            list.appendChild(this.renderFloorHeader(group));
+            for (const session of group.sessions) list.appendChild(this.renderSessionCard(session));
         }
+    }
+
+    renderFloorHeader(group) {
+        const summary = floorSummary(group.sessions);
+
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-top:2px; ' +
+            'padding:3px 2px 2px; border-bottom:1px solid rgba(146,182,255,0.25); font-size:11px;';
+
+        const name = document.createElement('span');
+        name.style.cssText = 'color:#9ec4ff; font-weight:700;';
+        name.textContent = group.floor > 0 ? `Floor ${group.floor}` : 'Earlier rooms';
+        header.appendChild(name);
+
+        const stats = document.createElement('span');
+        stats.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.85);';
+        const parts = [`${summary.rooms} room${summary.rooms === 1 ? '' : 's'}`];
+        if (summary.cleared < summary.rooms) parts.push(`${summary.cleared} cleared`);
+        if (summary.seconds > 0) parts.push(timeReadable(Math.round(summary.seconds)));
+        parts.push(summary.xpPerHour ? `${formatKMB(summary.xpPerHour)} xp/h` : 'xp not measured');
+        stats.textContent = parts.join(' · ');
+        header.appendChild(stats);
+
+        header.title = [
+            group.floor > 0 ? `Floor ${group.floor}` : 'Rooms logged before floors were recorded',
+            `${summary.rooms} rooms logged, ${summary.cleared} of them cleared`,
+            summary.seconds > 0 ? `${Math.round(summary.seconds)}s spent in them` : '',
+            summary.xp > 0 ? `${Math.round(summary.xp).toLocaleString()} experience gained` : '',
+            summary.xpPerHour
+                ? 'Rate is measured experience over measured time, across every room on this floor'
+                : 'Experience is measured by the change in your skill totals, so rooms logged before that was recorded show none',
+        ]
+            .filter(Boolean)
+            .join('\n');
+        return header;
     }
 
     makeNote(text) {
@@ -806,6 +1024,17 @@ class LabyrinthRoomLogs {
         }
         card.appendChild(meta);
 
+        if (session.mode !== 'combat') {
+            const check = this.skillingCheck(session);
+            if (check) {
+                const line = document.createElement('div');
+                line.style.cssText = 'font-size:10px; color:#9ec4ff; margin-bottom:3px;';
+                line.textContent = check;
+                card.appendChild(line);
+                card.title = this.skillingTooltip(session).join('\n');
+            }
+        }
+
         const actionsRow = document.createElement('div');
         actionsRow.style.cssText = 'display:flex; align-items:center; flex-wrap:wrap; gap:2px;';
         const actions = Array.isArray(session.actions) ? session.actions : [];
@@ -830,6 +1059,85 @@ class LabyrinthRoomLogs {
         card.appendChild(actionsRow);
 
         return card;
+    }
+
+    /**
+     * The skilling room's own results check: what the calculator predicted, what
+     * actually happened, and what the room returned.
+     *
+     * Three numbers rather than two. The server states the rate it is using with
+     * every action, so a skilling room can be checked twice over — the
+     * calculator against the stated rate, which needs no sample at all, and the
+     * stated rate against the actions, which does.
+     *
+     * @param {Object} session - A skilling or enhancing session
+     * @returns {string} Empty when there is nothing to compare
+     */
+    skillingCheck(session) {
+        const pct = (v) => `${Math.round(v * 100)}%`;
+        const parts = [];
+
+        const actions = Math.max(0, Math.floor(Number(session.actionCount) || 0));
+        const predicted = session.forecast?.successChance;
+        if (actions > 0) {
+            const observed = (Number(session.successCount) || 0) / actions;
+            parts.push(
+                Number.isFinite(predicted)
+                    ? `Calc ${pct(predicted)} → hit ${pct(observed)} of ${actions}`
+                    : `Hit ${pct(observed)} of ${actions}`
+            );
+        }
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const expected = session.forecast?.expectedSeconds;
+        if (session.completed && Number.isFinite(expected) && expected > 0) {
+            parts.push(`${Math.round(seconds)}s vs ${Math.round(expected)}s est`);
+        }
+
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0 && seconds > 0) parts.push(`${formatKMB((xp / seconds) * 3600)} xp/h`);
+
+        return parts.join(' | ');
+    }
+
+    skillingTooltip(session) {
+        const pct = (v, places = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '—');
+        const lines = [`${session.skillName} Lv.${session.roomLevel}`];
+
+        const actions = Math.max(0, Math.floor(Number(session.actionCount) || 0));
+        const forecast = session.forecast || {};
+        if (Number.isFinite(forecast.successChance)) {
+            lines.push(`Toolasha's formula predicted a ${pct(forecast.successChance)} success rate`);
+        }
+        if (Number.isFinite(session.successRate)) {
+            lines.push(`The server says the rate is ${pct(session.successRate)}`);
+        }
+        if (
+            Number.isFinite(forecast.successChance) &&
+            Number.isFinite(session.successRate) &&
+            Math.abs(forecast.successChance - session.successRate) > 0.005
+        ) {
+            lines.push('Those disagree, which is the formula being wrong rather than a run of bad luck');
+        }
+        if (actions > 0) {
+            lines.push(`${session.successCount} of ${actions} actions succeeded, ${session.doubleCount} doubled`);
+        }
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        if (Number.isFinite(forecast.expectedSeconds) && forecast.expectedSeconds > 0) {
+            lines.push(`Expected to take ${Math.round(forecast.expectedSeconds)}s; took ${Math.round(seconds)}s`);
+        }
+        if (Number.isFinite(forecast.clearChance)) {
+            lines.push(`Given a ${pct(forecast.clearChance)} chance of clearing inside the room's two minutes`);
+        }
+
+        const xp = Math.max(0, Number(session.xp) || 0);
+        lines.push(
+            xp > 0
+                ? `Gained ${Math.round(xp).toLocaleString()} experience, measured from your skill totals`
+                : 'No experience change was measured for this room'
+        );
+        return lines;
     }
 
     /** The one line under a fight's heading: what was promised against what happened */
@@ -962,7 +1270,7 @@ class LabyrinthRoomLogs {
         header.style.cssText =
             'display:flex; align-items:center; justify-content:space-between; gap:6px; font-weight:700;';
         const name = document.createElement('span');
-        name.textContent = `${this.prettyMonsterName(row.monsterHrid)} Lv.${row.level}`;
+        name.textContent = `${this.prettyMonsterName(row.subjectHrid)} Lv.${row.level}`;
         const record = document.createElement('span');
         record.style.cssText = 'opacity:0.85;';
         record.textContent = `${row.clears}/${row.attempts}`;
@@ -992,19 +1300,80 @@ class LabyrinthRoomLogs {
         }
         card.appendChild(line);
 
+        const rates = row.rates?.success;
+        if (rates) {
+            const actionLine = document.createElement('div');
+            actionLine.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
+            const text = document.createElement('span');
+            text.style.color = 'rgba(221,232,255,0.8)';
+            text.textContent =
+                `Per action — calc ${pct(rates.predicted)}, ` +
+                `server ${pct(rates.server)}, hit ${pct(rates.observed)} of ${row.measured.actions}`;
+            actionLine.appendChild(text);
+            // A formula that disagrees with the rate the server states is wrong
+            // outright, which no amount of play will fix or reveal
+            if (rates.formulaOff) {
+                actionLine.appendChild(this.makeChip('formula off', 'rgba(255,255,255,0.08)', '#ff8a8a'));
+            }
+            card.appendChild(actionLine);
+        }
+
+        const throughput = [];
+        if (row.timing)
+            throughput.push(`${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s est`);
+        if (row.measured?.xpPerHour) throughput.push(`${formatKMB(row.measured.xpPerHour)} xp/h`);
+        if (row.measured?.rooms) throughput.push(`${row.measured.rooms} finished`);
+        if (throughput.length) {
+            const timingLine = document.createElement('div');
+            timingLine.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.65);';
+            timingLine.textContent = throughput.join(' · ');
+            card.appendChild(timingLine);
+        }
+
         card.title = this.accuracyTooltip(row, pct).join('\n');
         return card;
     }
 
+    /** The extra lines a room with finished runs behind it earns */
+    throughputTooltip(row, pct) {
+        const lines = [];
+        if (row.rates?.success) {
+            const { predicted, server, observed, low, high, formulaOff } = row.rates.success;
+            lines.push(
+                `Success rate — Toolasha's formula says ${pct(predicted, 1)}, the server says ${pct(server, 1)}, ` +
+                    `and ${pct(observed, 1)} of ${row.measured.actions} actions succeeded (${pct(low, 0)}–${pct(high, 0)})`
+            );
+            if (formulaOff) {
+                lines.push(
+                    'The formula and the server disagree, which is a bug rather than variance — the server states the ' +
+                        'rate it is actually using, so no amount of play will bring the two together'
+                );
+            }
+        }
+        if (row.timing) {
+            lines.push(
+                `Took ${Math.round(row.timing.actual)}s on average over ${row.timing.rooms} finished room(s), ` +
+                    `against ${Math.round(row.timing.predicted)}s expected — ${row.timing.ratio.toFixed(2)}x`
+            );
+        }
+        if (row.measured?.xpPerHour) {
+            lines.push(
+                `${formatKMB(row.measured.xpPerHour)} experience per hour, measured from your skill totals over the ` +
+                    'time actually spent in this room'
+            );
+        }
+        return lines;
+    }
+
     accuracyTooltip(row, pct) {
-        const lines = [`${this.prettyMonsterName(row.monsterHrid)} at room level ${row.level}`];
+        const lines = [`${this.prettyMonsterName(row.subjectHrid)} at room level ${row.level} (${row.kind})`];
         lines.push(`${row.clears} clears in ${row.attempts} attempts — ${pct(row.observed, 1)}`);
         lines.push(`A record this size puts the true rate between ${pct(row.low, 1)} and ${pct(row.high, 1)}`);
 
         if (row.predicted === null) {
-            lines.push('No sim result on record for this room, so there is nothing to judge it against.');
-            lines.push('Calculate its tile once and the prediction is stamped on the next fights.');
-            return lines;
+            lines.push('No forecast on record for this room, so its clear rate has nothing to be judged against.');
+            lines.push('Calculate its tile once and the prediction is stamped on the next attempts.');
+            return [...lines, ...this.throughputTooltip(row, pct)];
         }
 
         lines.push(
@@ -1022,7 +1391,7 @@ class LabyrinthRoomLogs {
                     `of the time — about 1 run in ${Number.isFinite(oneIn) ? oneIn : 'a great many'}.`
             );
         }
-        return lines;
+        return [...lines, ...this.throughputTooltip(row, pct)];
     }
 
     makeChip(text, background, color) {
