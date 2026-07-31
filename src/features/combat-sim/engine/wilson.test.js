@@ -4,6 +4,7 @@ import {
     wilsonInterval,
     hasConverged,
     decidedAgainst,
+    decideSide,
     isStoppingRule,
     trialsNeeded,
     Z_95,
@@ -149,5 +150,35 @@ describe('trialsNeeded', () => {
 
     test('uses the quantile it is given', () => {
         expect(trialsNeeded(0.5, 0.01, Z_95)).toBeGreaterThan(trialsNeeded(0.5, 0.01, 1));
+    });
+});
+
+describe('decideSide', () => {
+    test('is stricter about calling a rate above the bar than below it', () => {
+        // 80 wins in 100 against a 70% bar clears the lenient confidence but
+        // not the strict one, which is the whole point: the sample is good
+        // enough to forgo a room on, not good enough to auto-fight on
+        expect(decideSide(80, 100, 0.7, { zAbove: 2, zBelow: 2 })).toBe('above');
+        expect(decideSide(80, 100, 0.7)).toBe(null);
+
+        // Push it far enough and the strict side agrees
+        expect(decideSide(86, 100, 0.7)).toBe('above');
+    });
+
+    test('the lenient direction settles on evidence the strict one rejects', () => {
+        // A losing room is dismissed on a sample that would not have been
+        // allowed to recommend one
+        expect(decideSide(30, 60, 0.7)).toBe('below');
+        expect(decideSide(48, 60, 0.7)).toBe(null);
+    });
+
+    test('undecided is a real answer, not a failure', () => {
+        expect(decideSide(70, 100, 0.7)).toBe(null);
+        expect(decideSide(7000, 10000, 0.7)).toBe(null);
+    });
+
+    test('rejects input it cannot read', () => {
+        expect(decideSide(0, 0, 0.7)).toBe(null);
+        expect(decideSide(10, 20, NaN)).toBe(null);
     });
 });

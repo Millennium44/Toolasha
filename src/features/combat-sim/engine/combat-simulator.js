@@ -1,5 +1,8 @@
 import { random, syncEncounterRng } from './rng.js';
 import { hasConverged, isStoppingRule } from './wilson.js';
+
+/** How far apart the decision checkpoints sit — each is 1.5x the last */
+const STOP_CHECK_GROWTH = 1.5;
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -182,6 +185,12 @@ class CombatSimulator {
         this.reset();
         this.stopRule = this.labyrinth && isStoppingRule(stopRule) ? stopRule : null;
         this.converged = false;
+        // A decision is tested on a growing schedule rather than after every
+        // fight. Re-testing a boundary on every new observation crosses it far
+        // more often than its nominal confidence implies — the same rate one
+        // point under a 70% bar was called "above" 39% of the time when checked
+        // each fight, and 19% on this schedule at the same confidence.
+        this.nextStopCheck = Number(this.stopRule?.minTrials) || 1;
 
         let ticks = 0;
 
@@ -387,8 +396,17 @@ class CombatSimulator {
             // one moment when every attempt so far has resolved, so stopping on
             // it leaves no half-fought trial to distort the rate. The attempt
             // just spawned is discarded by the count.
-            if (this.stopRule && hasConverged(this.simResult.encounters, this.labyrinth.attemptCount, this.stopRule)) {
-                this.converged = true;
+            if (this.stopRule) {
+                const attempts = this.labyrinth.attemptCount;
+                const decides = Number(this.stopRule.decideAgainst) > 0;
+                if (!decides || attempts >= this.nextStopCheck) {
+                    if (decides) {
+                        this.nextStopCheck = Math.max(attempts + 1, Math.ceil(attempts * STOP_CHECK_GROWTH));
+                    }
+                    if (hasConverged(this.simResult.encounters, attempts, this.stopRule)) {
+                        this.converged = true;
+                    }
+                }
             }
             this.enemies = this.labyrinth.getMonster();
             this.labyrinth.updateEncounterStartTime(this.simulationTime);
