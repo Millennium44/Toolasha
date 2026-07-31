@@ -1678,6 +1678,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows a live clear chance in the action bar during labyrinth rooms — from the actions left in a skilling or enhancing room, and from how the fight is going in a combat room',
             },
+            labyrinthLiveCombatSim: {
+                id: 'labyrinthLiveCombatSim',
+                label: 'Labyrinth: Replay the live fight for a better clear chance',
+                type: 'checkbox',
+                default: true,
+                help: 'Replays the fight in progress hundreds of times from its current health and remaining time, instead of extrapolating from how fast health is being lost. Slower but far more accurate, since it runs the real combat engine',
+            },
             labyrinthRoomLogs: {
                 id: 'labyrinthRoomLogs',
                 label: 'Labyrinth: Room action logs',

@@ -15,7 +15,12 @@ import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
-import { estimateLiveClearChance, formatLiveClearChance, FIGHT_TIMEOUT_SECONDS } from './labyrinth-live-combat.js';
+import {
+    estimateLiveClearChance,
+    formatLiveClearChance,
+    FIGHT_TIMEOUT_SECONDS,
+    MIN_ELAPSED_SECONDS,
+} from './labyrinth-live-combat.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -36,6 +41,12 @@ const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
 const LIVE_COMBAT_STALE_MS = 5000;
 /** Ticks are far faster than anyone reads; the readout is drawn at this rate */
 const LIVE_COMBAT_REDRAW_MS = 1000;
+/** Replays per conditional estimate — each is only the seconds the fight has left */
+const LIVE_SIM_TRIALS = 400;
+/** How often a fight is replayed; between replays the extrapolation shows */
+const LIVE_SIM_REFRESH_MS = 4000;
+/** A replay older than this describes a fight that has moved on */
+const LIVE_SIM_MAX_AGE_MS = 9000;
 /** Clear chances are pinned to this many percentage points either side by default */
 const DEFAULT_SIM_PRECISION_PCT = 1;
 /** No room stops before this many trials, however lopsided the early ones look */
@@ -694,6 +705,8 @@ class LabyrinthClearRate {
         this._fight = null;
         this._liveCombatTimeout = null;
         this._liveCombatDrawnAt = 0;
+        this._replay = null;
+        this._replayRunning = false;
         this.battleHandler = null;
     }
 
@@ -2391,7 +2404,19 @@ class LabyrinthClearRate {
             playerLostFraction: started.firstPlayerFraction - playerHpFraction,
             remainingSeconds: started.caughtStart ? Math.max(0, FIGHT_TIMEOUT_SECONDS - observedSeconds) : null,
         });
-        const text = formatLiveClearChance(estimate);
+        // The replayed figure is the better answer whenever one is in hand;
+        // the extrapolation carries the display between replays and covers the
+        // first seconds, before any replay has finished
+        const replay = this._replay;
+        const fresh =
+            replay && replay.fightStartedAt === started.startedAt && Date.now() - replay.at < LIVE_SIM_MAX_AGE_MS;
+        const text = fresh ? `Clear ${(replay.clearChance * 100).toFixed(0)}%` : formatLiveClearChance(estimate);
+        this.maybeReplayFight(started, {
+            monsterHpFraction,
+            playerHpFraction,
+            playerMpFraction: player.mHP > 0 ? player.cMP / player.mMP : 1,
+            elapsedSeconds: started.caughtStart ? observedSeconds : 0,
+        });
         if (!text) {
             this.clearLiveCombat();
             return;
@@ -2413,18 +2438,114 @@ class LabyrinthClearRate {
         this._liveCombatDrawnAt = now;
 
         const clock = estimate.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
-        this.renderLiveNode(` [${text}${clock}]`, [
-            `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
-            Number.isFinite(estimate.killSeconds) ? `Kill in ~${Math.round(estimate.killSeconds)}s` : 'Not killing it',
-            Number.isFinite(estimate.deathSeconds)
-                ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
-                : 'Taking no damage',
-            `${estimate.reason}${estimate.confident ? '' : ' — early, treat as provisional'}`,
-            estimate.timerKnown
-                ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
-                : 'Joined this fight in progress, so the room timer is unknown and left out',
-            'Extrapolated from the health lost so far; abilities and procs are not modelled',
-        ]);
+        this.renderLiveNode(
+            ` [${text}${clock}]`,
+            [
+                `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
+                Number.isFinite(estimate.killSeconds)
+                    ? `Kill in ~${Math.round(estimate.killSeconds)}s`
+                    : 'Not killing it',
+                Number.isFinite(estimate.deathSeconds)
+                    ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
+                    : 'Taking no damage',
+                fresh
+                    ? `Replayed this fight ${replay.trials} times from here — ±${(replay.halfWidth * 100).toFixed(1)}%`
+                    : `${estimate.reason}${estimate.confident ? '' : ' — early, treat as provisional'}`,
+                fresh ? `Extrapolated from health lost: ${(estimate.clearChance * 100).toFixed(0)}%` : '',
+                estimate.timerKnown
+                    ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
+                    : 'Joined this fight in progress, so the room timer is unknown and left out',
+                fresh ? '' : 'Extrapolated from the health lost so far; abilities and procs are not modelled',
+            ].filter(Boolean)
+        );
+    }
+
+    /**
+     * Replay this fight from where it stands, many times over, and count how
+     * often it ends in a clear.
+     *
+     * The extrapolated figure races two rates of health loss and knows nothing
+     * about abilities, procs, healing or what the monster does at low health.
+     * This runs the actual combat engine instead, with both sides rewound to
+     * their current health and the room timer already part-spent — so every
+     * replay is an independent continuation of the fight on screen, and the win
+     * rate over them is the answer to the question being asked.
+     *
+     * What it still cannot see is anything the socket does not send: buff
+     * timers, ability cooldowns, how many bites of food are left. Each replay
+     * starts those fresh, which flatters a fight whose cooldowns are actually
+     * spent. That error shrinks as a fight goes on and the remaining window
+     * gets shorter.
+     *
+     * @param {Object} state - { monsterHpFraction, playerHpFraction, playerMpFraction, elapsedSeconds }
+     * @returns {Promise<Object|null>} { clearChance, trials, halfWidth } or null
+     */
+    async simulateFromHere(state) {
+        const room = this.currentRoom();
+        const monsterHrid = room?.monsterHrid;
+        const roomLevel = Math.max(0, Math.floor(Number(room?.recommendedLevel) || 0));
+        if (!monsterHrid || roomLevel <= 0) return null;
+
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return null;
+
+        const simResult = await runLabyrinthSimulation({
+            gameData: buildGameDataPayload(),
+            playerDTOs: [dto],
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid,
+            roomLevel,
+            crates: this.getCrateHrids(),
+            // Each replay is only the seconds this fight has left, so even a
+            // few hundred of them cost a fraction of a tile badge's sim
+            hours: 1,
+            precision: { minTrials: LIVE_SIM_TRIALS, maxTrials: LIVE_SIM_TRIALS },
+            liveState: {
+                monsterHpFraction: state.monsterHpFraction,
+                playerHpFraction: state.playerHpFraction,
+                playerMpFraction: state.playerMpFraction,
+                elapsedNs: Math.max(0, state.elapsedSeconds) * 1e9,
+            },
+            communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
+            labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+        });
+
+        const trials = simResult.labyAttemptCount || 0;
+        if (trials <= 0) return null;
+        const wins = simResult.encounters || 0;
+        return { clearChance: wins / trials, trials, halfWidth: wilsonInterval(wins, trials).halfWidth };
+    }
+
+    /**
+     * Kick off a replay when the last one is stale, at most one at a time.
+     * @param {Object} fight - The tracked fight record
+     * @param {Object} state - Live fight state
+     */
+    maybeReplayFight(fight, state) {
+        if (!config.getSetting('labyrinthLiveCombatSim')) return;
+        if (this._replayRunning) return;
+        if (state.elapsedSeconds < MIN_ELAPSED_SECONDS) return;
+        if (this._replay?.fightStartedAt === fight.startedAt && Date.now() - this._replay.at < LIVE_SIM_REFRESH_MS) {
+            return;
+        }
+
+        this._replayRunning = true;
+        this.simulateFromHere(state)
+            .then((result) => {
+                // A replay that landed after its fight ended describes a moment
+                // that no longer exists, so it is tagged with the fight it came
+                // from and discarded when that stops matching
+                if (result) this._replay = { ...result, at: Date.now(), fightStartedAt: fight.startedAt };
+            })
+            .catch((error) => {
+                if (error?.message !== 'Cancelled') {
+                    console.error('[LabyrinthClearRate] Live fight replay failed:', error);
+                }
+            })
+            .finally(() => {
+                this._replayRunning = false;
+            });
     }
 
     /** Drop the combat readout and forget the fight it described */

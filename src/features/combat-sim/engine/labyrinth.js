@@ -9,13 +9,19 @@ const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds
  * Timeout (120s) or player death = loss; enemy killed = win.
  */
 class Labyrinth {
-    constructor(monsterHrid, roomLevel, crateHrids = []) {
+    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null) {
         this.monsterHrid = monsterHrid;
         this.hrid = monsterHrid;
         this.roomLevel = roomLevel;
         this.buffs = [];
         this.attemptCount = 0;
         this.encounterStartTime = 0;
+        /**
+         * A fight already under way, replayed from where it stands: health
+         * fractions for both sides and how much of the timer is gone. Set only
+         * for a conditional estimate — normally an encounter starts clean.
+         */
+        this.liveState = liveState;
 
         // Resolve crate buffs from game data
         if (crateHrids.length > 0) {

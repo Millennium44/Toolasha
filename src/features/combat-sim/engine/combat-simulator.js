@@ -379,6 +379,37 @@ class CombatSimulator {
         this.startNewEncounter();
     }
 
+    /**
+     * Rewind both sides to the fight in progress: health where it stands now,
+     * and a clock already part-spent.
+     *
+     * Fractions rather than absolute hitpoints, because the simulated player is
+     * built from a loadout that may not be what is equipped — matching the
+     * proportion carries over, matching the number would not.
+     */
+    applyLiveState() {
+        const live = this.labyrinth.liveState;
+
+        for (const player of this.players) {
+            const details = player.combatDetails;
+            details.currentHitpoints = Math.max(1, Math.round(details.maxHitpoints * live.playerHpFraction));
+            if (Number.isFinite(live.playerMpFraction)) {
+                details.currentManapoints = Math.max(0, Math.round(details.maxManapoints * live.playerMpFraction));
+            }
+        }
+
+        for (const enemy of this.enemies) {
+            const details = enemy.combatDetails;
+            details.currentHitpoints = Math.max(1, Math.round(details.maxHitpoints * live.monsterHpFraction));
+        }
+
+        // Backdate the encounter's start so the room timer expires after the
+        // time this fight has left, not a further two minutes
+        if (Number.isFinite(live.elapsedNs)) {
+            this.labyrinth.updateEncounterStartTime(this.simulationTime - live.elapsedNs);
+        }
+    }
+
     startNewEncounter() {
         // Restart the combat/setup streams so this encounter begins from the same
         // random state in every run sharing the seed (no-op when unseeded)
@@ -433,6 +464,14 @@ class CombatSimulator {
             enemy.reset(this.simulationTime);
             this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);
         });
+
+        // Conditional mode: every encounter restarts from the state of a fight
+        // already in progress, rather than from full health with a fresh clock.
+        // Applied after the resets above, which would otherwise undo it. Running
+        // many encounters this way makes each one an independent replay of the
+        // same moment, so the win rate over them is the chance of clearing from
+        // there — which is a different question from how the room usually goes.
+        if (this.labyrinth?.liveState) this.applyLiveState();
 
         this.eventQueue.clearEventsOfType(EnrageTickEvent.type);
         const enrageTickEvent = new EnrageTickEvent(this.simulationTime + ENRAGE_TICK_INTERVAL, ENRAGE_TICK_INTERVAL);
