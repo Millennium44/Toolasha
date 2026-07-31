@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Credit dakonglong for the labyrinth simulator
+
+- The README's credits now thank dakonglong, author of [迷宫胜率计算器 — Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829-%E8%BF%B7%E5%AE%AB%E8%83%9C%E7%8E%87%E8%AE%A1%E7%AE%97%E5%99%A8), for the code and inspiration behind the labyrinth simulator, and link to the script.
+
 ### Resize from either side, and Payback is now Time
 
 - **The sim panel resizes from the left edge and bottom-left corner too**, alongside the right, bottom and bottom-right grips. Each grip now moves the side you grabbed: the panel opens anchored to its right edge, so widening it used to push the opposite side across the screen — resizing now pins the panel by whichever edge you are not dragging.
