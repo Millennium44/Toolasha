@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Fixed: the sim accuracy record counted every defeat and no victory
+
+- Every room read `0/N`. **Clearing a room strips it** — the server stops sending its monster, its skill and its type, leaving a cell that says only `isCleared` — and the scan that fed the record looked for rooms naming a monster. So it saw the room on every attempt you lost and never once on the attempt you won. Attempts piled up, clears never did, and the verdict could only ever be "sim too high".
+- The scan now reads every room on the floor, and the fold credits a cleared square to the monster **last seen standing on it**. That memory is scoped to a run and floor, because coordinates repeat on every floor — without the scope, descending onto a floor whose corner room was already cleared would hand a free win to whatever was in the same corner one floor up.
+- **A win can no longer outrun its own attempt.** A room cleared first try can go from unseen straight to cleared with no update in between showing it entered, which would have recorded 1 clear in 0 attempts — a rate above 100%.
+- **Per-room state is now saved.** It was held in memory only, so every refresh made the record forget where each room stood and re-count its entire entry history from scratch — inflating attempts a little more every session.
+- **Records written before this fix are discarded on load.** They are not a small sample of the truth; they are every loss and no win, so carrying them forward would poison every verdict from here on. The count starts again from your next fight.
+- The room log itself was reading the same flag with the same blind spot and only got the right answer by falling back to the monster's health on the last tick. It now asks the floor properly.
+- New console diagnostic: `Toolasha.Debug.labRooms()` prints the current floor exactly as the server describes it, including which fields each room still carries, so what a cleared room looks like can be read rather than inferred.
+
 ### Resize the battle panel, from settings, per character
 
 - New setting, off by default: scale **your side** and the **enemy side** of the battle panel independently, choose how the two sit, and set the height of the character panel beside them. A ten-monster wave and a solo fight get the same slab of screen, so one is cramped and the other mostly empty — and the right answer differs per character, which is why every one of these is stored **per character** like the rest of Toolasha's settings.

@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     outcomeKey,
-    readCombatRooms,
+    readFloorRooms,
     foldFloorOutcomes,
     compareToPrediction,
     binomialTailLikelihood,
@@ -19,91 +19,177 @@ const combat = (over = {}) => ({
     ...over,
 });
 
-describe('readCombatRooms', () => {
-    test('picks out the fights and leaves everything else', () => {
-        const rooms = readCombatRooms([[combat(), null, { roomType: '/labyrinth_room_types/treasure' }]]);
-        expect(rooms).toHaveLength(1);
+/** A cleared room as the server actually sends it: stripped of its contents */
+const clearedRoom = (over = {}) => ({ isCleared: true, entryCount: 0, ...over });
+
+const MIMIC = outcomeKey('/monsters/mimic', 252);
+
+/** Fold one floor state after another, threading the state through */
+function foldAll(states, options = {}) {
+    let state = { totals: {}, seen: {} };
+    for (const rooms of states) {
+        state = foldFloorOutcomes(state.totals, state.seen, readFloorRooms(rooms), { scope: 'run|1', ...options });
+    }
+    return state;
+}
+
+describe('readFloorRooms', () => {
+    test('returns every room, not just the ones naming a monster', () => {
+        // A cleared room names nothing at all, so a reader that filters on
+        // monsterHrid cannot see the moment a fight was won
+        const rooms = readFloorRooms([[combat(), null, clearedRoom(), { roomType: '/labyrinth_room_types/treasure' }]]);
+        expect(rooms).toHaveLength(3);
         expect(rooms[0]).toMatchObject({ coord: '0,0', monsterHrid: '/monsters/mimic', roomLevel: 252 });
+        expect(rooms[1]).toMatchObject({ coord: '2,0', monsterHrid: '', isCleared: true });
     });
 
     test('survives a grid that is not one', () => {
-        expect(readCombatRooms(null)).toEqual([]);
-        expect(readCombatRooms([null, undefined])).toEqual([]);
+        expect(readFloorRooms(null)).toEqual([]);
+        expect(readFloorRooms([null, undefined])).toEqual([]);
     });
 });
 
 describe('foldFloorOutcomes', () => {
-    test('the same floor folded twice counts once', () => {
-        const rooms = readCombatRooms(grid([combat({ entryCount: 3, isCleared: true })]));
-        const first = foldFloorOutcomes({}, {}, rooms);
-        const second = foldFloorOutcomes(first.totals, first.seen, rooms);
+    test('counts the clear of a room that was stripped when it cleared', () => {
+        // The reported bug. Attempts accrued while the monster was there and
+        // the win was invisible, so every room read 0 clears in N attempts and
+        // the sim could only ever look too optimistic.
+        const state = foldAll([
+            grid([combat({ entryCount: 1 })]),
+            grid([combat({ entryCount: 2 })]),
+            grid([clearedRoom()]),
+        ]);
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 2, clears: 1, monsterHrid: '/monsters/mimic' });
+    });
 
-        const key = outcomeKey('/monsters/mimic', 252);
-        expect(first.totals[key]).toMatchObject({ attempts: 3, clears: 1 });
-        expect(second.totals[key]).toMatchObject({ attempts: 3, clears: 1 });
+    test('a stripped room reporting no entries does not restart the count', () => {
+        const state = foldAll([grid([combat({ entryCount: 5 })]), grid([clearedRoom()]), grid([clearedRoom()])]);
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 5, clears: 1 });
+    });
+
+    test('a win never outruns its own attempt', () => {
+        // A room cleared first try can go straight from unseen to cleared with
+        // no update in between showing it entered — and 1 clear in 0 attempts
+        // would be a rate above 100%
+        const state = foldAll([grid([combat({ entryCount: 0 })]), grid([clearedRoom()])]);
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 1, clears: 1 });
+    });
+
+    test('the same floor folded twice counts once', () => {
+        const rooms = readFloorRooms(grid([combat({ entryCount: 3, isCleared: true })]));
+        const first = foldFloorOutcomes({}, {}, rooms, { scope: 'run|1' });
+        const second = foldFloorOutcomes(first.totals, first.seen, rooms, { scope: 'run|1' });
+
+        expect(first.totals[MIMIC]).toMatchObject({ attempts: 3, clears: 1 });
+        expect(second.totals[MIMIC]).toMatchObject({ attempts: 3, clears: 1 });
         expect(second.changed).toBe(false);
     });
 
     test('counts attempts as they accrue and the clear once', () => {
-        let state = { totals: {}, seen: {} };
-        for (const [entries, cleared] of [
-            [1, false],
-            [2, false],
-            [3, true],
-            [3, true],
-        ]) {
-            state = foldFloorOutcomes(
-                state.totals,
-                state.seen,
-                readCombatRooms(grid([combat({ entryCount: entries, isCleared: cleared })]))
-            );
-        }
-        expect(state.totals[outcomeKey('/monsters/mimic', 252)]).toMatchObject({ attempts: 3, clears: 1 });
+        const state = foldAll([
+            grid([combat({ entryCount: 1 })]),
+            grid([combat({ entryCount: 2 })]),
+            grid([combat({ entryCount: 3, isCleared: true })]),
+            grid([combat({ entryCount: 3, isCleared: true })]),
+        ]);
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 3, clears: 1 });
     });
 
     test('a room given up on still contributes its attempts', () => {
         // Only counting rooms you finished would quietly drop every fight you
         // walked away from, which is exactly the losing half of the sample
-        const state = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 6, isCleared: false })])));
-        expect(state.totals[outcomeKey('/monsters/mimic', 252)]).toMatchObject({ attempts: 6, clears: 0 });
+        const state = foldAll([grid([combat({ entryCount: 6, isCleared: false })])]);
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 6, clears: 0 });
     });
 
     test('a new monster on the same square starts over', () => {
-        const first = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 4, isCleared: true })])));
-        const next = foldFloorOutcomes(
+        const state = foldAll([
+            grid([combat({ entryCount: 4, isCleared: true })]),
+            grid([combat({ monsterHrid: '/monsters/wark', entryCount: 2, isCleared: false })]),
+        ]);
+        expect(state.totals[outcomeKey('/monsters/wark', 252)]).toMatchObject({ attempts: 2, clears: 0 });
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 4, clears: 1 });
+    });
+
+    test('a cleared square on the next floor is not credited to the last one', () => {
+        // Coordinates repeat every floor. Without the scope, descending onto a
+        // floor whose 0,0 is already cleared would hand a free win to whatever
+        // was standing on the previous floor's 0,0.
+        const fought = foldFloorOutcomes({}, {}, readFloorRooms(grid([combat({ entryCount: 3 })])), {
+            scope: 'run|1',
+        });
+        const descended = foldFloorOutcomes(fought.totals, fought.seen, readFloorRooms(grid([clearedRoom()])), {
+            scope: 'run|2',
+        });
+        expect(descended.totals[MIMIC]).toMatchObject({ attempts: 3, clears: 0 });
+        expect(descended.changed).toBe(false);
+    });
+
+    test('reports room state moving even when no fight was counted', () => {
+        // Entering a room changes nothing about the record but everything about
+        // what the next session must not re-count
+        const first = foldFloorOutcomes({}, {}, readFloorRooms(grid([combat({ entryCount: 2 })])), { scope: 'run|1' });
+        const same = foldFloorOutcomes(first.totals, first.seen, readFloorRooms(grid([combat({ entryCount: 2 })])), {
+            scope: 'run|1',
+        });
+        expect(same.changed).toBe(false);
+        expect(same.seenChanged).toBe(false);
+
+        const revealed = foldFloorOutcomes(
             first.totals,
             first.seen,
-            readCombatRooms(grid([combat({ monsterHrid: '/monsters/wark', entryCount: 2, isCleared: false })]))
+            readFloorRooms([[combat({ entryCount: 2 }), { roomType: '/labyrinth_room_types/treasure' }]]),
+            { scope: 'run|1' }
         );
-        expect(next.totals[outcomeKey('/monsters/wark', 252)]).toMatchObject({ attempts: 2, clears: 0 });
-        expect(next.totals[outcomeKey('/monsters/mimic', 252)]).toMatchObject({ attempts: 4, clears: 1 });
+        expect(revealed.changed).toBe(false);
+        expect(revealed.seenChanged).toBe(true);
+    });
+
+    test('drops the previous floor rather than piling every floor up', () => {
+        const first = foldFloorOutcomes({}, {}, readFloorRooms(grid([combat({ entryCount: 1 })])), { scope: 'run|1' });
+        const second = foldFloorOutcomes(first.totals, first.seen, readFloorRooms(grid([combat()])), {
+            scope: 'run|2',
+        });
+        expect(Object.keys(second.seen)).toEqual(['0,0']);
     });
 
     test('the same monster at another level is another fight', () => {
-        const state = foldFloorOutcomes(
-            {},
-            {},
-            readCombatRooms([[combat({ entryCount: 1 }), combat({ recommendedLevel: 199, entryCount: 2 })]])
-        );
+        const state = foldAll([[[combat({ entryCount: 1 }), combat({ recommendedLevel: 199, entryCount: 2 })]]]);
         expect(Object.keys(state.totals)).toHaveLength(2);
+    });
+
+    test('a cleared skilling room is credited to nobody', () => {
+        const state = foldAll([
+            grid([{ skillHrid: '/skills/milking', recommendedLevel: 240, entryCount: 2 }]),
+            grid([clearedRoom()]),
+        ]);
+        expect(state.totals).toEqual({});
     });
 });
 
 describe('foldFloorOutcomes prediction capture', () => {
     test('stamps the rate the sim was claiming when the fights landed', () => {
-        const state = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 2 })])), () => 0.244);
-        expect(state.totals[outcomeKey('/monsters/mimic', 252)].predicted).toBeCloseTo(0.244);
+        const state = foldAll([grid([combat({ entryCount: 2 })])], { predictedFor: () => 0.244 });
+        expect(state.totals[MIMIC].predicted).toBeCloseTo(0.244);
     });
 
     test('a room with no sim yet keeps whatever was stamped before', () => {
-        const first = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 1 })])), () => 0.3);
-        const next = foldFloorOutcomes(
-            first.totals,
-            first.seen,
-            readCombatRooms(grid([combat({ entryCount: 2 })])),
-            () => null
-        );
-        expect(next.totals[outcomeKey('/monsters/mimic', 252)]).toMatchObject({ attempts: 2, predicted: 0.3 });
+        const first = foldFloorOutcomes({}, {}, readFloorRooms(grid([combat({ entryCount: 1 })])), {
+            scope: 'run|1',
+            predictedFor: () => 0.3,
+        });
+        const next = foldFloorOutcomes(first.totals, first.seen, readFloorRooms(grid([combat({ entryCount: 2 })])), {
+            scope: 'run|1',
+            predictedFor: () => null,
+        });
+        expect(next.totals[MIMIC]).toMatchObject({ attempts: 2, predicted: 0.3 });
+    });
+
+    test('a stripped cleared room is judged against the monster that was there', () => {
+        const state = foldAll([grid([combat({ entryCount: 1 })]), grid([clearedRoom()])], {
+            predictedFor: (hrid, level) => (hrid === '/monsters/mimic' && level === 252 ? 0.66 : null),
+        });
+        expect(state.totals[MIMIC]).toMatchObject({ clears: 1, predicted: 0.66 });
     });
 });
 

@@ -84,6 +84,7 @@ toolashaRoot.Debug = {
     ...(toolashaRoot.Debug || {}),
     ...labyrinthCapture,
     labAccuracy: () => labyrinthClearRate.labAccuracy(),
+    labRooms: () => labyrinthClearRate.labRooms(),
 };
 
 console.log('[Toolasha] Combat library loaded');

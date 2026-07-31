@@ -45,11 +45,22 @@ function rateOrNaN(value) {
 }
 
 /**
- * Read the combat rooms out of a floor's grid.
+ * Read every room out of a floor's grid.
+ *
+ * Deliberately not just the combat rooms. **Clearing a room strips it**: the
+ * server stops sending its monster, its skill and its type, leaving a cell that
+ * says only `isCleared`. Scanning for `monsterHrid` therefore sees a room for
+ * every attempt you lose and never once for the attempt you win, which counts
+ * every defeat and no victory at all — a record that can only ever say the sim
+ * is too optimistic.
+ *
+ * So every cell comes back, and working out which of the stripped ones used to
+ * be a fight is the fold's job, since only it remembers what was there before.
+ *
  * @param {Array<Array<Object|null>>} roomData - Floor grid
  * @returns {Array<Object>} { coord, monsterHrid, roomLevel, entryCount, isCleared }
  */
-export function readCombatRooms(roomData) {
+export function readFloorRooms(roomData) {
     if (!Array.isArray(roomData)) return [];
     const rooms = [];
     for (let y = 0; y < roomData.length; y++) {
@@ -57,10 +68,10 @@ export function readCombatRooms(roomData) {
         if (!Array.isArray(row)) continue;
         for (let x = 0; x < row.length; x++) {
             const room = row[x];
-            if (!room?.monsterHrid) continue;
+            if (!room) continue;
             rooms.push({
                 coord: `${x},${y}`,
-                monsterHrid: room.monsterHrid,
+                monsterHrid: room.monsterHrid || '',
                 roomLevel: Math.max(0, Math.floor(Number(room.recommendedLevel) || 0)),
                 entryCount: Math.max(0, Math.floor(Number(room.entryCount) || 0)),
                 isCleared: !!room.isCleared,
@@ -82,6 +93,13 @@ export function readCombatRooms(roomData) {
  * attempts, which is what stops the measured rate flattering itself: only
  * counting rooms you finished would drop every fight you gave up on.
  *
+ * Because a cleared room is stripped of its contents, the monster credited with
+ * a clear is the one last seen on that square rather than the one the room
+ * still names — a cleared room names nothing. That memory is scoped to a run
+ * and floor: coordinates repeat on every floor, and without the scope the first
+ * update after descending would credit a fresh floor's already-cleared square
+ * to whatever the last floor had standing in the same spot.
+ *
  * The prediction is stamped on the bucket as the fights land, not looked up
  * when the record is read. A sim result lives in a cache keyed by loadout and
  * crates and does not survive a refresh, so a record read a week later would
@@ -91,50 +109,83 @@ export function readCombatRooms(roomData) {
  *
  * @param {Object} totals - { [key]: { attempts, clears, monsterHrid, roomLevel } }
  * @param {Object} seen - Per-room state from the last fold, keyed by coord
- * @param {Array<Object>} rooms - Output of readCombatRooms
- * @param {Function} [predictedFor] - (monsterHrid, roomLevel) => rate 0..1 or null
- * @returns {{totals: Object, seen: Object, changed: boolean}} New state
+ * @param {Array<Object>} rooms - Output of readFloorRooms
+ * @param {Object} [options] - { scope, predictedFor }
+ * @param {string} [options.scope] - Run-and-floor identity of this grid
+ * @param {Function} [options.predictedFor] - (monsterHrid, roomLevel) => rate or null
+ * @returns {{totals: Object, seen: Object, changed: boolean, seenChanged: boolean}} New state
  */
-export function foldFloorOutcomes(totals, seen, rooms, predictedFor) {
+export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
+    const { scope = '', predictedFor } = options;
     const nextTotals = { ...totals };
-    const nextSeen = { ...seen };
+    // Rebuilt from this grid rather than merged into the old one, so descending
+    // a floor drops the previous floor's squares instead of accumulating a map
+    // of every room of the whole run
+    const nextSeen = {};
     let changed = false;
+    // Reported separately because the room state has to be saved even when no
+    // fight was counted — it is the only thing stopping the next session
+    // counting every room's whole entry history over again
+    let seenChanged = Object.keys(seen || {}).length !== rooms.length;
 
     for (const room of rooms) {
-        const before = seen[room.coord];
-        // A different monster on the same square means the floor moved on and
-        // this is a new room that happens to share coordinates
-        const continuing = before && before.monsterHrid === room.monsterHrid;
+        const before = seen?.[room.coord];
+        // The same square on the same floor of the same run. A room that still
+        // names a monster must name the same one; a stripped room names none,
+        // and the scope is what stops that matching anything at all.
+        const continuing =
+            !!before &&
+            before.scope === scope &&
+            (!room.monsterHrid || !before.monsterHrid || before.monsterHrid === room.monsterHrid);
+
+        const monsterHrid = room.monsterHrid || (continuing ? before.monsterHrid : '');
+        const roomLevel = room.roomLevel || (continuing ? before.roomLevel : 0);
         const priorEntries = continuing ? before.entryCount : 0;
         const priorCleared = continuing ? before.isCleared : false;
 
+        const next = {
+            scope,
+            monsterHrid,
+            roomLevel,
+            // A stripped room reports no entries. Keeping the count we had stops
+            // the next fold reading that drop to zero as a fresh run of attempts
+            entryCount: Math.max(room.entryCount, priorEntries),
+            isCleared: room.isCleared || priorCleared,
+        };
+        nextSeen[room.coord] = next;
+        if (
+            !before ||
+            before.scope !== next.scope ||
+            before.monsterHrid !== next.monsterHrid ||
+            before.entryCount !== next.entryCount ||
+            before.isCleared !== next.isCleared
+        ) {
+            seenChanged = true;
+        }
+        if (!monsterHrid) continue;
+
         const newEntries = Math.max(0, room.entryCount - priorEntries);
         const newClear = room.isCleared && !priorCleared ? 1 : 0;
-        nextSeen[room.coord] = {
-            monsterHrid: room.monsterHrid,
-            entryCount: room.entryCount,
-            isCleared: room.isCleared,
-        };
         if (newEntries === 0 && newClear === 0) continue;
 
-        const key = outcomeKey(room.monsterHrid, room.roomLevel);
-        const bucket = nextTotals[key] || {
-            monsterHrid: room.monsterHrid,
-            roomLevel: room.roomLevel,
-            attempts: 0,
-            clears: 0,
-        };
-        const predicted = predictedFor ? rateOrNaN(predictedFor(room.monsterHrid, room.roomLevel)) : NaN;
+        const key = outcomeKey(monsterHrid, roomLevel);
+        const bucket = nextTotals[key] || { monsterHrid, roomLevel, attempts: 0, clears: 0 };
+        const predicted = predictedFor ? rateOrNaN(predictedFor(monsterHrid, roomLevel)) : NaN;
+        const clears = bucket.clears + newClear;
         nextTotals[key] = {
             ...bucket,
-            attempts: bucket.attempts + newEntries,
-            clears: bucket.clears + newClear,
+            // A room won on the first try can clear before any update showed it
+            // being entered, and a clear that outran its own attempt would give
+            // a rate above 100%. The victory was an attempt whether or not the
+            // entry count was ever seen to rise.
+            attempts: Math.max(bucket.attempts + newEntries, clears),
+            clears,
             ...(Number.isFinite(predicted) ? { predicted } : {}),
         };
         changed = true;
     }
 
-    return { totals: nextTotals, seen: nextSeen, changed };
+    return { totals: nextTotals, seen: nextSeen, changed, seenChanged };
 }
 
 /**
