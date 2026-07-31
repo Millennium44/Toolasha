@@ -35,6 +35,12 @@ const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 /** Beacon reveal radius: Manhattan distance 2 — a 13-room diamond */
 const BEACON_RADIUS = 2;
 
+/** Two beacons chain when their diamonds meet: centers within this far apart */
+const BEACON_CHAIN_DIST = 2 * BEACON_RADIUS + 1;
+
+/** Re-placement sweeps over a greedy coverage plan before settling */
+const BEACON_SWAP_PASSES = 4;
+
 /** Lexicographic weight: one shroud outweighs any number of torches */
 const PATH_SHROUD_WEIGHT = 1e6;
 
@@ -253,31 +259,25 @@ export function countDisjointRoutes(passable, cols) {
 }
 
 /**
- * Plan beacon placements that reveal a walkable corridor from the entrance to
- * the floor exit while revealing as many new rooms as possible. Beacons reveal
- * a 13-room diamond (Manhattan radius 2). The corridor requirement: a path
- * from the entrance to the exit where every interior room is revealed (already
- * revealed rooms count, so mid-run the plan builds on what's uncovered).
- *
- * Priorities: use the minimum number of beacons that can cover such a corridor
- * (chained so consecutive reveal areas connect), prefer placements whose
- * revealed region offers two independent routes to the exit (no single blocked
- * room can sever it), maximize newly revealed rooms among those (beam search),
- * then spend any extra requested beacons where they add redundancy first and
- * coverage second.
- *
- * Pure function so the planning logic is testable without DOM.
- * @param {boolean[]} revealed - Flat grid of already-revealed rooms
- * @param {number} cols - Grid width
- * @param {number} [beaconCount=0] - Total beacons to place; 0 = minimum needed
- * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
- *   revealedNew, minNeeded, routes } or null on empty input
+ * Whether the server has told us anything about a room's contents. The same
+ * test the path planner's `isUnknown` uses inverted, so both features agree on
+ * which rooms a beacon would still be revealing.
+ * @param {Object|null} room - roomData entry
+ * @returns {boolean}
  */
-export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
-    const n = revealed.length;
-    if (!n || !cols) return null;
-    const entranceIdx = 0;
-    const exitIdx = n - 1;
+function isRoomRevealed(room) {
+    if (!room) return false;
+    return !!(String(room.roomType || '') !== '' || room.skillHrid || room.monsterHrid || room.isCleared);
+}
+
+/**
+ * Grid helpers shared by the two beacon planners: neighbour walks, reveal
+ * diamonds, and flood fills.
+ * @param {number} n - Cell count
+ * @param {number} cols - Grid width
+ * @returns {Object} { manhattan, neighbors, diamond, regionFrom }
+ */
+function beaconGrid(n, cols) {
     const x = (i) => i % cols;
     const y = (i) => Math.floor(i / cols);
     const manhattan = (a, b) => Math.abs(x(a) - x(b)) + Math.abs(y(a) - y(b));
@@ -304,14 +304,14 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         return cells;
     };
 
-    // Revealed regions walkable from the entrance and from the exit
-    const bfsRegion = (start) => {
+    /** Flood fill from start through cells the predicate accepts; start is always in. */
+    const regionFrom = (start, isOpen) => {
         const seen = new Set([start]);
         const queue = [start];
         while (queue.length) {
             const cur = queue.shift();
             for (const nb of neighbors(cur)) {
-                if (!seen.has(nb) && revealed[nb]) {
+                if (!seen.has(nb) && isOpen(nb)) {
                     seen.add(nb);
                     queue.push(nb);
                 }
@@ -319,27 +319,22 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         }
         return seen;
     };
-    const startRegion = bfsRegion(entranceIdx);
-    const endRegion = bfsRegion(exitIdx);
 
-    // Already connected without any beacons?
-    let connected = false;
-    for (const i of startRegion) {
-        if (endRegion.has(i) || neighbors(i).some((nb) => endRegion.has(nb))) {
-            connected = true;
-            break;
-        }
-    }
-    if (connected) {
-        return {
-            feasible: true,
-            beacons: [],
-            covered: new Set(),
-            revealedNew: 0,
-            minNeeded: 0,
-            routes: countDisjointRoutes(revealed, cols),
-        };
-    }
+    return { manhattan, neighbors, diamond, regionFrom };
+}
+
+/**
+ * Fewest beacons whose reveal diamonds chain the entrance region to the exit
+ * region, and the reachability data the chain search needs.
+ * @param {Object} grid - beaconGrid helpers
+ * @param {number} n - Cell count
+ * @param {Set<number>} startRegion - Revealed region holding the entrance
+ * @param {Set<number>} endRegion - Revealed region holding the exit
+ * @returns {Object} { startOK, distToEnd, minNeeded } — minNeeded is Infinity
+ *   when no chain reaches the exit
+ */
+function beaconChainReach(grid, n, startRegion, endRegion) {
+    const { manhattan, neighbors, diamond } = grid;
 
     // A beacon "touches" a region when its reveal area contains a cell in the
     // region or adjacent to it — a path can step between them
@@ -361,7 +356,6 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
 
     // Two beacons chain when their diamonds intersect or touch (centers within
     // Manhattan distance 5). distToEnd[c] = beacons still needed after c.
-    const CHAIN_DIST = 2 * BEACON_RADIUS + 1;
     const distToEnd = new Array(n).fill(Infinity);
     let frontier = [];
     for (let c = 0; c < n; c++) {
@@ -374,7 +368,7 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         const next = [];
         for (const c of frontier) {
             for (let other = 0; other < n; other++) {
-                if (distToEnd[other] === Infinity && manhattan(c, other) <= CHAIN_DIST) {
+                if (distToEnd[other] === Infinity && manhattan(c, other) <= BEACON_CHAIN_DIST) {
                     distToEnd[other] = distToEnd[c] + 1;
                     next.push(other);
                 }
@@ -389,21 +383,202 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
             minNeeded = Math.min(minNeeded, distToEnd[c] + 1);
         }
     }
-    if (!Number.isFinite(minNeeded)) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: Infinity, routes: 0 };
-    }
-    if (beaconCount > 0 && beaconCount < minNeeded) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
-    }
-    const targetCount = beaconCount > 0 ? beaconCount : minNeeded;
+    return { startOK, distToEnd, minNeeded };
+}
 
-    // Walkability including a candidate coverage union, for route counting
+/**
+ * How far out of the way each room sits, in rooms: 0 for one directly between
+ * the region you have already opened and the floor exit, rising with the
+ * detour needed to visit it. Straight Manhattan distances, because the
+ * labyrinth has no walls — every cell is a room, so nothing blocks a detour.
+ *
+ * Weighting coverage by this is what keeps a beacon off the far corner of the
+ * map: those rooms are revealed just as cheaply, but you will never walk them.
+ *
+ * @param {Object} grid - beaconGrid helpers
+ * @param {number} n - Cell count
+ * @param {Set<number>} startRegion - Revealed region holding the entrance
+ * @param {number} exitIdx - Floor exit
+ * @returns {number[]} Detour in rooms, per cell
+ */
+function detourCosts(grid, n, startRegion, exitIdx) {
+    const { manhattan } = grid;
+    const fromStart = new Array(n).fill(Infinity);
+    for (let i = 0; i < n; i++) {
+        for (const s of startRegion) fromStart[i] = Math.min(fromStart[i], manhattan(i, s));
+    }
+    const shortest = fromStart[exitIdx];
+    return fromStart.map((d, i) => d + manhattan(i, exitIdx) - shortest);
+}
+
+/**
+ * Place exactly `count` beacons to reveal as much of the floor as possible,
+ * preferring rooms on the way to the exit. Greedy by marginal gain, then a
+ * re-placement pass per beacon: greedy alone takes the densest spot first even
+ * when two beacons placed together would tile the dark region better.
+ *
+ * @param {Object} grid - beaconGrid helpers
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} count - Beacons to place
+ * @param {number[]} weight - Per-cell worth of revealing that room
+ * @returns {number[]} Beacon centers
+ */
+function placeBeaconsForCoverage(grid, revealed, count, weight) {
+    const { diamond } = grid;
+    const n = revealed.length;
+
+    const gainOf = (c, union) => {
+        let total = 0;
+        for (const d of diamond(c)) {
+            if (!revealed[d] && !union.has(d)) total += weight[d];
+        }
+        return total;
+    };
+    const coverageOf = (centers) => {
+        const union = new Set();
+        for (const c of centers) {
+            for (const d of diamond(c)) {
+                if (!revealed[d]) union.add(d);
+            }
+        }
+        return union;
+    };
+    const bestCenterAgainst = (union, taken, incumbent) => {
+        let center = incumbent;
+        let best = incumbent >= 0 ? gainOf(incumbent, union) : 0;
+        for (let c = 0; c < n; c++) {
+            if (c === incumbent || taken.has(c)) continue;
+            const gain = gainOf(c, union);
+            if (gain > best) {
+                best = gain;
+                center = c;
+            }
+        }
+        return best > 0 ? center : -1;
+    };
+
+    const beacons = [];
+    while (beacons.length < count) {
+        const chosen = bestCenterAgainst(coverageOf(beacons), new Set(beacons), -1);
+        if (chosen < 0) break; // nothing left worth revealing
+        beacons.push(chosen);
+    }
+
+    for (let pass = 0; pass < BEACON_SWAP_PASSES; pass++) {
+        let moved = false;
+        for (let slot = 0; slot < beacons.length; slot++) {
+            const others = beacons.filter((_, i) => i !== slot);
+            const chosen = bestCenterAgainst(coverageOf(others), new Set(others), beacons[slot]);
+            if (chosen >= 0 && chosen !== beacons[slot]) {
+                beacons[slot] = chosen;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+
+    return beacons;
+}
+
+/**
+ * Plan beacon placements on a labyrinth floor. Beacons reveal a 13-room
+ * diamond (Manhattan radius 2), and the two questions worth asking of them get
+ * different answers:
+ *
+ * - **A set count** (`beaconCount > 0`): place that many to reveal as much of
+ *   the floor as possible, biased toward rooms on the way to the exit. The
+ *   answer is always a plan — the count is what you have, not a target to be
+ *   declared infeasible.
+ * - **No count** (`beaconCount === 0`): the fewest beacons whose reveal areas
+ *   chain into a fully revealed corridor from the entrance to the exit,
+ *   maximizing new rooms among the minimal chains (beam search).
+ *
+ * The corridor is a convenience, not a requirement: unrevealed rooms are
+ * walkable, so a floor can always be crossed without beacons. That is why it
+ * only constrains the mode that asks for it — making it a hard constraint on a
+ * set count drags every beacon onto the entrance-to-exit line.
+ *
+ * Pure function so the planning logic is testable without DOM.
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} cols - Grid width
+ * @param {number} [beaconCount=0] - Beacons to place; 0 = minimum for a corridor
+ * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
+ *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
+ */
+export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+    const n = revealed.length;
+    if (!n || !cols) return null;
+    const entranceIdx = 0;
+    const exitIdx = n - 1;
+    const grid = beaconGrid(n, cols);
+    const { manhattan, neighbors, diamond, regionFrom } = grid;
+
+    // Revealed regions walkable from the entrance and from the exit
+    const isRevealed = (i) => revealed[i];
+    const startRegion = regionFrom(entranceIdx, isRevealed);
+    const endRegion = regionFrom(exitIdx, isRevealed);
+
+    const touches = (region, open) => {
+        for (const i of regionFrom(entranceIdx, open)) {
+            if (region.has(i) || neighbors(i).some((nb) => region.has(nb))) return true;
+        }
+        return false;
+    };
+    const connected = touches(endRegion, isRevealed);
+
     const passableWith = (union) => {
         const passable = new Array(n);
         for (let i = 0; i < n; i++) passable[i] = revealed[i] || union.has(i);
         return passable;
     };
-    const routesWith = (union) => Math.min(2, countDisjointRoutes(passableWith(union), cols));
+    const { startOK, distToEnd, minNeeded } = connected
+        ? { startOK: [], distToEnd: [], minNeeded: 0 }
+        : beaconChainReach(grid, n, startRegion, endRegion);
+
+    // A set count answers "where do I put the beacons I have", so it is planned
+    // for coverage whether or not the way out is already open
+    if (beaconCount > 0) {
+        const weight = detourCosts(grid, n, startRegion, exitIdx).map((detour) => 1 / (1 + detour));
+        const beacons = placeBeaconsForCoverage(grid, revealed, beaconCount, weight);
+        const covered = new Set();
+        for (const c of beacons) {
+            for (const d of diamond(c)) {
+                if (!revealed[d]) covered.add(d);
+            }
+        }
+        return {
+            feasible: true,
+            beacons,
+            covered,
+            revealedNew: covered.size,
+            minNeeded,
+            routes: countDisjointRoutes(passableWith(covered), cols),
+            corridorOpen: connected || touches(endRegion, (i) => revealed[i] || covered.has(i)),
+        };
+    }
+
+    if (connected) {
+        return {
+            feasible: true,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded: 0,
+            routes: countDisjointRoutes(revealed, cols),
+            corridorOpen: true,
+        };
+    }
+    if (!Number.isFinite(minNeeded)) {
+        return {
+            feasible: false,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded: Infinity,
+            routes: 0,
+            corridorOpen: false,
+        };
+    }
 
     // Beam search over minimum-length chains, maximizing newly revealed rooms
     const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
@@ -418,7 +593,7 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         for (const state of states) {
             const last = state.chain[state.chain.length - 1];
             for (let c = 0; c < n; c++) {
-                if (manhattan(c, last) > CHAIN_DIST) continue;
+                if (manhattan(c, last) > BEACON_CHAIN_DIST) continue;
                 if (state.chain.includes(c)) continue;
                 if (distToEnd[c] > minNeeded - depth - 1) continue;
                 const union = new Set(state.union);
@@ -430,49 +605,37 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         states = expanded.slice(0, BEAM_WIDTH);
     }
     states = states.filter((s) => distToEnd[s.chain[s.chain.length - 1]] === 0);
-    states.sort((a, b) => b.union.size - a.union.size);
     if (!states.length) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
+        return {
+            feasible: false,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded,
+            routes: 0,
+            corridorOpen: false,
+        };
     }
 
-    // Among the best chains, prefer ones whose revealed region already offers
-    // two independent routes to the exit, then the most coverage
-    const finalists = states.slice(0, 40).map((s) => ({ ...s, routes: routesWith(s.union) }));
-    finalists.sort((a, b) => b.routes - a.routes || b.union.size - a.union.size);
+    // Coverage decides between equal-length chains; route redundancy only
+    // breaks the ties it leaves. Redundancy counts unrevealed rooms as blocked,
+    // which they are not, so it is worth reporting but not worth paying rooms for.
+    states.sort((a, b) => b.union.size - a.union.size);
+    const finalists = states
+        .slice(0, 40)
+        .map((s) => ({ ...s, routes: Math.min(2, countDisjointRoutes(passableWith(s.union), cols)) }));
+    finalists.sort((a, b) => b.union.size - a.union.size || b.routes - a.routes);
     const best = finalists[0];
 
-    // Extra beacons: add redundancy first (up to two independent routes),
-    // then coverage
-    const beacons = [...best.chain];
-    const covered = new Set(best.union);
-    let routes = best.routes;
-    while (beacons.length < targetCount) {
-        let bestCenter = -1;
-        let bestRoutes = routes;
-        let bestGain = 0;
-        for (let c = 0; c < n; c++) {
-            if (beacons.includes(c)) continue;
-            const gain = newCells(c, covered).length;
-            if (gain === 0 && routes >= 2) continue;
-            let candidateRoutes = routes;
-            if (routes < 2 && gain > 0) {
-                const union = new Set(covered);
-                for (const g of newCells(c, covered)) union.add(g);
-                candidateRoutes = routesWith(union);
-            }
-            if (candidateRoutes > bestRoutes || (candidateRoutes === bestRoutes && gain > bestGain)) {
-                bestRoutes = candidateRoutes;
-                bestGain = gain;
-                bestCenter = c;
-            }
-        }
-        if (bestCenter < 0 || bestGain === 0) break;
-        beacons.push(bestCenter);
-        for (const gained of newCells(bestCenter, covered)) covered.add(gained);
-        routes = routes >= 2 ? routes : routesWith(covered);
-    }
-
-    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded, routes };
+    return {
+        feasible: true,
+        beacons: [...best.chain],
+        covered: new Set(best.union),
+        revealedNew: best.union.size,
+        minNeeded,
+        routes: best.routes,
+        corridorOpen: true,
+    };
 }
 
 class LabyrinthClearRate {
@@ -2350,7 +2513,7 @@ class LabyrinthClearRate {
         beaconButton.className = `${TILE_CONTROLS_CLASS}-beacon-button`;
         beaconButton.textContent = 'Beacons';
         beaconButton.title =
-            'Plan beacon placements: fewest beacons (or the set amount) whose reveal areas cover a walkable path to the exit, revealing as many rooms as possible';
+            'Plan beacon placements: a set count goes wherever it reveals the most rooms on the way out; 0 finds the fewest beacons that cover a revealed path to the exit';
         beaconButton.style.cssText =
             'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#1d9e83; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
@@ -2805,11 +2968,7 @@ class LabyrinthClearRate {
         if (countInput) countInput.value = String(count);
         config.setSettingValue('labyrinthBeaconCount', count);
 
-        // A room is revealed when its contents are known (typed room or cleared);
-        // the entrance always is
-        const revealed = flat.map(
-            (room, i) => i === 0 || (!!room && (String(room.roomType || '') !== '' || !!room.isCleared))
-        );
+        const revealed = flat.map((room, i) => i === 0 || isRoomRevealed(room));
 
         this.clearBeaconOverlays();
         const plan = computeBeaconPlan(revealed, cols, count);
@@ -2818,16 +2977,16 @@ class LabyrinthClearRate {
             return;
         }
         if (!plan.feasible) {
-            this.setTileStatus(
-                Number.isFinite(plan.minNeeded)
-                    ? `Need at least ${plan.minNeeded} beacons for a covered path`
-                    : 'No beacon chain can reach the exit'
-            );
+            this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
-        if (plan.minNeeded === 0) {
+        if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
-            this.setTileStatus(`Path to the exit is already revealed — no beacons needed${routeNote}`);
+            this.setTileStatus(
+                plan.minNeeded === 0
+                    ? `Path to the exit is already revealed — no beacons needed${routeNote}`
+                    : 'Nothing left for a beacon to reveal'
+            );
             return;
         }
 
@@ -2853,10 +3012,17 @@ class LabyrinthClearRate {
         };
 
         const minNote = count === 0 ? ' (min)' : '';
-        const routeText = plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route';
-        this.setTileStatus(
-            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · ${routeText}`
-        );
+        const parts = [
+            `Beacons: ${plan.beacons.length}${minNote}`,
+            `reveals ${plan.revealedNew} new rooms`,
+            plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route',
+        ];
+        // With a count you chose, whether the way out ends up covered is an
+        // outcome worth reporting rather than a condition on the plan
+        if (count > 0 && !plan.corridorOpen && Number.isFinite(plan.minNeeded)) {
+            parts.push(`a covered path to the exit needs ${plan.minNeeded}`);
+        }
+        this.setTileStatus(parts.join(' · '));
     }
 
     /**
@@ -2916,10 +3082,7 @@ class LabyrinthClearRate {
         const cells = this.findRoomGridCells(flat.length);
         if (cells.length !== flat.length) return;
 
-        const isRevealed = (i) => {
-            const room = flat[i];
-            return !!room && (String(room.roomType || '') !== '' || !!room.isCleared);
-        };
+        const isRevealed = (i) => isRoomRevealed(flat[i]);
 
         state.fills = state.fills.filter((i) => {
             if (!isRevealed(i)) return true;
