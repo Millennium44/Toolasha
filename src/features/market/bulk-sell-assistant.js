@@ -34,6 +34,7 @@ import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
+const PANEL_POSITION_KEY = 'bulkSellPanelPosition';
 const MS_PER_DAY = 86400000;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -55,6 +56,7 @@ class BulkSellAssistant {
         this.advanceTimeout = null;
         this.modalPoll = null;
         this.selectedTabId = 'all';
+        this.panelPosition = null;
         /**
          * Other scripts' claims on inventory: name -> () => iterable of hold
          * keys. Kept deliberately ignorant of why anything is held — a flip
@@ -112,10 +114,16 @@ class BulkSellAssistant {
         return [...collectHeldKeys(this.holdProviders)];
     }
 
-    initialize() {
+    async initialize() {
         if (this.isInitialized) return;
         if (!config.getSetting('market_bulkSellAssistant')) return;
         this.isInitialized = true;
+
+        try {
+            this.panelPosition = await storage.get(PANEL_POSITION_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[BulkSellAssistant] Loading panel position failed:', error);
+        }
 
         this.bookHandler = (data) => this._onOrderBook(data);
         dataManager.on('market_item_order_books_updated', this.bookHandler);
@@ -255,6 +263,61 @@ class BulkSellAssistant {
     }
 
     /**
+     * Let the panel be dragged anywhere, and remember where it was left.
+     *
+     * It is fixed over the game and defaults to the top-right, which is where
+     * the game puts its own gold counter and Bulk Sell controls — on a narrow
+     * window it lands on top of them. Rather than guess a position that suits
+     * every layout, it moves.
+     *
+     * Dragging starts only on the panel's own background, so the select and the
+     * buttons keep working: a drag beginning on a control would swallow the
+     * click that was meant for it.
+     *
+     * @param {HTMLElement} chip - The panel
+     */
+    _makeDraggable(chip) {
+        const applyPosition = (left, top) => {
+            // Kept on screen. A panel dragged off the edge cannot be dragged
+            // back, and the only way out would be reinstalling the script.
+            const maxLeft = Math.max(0, window.innerWidth - chip.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - chip.offsetHeight);
+            chip.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
+            chip.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
+            chip.style.right = 'auto';
+        };
+
+        if (this.panelPosition) {
+            // Applied after layout so offsetWidth is real, or the clamp above
+            // would measure a panel that has not been sized yet
+            setTimeout(() => applyPosition(this.panelPosition.left, this.panelPosition.top), 0);
+        }
+
+        chip.style.cursor = 'move';
+        chip.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('button, select, input')) return;
+            e.preventDefault();
+
+            const rect = chip.getBoundingClientRect();
+            const grabX = e.clientX - rect.left;
+            const grabY = e.clientY - rect.top;
+
+            const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                const final = chip.getBoundingClientRect();
+                this.panelPosition = { left: final.left, top: final.top };
+                storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    /**
      * Floating control panel, fixed near the top-right so the click targets
      * never move between marketplace subviews or items.
      */
@@ -304,18 +367,23 @@ class BulkSellAssistant {
             'font-weight:700; font-size:12px; padding:3px 7px; cursor:pointer; font-family:inherit;';
         stopBtn.addEventListener('click', () => this._stop('Stopped'));
 
-        // Closing the panel is not stopping the run — the same as clicking the
-        // tab off. The panel is fixed over the game and follows you out of the
-        // marketplace, so there has to be a way to dismiss it from the panel
-        // itself rather than only from a tab you may have navigated away from.
+        // Closing ends the run. The panel is the only thing showing what is
+        // being sold and how far through it is, so leaving a run going behind a
+        // closed panel would mean the next confirm click lands on a sale you
+        // can no longer see coming. Hiding it from the tab still leaves it
+        // running, because that is a different gesture with the panel's
+        // progress one click away.
         const closeBtn = document.createElement('button');
         closeBtn.className = `${CHIP_ID}-close`;
         closeBtn.textContent = '\u2715';
-        closeBtn.title = 'Hide this panel. A run in progress keeps going — reopen from the Bulk Sell tab.';
+        closeBtn.title = 'Close the panel. This also stops a run in progress.';
         closeBtn.style.cssText =
             'border:0; border-radius:5px; background:transparent; color:#7d879c; font-size:12px; ' +
             'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
-        closeBtn.addEventListener('click', () => this._togglePanel());
+        closeBtn.addEventListener('click', () => {
+            if (this.state !== 'idle' && this.state !== 'done') this._stop('Stopped');
+            this._togglePanel();
+        });
         closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
 
@@ -325,6 +393,7 @@ class BulkSellAssistant {
         chip.appendChild(stopBtn);
         chip.appendChild(closeBtn);
 
+        this._makeDraggable(chip);
         document.body.appendChild(chip);
         this.chip = chip;
         this._render();
