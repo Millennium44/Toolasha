@@ -14,6 +14,7 @@ import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
+import { estimateLiveClearChance, formatLiveClearChance } from './labyrinth-live-combat.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -29,6 +30,9 @@ const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
+const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
+/** Combat ticks arrive ~3/s, so this only expires once the fight is over */
+const LIVE_COMBAT_STALE_MS = 5000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -674,6 +678,9 @@ class LabyrinthClearRate {
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
         this._pathData = null;
+        this._fight = null;
+        this._liveCombatTimeout = null;
+        this.battleHandler = null;
     }
 
     initialize() {
@@ -716,6 +723,9 @@ class LabyrinthClearRate {
 
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
+
+        this.battleHandler = (data) => this.onBattleUpdated(data);
+        webSocketHook.on('battle_updated', this.battleHandler);
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
             this.injectOverlays()
@@ -833,7 +843,14 @@ class LabyrinthClearRate {
             this.snapshotUpdateHandler = null;
         }
 
+        if (this.battleHandler) {
+            webSocketHook.off('battle_updated', this.battleHandler);
+            this.battleHandler = null;
+        }
+
         this.clearLiveProgress();
+        this.clearLiveCombat();
+        this._fight = null;
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
         document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
@@ -2211,6 +2228,135 @@ class LabyrinthClearRate {
     onLiveProgress(data) {
         if (!config.getSetting('labyrinthLiveProgress')) return;
         this.refreshLiveProgress(data);
+    }
+
+    // -------------------------------------------------------------------------
+    // Live clear chance for combat rooms
+    //
+    // Skilling rooms get a live number from labyrinth_room_progress, which
+    // carries everything the closed-form math needs. Combat rooms carry no such
+    // message — the tile badge's win rate comes from simulating the fight
+    // beforehand, and once you are in it, it says nothing about how this one is
+    // going. battle_updated is the missing input: it pushes both sides' current
+    // and maximum hitpoints about three times a second.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Whether the header is showing a labyrinth fight. Read from the title
+     * rather than from run state, following the battle counter: a labyrinth run
+     * stays active while you fight regular zones, so the flags mislabel it.
+     * @returns {boolean}
+     */
+    inLabyrinthFight() {
+        const row = document.querySelector("div[class*='Header_actionName']");
+        return !!row && /labyrinth/i.test(row.textContent || '');
+    }
+
+    /**
+     * Track a labyrinth fight and show the odds of clearing it.
+     * @param {Object} data - battle_updated payload
+     */
+    onBattleUpdated(data) {
+        if (!config.getSetting('labyrinthLiveProgress')) return;
+
+        const player = data?.pMap?.['0'];
+        const monster = data?.mMap?.['0'];
+        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0) || !this.inLabyrinthFight()) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        // battleId stays put across labyrinth attempts, so a new fight is
+        // recognised by the monster: a different maximum, or a full bar where
+        // the last one was damaged
+        const fight = this._fight;
+        const isNewFight =
+            !fight ||
+            fight.battleId !== data.battleId ||
+            fight.monsterMaxHp !== monster.mHP ||
+            (monster.cHP >= monster.mHP && fight.lastMonsterHp < monster.mHP);
+
+        if (isNewFight) {
+            this._fight = {
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                startedAt: Date.now(),
+                // Only a fight seen from full health has a knowable clock. Join
+                // one in progress and the time already spent is invisible, so
+                // the timer leg of the estimate would be guesswork.
+                caughtStart: monster.cHP >= monster.mHP,
+                lastMonsterHp: monster.cHP,
+            };
+        } else {
+            fight.lastMonsterHp = monster.cHP;
+        }
+
+        if (!this._fight.caughtStart) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        const estimate = estimateLiveClearChance({
+            monsterHpFraction: monster.cHP / monster.mHP,
+            playerHpFraction: player.cHP / player.mHP,
+            elapsedSeconds: (Date.now() - this._fight.startedAt) / 1000,
+        });
+        const text = formatLiveClearChance(estimate);
+        if (!text) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        // battle_updated stops arriving the moment the fight ends, and nothing
+        // else would take the readout down — so it expires itself. Ticks come
+        // about three a second, so this only fires when the fight is over.
+        if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
+        this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
+
+        const left = Math.round(estimate.remainingSeconds);
+        this.renderLiveNode(` [${text} | ${left}s left]`, [
+            `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
+            Number.isFinite(estimate.killSeconds) ? `Kill in ~${Math.round(estimate.killSeconds)}s` : 'Not killing it',
+            Number.isFinite(estimate.deathSeconds)
+                ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
+                : 'Taking no damage',
+            `${estimate.reason}${estimate.confident ? '' : ' — early, treat as provisional'}`,
+            'Extrapolated from the health lost so far; abilities and procs are not modelled',
+        ]);
+    }
+
+    /** Drop the combat readout and forget the fight it described */
+    clearLiveCombat() {
+        if (this._liveCombatTimeout) {
+            clearTimeout(this._liveCombatTimeout);
+            this._liveCombatTimeout = null;
+        }
+        if (this._fight && !this.inLabyrinthFight()) this._fight = null;
+        document.querySelectorAll(`.${LIVE_COMBAT_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Write the combat readout into the header, beside the action name — the
+     * same slot the skilling readout uses. Only one can ever be showing: a room
+     * is a fight or it is not.
+     * @param {string} text - Readout
+     * @param {string[]} tooltipLines - Hover detail
+     */
+    renderLiveNode(text, tooltipLines) {
+        const host =
+            document.querySelector("div[class*='Header_actionName'] div[class*='Header_displayName']") ||
+            document.querySelector("div[class*='Header_actionName']");
+        if (!host) return;
+
+        let node = host.querySelector(`.${LIVE_COMBAT_CLASS}`);
+        if (!node) {
+            node = document.createElement('span');
+            node.className = LIVE_COMBAT_CLASS;
+            node.style.cssText = 'color:#fff; font-size:0.875rem;';
+            host.appendChild(node);
+        }
+        node.textContent = text;
+        node.title = tooltipLines.join('\n');
     }
 
     /**

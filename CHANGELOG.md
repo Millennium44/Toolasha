@@ -10,13 +10,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The `↻N` badge sits at the middle of the tile's left edge rather than the bottom-left corner, where it overlapped the clear-chance and ETA badge.
 
-### Groundwork for a live clear chance in combat rooms
+### Live clear chance in labyrinth combat rooms
 
-- **`Toolasha.Debug.captureLab()`** records every WebSocket message for a minute and prints a digest: which message types arrive and how often, every numeric field that changed between consecutive messages, and a full field inventory per message type. Run it from the console during a labyrinth fight to find out what the server actually pushes mid-combat. Nothing registers or schedules it — it runs only when typed.
-- The first version searched for fields whose **names** looked like hitpoints and found nothing on a live fight — a name search can only find what you can already name. It now diffs consecutive payloads and reports whatever moved, so the field turns up whatever the server calls it.
-- **The estimator itself is in**, as pure math with tests: given how much of the monster and of you is left and how long the fight has run, it extrapolates both times-to-die and returns the chance the monster's runs out first, inside the 120-second timer. Both finish lines are treated as spread-out rather than exact, and the spread narrows as the fight supplies evidence, so an early number is marked `?` and a settled one is not.
-- **`battle_updated` is now exempt from message deduplication.** It is the message combat state arrives on, roughly twice a second during a fight, and consecutive ticks can open with identical text — same type, same battle, same unit ids — differing only in hitpoints further in. The 100-character content hash would have dropped exactly the updates a live estimate depends on.
-- **It is not wired to anything yet** — it has no data source until the capture says where hitpoints live.
+- Combat rooms now show a **live clear chance** in the action bar, beside the room name: `[Clear ~72% | 48s left]`. Until now the only number for a fight was the tile badge's win rate, simulated before you walked in — it says nothing about how the fight in front of you is going.
+- It is measured, not simulated. `battle_updated` carries both sides' current and maximum hitpoints about three times a second; the two rates of health loss are extrapolated to three finish lines — the monster dies, you die, the 120-second timer expires — and the readout is the chance the monster's lands first. Hovering gives both times-to-die, which race is the binding one, and the raw hitpoints.
+- **Early numbers are marked with `?`.** Damage arrives in lumps, so a rate read off six seconds is a guess and one read off a minute is a measurement. The spread narrows as the fight supplies evidence, and nothing is shown at all for the first six seconds.
+- **A fight joined in progress shows nothing.** The time already spent is invisible, so the timer leg would be guesswork; only a fight seen from full health has a knowable clock.
+- Abilities, procs, healing and monster mechanics are not modelled. What the number captures is whether the trade is going your way fast enough.
+
+### Groundwork behind it
+
+- **`Toolasha.Debug.captureLab()`** records every WebSocket message for a minute and prints a digest: which message types arrive and how often, every numeric field that changed between consecutive messages, and a full field inventory per message type. Nothing registers or schedules it — it runs only when typed.
+- The first version searched for fields whose **names** looked like hitpoints and found nothing on a live fight — a name search can only find what you can already name. It now diffs consecutive payloads and reports whatever moved, so the field turns up whatever the server calls it. (It is `pMap`/`mMap` keyed by unit index, with `cHP` and `mHP`.)
+- **`battle_updated` is now exempt from message deduplication.** Consecutive combat ticks can open with identical text — same type, same battle, same unit ids — differing only in hitpoints further in, and the 100-character content hash was dropping them. Measured on a real fight, the message rate went from 0.65/s to 3.17/s: four out of five combat updates were being discarded before any feature saw them.
 
 ### Room attempt counter
 
