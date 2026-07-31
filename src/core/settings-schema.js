@@ -1141,13 +1141,6 @@ export const settingsGroups = {
                 default: false,
                 help: 'The game badges Marketplace in the sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill. This limits the sidebar badge to listings that have finished: filled completely, or cancelled and holding a refund. The badge on the My Listings tab is left alone, since once you are in the marketplace knowing there is something to collect is useful.',
             },
-            market_markersOnMyListings: {
-                id: 'market_markersOnMyListings',
-                label: 'Market: Show other scripts\u2019 markers on My Listings',
-                type: 'checkbox',
-                default: false,
-                help: 'Adds a column of toggles to My Listings for any script that registered one \u2014 the same markers Market History carries. Market History can only mark a listing that has finished; this marks one that is still working, so whatever it fills is counted as it happens. Does nothing unless a script has registered a marker.',
-            },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
                 label: 'Market: Show top order age on My Listings',
