@@ -1711,9 +1711,17 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
+        // A room's award over the expected time to earn it, and nothing else.
+        //
+        // This used to add `1 / clearChance` seconds to the divisor: one second
+        // of room-entry overhead, amortised over the entries a clear takes.
+        // Defensible on its own, but combat rooms charge no such overhead, so
+        // the two figures sat in the same panel measuring different things —
+        // and the term grows without bound exactly where the comparison matters
+        // most, adding twenty seconds to a room cleared one time in twenty.
         result.xpPerHour =
             Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
+                ? (result.xpPerRoom * 3600) / result.expectedSeconds
                 : 0;
     }
 
@@ -1811,9 +1819,17 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
+        // A room's award over the expected time to earn it, and nothing else.
+        //
+        // This used to add `1 / clearChance` seconds to the divisor: one second
+        // of room-entry overhead, amortised over the entries a clear takes.
+        // Defensible on its own, but combat rooms charge no such overhead, so
+        // the two figures sat in the same panel measuring different things —
+        // and the term grows without bound exactly where the comparison matters
+        // most, adding twenty seconds to a room cleared one time in twenty.
         result.xpPerHour =
             Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
+                ? (result.xpPerRoom * 3600) / result.expectedSeconds
                 : 0;
     }
 
