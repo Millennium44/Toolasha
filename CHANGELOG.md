@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Bulk Sell panel is draggable, and closing it stops the run
+
+- Drag the panel anywhere by its background; the position is remembered. It defaults to the top-right, which is where the game puts its own gold counter and controls, so on a narrow window it landed on top of them. It is clamped to the viewport — a panel dragged off the edge could not be dragged back.
+- Dragging starts only on the panel's own background, so the tab select and the buttons still work.
+- The ✕ now **stops** a run as well as closing the panel. The panel is the only thing showing what is being sold and how far through it is, so leaving a run going behind a closed panel would mean the next confirm click landing on a sale you could no longer see coming. Hiding it from the Bulk Sell tab still leaves it running — that gesture keeps the progress one click away.
+
 ### Bulk Sell panel can be closed from the panel
 
 - An ✕ on the floating panel hides it. The panel is fixed over the game and follows you out of the marketplace, so dismissing it used to mean navigating back to a tab you had left.
