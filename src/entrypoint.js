@@ -533,6 +533,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'combatScale',
+            name: 'Combat Panel Scale',
+            category: 'UI',
+            module: UI.combatPanelScale,
+            async: false,
+        },
+        {
             key: 'panelSizeMemory',
             name: 'Panel Size Memory',
             category: 'UI',

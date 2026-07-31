@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Resize the battle panel, from settings, per character
+
+- New setting, off by default: scale **your side** and the **enemy side** of the battle panel independently, choose how the two sit, and set the height of the character panel beside them. A ten-monster wave and a solo fight get the same slab of screen, so one is cramped and the other mostly empty — and the right answer differs per character, which is why every one of these is stored **per character** like the rest of Toolasha's settings.
+- Lives in **UI & Appearance** in the settings page rather than a floating panel, and every number applies **as you change it**. Finding the right scale means nudging a number and looking at the result, so a reload between nudges would make it unusable.
+- **How to resize** is configurable: `zoom` (the default) changes the layout size, so a side you shrink actually gives its space back; `transform` only redraws smaller and leaves the original box behind, with an anchor corner you can pick. The transform path reclaims the leftover space with a matching negative margin rather than needing a spacer element.
+- **Layout** is opt-in — leave the game's own, or force side-by-side or stacked. Forcing one overrides how the game arranges the panel at your window width, so it is not the default.
+- **Character panel height** takes a percentage of the window, with 0 meaning "leave the height the game picks". Taller shows more inventory at once; shorter gives the fight room.
+- Idea and target selection from **Scaley Way Idle** by Frotty, credited in `docs/THIRD-PARTY-LICENSES.md`. That script carries no licence, so nothing was copied — this is written against Toolasha's own settings and style helpers. It also differs where the original had problems: one stylesheet instead of a `MutationObserver` sweep re-setting inline styles on every combat tick, and class-prefix selectors instead of pinned CSS-module hashes like `BattlePanel_playersArea__vvwlB`, which the game regenerates on every build — a script written that way stops working silently at the next patch. Not reproduced: dragging the two areas to fixed pixel positions, which does not survive a window resize.
+
 ### Combat rooms are in the room log, next to the clear chance the sim promised
 
 - The Logs panel recorded skilling and enhancing rooms and ignored fights entirely — which left the one room type where the script makes a falsifiable prediction as the only one with no record of whether it came true. Combat rooms are now logged the same way, one entry per **attempt** rather than per swing.
