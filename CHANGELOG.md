@@ -28,6 +28,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Toolasha never learns what a mark means. It supplies a cell, a glyph and a click; the meaning stays with whoever registered it — which is what lets a marker defined in a private script appear in a public one without its reasons coming too.
 - A malformed marker is refused at registration rather than throwing once per row, and one that fails while rendering loses only its own cell. The table is your trading record and is worth more than any annotation on it.
+- **With no marker registered the table is exactly as it was** — no column, no empty cells, no shifted layout. The header and the rows are both built from the registered set, so an unused hook costs nothing.
+- An open table redraws when a marker is registered. The scripts that register them load after this one does, so a marker arriving late is the ordinary case, not the exception.
 
 ### Bulk Sell can be told to hold items back
 
