@@ -1666,7 +1666,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Show live clear chance',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows live clear chance during active labyrinth skilling/enhancing rooms',
+                help: 'Shows a live clear chance in the action bar during labyrinth rooms — from the actions left in a skilling or enhancing room, and from how the fight is going in a combat room',
             },
             labyrinthRoomLogs: {
                 id: 'labyrinthRoomLogs',
