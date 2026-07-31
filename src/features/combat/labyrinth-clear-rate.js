@@ -1377,6 +1377,23 @@ class LabyrinthClearRate {
     }
 
     /**
+     * How much more experience a labyrinth room pays than its base award.
+     *
+     * The labyrinth experience upgrade plus any wisdom the run's crates carry.
+     * The same two sources the skilling rooms read, minus the per-skill buff
+     * maps a fight has no equivalent of.
+     * @returns {number} Ratio, 0 when nothing applies
+     */
+    getCombatExperienceBonus() {
+        let bonus = this.getLabyrinthUpgrades().experience * UPGRADE_STEP;
+        for (const buff of this.getCombatCrateBuffs()) {
+            if (buff?.typeHrid !== '/buff_types/wisdom') continue;
+            bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
+        }
+        return bonus;
+    }
+
+    /**
      * Get crate buffs for tea crate only (used for room-assignment effective level)
      */
     getTeaCrateBuffs() {
@@ -2264,18 +2281,18 @@ class LabyrinthClearRate {
             // number of fights behind it, and that number now varies by room
             const interval = wilsonInterval(wins, attempts);
 
-            // Experience comes out of the simulation itself rather than a
-            // formula. A skilling room's experience is a closed-form function of
-            // its level, but a fight earns it by landing hits, so a room you
-            // usually lose still pays and a room you lose at the two-minute mark
-            // pays more than one you lose in twenty seconds. Only the replayed
-            // fights know that, and they have already been run.
-            const xpBySkill = simResult.experienceGained?.[dto.hrid || 'player1'] || {};
-            const totalXp = Object.values(xpBySkill).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            // A labyrinth room pays on completion, not per swing, so its
+            // experience is a property of the room rather than of the fight —
+            // the same level-based award a skilling room gives. An earlier
+            // version totalled the experience the simulated fights earned,
+            // which credited losing attempts for damage they dealt and paid out
+            // for rooms that were never cleared.
+            const xpPerClear = roomLevel * 50 * (1 + this.getCombatExperienceBonus());
+            const expectedSeconds = winRate > 0 ? avgTime / winRate : Infinity;
 
             const result = {
                 clearChance: winRate,
-                expectedSeconds: winRate > 0 ? avgTime / winRate : Infinity,
+                expectedSeconds,
                 type: 'combat',
                 winRate,
                 avgFightSeconds: avgTime,
@@ -2287,10 +2304,13 @@ class LabyrinthClearRate {
                 trials: attempts,
                 halfWidth: interval.halfWidth,
                 hitTarget: !!simResult.labyStoppedOnPrecision,
-                // Per entry into the room, won or lost — which is what an entry
-                // actually costs you and actually earns you
-                xpPerRoom: attempts > 0 ? totalXp / attempts : 0,
-                xpPerHour: totalTime > 0 ? (totalXp / totalTime) * 3600 : 0,
+                // What clearing the room is worth, and what that works out to per
+                // hour once the attempts you lose on the way are paid for. A
+                // room you never clear earns nothing however long you fight it,
+                // which is exactly what an unreachable room is worth.
+                xpPerRoom: xpPerClear,
+                xpPerHour:
+                    Number.isFinite(expectedSeconds) && expectedSeconds > 0 ? (xpPerClear * 3600) / expectedSeconds : 0,
             };
 
             // Don't cache 0% results: right after page load the loadout
@@ -4052,12 +4072,13 @@ class LabyrinthClearRate {
         const floorText = maxFloor >= 1 ? `F${maxFloor} · ` : '';
         badge.textContent = pct >= 100 ? `${floorText}${timeText}` : `${floorText}${pct}% ${timeText}`;
 
-        if (result.type === 'skilling' || result.type === 'enhancing') {
-            badge.removeAttribute('title');
-            this.bindPreview(badge, result);
-        } else {
-            badge.title = this.formatTooltip(result, roomLevel);
-        }
+        // Every room type gets the full card. Combat rows used to fall back to a
+        // three-line title while the skilling rows beside them showed a dozen
+        // figures — and a fight is the row where the detail is hardest to get at
+        // any other way, since its numbers come out of a simulation rather than
+        // off the screen.
+        badge.removeAttribute('title');
+        this.bindPreview(badge, result);
     }
 
     appendPlaceholderBadge(cell) {
@@ -4461,41 +4482,6 @@ class LabyrinthClearRate {
             addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
             addRow(boxLabel, `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
         }
-    }
-
-    formatTooltip(result, roomLevel) {
-        const pct = (v) => `${(v * 100).toFixed(1)}%`;
-
-        if (result.type === 'skilling') {
-            return [
-                `Success: ${pct(result.successChance)} | Double: ${pct(result.doubleChance)}`,
-                `Actions: ${result.attempts} @ ${result.actionSeconds.toFixed(2)}s each`,
-                `Work Power: ${Math.floor(result.workPower)} → Progress: ${result.progressPerSuccess}/${result.targetProgress} per success`,
-                `Effective Level: ${Math.floor(result.effectiveLevel)} (base ${result.baseLevel} + ${Math.floor(result.effectiveLevel - result.baseLevel)})`,
-                `Room Level: ${result.roomLevel} | XP/room: ${result.xpPerRoom}`,
-            ].join('\n');
-        }
-
-        if (result.type === 'enhancing') {
-            return [
-                `Success: ${pct(result.successChance)} | Double: ${pct(result.doubleChance)}`,
-                `Actions: ${result.attempts} @ ${result.actionSeconds.toFixed(2)}s each`,
-                `Target: +${result.targetLevel} | Effective Level: ${Math.floor(result.effectiveLevel)}`,
-                `Room Level: ${result.roomLevel}`,
-            ].join('\n');
-        }
-
-        if (result.type === 'combat') {
-            return [
-                `Win Rate: ${pct(result.winRate)} | Avg Fight: ${Math.round(result.avgFightSeconds)}s`,
-                `Monster: ${result.monsterName} | Room Level: ${result.roomLevel}`,
-                `Loadout: "${result.loadoutName}"`,
-            ].join('\n');
-        }
-
-        const clearPct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        return `Clear: ${clearPct}% | Expected: ${timeText} | Room level: ${roomLevel}`;
     }
 
     getBadgeColor(clearChance) {

@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Combat experience corrected, and the skip list's combat rows get the full card
+
+- **A labyrinth room pays on completion, not per swing.** The combat tile's experience figures were totalled from what the simulated fights earned by landing hits, which credited losing attempts for damage they dealt and paid out for rooms that were never cleared. They are now the room's own level-based award, the same one a skilling room gives, granted on a clear.
+- **EXP / Hour on a combat tile is therefore what clearing pays, amortised over the attempts you lose getting there** — it uses the expected time to a clear, so a room you never clear reads 0 however long you fight it, which is what an unreachable room is actually worth. The figures were also missing entirely before this, because the simulation's experience totals were empty for labyrinth runs.
+- **Rooms you gave up on now count their time** toward measured experience per hour. Since a room pays only when completed, an abandoned one is time spent for nothing, and leaving it out raised the measured rate every time you walked away from a room — precisely backwards. Its duration is kept apart from the completed rooms' so it cannot distort what a room takes to finish, which is a different question.
+- **Combat rows in the labyrinth skip settings now show the same full preview card the skilling rows do** — clear chance with its margin, fights simulated, combat style, damage type, accuracy, evasion, the monster's abilities at room-scaled levels, and the expected token and box drops. They used to fall back to a three-line tooltip, which was the wrong way round: a fight is the row where the detail is hardest to get at any other way, since its numbers come out of a simulation rather than off the screen.
+
 ### Fixed: rooms you completed showed no experience for the floor
 
 - Every floor read `xp not measured`. A room's experience was measured by sampling your skill totals when the room opened and again when it closed — but a room closes the instant the floor says the path moved on, and the experience it earned arrives in its own message that need not have landed by then. The room was being closed before it had been paid.

@@ -226,10 +226,17 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
  * Time and experience are folded in the same pass because they are only
  * knowable per finished room: the floor never says how long anything took.
  *
+ * Rooms you gave up on are folded in too, for their time. A labyrinth room pays
+ * only when it is completed, so an abandoned one is time spent for nothing —
+ * and leaving it out would quietly raise the measured experience per hour every
+ * time you walked away from a room, which is precisely backwards. Its duration
+ * is kept apart from the cleared rooms' so it cannot distort what a room takes
+ * to finish, which is a different question.
+ *
  * @param {Object} totals - The record
- * @param {Object} result - { subjectHrid, roomLevel, kind, seconds, xp, actions,
- *   successes, doubles, predictedSeconds, predictedSuccess, predictedDouble,
- *   serverSuccess, serverDouble }
+ * @param {Object} result - { subjectHrid, roomLevel, kind, cleared, seconds, xp,
+ *   actions, successes, doubles, predictedSeconds, predictedSuccess,
+ *   predictedDouble, serverSuccess, serverDouble }
  * @returns {Object} New totals
  */
 export function foldRoomResult(totals, result) {
@@ -260,6 +267,8 @@ export function foldRoomResult(totals, result) {
             roomLevel,
             rooms: add('rooms', 1),
             seconds: add('seconds', result.seconds),
+            clearedRooms: add('clearedRooms', result.cleared ? 1 : 0),
+            clearedSeconds: add('clearedSeconds', result.cleared ? result.seconds : 0),
             xp: add('xp', result.xp),
             actions: add('actions', result.actions),
             successes: add('successes', result.successes),
@@ -281,14 +290,20 @@ export function roomMeasurements(bucket) {
     const seconds = Math.max(0, Number(bucket.seconds) || 0);
     const actions = Math.max(0, Math.floor(Number(bucket.actions) || 0));
     const xp = Math.max(0, Number(bucket.xp) || 0);
+    // Older records predate the split and counted only completed rooms
+    const clearedRooms = Math.max(0, Math.floor(Number(bucket.clearedRooms ?? rooms) || 0));
+    const clearedSeconds = Math.max(0, Number(bucket.clearedSeconds ?? seconds) || 0);
 
     return {
         rooms,
+        clearedRooms,
         actions,
         seconds,
-        secondsPerRoom: seconds > 0 ? seconds / rooms : null,
-        // Measured throughput: real experience over real time. Not the
-        // calculator's figure, which assumes the room goes to plan.
+        // How long the room takes to finish — a question only the rooms you
+        // finished can answer
+        secondsPerRoom: clearedRooms > 0 && clearedSeconds > 0 ? clearedSeconds / clearedRooms : null,
+        // Measured throughput: real experience over all the time it cost,
+        // including the attempts that paid nothing
         xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
         success: actions > 0 ? (Number(bucket.successes) || 0) / actions : null,
         double: actions > 0 ? (Number(bucket.doubles) || 0) / actions : null,
@@ -387,7 +402,7 @@ function roomTiming(bucket, measured) {
         ratio: actual / predicted,
         // Only rooms that were finished have a meaningful duration, and the
         // sample is small enough that a factor is more honest than a verdict
-        rooms: measured.rooms,
+        rooms: measured.clearedRooms,
     };
 }
 
