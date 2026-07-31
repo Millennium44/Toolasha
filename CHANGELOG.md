@@ -15,6 +15,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Skip thresholds below the recommendation now read differently
+
+- A threshold set **under** the recommendation used to be green, the same as sitting exactly on it — which hid the one case that costs you rooms rather than risking them. It is now blue, with the tooltip saying how far under and what that means: safe, but skipping fights that would have cleared.
+- Green now means what it looks like: on the recommendation. Amber and red still grade being above it, where the mistake is fighting rooms below your target clear rate rather than passing on rooms you could take.
+- The tooltip states the current setting alongside the recommendation, so the gap does not have to be worked out from two numbers in different places.
+
 ### Market History rows can carry other scripts' markers
 
 - Another script can add a column of toggles to the Market History table:

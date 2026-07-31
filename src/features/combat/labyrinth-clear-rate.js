@@ -2330,15 +2330,30 @@ class LabyrinthClearRate {
             badge.style.cssText = 'font-size:0.7rem; white-space:nowrap; font-weight:bold;';
             badge.textContent = `Rec: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
 
-            badge.title = `Recommended skip threshold for ≥${this._recommendTargetPct}% clear rate`;
-
-            if (currentThreshold <= rec.threshold) {
+            // Four states, not three. Sitting below the recommendation used to
+            // share the colour of sitting exactly on it, which hid the one case
+            // that is costing you rooms rather than risking them: a threshold
+            // under the recommendation skips fights you would have cleared.
+            // Above it is the opposite error and is graded by how far.
+            const gap = currentThreshold - rec.threshold;
+            const target = `≥${this._recommendTargetPct}% clear rate`;
+            let note;
+            if (gap === 0) {
                 badge.style.color = '#00c896';
-            } else if (currentThreshold <= rec.threshold + 10) {
+                note = `On the recommendation for a ${target}`;
+            } else if (gap < 0) {
+                badge.style.color = '#5aa9e6';
+                note =
+                    `${-gap} below the recommendation — safe, but skipping rooms that would have ` +
+                    `cleared at a ${target}`;
+            } else if (gap <= 10) {
                 badge.style.color = '#f0ad4e';
+                note = `${gap} above the recommendation — fighting rooms below a ${target}`;
             } else {
                 badge.style.color = '#d9534f';
+                note = `${gap} above the recommendation — well below a ${target}`;
             }
+            badge.title = `Recommended skip threshold for a ${target}\nCurrently set to ${currentThreshold}. ${note}.`;
 
             getAnnotationContainer(cell).appendChild(badge);
         }
