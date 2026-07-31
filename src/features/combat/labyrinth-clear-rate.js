@@ -941,17 +941,29 @@ class LabyrinthClearRate {
     // sim predicted, that is a test the sim can fail.
     // -------------------------------------------------------------------------
 
+    /**
+     * Bring the record in from storage.
+     *
+     * Separate from recording because reading it is not the same event as
+     * adding to it. Loading only on the way in meant the record existed but
+     * nothing that merely *reads* it — the console table, a tile's tooltip —
+     * could see it until a labyrinth message happened to arrive, so a session
+     * that had not entered the labyrinth yet reported nothing recorded.
+     */
+    async loadOutcomes() {
+        if (this._outcomesLoaded) return;
+        this._outcomesLoaded = true;
+        try {
+            this._outcomes = (await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {})) || {};
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
+        }
+    }
+
     /** Fold the current floor into the running record of how fights went */
     async recordOutcomes(roomData) {
         if (!roomData) return;
-        if (!this._outcomesLoaded) {
-            this._outcomesLoaded = true;
-            try {
-                this._outcomes = await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {});
-            } catch (error) {
-                console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
-            }
-        }
+        await this.loadOutcomes();
 
         const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readCombatRooms(roomData));
         this._outcomes = folded.totals;
@@ -974,10 +986,12 @@ class LabyrinthClearRate {
      * Set every predicted rate beside the rate actually observed, and say which
      * ones the record will not support.
      *
-     * Console: Toolasha.Debug.labAccuracy()
-     * @returns {Array<Object>} One row per monster and level seen
+     * Console: `await Toolasha.Debug.labAccuracy()`
+     * @returns {Promise<Array<Object>>} One row per monster and level seen
      */
-    labAccuracy() {
+    async labAccuracy() {
+        await this.loadOutcomes();
+
         const rows = [];
         for (const bucket of Object.values(this._outcomes)) {
             const cached = this.getCachedCombatResult(bucket.monsterHrid, bucket.roomLevel);
@@ -997,7 +1011,7 @@ class LabyrinthClearRate {
         rows.sort((a, b) => b.observed.split('/')[1] - a.observed.split('/')[1]);
 
         console.log(
-            `[Toolasha] ${rows.length} fights recorded. "likelihood" is how often the sim's own rate would ` +
+            `[Toolasha] ${rows.length} monster/level buckets recorded. "likelihood" is how often the sim's own rate would ` +
                 'produce a record this lopsided — a small number means the sim is being contradicted.\n' +
                 'Rows reading "not simmed" need their tile calculated first, so a prediction exists to compare against.'
         );
