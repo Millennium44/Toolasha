@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Price history panel, ingested from mooket II
+
+- New setting, off by default: a floating chart of an item's ask, bid, traded price and volume over the last day to six months, following whatever the marketplace is showing. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge — 840,000 is cheap or dear only against what it has been.
+- Pin items to a row of chips with the 📌 beside the item icon: price, percentage move since you pinned it, reorderable, right-click to unpin. One button cycles how much of each chip to show, because the right amount depends on how many are pinned.
+- The volume line is split on hover into an estimate of how much was **bought at the ask** versus **sold into the bid**. The server reports how much traded and at what average price, never who crossed, so where in the spread that average landed is the evidence — it is an estimate and says so.
+- Ranges past a week are grouped into one point per day using the **median**, not the mean. A single absurd listing — a 300-coin item at 40 million to see if anyone bites — moves a mean for the whole day and a median not at all.
+- Adapted from **mooket II** by Q7, used under the MIT licence; see `docs/THIRD-PARTY-LICENSES.md`. Left behind deliberately: the second WebSocket hook (Toolasha has one, and two scripts patching `MessageEvent.data` is how a page silently drops messages), the bundled item-name dictionaries (the game's own are already loaded), the localStorage cache with its defensive pruning (this uses IndexedDB), and the crosshair plugin (the index-mode tooltip covers it without another dependency).
+- Both directions are opt-in and neither is quiet about what it sends. Reading tells a third-party server which items you look up. **Contributing** — a separate setting — sends back the order books you open, which is where the history you read comes from: every reader is someone else's missing data point.
+
 ### Bulk Sell panel is draggable, and closing it stops the run
 
 - Drag the panel anywhere by its background; the position is remembered. It defaults to the top-right, which is where the game puts its own gold counter and controls, so on a narrow window it landed on top of them. It is clamped to the viewport — a panel dragged off the edge could not be dragged back.

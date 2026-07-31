@@ -114,6 +114,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketHistoryPanel',
+            name: 'Market History Panel',
+            category: 'Market',
+            module: Market.marketHistoryPanel,
+            async: true,
+        },
+        {
             key: 'queueLengthEstimator',
             name: 'Queue Length Estimator',
             category: 'Market',
