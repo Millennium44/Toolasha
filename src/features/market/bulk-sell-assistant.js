@@ -183,7 +183,16 @@ class BulkSellAssistant {
 
         const button = referenceTab.cloneNode(true);
         button.id = BUTTON_ID;
-        button.title = 'Show / hide the Bulk Sell panel';
+        button.title =
+            'Bulk Sell \u2014 clears the inventory through the market one item at a time.\n\n' +
+            'Start builds a queue of everything tradable, then for each item opens its order book, ' +
+            'decides between insta-selling and posting a listing, and opens the matching modal with the ' +
+            'quantity already filled in. After that every sale is one click on the game\u2019s own confirm ' +
+            'button, always in the same place. It never confirms a sale for you.\n\n' +
+            'Works best pointed at a Toolasha inventory tab rather than the whole inventory: put the things ' +
+            'you actually want gone in one tab and pick it in the panel, and nothing outside it can be sold ' +
+            'by a mis-click. Items you also filed in a tab above the selected one are kept, not sold.\n\n' +
+            'Click to show or hide the panel. Hiding it never stops a run.';
         const badge = button.querySelector('[class*="TabsComponent_badge"]');
         if (badge) {
             badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
@@ -285,17 +294,36 @@ class BulkSellAssistant {
 
         const stopBtn = document.createElement('button');
         stopBtn.className = `${CHIP_ID}-stop`;
-        stopBtn.textContent = '✕';
+        // Spelled out rather than an ✕, now that there is a close button beside
+        // it. Two identical glyphs a few pixels apart, one abandoning a run and
+        // one only hiding the panel, is a mis-click waiting to happen.
+        stopBtn.textContent = 'Stop';
         stopBtn.title = 'Stop bulk selling';
         stopBtn.style.cssText =
             'display:none; border:0; border-radius:5px; background:rgba(244,67,54,0.25); color:#ff8a80; ' +
             'font-weight:700; font-size:12px; padding:3px 7px; cursor:pointer; font-family:inherit;';
         stopBtn.addEventListener('click', () => this._stop('Stopped'));
 
+        // Closing the panel is not stopping the run — the same as clicking the
+        // tab off. The panel is fixed over the game and follows you out of the
+        // marketplace, so there has to be a way to dismiss it from the panel
+        // itself rather than only from a tab you may have navigated away from.
+        const closeBtn = document.createElement('button');
+        closeBtn.className = `${CHIP_ID}-close`;
+        closeBtn.textContent = '\u2715';
+        closeBtn.title = 'Hide this panel. A run in progress keeps going — reopen from the Bulk Sell tab.';
+        closeBtn.style.cssText =
+            'border:0; border-radius:5px; background:transparent; color:#7d879c; font-size:12px; ' +
+            'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
+        closeBtn.addEventListener('click', () => this._togglePanel());
+        closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
+        closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
+
         chip.appendChild(status);
         chip.appendChild(tabSel);
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
+        chip.appendChild(closeBtn);
 
         document.body.appendChild(chip);
         this.chip = chip;

@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Bulk Sell panel can be closed from the panel
+
+- An ✕ on the floating panel hides it. The panel is fixed over the game and follows you out of the marketplace, so dismissing it used to mean navigating back to a tab you had left.
+- Hiding never stops a run — reopen from the Bulk Sell tab and the progress is still there.
+- The stop button now reads **Stop** instead of ✕. Two identical glyphs a few pixels apart, one abandoning a run and one only hiding the panel, is a mis-click waiting to happen.
+- The Bulk Sell tab's hover text now explains what the feature actually does — that it queues your tradable inventory, prefills each sell modal, and never confirms a sale itself — and recommends pointing it at a Toolasha inventory tab, so nothing outside that tab can be sold by a mis-click.
+
+### The net worth chart button closes the chart
+
+- Clicking 📈 again dismisses the chart instead of rebuilding it. The control is a switch, and any other reading left no way to close the chart from where you opened it.
+- The click-outside-to-close handler now ignores that button. It fired on mousedown and the button's own click reopened the chart a moment later, so a toggle alone would have looked like nothing happening.
+
 ### Sidebar Marketplace badge can be limited to finished listings
 
 - New setting, off by default. The game badges **Marketplace** in the left sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill, which teaches you to ignore the badge.
