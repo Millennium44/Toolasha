@@ -22,6 +22,7 @@ import marketHistoryViewer from '../features/market/market-history-viewer.js';
 import listingRefreshNavigator from '../features/market/listing-refresh-navigator.js';
 import bulkSellAssistant from '../features/market/bulk-sell-assistant.js';
 import listingMarkers from '../features/market/listing-markers.js';
+import marketplaceBadgeFilter from '../features/market/marketplace-badge-filter.js';
 import philoCalculator from '../features/market/philo-calculator.js';
 import tradeHistory from '../features/market/trade-history.js';
 import tradeHistoryDisplay from '../features/market/trade-history-display.js';
@@ -69,6 +70,7 @@ toolashaRoot.Market = {
     listingRefreshNavigator,
     bulkSellAssistant,
     listingMarkers,
+    marketplaceBadgeFilter,
     philoCalculator,
     tradeHistory,
     tradeHistoryDisplay,

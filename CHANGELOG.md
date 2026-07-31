@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Sidebar Marketplace badge can be limited to finished listings
+
+- New setting, off by default. The game badges **Marketplace** in the left sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill, which teaches you to ignore the badge.
+- With it on, the sidebar badge appears only for listings that have finished: filled completely, or cancelled and holding a refund. Both are things you can actually close out.
+- The badge on the **My Listings** tab is left alone. Once you are in the marketplace, knowing there is something to collect is useful; it is only the sidebar nag that isn't.
+- Done with a stylesheet toggled by listing data, not by clearing the badge's text — React rewrites that node on every update, so anything written into it would be gone within the second.
+
+### My Listings can carry other scripts' markers too
+
+- New setting, off by default: the same marker column Market History has, on the live My Listings table. Does nothing unless a script has registered a marker.
+- Markers are now told which surface a row is on — `history` or `myListings` — because the two mean different things. A finished trade can be adopted with a real cost basis; a working order cannot, but it is exactly the one worth marking ahead of time so its fills are counted as they arrive.
+- The column is appended past the last column rather than inserted among them: the Top Order Price cells are placed by index arithmetic, and a column inserted into the middle of that would silently misalign them.
+- A marker registered after the table was built now redraws it, instead of appearing only the next time the table happened to rebuild.
+
 ### Market History items open in the marketplace when clicked
 
 - Clicking an item in the Market History table closes the viewer and opens that item's marketplace page, at the row's own enhancement level. The row already names both, so retyping them into the search box was only ever busywork.

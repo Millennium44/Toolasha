@@ -12,6 +12,10 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import estimatedListingAge from './estimated-listing-age.js';
+import listingMarkers, { markerStateFor } from './listing-markers.js';
+
+/** Rows here are live orders, most of them still working. Markers are told so. */
+const MY_LISTINGS_SURFACE = { surface: 'myListings' };
 import { coinFormatter, formatKMB, formatRelativeTime } from '../../utils/formatters.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -86,6 +90,20 @@ class ListingPriceDisplay {
 
         this.setupWebSocketListeners();
         this.setupObserver();
+
+        // A companion script that registers its marker after this table was
+        // built would otherwise not appear in it until the table happened to be
+        // rebuilt, which looks like the marker simply not working
+        this.unsubscribeMarkers = listingMarkers.onChange(() => {
+            this.clearDisplays();
+            document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach((table) => {
+                this.scheduleTableRefresh(table);
+            });
+        });
+        this.cleanupRegistry.registerCleanup(() => {
+            this.unsubscribeMarkers?.();
+            this.unsubscribeMarkers = null;
+        });
     }
 
     /**
@@ -313,6 +331,8 @@ class ListingPriceDisplay {
         // Clear any existing price displays from this table before re-rendering
         tableNode.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
         tableNode.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
+        tableNode.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
+        tableNode.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
 
         // Wait until row count matches listing count
         const tbody = tableNode.querySelector('tbody');
@@ -357,6 +377,10 @@ class ListingPriceDisplay {
 
         // Add price displays to each row
         this.addPriceDisplays(tbody, priceCache, ownListingIds);
+
+        // Markers go last, appended past the final column, so the index
+        // arithmetic the price cells depend on is untouched by them
+        this.addListingMarkers(tableNode, tbody);
 
         // Check if we should mark as fully processed
         let fullyProcessed = true;
@@ -1201,6 +1225,105 @@ class ListingPriceDisplay {
     }
 
     /**
+     * Put other scripts' markers against each of your live listings.
+     *
+     * Market History can only offer a mark on a listing that has finished,
+     * because adopting one still working would take the fills so far and stop
+     * watching. This is the other half: an order that is still running is
+     * exactly the one worth marking ahead of time, so whatever it fills is
+     * counted as it happens rather than reconstructed afterwards.
+     *
+     * Appended past the last column rather than inserted among them — the price
+     * cells are placed by index arithmetic, and a column inserted into the
+     * middle of that would silently misalign them.
+     *
+     * @param {HTMLElement} tableNode - The listings table
+     * @param {HTMLElement} tbody - Its body
+     */
+    addListingMarkers(tableNode, tbody) {
+        if (!config.getSetting('market_markersOnMyListings')) return;
+        const markers = listingMarkers.all();
+        if (!markers.length) return;
+
+        const thead = tableNode.querySelector('thead tr');
+        if (thead && !thead.querySelector('.mwi-listing-marker-header')) {
+            for (const _marker of markers) {
+                const th = document.createElement('th');
+                th.classList.add('mwi-listing-marker-header');
+                // Unlabelled on purpose: the meaning belongs to whichever script
+                // registered it, and this table has no business naming it
+                th.textContent = '';
+                thead.appendChild(th);
+            }
+        }
+
+        for (const row of tbody.querySelectorAll('tr')) {
+            if (row.querySelector('.mwi-listing-marker-cell')) continue;
+            const listing = this.allListings[row.dataset.listingId];
+            for (const marker of markers) {
+                const cell = document.createElement('td');
+                cell.classList.add('mwi-listing-marker-cell');
+                cell.dataset.markerName = marker.name;
+                cell.style.cssText = 'padding: 4px 4px; text-align: center;';
+                // A row that could not be matched to a listing gets an empty
+                // cell rather than none, so the columns still line up
+                if (listing) this.fillMarkerCell(cell, marker, listing, tableNode);
+                row.appendChild(cell);
+            }
+        }
+    }
+
+    /**
+     * Draw one marker's toggle for one listing.
+     * @param {HTMLElement} cell - The cell to fill
+     * @param {Object} marker - Registered marker
+     * @param {Object} listing - The listing this row shows
+     * @param {HTMLElement} tableNode - The table, for redrawing after a toggle
+     */
+    fillMarkerCell(cell, marker, listing, tableNode) {
+        cell.textContent = '';
+        const state = markerStateFor(
+            marker,
+            listing,
+            (name, error) => console.error(`[ListingPriceDisplay] Listing marker "${name}" failed:`, error),
+            MY_LISTINGS_SURFACE
+        );
+        if (!state) return;
+
+        const button = document.createElement('button');
+        button.textContent = state.glyph;
+        button.title = state.title;
+        button.style.cssText =
+            'background:none; border:none; cursor:pointer; font-size:14px; line-height:1; ' +
+            `padding:2px 4px; color:${state.active ? state.color || '#ffc866' : '#555'};`;
+        button.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            try {
+                await marker.onToggle(listing, MY_LISTINGS_SURFACE);
+            } catch (error) {
+                console.error(`[ListingPriceDisplay] Listing marker "${marker.name}" toggle failed:`, error);
+            }
+            // Marking one listing can change how others read — a decision is
+            // about the item, not the row — so every marker cell is redrawn
+            this.refreshMarkerCells(tableNode);
+        });
+        cell.appendChild(button);
+    }
+
+    /**
+     * Redraw every marker toggle in the table from current state.
+     * @param {HTMLElement} tableNode - The listings table
+     */
+    refreshMarkerCells(tableNode) {
+        const byName = new Map(listingMarkers.all().map((marker) => [marker.name, marker]));
+        for (const cell of tableNode.querySelectorAll('.mwi-listing-marker-cell')) {
+            const marker = byName.get(cell.dataset.markerName);
+            const listing = this.allListings[cell.parentElement?.dataset.listingId];
+            if (marker && listing) this.fillMarkerCell(cell, marker, listing, tableNode);
+        }
+    }
+
+    /**
      * Clear all injected displays
      */
     clearDisplays() {
@@ -1209,6 +1332,8 @@ class ListingPriceDisplay {
         });
         document.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
         for (const colKey of this.sortHeaders.keys()) {
             this._updateHeaderIndicator(colKey, null);
         }

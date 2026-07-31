@@ -2,7 +2,7 @@
  * Listing markers
  *
  * A registry letting other scripts put their own toggle against each row of
- * Market History.
+ * Market History and of the live My Listings table.
  *
  * Deliberately ignorant of what a mark means. A listing might be part of a
  * flip, a purchase to record against a guild ledger, something to come back to
@@ -45,11 +45,15 @@ export function markerProblem(marker) {
  * @param {Object} marker - Registered marker
  * @param {Object} listing - The listing row
  * @param {Function} [onError] - Called with (name, error)
+ * @param {Object} [context] - Where the row is being drawn, e.g.
+ *   { surface: 'history' } or { surface: 'myListings' }. A finished trade and a
+ *   working order are different things to mark, and a marker that cannot tell
+ *   them apart has to treat them the same
  * @returns {MarkerState|null} null when the marker declines this row
  */
-export function markerStateFor(marker, listing, onError) {
+export function markerStateFor(marker, listing, onError, context) {
     try {
-        const state = marker.stateFor(listing);
+        const state = marker.stateFor(listing, context);
         if (!state) return null;
         return {
             glyph: String(state.glyph ?? '★'),
@@ -84,8 +88,12 @@ class ListingMarkers {
      *         onToggle: (listing) => toggleFlip(listing),
      *     });
      *
+     * Both functions are also handed a context object naming the surface the
+     * row is on — `history` for Market History, `myListings` for the live
+     * listings table — so a marker can offer different things in each.
+     *
      * @param {string} name - Identifies the caller, and reports its errors
-     * @param {Object} marker - { stateFor(listing), onToggle(listing) }
+     * @param {Object} marker - { stateFor(listing, context), onToggle(listing, context) }
      * @returns {Function} Removes the marker
      */
     register(name, marker) {

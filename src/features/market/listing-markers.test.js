@@ -79,3 +79,27 @@ describe('the registry', () => {
         stop();
     });
 });
+
+describe('surface context', () => {
+    test('the marker is told where the row is being drawn', () => {
+        // A finished trade and a working order are different things to mark,
+        // and without this a marker has to treat them the same
+        const seen = [];
+        const marker = {
+            stateFor: (listing, context) => {
+                seen.push(context?.surface);
+                return { glyph: '★', active: false, title: '' };
+            },
+            onToggle: () => {},
+        };
+
+        markerStateFor(marker, {}, undefined, { surface: 'history' });
+        markerStateFor(marker, {}, undefined, { surface: 'myListings' });
+        expect(seen).toEqual(['history', 'myListings']);
+    });
+
+    test('a marker written before contexts existed still works', () => {
+        const state = markerStateFor({ stateFor: () => ({ glyph: '☆', active: false }) }, {});
+        expect(state.glyph).toBe('☆');
+    });
+});
