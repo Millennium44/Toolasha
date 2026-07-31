@@ -241,3 +241,7 @@ npm test -- --coverage      # Coverage report
 [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator),
 for several of the ideas behind the upgrade advisor and the wider combat-sim
 tooling.
+
+**With thanks to dakonglong**, author of
+[迷宫胜率计算器 — Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829-%E8%BF%B7%E5%AE%AB%E8%83%9C%E7%8E%87%E8%AE%A1%E7%AE%97%E5%99%A8),
+for the code and inspiration behind the labyrinth simulator.
