@@ -15,6 +15,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Fixed: guild leaderboard XP/h columns were blank
+
+- The guild leaderboard refreshes on its own 20-minute cycle, so opening the panel again inside that window hands back the **same snapshot**. Every one of those was being recorded, which left two identical readings at the end of each guild's history — and a rate measured across two identical readings is zero, so the column rendered blank. Clicking around the leaderboard actively made it worse. The own guild kept working because its history is fed by `guild_updated`, whose experience really does move.
+- A reading that only repeats the one before it is now dropped. A flat reading is still kept once the refresh window has passed, where it means the guild genuinely earned nothing rather than that nothing new was asked for.
+- **Existing histories are healed on load**, so the columns fill in without waiting for fresh samples to age out the bad ones.
+
 ### Fixed: the action bar stayed narrow in the labyrinth
 
 - Deciding the bar's width rode on looking the running action up by the name in the header — and a labyrinth room's header reads `Labyrinth - Mimic Lv.252`, which is not the name of any action, so the lookup found nothing and the width was never applied. The bar then showed whatever width the previous action had left behind, which is why it seemed to come and go. Width is now decided from the action queue's own type rather than from the header text, so it no longer depends on a name match at all. The earlier fix — keeping script annotations out of that name — was needed too, but was not the whole story.
