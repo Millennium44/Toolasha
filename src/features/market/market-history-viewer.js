@@ -15,6 +15,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import listingMarkers, { markerStateFor } from './listing-markers.js';
 import estimatedListingAge from './estimated-listing-age.js';
 
 class MarketHistoryViewer {
@@ -1188,6 +1189,7 @@ class MarketHistoryViewer {
             { key: 'orderQuantity', label: 'Quantity' },
             { key: 'filledQuantity', label: 'Filled' },
             { key: 'total', label: 'Total' },
+            ...listingMarkers.all().map((marker) => ({ key: `_marker_${marker.name}`, label: '' })),
             { key: '_delete', label: '' },
         ];
 
@@ -1397,6 +1399,35 @@ class MarketHistoryViewer {
                 totalCell.textContent = this.formatNumber(totalValue);
                 totalCell.style.padding = '4px 10px';
                 row.appendChild(totalCell);
+
+                // Whatever other scripts want to mark this listing with. The
+                // viewer supplies a cell and a click; the meaning is theirs.
+                for (const marker of listingMarkers.all()) {
+                    const cell = document.createElement('td');
+                    cell.style.cssText = 'padding: 4px 4px; text-align: center;';
+                    const state = markerStateFor(marker, listing, (name, error) =>
+                        console.error(`[MarketHistory] Listing marker "${name}" failed:`, error)
+                    );
+                    if (state) {
+                        const button = document.createElement('button');
+                        button.textContent = state.glyph;
+                        button.title = state.title;
+                        button.style.cssText =
+                            'background:none; border:none; cursor:pointer; font-size:14px; line-height:1; ' +
+                            `padding:2px 4px; color:${state.active ? state.color || '#ffc866' : '#555'};`;
+                        button.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            try {
+                                await marker.onToggle(listing);
+                            } catch (error) {
+                                console.error(`[MarketHistory] Listing marker "${marker.name}" toggle failed:`, error);
+                            }
+                            this.renderTable();
+                        });
+                        cell.appendChild(button);
+                    }
+                    row.appendChild(cell);
+                }
 
                 // Delete button
                 const deleteCell = document.createElement('td');

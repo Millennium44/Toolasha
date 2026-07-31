@@ -15,6 +15,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Market History rows can carry other scripts' markers
+
+- Another script can add a column of toggles to the Market History table:
+
+    ```js
+    Toolasha.Market.listingMarkers.register('flip-finder', {
+        stateFor: (listing) => ({ glyph: '★', active: isFlip(listing), title: 'Count this as a flip' }),
+        onToggle: (listing) => toggleFlip(listing),
+    });
+    ```
+
+- Toolasha never learns what a mark means. It supplies a cell, a glyph and a click; the meaning stays with whoever registered it — which is what lets a marker defined in a private script appear in a public one without its reasons coming too.
+- A malformed marker is refused at registration rather than throwing once per row, and one that fails while rendering loses only its own cell. The table is your trading record and is worth more than any annotation on it.
+
 ### Bulk Sell can be told to hold items back
 
 - Another script can now claim inventory the sell queue must skip:
