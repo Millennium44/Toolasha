@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Fixed: the alchemy pins never appeared
+
+- The picker was recognised by looking for a label reading "Alchemize Item", which nothing else in the codebase relies on and which the panel does not appear to render. It is now found by the container the panel marks the alchemized item's slot with — `primaryItemSelectorContainer` — which is exactly what the catalyst selector beside it is not, and which two other working features already use. The label is kept only for the case where the menu has been portalled away from its owner.
+- **Pins also vanished on the first keystroke in the filter box.** Typing replaces the tiles inside the menu without replacing the menu, so a watcher that only sees the menu appear decorates it once and never again. The menu's contents are watched now, with the decoration made idempotent so it cannot react to its own writes.
+- The same misrecognition would have stopped the existing item dimming working, since it shared the logic.
+- New diagnostic: `Toolasha.Debug.alchemyMenu()` lists every item selector menu on the page, which one the finder matched, the labels it can see and the active action — because when this fails it fails silently, which is indistinguishable from the feature not being installed.
+
 ### Pin items in the alchemy picker
 
 - New setting, on by default: a **📌** on each item in the Alchemize Item list moves it to the front. The picker lists everything you own in whatever order the game keeps it, and the handful of items anyone actually feeds it are scattered through that — the alternative is typing the same filter every time.
