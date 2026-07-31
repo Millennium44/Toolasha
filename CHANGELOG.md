@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Combat rooms are in the room log, next to the clear chance the sim promised
+
+- The Logs panel recorded skilling and enhancing rooms and ignored fights entirely — which left the one room type where the script makes a falsifiable prediction as the only one with no record of whether it came true. Combat rooms are now logged the same way, one entry per **attempt** rather than per swing.
+- Each fight card reads `Sim 24% | Won 0/3 (0%) | 2 died, 1 timed out`. Deaths and timeouts are counted separately because they fail the same room for opposite reasons, and the fix for one makes the other worse: dying says you cannot survive the fight, timing out says you cannot finish it.
+- Every attempt shows a number. A win shows **how long it took**; a loss shows **the health the monster had left**, because "lost with it on 4%" and "lost with it on 71%" are different problems — the first is worth another attempt, the second a different loadout.
+- The outcome is taken from the floor, not from the last tick. `battle_updated` stops dead when a fight ends and the killing blow's update usually never arrives, so a won fight's final tick still shows the monster alive; the room's own cleared flag is the only reliable witness. A fight interrupted by a refresh is filed as unknown and left out of the counts rather than assumed lost.
+
+### A Sim accuracy tab, for whether the clear chances are true over the long run
+
+- Second tab on the Logs panel, totalling **every labyrinth fight ever recorded** against the rate the sim predicted for it — per monster and room level, most-fought first. Thirty rooms of history cannot settle this; a room that says 24% and loses three times running has said nothing, and the same room losing twenty-one times running has said plenty.
+- Each row gives the sim's rate, the rate you actually cleared at, the range those fights support, and a verdict: **consistent**, **sim too high**, or **sim too low**. Rows the record genuinely contradicts also show how often the sim's own rate would produce a record that lopsided — a `p=0.4%` is the sim being told it is wrong.
+- A summary at the top: how many fights, and how many clears the sim owed you against how many you got. Rooms that were never simmed are counted in the totals but left out of the expectation, so the sim is not credited with predicting nothing for fights it made no claim about.
+- The prediction is now **stamped on each room as the fights land**, instead of being looked up when the record is read. Sim results live in a cache keyed by loadout and crates and do not survive a refresh, so a record read a week later used to say "not simmed" for almost everything — the one thing it exists to avoid. Comparing a fight to the number that was on screen when you walked in is also the honest comparison: that is the claim the sim actually made.
+- `Reset` on that tab throws the record away, and asks twice, since it is the only copy of every fight you have had. `await Toolasha.Debug.labAccuracy()` still prints the same data as a console table.
+
 ### Fixed: the labyrinth fight record read as empty until you entered the labyrinth
 
 - `Toolasha.Debug.labAccuracy()` reported "0 fights recorded" on a fresh session even with a full record stored. Loading only happened on the way _in_ — when a labyrinth message arrived to be folded — so anything that merely **read** the record saw nothing until then. The console table and a tile's "Actually Cleared" row both read it.
