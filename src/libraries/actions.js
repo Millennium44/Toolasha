@@ -26,6 +26,7 @@ import drinkTimer from '../features/actions/drink-timer.js';
 // Alchemy features
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
 import alchemyBestItems from '../features/alchemy/alchemy-best-items.js';
+import alchemyItemPins from '../features/alchemy/alchemy-item-pins.js';
 
 // Skilling optimizer
 import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer-ui.js';
@@ -53,6 +54,7 @@ toolashaRoot.Actions = {
     craftingPlan,
     alchemyProfitDisplay,
     alchemyBestItems,
+    alchemyItemPins,
     teaRecommendation,
     inventoryCountDisplay,
     pinnedActionsPage,
