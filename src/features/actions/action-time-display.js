@@ -53,6 +53,20 @@ function formatCompletionTime(completionTime, includeDate) {
 /**
  * ActionTimeDisplay class manages the time display panel and queue tooltips
  */
+
+/**
+ * Whether an element in the action-name row was put there by a script rather
+ * than by the game — Toolasha's own annotations all carry an `mwi-` class or
+ * id, and anything else following that convention is equally not part of the
+ * action's name.
+ * @param {Element} node - A child of the action name element
+ * @returns {boolean}
+ */
+function isScriptAnnotation(node) {
+    const className = typeof node.className === 'string' ? node.className : '';
+    return className.includes('mwi-') || String(node.id || '').startsWith('mwi-');
+}
+
 class ActionTimeDisplay {
     constructor() {
         this.displayElement = null;
@@ -1624,10 +1638,16 @@ class ActionTimeDisplay {
     getCleanActionName(actionNameElement) {
         // Walk direct children to join their text with spaces, preserving word boundaries
         // that textContent would collapse (e.g. <span>Dragon</span><span>Fruit</span> → "Dragon Fruit")
-        const markerSpan = actionNameElement.querySelector('.mwi-appended-stats');
+        //
+        // Every annotation is skipped, not just this feature's own. The row is
+        // shared: the battle counter appends "· Attempt #3", the labyrinth
+        // readouts append "[Clear ~85%]". Folding those into the name stops it
+        // matching any action in the queue, and the failed match takes the
+        // width override down with it — the action bar reverts to the game's
+        // narrow default for as long as an annotation happens to be showing.
         const parts = [];
         for (const node of actionNameElement.childNodes) {
-            if (node === markerSpan) continue;
+            if (node.nodeType === 1 && isScriptAnnotation(node)) continue;
             const text = node.textContent.trim();
             if (text) parts.push(text);
         }

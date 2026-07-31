@@ -158,7 +158,12 @@ class CombatBattleCounter {
         // A battle number describes a fight, so it has no business beside a
         // craft or an alchemy action. The labyrinth variant needs no such
         // guard: its title check already fails on anything else.
-        const runningAction = (dataManager.getCurrentActions() || []).find((action) => !action.isDone);
+        // Lowest ordinal is the action actually running — the array arrives in
+        // insertion order, so the first unfinished entry can be one you queued
+        // behind it
+        const runningAction = (dataManager.getCurrentActions() || [])
+            .filter((action) => !action.isDone)
+            .sort((a, b) => a.ordinal - b.ordinal)[0];
         const inSkillingAction =
             !!runningAction && !String(runningAction.actionHrid || '').startsWith('/actions/combat/');
 
