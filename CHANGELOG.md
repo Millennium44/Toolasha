@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Fixed: the labyrinth fight record read as empty until you entered the labyrinth
+
+- `Toolasha.Debug.labAccuracy()` reported "0 fights recorded" on a fresh session even with a full record stored. Loading only happened on the way _in_ — when a labyrinth message arrived to be folded — so anything that merely **read** the record saw nothing until then. The console table and a tile's "Actually Cleared" row both read it.
+- It is now loaded on demand by whatever asks for it. Call it as `await Toolasha.Debug.labAccuracy()`, since it may have to fetch first.
+
 ### Price history panel, ingested from mooket II
 
 - New setting, off by default: a floating chart of an item's ask, bid, traded price and volume over the last day to six months, following whatever the marketplace is showing. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge — 840,000 is cheap or dear only against what it has been.
