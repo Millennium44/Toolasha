@@ -15,6 +15,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Fixed: the labyrinth attempt count followed you out of the labyrinth
+
+- Finishing a labyrinth room and starting something else left `Attempt #N` sitting beside the new action — an alchemy craft wearing the number from the fight before it. React swaps the header's text in place rather than replacing the element, so the observer watching for a new header never fired on an action switch and the counter was simply never re-evaluated. It now re-checks on every action change, and a battle number is suppressed outright while a non-combat action is running.
+
 ### Labyrinth sims stop when the answer is pinned down, not when a clock runs out
 
 - **The `Sim Hours` control is now `Precision ±`**, in percentage points. A room's sim runs until its clear chance is measured that tightly and then stops, instead of always burning a fixed span of simulated time.

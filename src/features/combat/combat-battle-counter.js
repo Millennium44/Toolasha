@@ -77,7 +77,15 @@ class CombatBattleCounter {
             this.isDungeon = false;
             this.labyrinthAttempt = 0;
             document.getElementById(COUNTER_ID)?.remove();
+            return;
         }
+
+        // Re-evaluate on any action change even when none of the above matched.
+        // React swaps the header's text in place rather than replacing the
+        // element, so the class observer does not fire on an action switch and
+        // a counter left from the last fight would sit beside the new action —
+        // an alchemy craft wearing "Attempt #1" from the labyrinth room before it.
+        this._injectOrUpdate();
     }
 
     _onLabyrinthUpdated(data) {
@@ -147,11 +155,20 @@ class CombatBattleCounter {
         // the word, so reading the row's full text is safe)
         const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
 
+        // A battle number describes a fight, so it has no business beside a
+        // craft or an alchemy action. The labyrinth variant needs no such
+        // guard: its title check already fails on anything else.
+        const runningAction = (dataManager.getCurrentActions() || []).find((action) => !action.isDone);
+        const inSkillingAction =
+            !!runningAction && !String(runningAction.actionHrid || '').startsWith('/actions/combat/');
+
         let text = '';
         if (isLabyrinthFight) {
             // Never show "Battle #" on a labyrinth fight — if the attempt
             // count hasn't arrived yet, show nothing
             text = this.labyrinthAttempt > 0 ? `· Attempt #${this.labyrinthAttempt}` : '';
+        } else if (inSkillingAction) {
+            text = '';
         } else if (this.isDungeon && this.battleId > 0) {
             text = `· Wave ${this.currentWave} · Battle #${this.battleId}`;
         } else if (this.battleId > 0) {
