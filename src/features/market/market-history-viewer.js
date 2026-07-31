@@ -15,6 +15,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 import estimatedListingAge from './estimated-listing-age.js';
 
@@ -1348,6 +1349,18 @@ class MarketHistoryViewer {
                 const textSpan = document.createElement('span');
                 textSpan.textContent = this.getItemName(listing.itemHrid);
                 itemCell.appendChild(textSpan);
+
+                // Clicking the item opens its marketplace page. The row already
+                // names an item and an enhancement level, which is everything
+                // the marketplace needs, so retyping it into the search box was
+                // only ever busywork. The modal closes first — navigating behind
+                // an overlay would look like nothing happened.
+                itemCell.style.cursor = 'pointer';
+                itemCell.title = 'Open this item in the marketplace';
+                itemCell.addEventListener('click', () => {
+                    this.closeModal();
+                    navigateToMarketplace(listing.itemHrid, listing.enhancementLevel || 0);
+                });
 
                 row.appendChild(itemCell);
 

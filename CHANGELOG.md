@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Market History items open in the marketplace when clicked
+
+- Clicking an item in the Market History table closes the viewer and opens that item's marketplace page, at the row's own enhancement level. The row already names both, so retyping them into the search box was only ever busywork.
+
 ### Attempt badge moved off the ETA
 
 - The `↻N` badge sits at the middle of the tile's left edge rather than the bottom-left corner, where it overlapped the clear-chance and ETA badge.
