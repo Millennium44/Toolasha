@@ -27,6 +27,7 @@ onmessage = function (event) {
             simulationTimeLimit,
             extraBuffs,
             labyrinth: labyrinthData,
+            precision,
             seed,
         } = event.data;
 
@@ -76,7 +77,7 @@ onmessage = function (event) {
         );
 
         // Run simulation
-        const simResult = combatSimulator.simulate(simulationTimeLimit);
+        const simResult = combatSimulator.simulate(simulationTimeLimit, precision);
 
         postMessage({
             type: 'result',

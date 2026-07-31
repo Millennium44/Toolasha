@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
+import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -35,6 +36,12 @@ const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
 const LIVE_COMBAT_STALE_MS = 5000;
 /** Ticks are far faster than anyone reads; the readout is drawn at this rate */
 const LIVE_COMBAT_REDRAW_MS = 1000;
+/** Clear chances are pinned to this many percentage points either side by default */
+const DEFAULT_SIM_PRECISION_PCT = 1;
+/** No room stops before this many trials, however lopsided the early ones look */
+const MIN_SIM_TRIALS = 100;
+/** Backstop for a rate near a coin toss, which never converges cheaply */
+const MAX_SIM_TRIALS = 20000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -1831,15 +1838,40 @@ class LabyrinthClearRate {
     buildCombatCacheKey(monsterHrid, roomLevel) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimHours()}h:${crateHrids.join(',')}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimPrecisionPct()}pp:${crateHrids.join(',')}`;
     }
 
     /**
-     * Combat sim hours for labyrinth tile and recommendation calculations
+     * How tightly a room's clear chance has to be pinned down before its sim
+     * stops, in percentage points either side.
+     *
+     * This replaced a fixed span of simulated hours, which bought trials at a
+     * rate set by fight length and so measured a five-second room twenty times
+     * more finely than one running the full timeout — the slow rooms being
+     * exactly the marginal ones where the decision is closest.
+     */
+    getSimPrecisionPct() {
+        const raw = Number(config.getSettingValue('labyrinthSimPrecision', DEFAULT_SIM_PRECISION_PCT));
+        return Math.min(10, Math.max(0.1, raw || DEFAULT_SIM_PRECISION_PCT));
+    }
+
+    /**
+     * Ceiling on a single room's sim, in simulated hours. Precision normally
+     * ends the run long before this; it exists so a room whose rate sits near a
+     * coin toss cannot run forever.
      */
     getSimHours() {
         const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
         return Math.min(100, Math.max(1, Math.floor(raw) || 3));
+    }
+
+    /** The stopping rule handed to the engine */
+    getSimStopRule() {
+        return {
+            targetHalfWidth: this.getSimPrecisionPct() / 100,
+            minTrials: MIN_SIM_TRIALS,
+            maxTrials: MAX_SIM_TRIALS,
+        };
     }
 
     getCachedCombatResult(monsterHrid, roomLevel) {
@@ -1870,6 +1902,7 @@ class LabyrinthClearRate {
                 roomLevel,
                 crates: crateHrids,
                 hours: this.getSimHours(),
+                precision: this.getSimStopRule(),
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -1900,6 +1933,11 @@ class LabyrinthClearRate {
                         : 'Insufficient Damage'
                     : '';
 
+            // How sure the figure is, which is the point of stopping on
+            // precision rather than on a clock: a rate is only as good as the
+            // number of fights behind it, and that number now varies by room
+            const interval = wilsonInterval(wins, attempts);
+
             const result = {
                 clearChance: winRate,
                 expectedSeconds: winRate > 0 ? avgTime / winRate : Infinity,
@@ -1911,6 +1949,9 @@ class LabyrinthClearRate {
                 loadoutName,
                 roomLevel,
                 failureReason,
+                trials: attempts,
+                halfWidth: interval.halfWidth,
+                hitTarget: !!simResult.labyStoppedOnPrecision,
             };
 
             // Don't cache 0% results: right after page load the loadout
@@ -2702,27 +2743,33 @@ class LabyrinthClearRate {
         button.addEventListener('click', () => this.runTileCalculation());
         container.appendChild(button);
 
-        const hoursLabel = document.createElement('span');
-        hoursLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
-        hoursLabel.textContent = 'Sim Hours';
-        container.appendChild(hoursLabel);
+        const precisionLabel = document.createElement('span');
+        precisionLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        precisionLabel.textContent = 'Precision ±';
+        precisionLabel.title =
+            'How tightly to pin each room down before its sim stops, in percentage points. ' +
+            'A settled room reaches it in a few hundred fights; one near a coin toss needs thousands, ' +
+            'so the work goes where the answer is still in doubt.';
+        container.appendChild(precisionLabel);
 
-        const hoursInput = document.createElement('input');
-        hoursInput.type = 'number';
-        hoursInput.min = '1';
-        hoursInput.max = '100';
-        hoursInput.step = '1';
-        hoursInput.value = String(this.getSimHours());
-        hoursInput.style.cssText =
+        const precisionInput = document.createElement('input');
+        precisionInput.className = `${TILE_CONTROLS_CLASS}-precision`;
+        precisionInput.type = 'number';
+        precisionInput.min = '0.1';
+        precisionInput.max = '10';
+        precisionInput.step = '0.5';
+        precisionInput.value = String(this.getSimPrecisionPct());
+        precisionInput.title = precisionLabel.title;
+        precisionInput.style.cssText =
             'width:52px; height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
             'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; text-align:center; outline:none;';
-        hoursInput.addEventListener('change', () => {
-            const n = Math.min(100, Math.max(1, Math.floor(Number(hoursInput.value) || 3)));
-            hoursInput.value = String(n);
-            config.setSettingValue('labyrinthRecommendSimHours', n);
+        precisionInput.addEventListener('change', () => {
+            const n = Math.min(10, Math.max(0.1, Number(precisionInput.value) || DEFAULT_SIM_PRECISION_PCT));
+            precisionInput.value = String(n);
+            config.setSettingValue('labyrinthSimPrecision', n);
             this.combatCache.clear();
         });
-        container.appendChild(hoursInput);
+        container.appendChild(precisionInput);
 
         const pathButton = document.createElement('button');
         pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
@@ -2749,7 +2796,7 @@ class LabyrinthClearRate {
         pathInput.step = '1';
         pathInput.value = String(config.getSettingValue('labyrinthPathClearThreshold', 70));
         pathInput.title = pathLabel.title;
-        pathInput.style.cssText = hoursInput.style.cssText;
+        pathInput.style.cssText = precisionInput.style.cssText;
         pathInput.addEventListener('change', () => {
             const n = Math.min(100, Math.max(1, Math.floor(Number(pathInput.value) || 70)));
             pathInput.value = String(n);
@@ -2798,7 +2845,7 @@ class LabyrinthClearRate {
         beaconInput.step = '1';
         beaconInput.value = String(config.getSettingValue('labyrinthBeaconCount', 0));
         beaconInput.title = 'Beacons to place — 0 uses the fewest that cover a path to the exit';
-        beaconInput.style.cssText = hoursInput.style.cssText;
+        beaconInput.style.cssText = precisionInput.style.cssText;
         beaconInput.addEventListener('change', () => {
             const n = Math.min(20, Math.max(0, Math.floor(Number(beaconInput.value) || 0)));
             beaconInput.value = String(n);
@@ -3817,6 +3864,18 @@ class LabyrinthClearRate {
         const monster = this.buildScaledMonster(result.monsterHrid, result.roomLevel);
         const gameData = dataManager.getInitClientData();
         const monsterDetail = gameData?.combatMonsterDetailMap?.[result.monsterHrid];
+
+        // What the badge's percentage is worth. Trials vary room to room now
+        // that sims stop on precision, so the sample behind the figure is worth
+        // stating rather than leaving to be assumed.
+        if (Number.isFinite(result.halfWidth) && result.trials > 0) {
+            const band = (result.halfWidth * 100).toFixed(1);
+            addRow(
+                'Clear Chance',
+                `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
+            );
+            addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
 
         if (monster) {
             const stats = monster.combatDetails.combatStats;

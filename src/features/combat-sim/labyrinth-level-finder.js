@@ -61,6 +61,9 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
             roomLevel: mid,
             crates,
             hours: simHours,
+            // Each probe only has to place the level on one side of the target
+            // rate, so a coarse reading is enough and a close one stops early
+            precision: { targetHalfWidth: 0.02, minTrials: 100, maxTrials: 8000 },
             communityBuffs,
             labyrinthCombatBuffs,
         });
