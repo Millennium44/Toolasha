@@ -6,10 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Groundwork for a live clear chance in combat rooms
+
+- **`Toolasha.Debug.captureLab()`** records every WebSocket message for a minute and prints a digest: which message types arrive and how often, which hitpoint-like fields changed during the capture, and a shape sample of each payload. Run it from the console during a labyrinth fight to find out what the server actually pushes mid-combat. Nothing registers or schedules it — it runs only when typed.
+- **The estimator itself is in**, as pure math with tests: given how much of the monster and of you is left and how long the fight has run, it extrapolates both times-to-die and returns the chance the monster's runs out first, inside the 120-second timer. Both finish lines are treated as spread-out rather than exact, and the spread narrows as the fight supplies evidence, so an early number is marked `?` and a settled one is not.
+- **It is not wired to anything yet** — it has no data source until the capture says where hitpoints live.
+
 ### Room attempt counter
 
-- Rooms that have taken **more than one try** are marked on the map with a `↻N` badge in the bottom-left of the tile, and the room you are running now adds `try N` to the end of the action bar's clear readout. The map gave no sign of this before: a tile looks identical on your fourth attempt and your first.
-- An attempt is counted both when you walk into a room and when the room's action counter restarts under you, so the tally holds whichever way the game re-runs a failed room. Counts are per floor — room coordinates repeat on every floor — and survive a page refresh, but only for the run they were recorded in.
+- Rooms entered **more than once** are marked on the map with a `↻N` badge in the bottom-left of the tile, and the room you are running now adds `try N` to the end of the action bar's clear readout. The map gave no sign of this before: a tile looks identical on your fourth attempt and your first.
+- The count is the server's own `entryCount`, the same figure the battle counter already shows as `Attempt #N` on combat rooms — so nothing is inferred, and the badge covers skilling and enhancing rooms, where no attempt count was shown at all.
 
 ### Beacon plans stop chasing a corridor that was never required
 

@@ -6,7 +6,6 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
@@ -30,7 +29,6 @@ const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
-const ATTEMPT_STORAGE_KEY = 'labyrinthRoomAttempts';
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -675,10 +673,7 @@ class LabyrinthClearRate {
         this.snapshotUpdateHandler = null;
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
-        this.roomAttempts = new Map();
-        this._attemptRunKey = null;
-        this._attemptHead = null;
-        this._attemptActionCounter = null;
+        this._pathData = null;
     }
 
     initialize() {
@@ -741,7 +736,6 @@ class LabyrinthClearRate {
             this.seedFromCharacterData();
             this.injectTileControls();
             this.scheduleAutoTileCalc();
-            this.restoreAttempts();
         }, 500);
 
         setTimeout(() => {
@@ -891,146 +885,60 @@ class LabyrinthClearRate {
     // Room attempts
     //
     // A room you fail to clear is one you come back to, and the map gives no
-    // sign of it: the tile looks the same on your fourth try as on your first.
-    // Two things start a fresh attempt, and the game may use either, so both
-    // are counted — walking into the room (the path head moves onto it) and the
-    // room's action counter restarting while you are standing in it.
+    // sign of it: the tile looks identical on your fourth try and your first.
+    // The server counts them for us — every room carries an entryCount — so
+    // nothing here is inferred, and nothing needs storing between sessions.
     // -------------------------------------------------------------------------
 
     /**
-     * Identify the run a count belongs to. Room coordinates repeat on every
-     * floor, so the floor is part of the key — otherwise descending would carry
-     * the last floor's tallies onto the new map.
-     * @param {Object} labyrinth - labyrinth payload
-     * @returns {string}
+     * The room the path head is standing in.
+     * @returns {Object|null} roomData entry, or null when not in a run
      */
-    attemptRunKey(labyrinth) {
-        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
-    }
-
-    /**
-     * Follow the path head, counting an attempt each time it enters a room.
-     * @param {Object} labyrinth - labyrinth payload from labyrinth_updated
-     */
-    trackAttemptFromPath(labyrinth) {
-        if (!labyrinth) return;
-        const runKey = this.attemptRunKey(labyrinth);
-        if (runKey !== this._attemptRunKey) {
-            this._attemptRunKey = runKey;
-            this.roomAttempts = new Map();
-            this._attemptHead = null;
-            this._attemptActionCounter = null;
-        }
-
-        let path = labyrinth.pathData;
+    currentRoom() {
+        const rows = this.roomData;
+        if (!Array.isArray(rows)) return null;
+        let path = this._pathData;
         if (typeof path === 'string' && path) {
             try {
                 path = JSON.parse(path);
             } catch {
-                path = null;
+                return null;
             }
         }
-        const head = Array.isArray(path) ? path[0] : null;
-        if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return;
-
-        const roomKey = `${head.x},${head.y}`;
-        if (roomKey === this._attemptHead) return;
-        this._attemptHead = roomKey;
-        this._attemptActionCounter = null;
-        this.countAttempt(roomKey);
+        if (!Array.isArray(path) || !path.length) return null;
+        const head = path[path.length - 1];
+        if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return null;
+        return rows[head.y]?.[head.x] || null;
     }
 
-    /**
-     * Count a fresh attempt when the room restarts under you: the action
-     * counter can only go backwards by starting the room over.
-     * @param {Object} progress - labyrinth_room_progress payload
-     */
-    trackAttemptFromProgress(progress) {
-        if (!this._attemptHead) return;
-        const counter = Math.floor(Number(progress?.actionCounter));
-        if (!Number.isFinite(counter)) return;
-        if (this._attemptActionCounter !== null && counter < this._attemptActionCounter) {
-            this.countAttempt(this._attemptHead);
-        }
-        this._attemptActionCounter = counter;
-    }
-
-    /**
-     * @param {string} roomKey - "x,y"
-     */
-    countAttempt(roomKey) {
-        this.roomAttempts.set(roomKey, (this.roomAttempts.get(roomKey) || 0) + 1);
-        this.persistAttempts();
-        this.refreshAttemptBadges();
-    }
-
-    /** Attempts on the room being run right now, 0 when it is not known */
+    /** Times the room being run now has been entered, 0 when unknown */
     currentRoomAttempts() {
-        return this._attemptHead ? this.roomAttempts.get(this._attemptHead) || 0 : 0;
-    }
-
-    async persistAttempts() {
-        try {
-            await storage.setJSON(
-                ATTEMPT_STORAGE_KEY,
-                { runKey: this._attemptRunKey, head: this._attemptHead, attempts: [...this.roomAttempts] },
-                'settings'
-            );
-        } catch (error) {
-            console.error('[LabyrinthClearRate] Persisting room attempts failed:', error);
-        }
+        return Math.max(0, Math.floor(Number(this.currentRoom()?.entryCount) || 0));
     }
 
     /**
-     * Restore the tallies after a page refresh, but only for the run they were
-     * recorded in — a stored count from a finished run would otherwise show up
-     * on a fresh floor's identically numbered rooms.
-     */
-    async restoreAttempts() {
-        try {
-            const stored = await storage.getJSON(ATTEMPT_STORAGE_KEY, 'settings', null);
-            if (!stored?.runKey || !Array.isArray(stored.attempts)) return;
-            const labyrinth = dataManager.characterData?.characterLabyrinth || this.getLabyrinthFromReactState();
-            if (!labyrinth || this.attemptRunKey(labyrinth) !== stored.runKey) return;
-            if (this._attemptRunKey && this._attemptRunKey !== stored.runKey) return;
-
-            this._attemptRunKey = stored.runKey;
-            this._attemptHead = this._attemptHead || stored.head || null;
-            for (const [roomKey, count] of stored.attempts) {
-                if (!this.roomAttempts.has(roomKey)) this.roomAttempts.set(roomKey, count);
-            }
-            this.refreshAttemptBadges();
-        } catch (error) {
-            console.error('[LabyrinthClearRate] Restoring room attempts failed:', error);
-        }
-    }
-
-    /**
-     * Mark every room that has taken more than one try. One attempt is the
-     * normal case and carries no information, so only repeats are drawn.
+     * Mark every room entered more than once. A first entry is the normal case
+     * and carries no information, so only repeats are drawn.
      */
     refreshAttemptBadges() {
         document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
-        if (!this.roomAttempts.size || !this.roomData) return;
+        if (!this.roomData) return;
         const flat = this.roomData.flat();
-        const cols = Array.isArray(this.roomData[0]) ? this.roomData[0].length : 0;
-        if (!cols) return;
         const cells = this.findRoomGridCells(flat.length);
         if (cells.length !== flat.length) return;
 
-        for (const [roomKey, count] of this.roomAttempts) {
-            if (count < 2) continue;
-            const [x, y] = roomKey.split(',').map(Number);
-            const cell = cells[y * cols + x];
-            if (!cell) continue;
+        for (let i = 0; i < flat.length; i++) {
+            const entries = Math.floor(Number(flat[i]?.entryCount) || 0);
+            const cell = cells[i];
+            if (entries < 2 || !cell) continue;
 
             const cellStyle = window.getComputedStyle(cell);
             if (cellStyle.position === 'static') cell.style.position = 'relative';
 
             const badge = document.createElement('div');
             badge.className = ATTEMPT_BADGE_CLASS;
-            badge.title = `${count} attempts at this room this floor`;
-            badge.textContent = `↻${count}`;
+            badge.title = `Entered ${entries} times`;
+            badge.textContent = `\u21bb${entries}`;
             badge.style.cssText =
                 'position:absolute; left:1px; bottom:1px; z-index:9; padding:0 3px; border-radius:3px; ' +
                 'background:rgba(0,0,0,0.7); color:#ffc866; font-size:8px; font-weight:700; line-height:1.4; ' +
@@ -1040,7 +948,7 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
-        this.trackAttemptFromPath(data.labyrinth);
+        this._pathData = data.labyrinth?.pathData ?? null;
         const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
@@ -2298,7 +2206,6 @@ class LabyrinthClearRate {
      * Handle incoming labyrinth_room_progress WS message
      */
     onLiveProgress(data) {
-        this.trackAttemptFromProgress(data);
         if (!config.getSetting('labyrinthLiveProgress')) return;
         this.refreshLiveProgress(data);
     }
