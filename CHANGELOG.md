@@ -10,12 +10,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The `↻N` badge sits at the middle of the tile's left edge rather than the bottom-left corner, where it overlapped the clear-chance and ETA badge.
 
+### Fixed: the attempt count vanished once you queued more than one room
+
+- The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
+- **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
+
 ### Live clear chance in labyrinth combat rooms
 
 - Combat rooms now show a **live clear chance** in the action bar, beside the room name: `[Clear ~72% | 48s left]`. Until now the only number for a fight was the tile badge's win rate, simulated before you walked in — it says nothing about how the fight in front of you is going.
 - It is measured, not simulated. `battle_updated` carries both sides' current and maximum hitpoints about three times a second; the two rates of health loss are extrapolated to three finish lines — the monster dies, you die, the 120-second timer expires — and the readout is the chance the monster's lands first. Hovering gives both times-to-die, which race is the binding one, and the raw hitpoints.
 - **Early numbers are marked with `?`.** Damage arrives in lumps, so a rate read off six seconds is a guess and one read off a minute is a measurement. The spread narrows as the fight supplies evidence, and nothing is shown at all for the first six seconds.
-- **A fight joined in progress shows nothing.** The time already spent is invisible, so the timer leg would be guesswork; only a fight seen from full health has a knowable clock.
+- **A fight joined in progress still reports.** Rates are measured over the window actually watched rather than assumed to run back to a full health bar — an estimator that insisted on catching the start would simply never appear if the first update arrived with damage already done. What being late costs is the clock: the time already spent is invisible, so the timer drops out of the estimate instead of being guessed at, and the readout omits the `Ns left`.
 - Abilities, procs, healing and monster mechanics are not modelled. What the number captures is whether the trade is going your way fast enough.
 
 ### Groundwork behind it

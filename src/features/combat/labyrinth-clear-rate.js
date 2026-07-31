@@ -14,7 +14,7 @@ import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
-import { estimateLiveClearChance, formatLiveClearChance } from './labyrinth-live-combat.js';
+import { estimateLiveClearChance, formatLiveClearChance, FIGHT_TIMEOUT_SECONDS } from './labyrinth-live-combat.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -923,7 +923,9 @@ class LabyrinthClearRate {
             }
         }
         if (!Array.isArray(path) || !path.length) return null;
-        const head = path[path.length - 1];
+        // pathData is the queued route, not the trail behind you: [0] is the
+        // room being run and the rest are what you lined up after it
+        const head = path[0];
         if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return null;
         return rows[head.y]?.[head.x] || null;
     }
@@ -955,7 +957,7 @@ class LabyrinthClearRate {
             const badge = document.createElement('div');
             badge.className = ATTEMPT_BADGE_CLASS;
             badge.title = `Entered ${entries} times`;
-            badge.textContent = `\u21bb${entries}`;
+            badge.textContent = String(entries);
             // Middle of the left edge: the tile's own corners are taken — level
             // top, clear chance and ETA bottom — and the bottom-left slot put
             // this straight over the ETA
@@ -2281,25 +2283,31 @@ class LabyrinthClearRate {
                 battleId: data.battleId,
                 monsterMaxHp: monster.mHP,
                 startedAt: Date.now(),
-                // Only a fight seen from full health has a knowable clock. Join
-                // one in progress and the time already spent is invisible, so
-                // the timer leg of the estimate would be guesswork.
+                // Rates are measured from here, wherever "here" is. Only a fight
+                // seen from full health also has a knowable clock: join one in
+                // progress and the time already spent is invisible, so the timer
+                // drops out rather than being guessed at.
                 caughtStart: monster.cHP >= monster.mHP,
+                firstMonsterFraction: monster.cHP / monster.mHP,
+                firstPlayerFraction: player.cHP / player.mHP,
                 lastMonsterHp: monster.cHP,
             };
         } else {
             fight.lastMonsterHp = monster.cHP;
         }
 
-        if (!this._fight.caughtStart) {
-            this.clearLiveCombat();
-            return;
-        }
+        const started = this._fight;
+        const observedSeconds = (Date.now() - started.startedAt) / 1000;
+        const monsterHpFraction = monster.cHP / monster.mHP;
+        const playerHpFraction = player.cHP / player.mHP;
 
         const estimate = estimateLiveClearChance({
-            monsterHpFraction: monster.cHP / monster.mHP,
-            playerHpFraction: player.cHP / player.mHP,
-            elapsedSeconds: (Date.now() - this._fight.startedAt) / 1000,
+            monsterHpFraction,
+            playerHpFraction,
+            observedSeconds,
+            monsterLostFraction: started.firstMonsterFraction - monsterHpFraction,
+            playerLostFraction: started.firstPlayerFraction - playerHpFraction,
+            remainingSeconds: started.caughtStart ? Math.max(0, FIGHT_TIMEOUT_SECONDS - observedSeconds) : null,
         });
         const text = formatLiveClearChance(estimate);
         if (!text) {
@@ -2313,14 +2321,17 @@ class LabyrinthClearRate {
         if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
         this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
 
-        const left = Math.round(estimate.remainingSeconds);
-        this.renderLiveNode(` [${text} | ${left}s left]`, [
+        const clock = estimate.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
+        this.renderLiveNode(` [${text}${clock}]`, [
             `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
             Number.isFinite(estimate.killSeconds) ? `Kill in ~${Math.round(estimate.killSeconds)}s` : 'Not killing it',
             Number.isFinite(estimate.deathSeconds)
                 ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
                 : 'Taking no damage',
             `${estimate.reason}${estimate.confident ? '' : ' — early, treat as provisional'}`,
+            estimate.timerKnown
+                ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
+                : 'Joined this fight in progress, so the room timer is unknown and left out',
             'Extrapolated from the health lost so far; abilities and procs are not modelled',
         ]);
     }

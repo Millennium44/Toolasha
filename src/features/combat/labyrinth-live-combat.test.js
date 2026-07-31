@@ -86,6 +86,77 @@ describe('estimateLiveClearChance', () => {
     });
 });
 
+describe('estimateLiveClearChance joined in progress', () => {
+    test('rates come from the watched window, not from a full health bar', () => {
+        // Picked the fight up with the monster already at 60%: over the next
+        // 20 seconds it drops to 20%, so the last fifth takes ~10s more
+        const late = estimateLiveClearChance({
+            monsterHpFraction: 0.2,
+            playerHpFraction: 0.7,
+            observedSeconds: 20,
+            monsterLostFraction: 0.4,
+            playerLostFraction: 0.1,
+            remainingSeconds: null,
+        });
+        expect(late.killSeconds).toBeCloseTo(10, 6);
+        expect(late.deathSeconds).toBeCloseTo(140, 6);
+        expect(late.clearChance).toBeGreaterThan(0.9);
+    });
+
+    test('an unknown clock is left out rather than guessed', () => {
+        const state = {
+            monsterHpFraction: 0.5,
+            playerHpFraction: 1,
+            observedSeconds: 30,
+            monsterLostFraction: 0.1,
+            playerLostFraction: 0,
+        };
+        // Kill is 150s away — past any room timer — but with no clock to race,
+        // an untouchable player is winning
+        const unknownClock = estimateLiveClearChance({ ...state, remainingSeconds: null });
+        expect(unknownClock.timerKnown).toBe(false);
+        expect(unknownClock.clearChance).toBe(1);
+
+        // Give it the clock and the same fight is lost
+        const knownClock = estimateLiveClearChance({ ...state, remainingSeconds: 40 });
+        expect(knownClock.timerKnown).toBe(true);
+        expect(knownClock.clearChance).toBeLessThan(0.05);
+    });
+
+    test('healing between sightings is a zero loss, not a negative one', () => {
+        const healed = estimateLiveClearChance({
+            monsterHpFraction: 0.5,
+            playerHpFraction: 0.9,
+            observedSeconds: 20,
+            monsterLostFraction: 0.5,
+            playerLostFraction: -0.2, // ended the window healthier than it started
+            remainingSeconds: 60,
+        });
+        expect(healed.deathSeconds).toBe(Infinity);
+        expect(healed.reason).toBe('racing the clock');
+    });
+
+    test('a fight watched from the start needs none of the extra fields', () => {
+        const explicit = estimateLiveClearChance({
+            monsterHpFraction: 0.4,
+            playerHpFraction: 0.8,
+            observedSeconds: 30,
+            monsterLostFraction: 0.6,
+            playerLostFraction: 0.2,
+            remainingSeconds: 90,
+        });
+        const implied = at(0.4, 0.8, 30);
+        expect(implied.reason).toBe(explicit.reason);
+        expect(implied.timerKnown).toBe(explicit.timerKnown);
+        expect(implied.remainingSeconds).toBe(explicit.remainingSeconds);
+        // Derived losses go through 1 - fraction, so they land a rounding error
+        // away from the same figure written out
+        expect(implied.killSeconds).toBeCloseTo(explicit.killSeconds, 9);
+        expect(implied.deathSeconds).toBeCloseTo(explicit.deathSeconds, 9);
+        expect(implied.clearChance).toBeCloseTo(explicit.clearChance, 9);
+    });
+});
+
 describe('formatLiveClearChance', () => {
     test('marks a number the fight has not yet earned', () => {
         expect(formatLiveClearChance(at(0.3, 0.95, 10))).toMatch(/^Clear ~\d+%\?$/);
