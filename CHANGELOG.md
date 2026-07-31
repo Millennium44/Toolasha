@@ -33,7 +33,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### My Listings can carry other scripts' markers too
 
-- New setting, off by default: the same marker column Market History has, on the live My Listings table. Does nothing unless a script has registered a marker.
+- The same marker column Market History has, on the live My Listings table. No setting guards it: nothing appears unless a script has registered a marker, so a switch would only ever be turned on by someone who had already installed the thing that draws it.
 - Markers are now told which surface a row is on — `history` or `myListings` — because the two mean different things. A finished trade can be adopted with a real cost basis; a working order cannot, but it is exactly the one worth marking ahead of time so its fills are counted as they arrive.
 - The column is appended past the last column rather than inserted among them: the Top Order Price cells are placed by index arithmetic, and a column inserted into the middle of that would silently misalign them.
 - A marker registered after the table was built now redraws it, instead of appearing only the next time the table happened to rebuild.

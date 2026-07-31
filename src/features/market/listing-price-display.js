@@ -1237,11 +1237,14 @@ class ListingPriceDisplay {
      * cells are placed by index arithmetic, and a column inserted into the
      * middle of that would silently misalign them.
      *
+     * No setting guards this. Nothing appears unless a script has registered a
+     * marker, so a switch would only ever be turned on by someone who had
+     * already installed the thing that draws it.
+     *
      * @param {HTMLElement} tableNode - The listings table
      * @param {HTMLElement} tbody - Its body
      */
     addListingMarkers(tableNode, tbody) {
-        if (!config.getSetting('market_markersOnMyListings')) return;
         const markers = listingMarkers.all();
         if (!markers.length) return;
 
