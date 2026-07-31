@@ -939,10 +939,13 @@ class LabyrinthClearRate {
             badge.className = ATTEMPT_BADGE_CLASS;
             badge.title = `Entered ${entries} times`;
             badge.textContent = `\u21bb${entries}`;
+            // Middle of the left edge: the tile's own corners are taken — level
+            // top, clear chance and ETA bottom — and the bottom-left slot put
+            // this straight over the ETA
             badge.style.cssText =
-                'position:absolute; left:1px; bottom:1px; z-index:9; padding:0 3px; border-radius:3px; ' +
-                'background:rgba(0,0,0,0.7); color:#ffc866; font-size:8px; font-weight:700; line-height:1.4; ' +
-                'pointer-events:none;';
+                'position:absolute; left:1px; top:50%; transform:translateY(-50%); z-index:9; padding:0 3px; ' +
+                'border-radius:3px; background:rgba(0,0,0,0.7); color:#ffc866; font-size:8px; font-weight:700; ' +
+                'line-height:1.4; pointer-events:none;';
             cell.appendChild(badge);
         }
     }
