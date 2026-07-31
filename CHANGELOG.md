@@ -13,7 +13,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The volume line is split on hover into an estimate of how much was **bought at the ask** versus **sold into the bid**. The server reports how much traded and at what average price, never who crossed, so where in the spread that average landed is the evidence — it is an estimate and says so.
 - Ranges past a week are grouped into one point per day using the **median**, not the mean. A single absurd listing — a 300-coin item at 40 million to see if anyone bites — moves a mean for the whole day and a median not at all.
 - Adapted from **mooket II** by Q7, used under the MIT licence; see `docs/THIRD-PARTY-LICENSES.md`. Left behind deliberately: the second WebSocket hook (Toolasha has one, and two scripts patching `MessageEvent.data` is how a page silently drops messages), the bundled item-name dictionaries (the game's own are already loaded), the localStorage cache with its defensive pruning (this uses IndexedDB), and the crosshair plugin (the index-mode tooltip covers it without another dependency).
-- Shown and hidden by a **History** tab beside Market Listings, the same way Bulk Sell works, and closed with the ✕ on the panel itself. It starts hidden — a panel that appears over the marketplace the moment you open it is in the way of the thing you opened.
+- Shown and hidden by a **⧉ History** tab at the end of the marketplace tab bar, and closed with the ✕ on the panel itself. It starts hidden — a panel that appears over the marketplace the moment you open it is in the way of the thing you opened.
+
+### Panel tabs look like panel tabs
+
+- **⧉ Bulk Sell** and **⧉ History** now carry a ⧉ and sit dimmed until their panel is up. Both borrow the game's own tab styling, so they read as two more places to navigate to — and a tab that does not change the page when clicked, then does nothing visible when clicked again, looks broken. The glyph says it opens a panel; the dimming says whether that panel is currently open.
 - Reading and contributing are **one switch**, not two. A version that let you read without giving anything back would work perfectly and quietly drain a shared resource: the history is only as good as what people send, and a reader who contributes nothing is someone else's missing data point. The setting says plainly what each direction does.
 
 ### Bulk Sell panel is draggable, and closing it stops the run
