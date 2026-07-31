@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
-import { wilsonInterval } from '../combat-sim/engine/wilson.js';
+import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -42,6 +42,10 @@ const DEFAULT_SIM_PRECISION_PCT = 1;
 const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
 const MAX_SIM_TRIALS = 20000;
+/** Deciding a side needs far fewer fights than measuring a rate */
+const DECISION_MIN_TRIALS = 40;
+/** A room sitting exactly on the bar never decides; this is where it gives up */
+const DECISION_MAX_TRIALS = 4000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -1835,10 +1839,14 @@ class LabyrinthClearRate {
     /**
      * Build cache key for a combat sim result
      */
-    buildCombatCacheKey(monsterHrid, roomLevel) {
+    buildCombatCacheKey(monsterHrid, roomLevel, decideAgainst = null) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimPrecisionPct()}pp:${crateHrids.join(',')}`;
+        // Results from the two stopping rules must not share a slot. A decided
+        // one is deliberately coarse — forty fights can leave ±12 points — and
+        // a tile badge reading it would present that as a measurement.
+        const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}`;
     }
 
     /**
@@ -1881,9 +1889,26 @@ class LabyrinthClearRate {
     /**
      * Run combat sim for a monster room and return clear stats
      */
-    async computeCombatClear(monsterHrid, roomLevel) {
-        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel);
+    async computeCombatClear(monsterHrid, roomLevel, options = {}) {
+        // A bar means the caller only needs to know which side of it this room
+        // falls on, which is a far cheaper question than what its rate is
+        const rawBar = Number(options.decideAgainst);
+        const bar = Number.isFinite(rawBar) && rawBar > 0 && rawBar < 1 ? rawBar : null;
+
+        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel, bar);
         if (this.combatCache.has(cacheKey)) return this.combatCache.get(cacheKey);
+
+        // A measured result already in hand answers a decision for free, as
+        // long as its interval clears the bar — no reason to simulate again
+        if (bar !== null) {
+            const measured = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null));
+            if (
+                measured?.trials > 0 &&
+                decidedAgainst(Math.round(measured.clearChance * measured.trials), measured.trials, bar)
+            ) {
+                return measured;
+            }
+        }
 
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
@@ -1902,7 +1927,14 @@ class LabyrinthClearRate {
                 roomLevel,
                 crates: crateHrids,
                 hours: this.getSimHours(),
-                precision: this.getSimStopRule(),
+                precision:
+                    bar === null
+                        ? this.getSimStopRule()
+                        : {
+                              decideAgainst: bar,
+                              minTrials: DECISION_MIN_TRIALS,
+                              maxTrials: DECISION_MAX_TRIALS,
+                          },
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -2034,7 +2066,9 @@ class LabyrinthClearRate {
                 low = mid + 1;
                 continue;
             }
-            const result = await this.computeCombatClear(monsterHrid, roomLevel);
+            // The search only needs this level placed above or below the bar,
+            // not measured against it
+            const result = await this.computeCombatClear(monsterHrid, roomLevel, { decideAgainst: targetRate });
             if (result.cancelled) break;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
