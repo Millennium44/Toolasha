@@ -15,6 +15,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Bulk Sell can be told to hold items back
+
+- Another script can now claim inventory the sell queue must skip:
+
+    ```js
+    const release = Toolasha.Market.bulkSellAssistant.addHoldProvider('flip-finder', () => [
+        '/items/cheese',
+        '/items/cheese_sword+3',
+    ]);
+    ```
+
+- The assistant never learns **why** anything is held — a flip waiting to be relisted, a crafting reserve, something promised to a guildmate. It takes keys and gives them back, so nothing about the reason has to live in Toolasha, and a caller with a reason of its own does not have to either.
+- Keys follow the convention the custom inventory tabs already use: bare hrid for an unenhanced item, `hrid+level` once enhanced, so a `+3` sword can be held while the plain one still sells.
+- **Held items are counted, not silently dropped.** The panel says `3 items held back`, because an item vanishing from the sell queue with no explanation is indistinguishable from a bug.
+- A provider that throws loses its own claim and nothing else. Failing to hold something back is bad; being unable to sell at all because someone else's list is broken is worse.
+
 ### Simulated clear rates are now checked against what actually happens
 
 - Every labyrinth fight is recorded: the server counts entries per room and marks a room cleared, so a room beaten on the fifth try is one clear in five attempts, and a room walked away from is none in however many it took. Totals accumulate per monster and level, and persist.
