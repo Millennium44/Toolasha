@@ -11,9 +11,12 @@
  * side is the only way to find out whether the number was ever true.
  *
  * Two views, because they answer different questions. The room list is "how did
- * this run go"; the accuracy view is "does the sim know what it is talking
- * about", which needs every fight ever recorded rather than the last thirty
- * rooms.
+ * this run go" — grouped by floor, with what each floor cost and returned; the
+ * accuracy view is "does the calculator know what it is talking about", which
+ * needs every room ever recorded rather than the last few floors.
+ *
+ * Reached from a tab beside Lab Sim, which is up whether or not a run is in
+ * progress: reviewing a run is something you do after it.
  *
  * Ported in part from dakonglong's MIT-licensed Labyrinth Clear Rate Calculator.
  */
@@ -21,6 +24,7 @@
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
@@ -33,6 +37,7 @@ const MAX_ACTIONS = 60;
 /** A room retried this many times has made its point */
 const MAX_ATTEMPTS = 40;
 const PANEL_ID = 'mwi-lab-logs-panel';
+const TAB_ID = 'mwi-lab-logs-tab';
 
 /**
  * Ticks arrive about three times a second and stop dead when the fight ends.
@@ -132,6 +137,8 @@ class LabyrinthRoomLogs {
         this.fightTimer = null;
         this.renderToken = 0;
         this.resetArmed = false;
+        this.tabButton = null;
+        this.unregisterTab = null;
     }
 
     /** How many rooms of history to keep */
@@ -188,6 +195,12 @@ class LabyrinthRoomLogs {
 
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
+
+        this.unregisterTab = domObserver.onClass('LabyrinthRoomLogsTab', 'LabyrinthPanel_tabsComponentContainer', () =>
+            this.ensureTabButton()
+        );
+        this.ensureTabButton();
+        setTimeout(() => this.ensureTabButton(), 500);
     }
 
     disable() {
@@ -203,8 +216,14 @@ class LabyrinthRoomLogs {
             webSocketHook.off('battle_updated', this.battleHandler);
             this.battleHandler = null;
         }
+        if (this.unregisterTab) {
+            this.unregisterTab();
+            this.unregisterTab = null;
+        }
         this.resolveFight();
         this.finalizeActiveSession('feature_disabled');
+        document.getElementById(TAB_ID)?.remove();
+        this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
         this.panel = null;
         this.labContext = null;
@@ -745,6 +764,90 @@ class LabyrinthRoomLogs {
     // UI
     // -------------------------------------------------------------------------
 
+    /**
+     * The labyrinth page's own tab bar, which is up whether or not a run is in
+     * progress.
+     *
+     * The button used to live on the calculate bar inside a run, which put the
+     * history of your last three floors behind having to be standing in a
+     * fourth. Reviewing a run is something you do after it, so the way in has to
+     * outlive it.
+     *
+     * @returns {HTMLElement|null}
+     */
+    findLabyrinthTabBar() {
+        const container = document.querySelector('[class*="LabyrinthPanel_tabsComponentContainer"]');
+        return container?.querySelector('[class*="TabsComponent_tabsContainer"] > div > div > div') || null;
+    }
+
+    /**
+     * A tab beside Lab Sim that shows and hides the panel.
+     *
+     * Cloned from one of the game's own tabs so it sits in the row properly, and
+     * marked with a ⧉ and dimmed while closed: a tab that does not change the
+     * page when clicked, then does nothing visible when clicked again, reads as
+     * broken. The glyph says it opens a panel, the dimming says whether that
+     * panel is currently up. Same treatment as the Bulk Sell tab.
+     */
+    ensureTabButton() {
+        const bar = this.findLabyrinthTabBar();
+        if (!bar) {
+            this.tabButton?.remove();
+            this.tabButton = null;
+            return;
+        }
+        if (this.tabButton && bar.contains(this.tabButton)) {
+            this.keepAfterLabSim(bar);
+            this.syncTabButton();
+            return;
+        }
+        this.tabButton?.remove();
+
+        const native = Array.from(bar.children).find(
+            (el) => el.classList?.contains('MuiTab-root') && !el.classList.contains('toolasha-lab-sim-btn')
+        );
+        if (!native) return;
+
+        const button = native.cloneNode(true);
+        button.id = TAB_ID;
+        button.title =
+            'Room Logs — what happened in each room, and whether the calculator was right about it.\n\n' +
+            'Rooms: the last runs grouped by floor, with time, clears and experience per hour for each.\n' +
+            'Sim accuracy: every room ever recorded, set against the chance it was given.\n\n' +
+            'Click to show or hide the panel.';
+        const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) {
+            badge.innerHTML = '<div style="text-align: center;"><div>⧉ Room Logs</div></div>';
+        } else {
+            button.textContent = '⧉ Room Logs';
+        }
+        button.classList.remove('Mui-selected');
+        button.setAttribute('aria-selected', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.togglePanel();
+        });
+
+        bar.appendChild(button);
+        this.tabButton = button;
+        this.keepAfterLabSim(bar);
+        this.syncTabButton();
+    }
+
+    /** Lab Sim injects itself too and can land after us; stay on its right */
+    keepAfterLabSim(bar) {
+        const labSim = bar.querySelector('.toolasha-lab-sim-btn');
+        if (labSim && labSim.nextElementSibling !== this.tabButton) labSim.after(this.tabButton);
+    }
+
+    syncTabButton() {
+        if (!this.tabButton) return;
+        const open = !!this.panel?.isConnected && this.panel.style.display !== 'none';
+        this.tabButton.style.opacity = open ? '1' : '0.6';
+    }
+
     togglePanel() {
         const panel = this.ensurePanel();
         if (panel.style.display === 'none') {
@@ -753,6 +856,7 @@ class LabyrinthRoomLogs {
         } else {
             panel.style.display = 'none';
         }
+        this.syncTabButton();
     }
 
     ensurePanel() {
@@ -793,6 +897,7 @@ class LabyrinthRoomLogs {
             'width:18px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:13px; line-height:1; cursor:pointer;';
         closeBtn.addEventListener('click', () => {
             panel.style.display = 'none';
+            this.syncTabButton();
         });
 
         actions.appendChild(this.clearButton);
@@ -1150,6 +1255,11 @@ class LabyrinthRoomLogs {
         );
         const shape = failureShape(tally);
         if (shape) parts.push(shape);
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0 && seconds > 0) parts.push(`${formatKMB((xp / seconds) * 3600)} xp/h`);
+
         return parts.join(' | ');
     }
 
@@ -1172,6 +1282,17 @@ class LabyrinthRoomLogs {
             lines.push(
                 `The server has counted ${session.entryCount} entries for this room, including earlier sessions`
             );
+        }
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0) {
+            lines.push(
+                `Gained ${Math.round(xp).toLocaleString()} experience over ${Math.round(seconds)}s in this room`
+            );
+            lines.push('Measured from your skill totals, so losing attempts count toward it as well as the win');
+        }
+        if (Number.isFinite(session.forecast?.xpPerHour) && session.forecast.xpPerHour > 0) {
+            lines.push(`The sim expected ${formatKMB(session.forecast.xpPerHour)} experience per hour here`);
         }
         lines.push('Wins show how long they took; losses show the health the monster had left');
         return lines;

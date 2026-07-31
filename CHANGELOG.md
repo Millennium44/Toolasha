@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Combat rooms get experience figures, and the logs moved somewhere you can reach
+
+- **Expected EXP / Room and EXP / Hour on the combat tile hover.** Taken from the simulation itself rather than a formula: a skilling room's experience is a closed-form function of its level, but a fight earns it by landing hits, so a room you usually lose still pays and one you lose at the two-minute mark pays more than one you lose in twenty seconds. Only the replayed fights know that, and they have already been run.
+- Both figures are **per entry, not per clear**. Quoting only what a win is worth would make a room you clear 5% of the time look like it returns nothing at all.
+- **Measured experience per hour on combat room cards** in the log, alongside the skilling ones — the hover tooltip sets the sim's expected rate beside what you actually gained.
+- **The Logs button is now a ⧉ Room Logs tab beside Lab Sim**, matching the Bulk Sell tab: cloned from the game's own tabs, dimmed while the panel is closed. It used to sit on the calculate bar inside a run, which put the history of your last three floors behind having to be standing in a fourth — and reviewing a run is something you do after it.
+
 ### Skilling rooms get the same results check, and the log now shows what a floor is worth
 
 - **Skilling and enhancing rooms join the accuracy record.** A skilling room is failed by running out of the two minutes rather than by dying, but it is still a room the calculator gave a chance of clearing and still a room you either cleared or did not — so the same entry counting answers the same question. They can be judged from the first room you walk into, too, because a skilling forecast is closed-form maths rather than a simulation that has to be run first.
