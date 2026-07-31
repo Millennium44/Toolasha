@@ -90,6 +90,8 @@ import pformancePanel from '../features/dev/pformance-panel.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
+// Shared console-only debug namespace; nothing schedules these
+toolashaRoot.Debug = { ...(toolashaRoot.Debug || {}), guildXp: () => guildXPTracker.debugState() };
 window.Toolasha = toolashaRoot;
 
 if (typeof unsafeWindow !== 'undefined') {

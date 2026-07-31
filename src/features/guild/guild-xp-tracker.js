@@ -471,6 +471,34 @@ class GuildXPTracker {
     // ─── Public API (for display module) ─────────────────────────────────────
 
     /**
+     * What the tracker actually holds, for telling "no samples yet" apart from
+     * "the samples never arrived". A rate needs two readings: the leaderboard
+     * refreshes every 20 minutes and only while the panel is open, so a column
+     * can be legitimately blank for a long time on a fresh install.
+     *
+     * Console: Toolasha.Debug.guildXp()
+     * @returns {Object} Sample counts and spans per guild
+     */
+    debugState() {
+        const summary = (history) =>
+            Object.entries(history)
+                .map(([name, arr]) => ({
+                    name,
+                    samples: arr.length,
+                    spanHours: arr.length > 1 ? +((arr[arr.length - 1].t - arr[0].t) / 3600000).toFixed(2) : 0,
+                    newest: arr.length ? new Date(arr[arr.length - 1].t).toISOString() : null,
+                }))
+                .sort((a, b) => b.samples - a.samples);
+
+        const guilds = summary(this.guildXPHistory || {});
+        const members = summary(this.memberXPHistory || {});
+        console.log(`[Toolasha] Guild XP history — ${guilds.length} guilds, ${members.length} members tracked`);
+        console.log('Guilds with at least 2 samples can show a rate:');
+        console.table(guilds.slice(0, 25));
+        return { ownGuildName: this.ownGuildName, ownGuildID: this.ownGuildID, guilds, members };
+    }
+
+    /**
      * Get XP/hr stats for a guild.
      * @param {string} guildName
      * @returns {{lastXPH: number, lastHourXPH: number, lastDayXPH: number, chart: Array}}
