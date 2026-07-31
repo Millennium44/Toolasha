@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Fixed: rooms you completed showed no experience for the floor
+
+- Every floor read `xp not measured`. A room's experience was measured by sampling your skill totals when the room opened and again when it closed — but a room closes the instant the floor says the path moved on, and the experience it earned arrives in its own message that need not have landed by then. The room was being closed before it had been paid.
+- Experience is now **watched for as it lands** and credited to whichever room is open, against a rolling baseline rather than a snapshot per room. Experience arriving while no room is open still advances the baseline, so it cannot be mistaken for the next room's.
+- A finished room stays **claimable for a few seconds** before going into the long-term record, so experience credited a moment after the room ends still counts toward it.
+- New diagnostic: `Toolasha.Debug.watchLabXp()` watches your skill totals across every message type that could plausibly carry experience and prints which one actually moved them, so if the labyrinth credits experience some other way it says so rather than silently reporting nothing. `Toolasha.Debug.stopLabXp()` prints early.
+
 ### Combat rooms get experience figures, and the logs moved somewhere you can reach
 
 - **Expected EXP / Room and EXP / Hour on the combat tile hover.** Taken from the simulation itself rather than a formula: a skilling room's experience is a closed-form function of its level, but a fight earns it by landing hits, so a room you usually lose still pays and one you lose at the two-minute mark pays more than one you lose in twenty seconds. Only the replayed fights know that, and they have already been run.

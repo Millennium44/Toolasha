@@ -26,6 +26,7 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
+import dataManager from '../../core/data-manager.js';
 
 /** Recursion limit. Generous, because the whole point is not knowing the shape */
 const MAX_DEPTH = 9;
@@ -38,6 +39,7 @@ const ARRAY_WALK = 12;
 const MAX_PATHS = 400;
 
 let active = null;
+let xpWatch = null;
 
 /**
  * Reduce a value to its shape: deep objects truncate, long arrays sample, long
@@ -236,4 +238,122 @@ export function stopCapture() {
     return result;
 }
 
-export default { captureLab, stopCapture };
+/**
+ * Watch skill experience and report every message that moves it.
+ *
+ * The room log measures a room's experience from the change in your skill
+ * totals, which only works if something actually updates those totals during a
+ * labyrinth run. Whether it does is not knowable from the outside: the
+ * labyrinth has messages of its own, and it need not use the ones a normal
+ * action uses. So rather than assume, this listens on every message type that
+ * could plausibly carry it and prints which one did.
+ *
+ * Run it, then do one labyrinth room:
+ *
+ *     Toolasha.Debug.watchLabXp()        // 120s, then prints
+ *     Toolasha.Debug.watchLabXp(300)     // longer
+ *     Toolasha.Debug.stopLabXp()         // print early
+ *
+ * @param {number} [seconds=120] - How long to watch
+ * @returns {Promise<Array<Object>>} One row per experience change seen
+ */
+export function watchLabXp(seconds = 120) {
+    stopLabXp();
+
+    const TYPES = [
+        'action_completed',
+        'skills_updated',
+        'labyrinth_updated',
+        'labyrinth_room_progress',
+        'battle_updated',
+        'items_updated',
+        'character_info_updated',
+    ];
+
+    const totals = () => {
+        const skills = dataManager.getSkills();
+        if (!Array.isArray(skills)) return null;
+        const bySkill = {};
+        let sum = 0;
+        for (const skill of skills) {
+            const xp = Number(skill?.experience) || 0;
+            bySkill[
+                String(skill?.skillHrid || '')
+                    .split('/')
+                    .pop()
+            ] = xp;
+            sum += xp;
+        }
+        return { sum, bySkill };
+    };
+
+    const start = totals();
+    const rows = [];
+    let last = start;
+    const startedAt = performance.now();
+
+    const handlers = TYPES.map((type) => {
+        const handler = () => {
+            const now = totals();
+            if (!now || !last) {
+                last = now || last;
+                return;
+            }
+            const delta = now.sum - last.sum;
+            if (delta === 0) return;
+
+            const moved = Object.entries(now.bySkill)
+                .filter(([skill, xp]) => xp !== (last.bySkill[skill] || 0))
+                .map(([skill, xp]) => `${skill} +${xp - (last.bySkill[skill] || 0)}`);
+            rows.push({
+                at: `${Math.round((performance.now() - startedAt) / 1000)}s`,
+                message: type,
+                gained: delta,
+                skills: moved.join(', '),
+            });
+            last = now;
+        };
+        webSocketHook.on(type, handler);
+        return { type, handler };
+    });
+
+    if (!start) {
+        console.warn('[Toolasha] No skill data yet — character has not finished loading.');
+    }
+    console.log(
+        `[Toolasha] Watching skill experience for ${seconds}s across ${TYPES.length} message types. ` +
+            'Run a labyrinth room now.'
+    );
+
+    return new Promise((resolve) => {
+        xpWatch = {
+            finish: () => {
+                for (const { type, handler } of handlers) webSocketHook.off(type, handler);
+                clearTimeout(xpWatch.timer);
+                xpWatch = null;
+
+                if (!rows.length) {
+                    console.log(
+                        '[Toolasha] Skill experience never changed. Either nothing was done, or the labyrinth ' +
+                            'credits experience through a message this was not listening to — in which case the ' +
+                            'room log cannot measure it this way and needs a different source.'
+                    );
+                } else {
+                    const byType = {};
+                    for (const row of rows) byType[row.message] = (byType[row.message] || 0) + row.gained;
+                    console.log('[Toolasha] Experience arrived on these message types:', byType);
+                    console.table(rows.slice(0, 60));
+                }
+                resolve(rows);
+            },
+            timer: setTimeout(() => xpWatch?.finish(), seconds * 1000),
+        };
+    });
+}
+
+/** Stop an experience watch early and print what it saw */
+export function stopLabXp() {
+    xpWatch?.finish();
+}
+
+export default { captureLab, stopCapture, watchLabXp, stopLabXp };
