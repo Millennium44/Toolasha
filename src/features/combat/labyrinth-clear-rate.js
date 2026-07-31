@@ -104,6 +104,33 @@ function clampSuccessChance(v) {
     return Math.min(1, Math.max(0.05, v));
 }
 
+/** Walking to a room. Paid on every entry, including the ones you lose. */
+const ROOM_TRAVEL_SECONDS = 1;
+
+/**
+ * A room's experience per hour, once the walk to it is paid for.
+ *
+ * The travel is charged per *entry*, not per clear, so a room you clear one
+ * time in five is walked to five times over — hence one second times the
+ * entries a clear takes. `expectedSeconds` covers the attempts themselves and
+ * nothing else, which is why the two terms are separate rather than one being
+ * folded into the other.
+ *
+ * Shared by fights and skilling rooms so their figures can be read side by
+ * side. They were computed differently for a while, and two numbers in one
+ * panel measuring different things is worse than either convention.
+ *
+ * @param {number} xpPerRoom - What clearing the room awards
+ * @param {number} expectedSeconds - Expected time in the room to get one clear
+ * @param {number} clearChance - 0..1
+ * @returns {number} Experience per hour, 0 when the room is never cleared
+ */
+function roomXpPerHour(xpPerRoom, expectedSeconds, clearChance) {
+    if (!(xpPerRoom > 0) || !(clearChance > 0)) return 0;
+    if (!Number.isFinite(expectedSeconds) || expectedSeconds <= 0) return 0;
+    return (xpPerRoom * 3600) / (expectedSeconds + ROOM_TRAVEL_SECONDS / clearChance);
+}
+
 /**
  * Compute the cheapest route from the cleared region (or the entrance) to the
  * floor exit over a flat labyrinth grid. Priorities, lexicographic: fewest
@@ -1711,18 +1738,7 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
-        // A room's award over the expected time to earn it, and nothing else.
-        //
-        // This used to add `1 / clearChance` seconds to the divisor: one second
-        // of room-entry overhead, amortised over the entries a clear takes.
-        // Defensible on its own, but combat rooms charge no such overhead, so
-        // the two figures sat in the same panel measuring different things —
-        // and the term grows without bound exactly where the comparison matters
-        // most, adding twenty seconds to a room cleared one time in twenty.
-        result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / result.expectedSeconds
-                : 0;
+        result.xpPerHour = roomXpPerHour(result.xpPerRoom, result.expectedSeconds, result.clearChance);
     }
 
     /**
@@ -1819,18 +1835,7 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
-        // A room's award over the expected time to earn it, and nothing else.
-        //
-        // This used to add `1 / clearChance` seconds to the divisor: one second
-        // of room-entry overhead, amortised over the entries a clear takes.
-        // Defensible on its own, but combat rooms charge no such overhead, so
-        // the two figures sat in the same panel measuring different things —
-        // and the term grows without bound exactly where the comparison matters
-        // most, adding twenty seconds to a room cleared one time in twenty.
-        result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / result.expectedSeconds
-                : 0;
+        result.xpPerHour = roomXpPerHour(result.xpPerRoom, result.expectedSeconds, result.clearChance);
     }
 
     buildResult(clearStats, actionSeconds) {
@@ -2321,12 +2326,12 @@ class LabyrinthClearRate {
                 halfWidth: interval.halfWidth,
                 hitTarget: !!simResult.labyStoppedOnPrecision,
                 // What clearing the room is worth, and what that works out to per
-                // hour once the attempts you lose on the way are paid for. A
-                // room you never clear earns nothing however long you fight it,
-                // which is exactly what an unreachable room is worth.
+                // hour once the attempts you lose on the way — and the walk to
+                // the room before each of them — are paid for. A room you never
+                // clear earns nothing however long you fight it, which is
+                // exactly what an unreachable room is worth.
                 xpPerRoom: xpPerClear,
-                xpPerHour:
-                    Number.isFinite(expectedSeconds) && expectedSeconds > 0 ? (xpPerClear * 3600) / expectedSeconds : 0,
+                xpPerHour: roomXpPerHour(xpPerClear, expectedSeconds, winRate),
             };
 
             // Don't cache 0% results: right after page load the loadout
