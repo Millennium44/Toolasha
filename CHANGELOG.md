@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Pin items in the alchemy picker
+
+- New setting, on by default: a **📌** on each item in the Alchemize Item list moves it to the front. The picker lists everything you own in whatever order the game keeps it, and the handful of items anyone actually feeds it are scattered through that — the alternative is typing the same filter every time.
+- **Kept per action.** Coinify, Decompose, Transmute and Unrefine each have their own list, because the same item means different things in each and one shared list would be the union of four unrelated shortlists.
+- **Pins reorder, they do not exempt.** A pinned item that does not match what you typed in the filter box stays hidden — the filter has to keep meaning what it says, or it stops being usable for finding anything else.
+- New pins go to the **end** of the list rather than the front, so adding one does not shuffle the one you reach for most.
+- Catalysts are untouched: that selector is a separate menu and pinning it was not asked for.
+- Finding the right menu is now shared with the item dimming feature rather than duplicated. The page carries several identical-looking item selectors — the catalyst and guild have their own — and the logic for telling them apart, including the portalled case and labels left mounted in hidden tabs, is fiddly enough to want exactly one copy of.
+- While there: the dimming feature matched items by exact CSS-module class names like `Item_item__2De2O`. The game regenerates those suffixes on every build, so it would have stopped working at the next patch and looked merely broken. It matches on the class prefix now.
+
 ### The labyrinth room header says "Attempt #2" rather than "try 2"
 
 - Matches how the room log and the tile badges already word it, and reads as a count rather than an instruction.

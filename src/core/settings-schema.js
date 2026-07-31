@@ -367,6 +367,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a button to see items ranked by profit or XP for each alchemy type.',
             },
+            alchemyItemPins: {
+                id: 'alchemyItemPins',
+                label: 'Alchemy panel: Pin items in the item picker',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
+            },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
                 label: 'Alchemy panel: Track and view transmute session history',

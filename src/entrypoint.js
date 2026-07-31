@@ -325,6 +325,13 @@ function registerFeatures() {
             customCheck: () => config.getSetting('alchemy_bestItems'),
         },
         {
+            key: 'alchemyItemPins',
+            name: 'Alchemy Item Pins',
+            category: 'Alchemy',
+            module: Actions.alchemyItemPins,
+            async: true,
+        },
+        {
             key: 'teaRecommendation',
             name: 'Tea Recommendation',
             category: 'Actions',
