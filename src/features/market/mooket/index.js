@@ -28,6 +28,7 @@ import storage from '../../../core/storage.js';
 import dataManager from '../../../core/data-manager.js';
 import marketAPI from '../../../api/marketplace.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
+import { createMutationWatcher } from '../../../utils/dom-observer-helpers.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
 import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
 import marketPriceStore from './market-price-store.js';
@@ -44,6 +45,7 @@ import {
 } from './market-watchlist.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
+const TAB_ID = 'mwi-market-history-tab';
 const PREFS_KEY = 'mooketPanelPrefs';
 const POLL_MS = 500;
 
@@ -51,7 +53,7 @@ const POLL_MS = 500;
 const SERIES = [
     { key: 'ask', label: 'Ask', color: '#f56c6c', dash: [] },
     { key: 'bid', label: 'Bid', color: '#67c23a', dash: [5, 5] },
-    { key: 'avg', label: 'Traded', color: '#e6a23c', dash: [2, 3] },
+    { key: 'avg', label: 'Avg', color: '#e6a23c', dash: [2, 3] },
 ];
 
 class MarketHistoryPanel {
@@ -64,7 +66,11 @@ class MarketHistoryPanel {
         this.chipRow = null;
         this.overlay = null;
         this.pinButton = null;
-        this.prefs = { x: 20, y: 90, w: 520, h: 300, days: 7, open: true, locked: false, mode: 'iconPrice' };
+        // Starts hidden. A panel that appears over the marketplace the moment
+        // you open it is in the way of the thing you opened.
+        this.prefs = { x: 20, y: 120, w: 520, h: 300, days: 7, open: false, locked: false, mode: 'iconPrice' };
+        this.tabButton = null;
+        this.tabWatcher = null;
         this.watchlist = [];
         this.current = null; // { itemHrid, enhancementLevel }
         this.shown = null; // what the chart is currently drawing
@@ -105,6 +111,15 @@ class MarketHistoryPanel {
 
         this.buildPanel();
         this.buildOverlay();
+
+        // The tab bar is rebuilt whenever the marketplace re-renders, so the
+        // button has to be put back rather than added once
+        this.tabWatcher = createMutationWatcher(document.body, () => this.ensureTabButton(), {
+            childList: true,
+            subtree: true,
+        });
+        this.cleanupRegistry.registerCleanup(() => this.tabWatcher?.());
+        this.ensureTabButton();
 
         const poll = setInterval(() => this.followMarketplace(), POLL_MS);
         this.cleanupRegistry.registerInterval(poll);
@@ -174,6 +189,62 @@ class MarketHistoryPanel {
         this.renderChips();
     }
 
+    /**
+     * A tab beside Market Listings that shows and hides the panel.
+     *
+     * Cloned from one of the game's own tabs so it looks like part of the bar
+     * rather than something bolted on, the same way Bulk Sell does it. The
+     * marketplace rebuilds the bar on every re-render, so this runs again and
+     * puts the tab back rather than assuming it survived.
+     */
+    ensureTabButton() {
+        const tabBar = this.findMarketTabBar();
+        if (!tabBar) {
+            this.tabButton = null;
+            return;
+        }
+        if (this.tabButton && tabBar.contains(this.tabButton)) return;
+
+        const reference = [...tabBar.children].find((tab) => tab.textContent.includes('Market Listings'));
+        if (!reference) return;
+
+        const tab = reference.cloneNode(true);
+        tab.id = TAB_ID;
+        tab.title = 'Show or hide the price history panel';
+        const badge = tab.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) badge.innerHTML = '<div style="text-align:center;"><div>History</div></div>';
+        else tab.textContent = 'History';
+
+        tab.classList.remove('Mui-selected');
+        tab.setAttribute('aria-selected', 'false');
+        tab.setAttribute('tabindex', '-1');
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.prefs.open = !this.prefs.open;
+            this.applyOpenState();
+            this.savePrefs();
+        });
+
+        tabBar.appendChild(tab);
+        this.tabButton = tab;
+        this.syncTabButton();
+    }
+
+    /** @returns {HTMLElement|null} The marketplace's own tab bar */
+    findMarketTabBar() {
+        for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+            if ([...tabBar.children].some((tab) => tab.textContent.includes('Market Listings'))) return tabBar;
+        }
+        return null;
+    }
+
+    /** Underline the tab while the panel is up, like an active tab */
+    syncTabButton() {
+        if (!this.tabButton) return;
+        this.tabButton.style.boxShadow = this.prefs.open ? 'inset 0 -2px 0 0 #90a6eb' : '';
+    }
+
     buildToolbar() {
         const bar = document.createElement('div');
         bar.style.cssText = 'display:flex; align-items:center; gap:4px; padding:3px 4px; background:rgba(0,0,0,0.25);';
@@ -190,8 +261,8 @@ class MarketHistoryPanel {
             return element;
         };
 
-        this.toggleButton = button('📈', 'Show or hide the chart', () => {
-            this.prefs.open = !this.prefs.open;
+        button('\u2715', 'Close the panel. Reopen it from the History tab.', () => {
+            this.prefs.open = false;
             this.applyOpenState();
             this.savePrefs();
         });
@@ -238,11 +309,9 @@ class MarketHistoryPanel {
 
     applyOpenState() {
         const open = this.prefs.open;
-        this.canvas.style.display = open ? 'block' : 'none';
-        this.panel.style.height = open ? `${this.prefs.h}px` : 'auto';
-        this.panel.style.resize = open ? 'both' : 'none';
-        this.toggleButton.textContent = open ? '📈' : '📉';
-        this.toggleButton.title = open ? 'Hide the chart' : 'Show the chart';
+        this.panel.style.display = open ? 'flex' : 'none';
+        this.panel.style.height = `${this.prefs.h}px`;
+        this.syncTabButton();
         if (open && this.current) this.showItem(this.current.itemHrid, this.current.enhancementLevel);
     }
 
@@ -528,7 +597,11 @@ class MarketHistoryPanel {
 
         const marketplace = document.querySelector('[class*="MarketplacePanel_marketplacePanel"]');
         const visible = !!(marketplace && marketplace.getClientRects().length);
-        this.panel.style.display = visible ? 'flex' : 'none';
+
+        // Off the marketplace there is no item to chart and nowhere to put the
+        // pin, so the panel goes with it — but coming back does not reopen a
+        // panel that was closed on purpose
+        this.panel.style.display = visible && this.prefs.open ? 'flex' : 'none';
         if (!visible) {
             this.pinButton.style.display = 'none';
             return;

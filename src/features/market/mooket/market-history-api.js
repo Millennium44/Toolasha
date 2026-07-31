@@ -6,14 +6,15 @@
  *
  * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
  *
- * The dataset exists because clients report the order books they open. Reading
- * it without ever contributing works and is the default here, but the honest
- * framing is that the history is only as good as what people send back, and
- * every reader is someone's missing data point.
+ * The dataset exists because clients report the order books they open, so
+ * reading and contributing are one switch rather than two. A version that let
+ * you read without ever giving anything back would work perfectly and quietly
+ * drain a shared resource — the history is only as good as what people send,
+ * and a reader who contributes nothing is someone else's missing data point.
  *
- * Both directions talk to a third party, so both are off until turned on and
- * neither is quiet about what it sends: reading tells the server which items you
- * look up, contributing tells it the books you opened and when.
+ * Both directions talk to a third party, which is why the switch starts off and
+ * why the setting says plainly what each does: reading tells the server which
+ * items you look up, contributing tells it the books you opened and when.
  */
 
 import config from '../../../core/config.js';
@@ -43,9 +44,13 @@ class MarketHistoryAPI {
         return config.getSetting('market_pooledHistory') === true;
     }
 
-    /** @returns {boolean} Whether observed books may be sent back */
+    /**
+     * @returns {boolean} Whether observed books may be sent back. The same
+     *   switch as reading: taking from a pooled dataset without feeding it is
+     *   what empties it.
+     */
     get contributing() {
-        return this.enabled && config.getSetting('market_pooledHistoryContribute') === true;
+        return this.enabled;
     }
 
     /**
