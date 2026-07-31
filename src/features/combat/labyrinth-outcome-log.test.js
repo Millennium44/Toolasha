@@ -190,6 +190,7 @@ describe('foldRoomResult', () => {
         subjectHrid: '/skills/milking',
         roomLevel: 240,
         kind: 'skilling',
+        cleared: true,
         seconds: 60,
         xp: 12000,
         actions: 20,
@@ -218,6 +219,22 @@ describe('foldRoomResult', () => {
         expect(totals[KEY]).toMatchObject({ attempts: 4, rooms: 1, seconds: 60 });
     });
 
+    test('a room given up on contributes its time but no finished room', () => {
+        // A labyrinth room pays only on completion, so an abandoned one is time
+        // spent for nothing — dropping it would raise the measured rate every
+        // time you walked away from a room
+        const totals = foldRoomResult(
+            foldRoomResult({}, result({ cleared: true })),
+            result({ cleared: false, seconds: 120, xp: 0, actions: 0, successes: 0, doubles: 0 })
+        );
+        expect(totals[KEY]).toMatchObject({ rooms: 2, seconds: 180, clearedRooms: 1, clearedSeconds: 60 });
+
+        const measured = roomMeasurements(totals[KEY]);
+        // 60s to finish a room, but 180s of real time behind the experience
+        expect(measured.secondsPerRoom).toBe(60);
+        expect(measured.xpPerHour).toBeCloseTo(240_000, 6);
+    });
+
     test('the newest prediction replaces the last, rather than averaging with it', () => {
         // Averaging today's prediction with one made for gear since replaced
         // produces a number nothing ever claimed
@@ -240,9 +257,15 @@ describe('roomMeasurements', () => {
         expect(measured.xpPerHour).toBe(720000);
     });
 
-    test('says nothing about a room nobody finished', () => {
+    test('says nothing about a room never entered', () => {
         expect(roomMeasurements({ attempts: 9, clears: 0 })).toBeNull();
         expect(roomMeasurements(null)).toBeNull();
+    });
+
+    test('a record written before the split reads its old totals as cleared', () => {
+        const measured = roomMeasurements({ rooms: 2, seconds: 120, xp: 24000 });
+        expect(measured.secondsPerRoom).toBe(60);
+        expect(measured.clearedRooms).toBe(2);
     });
 
     test('no actions means no rate, rather than a rate of zero', () => {

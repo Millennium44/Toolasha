@@ -165,10 +165,10 @@ class LabyrinthRoomLogs {
     /**
      * Total experience across every skill, right now.
      *
-     * Measured rather than derived. The calculator has a formula for the
-     * experience a room is worth, but a formula is the thing being checked, and
-     * a combat room has no formula here at all. Summing every skill also picks
-     * up the combat experience a fight spreads over several of them.
+     * Measured rather than derived. The calculator has a formula for what a
+     * room is worth, but that formula is one of the things being checked here,
+     * so reading it back would only confirm itself. Summing every skill also
+     * picks up the experience a fight spreads over several of them.
      *
      * @returns {number|null} null when character data has not arrived
      */
@@ -775,15 +775,17 @@ class LabyrinthRoomLogs {
     /**
      * Hand a finished room to the long-term record.
      *
-     * Only rooms that were actually finished are reported. A room you walked
-     * out of took as long as you stayed, not as long as it needed, and folding
-     * that into an average duration would make every room look faster the more
-     * often you gave up on one.
+     * Rooms you gave up on are reported too. A labyrinth room pays only when it
+     * is completed, so an abandoned one is time spent for nothing — and dropping
+     * it would raise the measured experience per hour every time you walked away
+     * from a room. The record keeps its duration apart from the finished rooms'
+     * so it cannot distort what a room takes to complete, which is a different
+     * question.
      *
      * @param {Object} session - The finalized session
      */
     reportRoomResult(session) {
-        if (!session.completed || !session.subjectHrid || !this.simSource?.record) return;
+        if (!session.subjectHrid || !this.simSource?.record) return;
 
         const seconds = Math.max(0, (session.endedAt - session.startedAt) / 1000);
         const skilling = session.mode !== 'combat';
@@ -793,6 +795,7 @@ class LabyrinthRoomLogs {
                 subjectHrid: session.subjectHrid,
                 roomLevel: session.roomLevel,
                 kind: skilling ? 'skilling' : 'combat',
+                cleared: !!session.completed,
                 seconds,
                 xp: session.xp,
                 actions: skilling ? session.actionCount : 0,
