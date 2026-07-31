@@ -3047,7 +3047,7 @@ class LabyrinthClearRate {
         const actionText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
         // Only past the first, since every room is on its first try until it is not
         const tries = this.currentRoomAttempts();
-        const tryText = tries > 1 ? ` | try ${tries}` : '';
+        const tryText = tries > 1 ? ` | Attempt #${tries}` : '';
         if (estimate.isEnhancing) {
             node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
         } else {
