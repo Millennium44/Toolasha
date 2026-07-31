@@ -45,6 +45,17 @@ const TAB_ID = 'mwi-lab-logs-tab';
  */
 const FIGHT_STALE_MS = 4000;
 
+/**
+ * How long a finished room stays open to experience still arriving for it.
+ *
+ * A room ends when the floor says the path moved on, and the experience it
+ * earned is a separate message that need not have arrived by then. Sampling the
+ * skill totals at the moment of finalizing therefore caught nothing at all: the
+ * room was closed before it had been paid. The room stays claimable for a few
+ * seconds, and only then goes into the long-term record.
+ */
+const XP_GRACE_MS = 4000;
+
 const OUTCOME_COLORS = {
     success: '#3ddc84',
     fail: '#ff6464',
@@ -139,6 +150,10 @@ class LabyrinthRoomLogs {
         this.resetArmed = false;
         this.tabButton = null;
         this.unregisterTab = null;
+        this.xpHandlers = [];
+        this.xpBaseline = null;
+        this.pendingReport = null;
+        this.reportTimer = null;
     }
 
     /** How many rooms of history to keep */
@@ -161,6 +176,36 @@ class LabyrinthRoomLogs {
         const skills = dataManager.getSkills();
         if (!Array.isArray(skills)) return null;
         return skills.reduce((sum, skill) => sum + (Number(skill?.experience) || 0), 0);
+    }
+
+    /**
+     * Credit experience that has just landed to the room that earned it.
+     *
+     * Differences against a rolling baseline rather than a snapshot taken per
+     * room, because the two ends of a room are not the two ends of its payment.
+     * Experience arriving while no room is open — outside the labyrinth, or in
+     * the gap between rooms — still advances the baseline so it cannot be
+     * mistaken for the next room's.
+     */
+    absorbExperience() {
+        const total = this.totalExperience();
+        if (!Number.isFinite(total)) return;
+        if (!Number.isFinite(this.xpBaseline)) {
+            this.xpBaseline = total;
+            return;
+        }
+
+        const gained = total - this.xpBaseline;
+        this.xpBaseline = total;
+        if (gained <= 0) return;
+
+        const pending = this.pendingReport;
+        const target = this.activeSession || (pending && Date.now() - pending.endedAt < XP_GRACE_MS ? pending : null);
+        if (!target) return;
+
+        target.xp = Math.max(0, (Number(target.xp) || 0) + gained);
+        this.persist();
+        this.renderIfOpen();
     }
 
     /**
@@ -196,6 +241,17 @@ class LabyrinthRoomLogs {
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
 
+        // Experience is credited by its own messages, on their own schedule.
+        // Watching for it to land and attributing it to whichever room is open
+        // works whichever message brings it and whether it turns up during the
+        // room or a moment after it.
+        this.xpBaseline = this.totalExperience();
+        const absorb = () => this.absorbExperience();
+        for (const type of ['action_completed', 'skills_updated', 'labyrinth_updated']) {
+            webSocketHook.on(type, absorb);
+            this.xpHandlers.push([type, absorb]);
+        }
+
         this.unregisterTab = domObserver.onClass('LabyrinthRoomLogsTab', 'LabyrinthPanel_tabsComponentContainer', () =>
             this.ensureTabButton()
         );
@@ -216,6 +272,9 @@ class LabyrinthRoomLogs {
             webSocketHook.off('battle_updated', this.battleHandler);
             this.battleHandler = null;
         }
+        for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
+        this.xpHandlers = [];
+        this.flushReport();
         if (this.unregisterTab) {
             this.unregisterTab();
             this.unregisterTab = null;
@@ -370,7 +429,6 @@ class LabyrinthRoomLogs {
             skillName: this.prettySkillName(skillHrid, mode),
             roomLevel,
             forecast: this.forecastFor(skillHrid, roomLevel, 'skilling'),
-            xpAtStart: this.totalExperience(),
             xp: 0,
             actionCount: 0,
             successCount: 0,
@@ -599,7 +657,6 @@ class LabyrinthRoomLogs {
             roomLevel,
             forecast,
             predicted: forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null,
-            xpAtStart: this.totalExperience(),
             xp: 0,
             entryCount: Math.max(0, Math.floor(Number(room.entryCount) || 0)),
             startedAt: Date.now(),
@@ -691,16 +748,28 @@ class LabyrinthRoomLogs {
         }
         delete session.lastSnapshot;
 
-        const after = this.totalExperience();
-        if (Number.isFinite(after) && Number.isFinite(session.xpAtStart)) {
-            session.xp = Math.max(0, after - session.xpAtStart);
-        }
-        this.reportRoomResult(session);
+        // Held back rather than reported now: the experience this room earned
+        // may not have been credited yet, and a record written before the
+        // payment arrives is a record of a room that earned nothing
+        this.flushReport();
+        this.pendingReport = session;
+        this.reportTimer = setTimeout(() => this.flushReport(), XP_GRACE_MS);
 
         this.sessions.unshift(session);
         this.sessions = this.sessions.slice(0, this.logSize());
         this.persist();
         this.renderIfOpen();
+    }
+
+    /** Report whichever room has been waiting for its experience, if any */
+    flushReport() {
+        if (this.reportTimer) {
+            clearTimeout(this.reportTimer);
+            this.reportTimer = null;
+        }
+        const session = this.pendingReport;
+        this.pendingReport = null;
+        if (session) this.reportRoomResult(session);
     }
 
     /**
