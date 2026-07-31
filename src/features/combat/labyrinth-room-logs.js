@@ -464,9 +464,15 @@ class LabyrinthRoomLogs {
 
     /**
      * Whether the floor says a room was cleared.
+     *
+     * A cleared room is stripped of its monster, so demanding that the square
+     * still name the fight you just had is demanding the one thing a won room
+     * cannot do — it would answer "cannot say" for exactly the wins it is being
+     * asked about. A square naming a *different* monster is a different room on
+     * a floor that has moved on, and that one really is unanswerable.
+     *
      * @param {string} roomKey - "x,y"
-     * @param {string} monsterHrid - The monster that was there, so a floor that
-     *   has moved on is not mistaken for an answer
+     * @param {string} monsterHrid - The monster that was there
      * @returns {boolean|undefined} undefined when the floor cannot say
      */
     roomCleared(roomKey, monsterHrid) {
@@ -475,7 +481,8 @@ class LabyrinthRoomLogs {
             .map(Number);
         if (!Number.isInteger(x) || !Number.isInteger(y)) return undefined;
         const room = this.roomData?.[y]?.[x];
-        if (!room || room.monsterHrid !== monsterHrid) return undefined;
+        if (!room) return undefined;
+        if (room.monsterHrid && room.monsterHrid !== monsterHrid) return undefined;
         return !!room.isCleared;
     }
 

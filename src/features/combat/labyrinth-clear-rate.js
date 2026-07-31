@@ -12,7 +12,7 @@ import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from 
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import {
-    readCombatRooms,
+    readFloorRooms,
     foldFloorOutcomes,
     compareToPrediction,
     outcomeKey,
@@ -64,6 +64,8 @@ const MIN_SIM_TRIALS = 100;
 const MAX_SIM_TRIALS = 20000;
 /** Deciding a side needs far fewer fights than measuring a rate */
 const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
+/** Bumped when the stored shape changes; older documents are read as bare totals */
+const OUTCOME_STORAGE_VERSION = 2;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
@@ -971,10 +973,49 @@ class LabyrinthClearRate {
         if (this._outcomesLoaded) return;
         this._outcomesLoaded = true;
         try {
-            this._outcomes = (await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {})) || {};
+            const stored = (await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {})) || {};
+            // Anything written before the stripped-room fix counted defeats and
+            // nothing else — a cleared room stops naming its monster, so the
+            // scan that looked for one never saw a single win. Those totals are
+            // not a small sample of the truth, they are every loss and no
+            // victory, so they are dropped rather than carried forward and
+            // quietly poisoning every verdict from here on.
+            if (stored.version === OUTCOME_STORAGE_VERSION) {
+                this._outcomes = stored.totals || {};
+                this._outcomesSeen = stored.seen || {};
+            } else {
+                this._outcomes = {};
+                this._outcomesSeen = {};
+            }
         } catch (error) {
             console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
         }
+    }
+
+    /** Write the record and the per-room state it is counted against */
+    async saveOutcomes() {
+        try {
+            await storage.setJSON(
+                OUTCOME_STORAGE_KEY,
+                { version: OUTCOME_STORAGE_VERSION, totals: this._outcomes, seen: this._outcomesSeen },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
+        }
+    }
+
+    /**
+     * Which floor of which run the grid in hand belongs to.
+     *
+     * Attempts are counted as differences against the last sighting of each
+     * square, so the sighting has to know which floor it was of. Coordinates
+     * repeat on every floor.
+     * @param {Object} labyrinth - The labyrinth payload
+     * @returns {string}
+     */
+    outcomeScope(labyrinth) {
+        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
     }
 
     /** The rate the sim is currently claiming for a room, or null */
@@ -983,28 +1024,73 @@ class LabyrinthClearRate {
         return cached && Number.isFinite(cached.clearChance) ? cached.clearChance : null;
     }
 
-    /** Fold the current floor into the running record of how fights went */
-    async recordOutcomes(roomData) {
+    /**
+     * Fold the current floor into the running record of how fights went.
+     * @param {Object} labyrinth - The labyrinth payload, for its grid and floor
+     */
+    async recordOutcomes(labyrinth) {
+        const roomData = labyrinth?.roomData;
         if (!roomData) return;
         await this.loadOutcomes();
 
-        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readCombatRooms(roomData), (hrid, level) =>
-            this.predictedClearChance(hrid, level)
-        );
+        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readFloorRooms(roomData), {
+            scope: this.outcomeScope(labyrinth),
+            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+        });
         this._outcomes = folded.totals;
         this._outcomesSeen = folded.seen;
-        if (!folded.changed) return;
 
-        try {
-            await storage.setJSON(OUTCOME_STORAGE_KEY, this._outcomes, 'settings');
-        } catch (error) {
-            console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
-        }
+        if (!folded.changed && !folded.seenChanged) return;
+        await this.saveOutcomes();
     }
 
     /** What was actually observed for a monster at a level, if anything */
     observedOutcome(monsterHrid, roomLevel) {
         return this._outcomes[outcomeKey(monsterHrid, roomLevel)] || null;
+    }
+
+    /**
+     * Print the current floor exactly as the server describes it, so what a
+     * room looks like before and after it is cleared can be read rather than
+     * inferred.
+     *
+     * Console: `Toolasha.Debug.labRooms()`
+     * @returns {Array<Object>} One row per room cell
+     */
+    labRooms() {
+        const rows = [];
+        const grid = this.roomData;
+        for (let y = 0; Array.isArray(grid) && y < grid.length; y++) {
+            for (let x = 0; Array.isArray(grid[y]) && x < grid[y].length; x++) {
+                const room = grid[y][x];
+                if (!room) continue;
+                rows.push({
+                    coord: `${x},${y}`,
+                    monster:
+                        String(room.monsterHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    skill:
+                        String(room.skillHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    type:
+                        String(room.roomType || '')
+                            .split('/')
+                            .pop() || '',
+                    level: room.recommendedLevel ?? '',
+                    entries: room.entryCount ?? '',
+                    cleared: !!room.isCleared,
+                    keys: Object.keys(room).join(' '),
+                });
+            }
+        }
+        console.log(
+            `[Toolasha] Floor ${this.currentFloor ?? '?'}: ${rows.length} rooms. ` +
+                'Compare a cleared row against an uncleared one — "keys" shows what the server still sends for each.'
+        );
+        console.table(rows);
+        return rows;
     }
 
     /**
@@ -1025,11 +1111,7 @@ class LabyrinthClearRate {
         this._outcomes = {};
         this._outcomesSeen = {};
         this._outcomesLoaded = true;
-        try {
-            await storage.setJSON(OUTCOME_STORAGE_KEY, {}, 'settings');
-        } catch (error) {
-            console.error('[LabyrinthClearRate] Clearing fight outcomes failed:', error);
-        }
+        await this.saveOutcomes();
     }
 
     /**
@@ -1141,7 +1223,7 @@ class LabyrinthClearRate {
 
     onLabyrinthUpdated(data) {
         this._pathData = data.labyrinth?.pathData ?? null;
-        this.recordOutcomes(data.labyrinth?.roomData);
+        this.recordOutcomes(data.labyrinth);
         const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
