@@ -202,10 +202,13 @@ class BulkSellAssistant {
             'by a mis-click. Items you also filed in a tab above the selected one are kept, not sold.\n\n' +
             'Click to show or hide the panel. Hiding it never stops a run.';
         const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        // The ⧉ marks it as opening a panel rather than switching the view.
+        // Borrowing the game's tab styling made it read as a fifth place to
+        // navigate to, and clicking it twice looked broken.
         if (badge) {
-            badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
+            badge.innerHTML = '<div style="text-align: center;"><div>\u29c9 Bulk Sell</div></div>';
         } else {
-            button.textContent = 'Bulk Sell';
+            button.textContent = '\u29c9 Bulk Sell';
         }
         button.classList.remove('Mui-selected');
         button.setAttribute('aria-selected', 'false');
@@ -242,10 +245,15 @@ class BulkSellAssistant {
         this._syncButton();
     }
 
-    /** Underline the tab while the panel is open, like an active tab */
+    /**
+     * Show whether the panel is up: dimmed when closed, lit when open. An
+     * underline alone is two pixels at the bottom edge of a tab that looks like
+     * every other tab, which is not a state most people will notice.
+     */
     _syncButton() {
         if (!this.toggleBtn) return;
         this.toggleBtn.style.boxShadow = this.panelVisible ? 'inset 0 -2px 0 0 #4a9eff' : '';
+        this.toggleBtn.style.opacity = this.panelVisible ? '1' : '0.6';
     }
 
     _removeButton() {

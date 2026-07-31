@@ -203,17 +203,27 @@ class MarketHistoryPanel {
             this.tabButton = null;
             return;
         }
-        if (this.tabButton && tabBar.contains(this.tabButton)) return;
+        if (this.tabButton && tabBar.contains(this.tabButton)) {
+            // Kept at the end. Every other script inserts its tab relative to an
+            // anchor, so one added after this one lands in front of it; moving
+            // back only when it is not already last leaves nothing to fight over.
+            if (tabBar.lastElementChild !== this.tabButton) tabBar.appendChild(this.tabButton);
+            return;
+        }
 
         const reference = [...tabBar.children].find((tab) => tab.textContent.includes('Market Listings'));
         if (!reference) return;
 
         const tab = reference.cloneNode(true);
         tab.id = TAB_ID;
-        tab.title = 'Show or hide the price history panel';
+        tab.title =
+            'Show or hide the price history panel. This opens a panel over the page rather than switching to a view.';
         const badge = tab.querySelector('[class*="TabsComponent_badge"]');
-        if (badge) badge.innerHTML = '<div style="text-align:center;"><div>History</div></div>';
-        else tab.textContent = 'History';
+        // The ⧉ marks it as opening a panel rather than switching the view.
+        // Without it a toggle that borrows the game's tab styling reads as a
+        // fifth place to navigate to, and clicking it twice looks broken.
+        if (badge) badge.innerHTML = '<div style="text-align:center;"><div>\u29c9 History</div></div>';
+        else tab.textContent = '\u29c9 History';
 
         tab.classList.remove('Mui-selected');
         tab.setAttribute('aria-selected', 'false');
@@ -239,10 +249,17 @@ class MarketHistoryPanel {
         return null;
     }
 
-    /** Underline the tab while the panel is up, like an active tab */
+    /**
+     * Show whether the panel is up.
+     *
+     * A dimmed tab when closed and a lit one when open, rather than only an
+     * underline: the tab borrows the game's own styling, and a state shown by
+     * two pixels at the bottom edge is not a state most people will notice.
+     */
     syncTabButton() {
         if (!this.tabButton) return;
         this.tabButton.style.boxShadow = this.prefs.open ? 'inset 0 -2px 0 0 #90a6eb' : '';
+        this.tabButton.style.opacity = this.prefs.open ? '1' : '0.6';
     }
 
     buildToolbar() {
