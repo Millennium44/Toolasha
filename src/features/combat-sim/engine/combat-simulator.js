@@ -1,4 +1,5 @@
 import { random, syncEncounterRng } from './rng.js';
+import { hasConverged } from './wilson.js';
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -48,6 +49,8 @@ class CombatSimulator {
         this.simResult = new SimResult(zone, players.length);
         this.allPlayersDead = false;
         this.encounterIndex = 0;
+        this.stopRule = null;
+        this.converged = false;
 
         this.wipeLogs = {
             buffer: new Array(200),
@@ -164,18 +167,27 @@ class CombatSimulator {
 
     /**
      * Run the combat simulation synchronously.
+     *
+     * A labyrinth run can also stop once its win rate is pinned down closely
+     * enough (see stopRule), which is usually long before the time limit and
+     * occasionally much later. Time remains the outer bound either way.
+     *
      * @param {number} simulationTimeLimit - Simulation time limit in nanoseconds
+     * @param {Object} [stopRule] - Labyrinth precision rule: targetHalfWidth,
+     *   minTrials, maxTrials. Ignored outside labyrinth runs.
      * @returns {SimResult}
      */
-    simulate(simulationTimeLimit) {
+    simulate(simulationTimeLimit, stopRule = null) {
         this.reset();
+        this.stopRule = this.labyrinth && stopRule?.targetHalfWidth > 0 ? stopRule : null;
+        this.converged = false;
 
         let ticks = 0;
 
         const combatStartEvent = new CombatStartEvent(0);
         this.eventQueue.addEvent(combatStartEvent);
 
-        while (this.simulationTime < simulationTimeLimit) {
+        while (this.simulationTime < simulationTimeLimit && !this.converged) {
             const nextEvent = this.eventQueue.getNextEvent();
             this.processEvent(nextEvent);
 
@@ -214,7 +226,11 @@ class CombatSimulator {
         // Labyrinth result tracking
         if (this.labyrinth) {
             this.simResult.isLabyrinth = true;
-            this.simResult.labyAttemptCount = this.labyrinth.attemptCount;
+            // The attempt in progress when the run stopped never resolved, and
+            // counting it would score it a loss: attemptCount rises when a
+            // monster spawns, while a win is only recorded when one dies.
+            this.simResult.labyAttemptCount = Math.max(0, this.labyrinth.attemptCount - 1);
+            this.simResult.labyStoppedOnPrecision = this.converged;
             this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;
             this.simResult.roomLevel = this.labyrinth.roomLevel;
         }
@@ -366,6 +382,13 @@ class CombatSimulator {
         }
 
         if (this.labyrinth) {
+            // Decided here rather than in the loop: a monster spawning is the
+            // one moment when every attempt so far has resolved, so stopping on
+            // it leaves no half-fought trial to distort the rate. The attempt
+            // just spawned is discarded by the count.
+            if (this.stopRule && hasConverged(this.simResult.encounters, this.labyrinth.attemptCount, this.stopRule)) {
+                this.converged = true;
+            }
             this.enemies = this.labyrinth.getMonster();
             this.labyrinth.updateEncounterStartTime(this.simulationTime);
         } else if (!this.zone.isDungeon) {

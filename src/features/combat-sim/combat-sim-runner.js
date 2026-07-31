@@ -441,6 +441,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         roomLevel,
         crates,
         hours,
+        precision,
         communityBuffs,
         labyrinthCombatBuffs,
         seed,
@@ -470,6 +471,8 @@ export async function runLabyrinthSimulation(params, onProgress) {
             roomLevel,
             crates: crates || [],
         },
+        // Time is the ceiling; precision is what usually ends the run
+        precision: precision || null,
         seed: deriveSeed(seed, 0),
     };
 
