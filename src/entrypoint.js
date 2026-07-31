@@ -107,6 +107,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketplaceBadgeFilter',
+            name: 'Marketplace Badge Filter',
+            category: 'Market',
+            module: Market.marketplaceBadgeFilter,
+            async: false,
+        },
+        {
             key: 'queueLengthEstimator',
             name: 'Queue Length Estimator',
             category: 'Market',

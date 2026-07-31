@@ -17,6 +17,9 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
+
+/** Rows here are finished trades, not working orders. Markers are told so. */
+const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
 
 class MarketHistoryViewer {
@@ -1427,8 +1430,11 @@ class MarketHistoryViewer {
                 for (const marker of listingMarkers.all()) {
                     const cell = document.createElement('td');
                     cell.style.cssText = 'padding: 4px 4px; text-align: center;';
-                    const state = markerStateFor(marker, listing, (name, error) =>
-                        console.error(`[MarketHistory] Listing marker "${name}" failed:`, error)
+                    const state = markerStateFor(
+                        marker,
+                        listing,
+                        (name, error) => console.error(`[MarketHistory] Listing marker "${name}" failed:`, error),
+                        HISTORY_SURFACE
                     );
                     if (state) {
                         const button = document.createElement('button');
@@ -1440,7 +1446,7 @@ class MarketHistoryViewer {
                         button.addEventListener('click', async (e) => {
                             e.stopPropagation();
                             try {
-                                await marker.onToggle(listing);
+                                await marker.onToggle(listing, HISTORY_SURFACE);
                             } catch (error) {
                                 console.error(`[MarketHistory] Listing marker "${marker.name}" toggle failed:`, error);
                             }
