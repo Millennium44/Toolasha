@@ -2264,6 +2264,15 @@ class LabyrinthClearRate {
             // number of fights behind it, and that number now varies by room
             const interval = wilsonInterval(wins, attempts);
 
+            // Experience comes out of the simulation itself rather than a
+            // formula. A skilling room's experience is a closed-form function of
+            // its level, but a fight earns it by landing hits, so a room you
+            // usually lose still pays and a room you lose at the two-minute mark
+            // pays more than one you lose in twenty seconds. Only the replayed
+            // fights know that, and they have already been run.
+            const xpBySkill = simResult.experienceGained?.[dto.hrid || 'player1'] || {};
+            const totalXp = Object.values(xpBySkill).reduce((sum, value) => sum + (Number(value) || 0), 0);
+
             const result = {
                 clearChance: winRate,
                 expectedSeconds: winRate > 0 ? avgTime / winRate : Infinity,
@@ -2278,6 +2287,10 @@ class LabyrinthClearRate {
                 trials: attempts,
                 halfWidth: interval.halfWidth,
                 hitTarget: !!simResult.labyStoppedOnPrecision,
+                // Per entry into the room, won or lost — which is what an entry
+                // actually costs you and actually earns you
+                xpPerRoom: attempts > 0 ? totalXp / attempts : 0,
+                xpPerHour: totalTime > 0 ? (totalXp / totalTime) * 3600 : 0,
             };
 
             // Don't cache 0% results: right after page load the loadout
@@ -3314,16 +3327,6 @@ class LabyrinthClearRate {
         clearButton.addEventListener('click', () => this.clearRecommendations());
         container.appendChild(clearButton);
 
-        if (config.getSetting('labyrinthRoomLogs')) {
-            const logsButton = document.createElement('button');
-            logsButton.textContent = 'Logs';
-            logsButton.style.cssText =
-                'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(77,151,255,0.95); ' +
-                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
-            logsButton.addEventListener('click', () => labyrinthRoomLogs.togglePanel());
-            container.appendChild(logsButton);
-        }
-
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
         status.style.cssText = 'font-size:10px; color:#9ab0d8;';
@@ -4326,6 +4329,17 @@ class LabyrinthClearRate {
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
+
+        // Per entry rather than per clear. A fight earns experience by landing
+        // hits, so a room you usually lose still pays — and quoting only what a
+        // win is worth would make a room you clear 5% of the time look like it
+        // returns nothing at all.
+        if (result.xpPerRoom > 0) {
+            addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
+        }
+        if (result.xpPerHour > 0) {
+            addRow('EXP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
         }
 
         // How the fight has actually gone, which is the only thing that can
