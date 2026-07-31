@@ -15,6 +15,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Fixed: the action bar stayed narrow in the labyrinth
+
+- Deciding the bar's width rode on looking the running action up by the name in the header — and a labyrinth room's header reads `Labyrinth - Mimic Lv.252`, which is not the name of any action, so the lookup found nothing and the width was never applied. The bar then showed whatever width the previous action had left behind, which is why it seemed to come and go. Width is now decided from the action queue's own type rather than from the header text, so it no longer depends on a name match at all. The earlier fix — keeping script annotations out of that name — was needed too, but was not the whole story.
+
+### Diagnostic for guild XP tracking
+
+- **`Toolasha.Debug.guildXp()`** prints how many XP samples are held per guild and how far apart they are. An XP/h column needs two readings, the guild leaderboard refreshes only every 20 minutes, and samples are only taken while the panel is open — so a blank column can mean "not enough readings yet" or "the readings never arrived", and those need telling apart before anything is changed.
+
 ### The live combat clear chance now replays the fight instead of extrapolating it
 
 - During a labyrinth fight, the readout is computed by **replaying that exact fight 400 times** through the combat engine — both sides rewound to their current health, the room timer already part-spent — and counting how many replays end in a clear. Each replay covers only the seconds the fight has left, so the whole thing costs a fraction of a tile badge's simulation.
