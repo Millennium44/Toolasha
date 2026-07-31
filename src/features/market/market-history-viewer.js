@@ -22,6 +22,7 @@ class MarketHistoryViewer {
     constructor() {
         this.isInitialized = false;
         this.modal = null;
+        this.unsubscribeMarkers = null;
         this.listings = [];
         this.filteredListings = [];
         this.currentPage = 1;
@@ -87,6 +88,14 @@ class MarketHistoryViewer {
 
         // Load saved filters
         await this.loadFilters();
+
+        // A marker registered after this table was built would otherwise not
+        // appear until it was next opened — and the scripts that register them
+        // load after this one does, so that is the ordinary case rather than
+        // the exception
+        this.unsubscribeMarkers = listingMarkers.onChange(() => {
+            if (this.modal && this.modal.style.display !== 'none') this.renderTable();
+        });
 
         // Add marketplace tab
         this.addMarketplaceTab();
@@ -2841,6 +2850,11 @@ class MarketHistoryViewer {
      * Disable the feature
      */
     disable() {
+        if (this.unsubscribeMarkers) {
+            this.unsubscribeMarkers();
+            this.unsubscribeMarkers = null;
+        }
+
         // Disconnect the marketplace-tab watcher and remove the injected tab
         // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
         if (this.tabCleanupObserver) {
