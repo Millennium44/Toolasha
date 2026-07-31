@@ -142,10 +142,10 @@ describe('attachSkillingWhatIfs', () => {
         expect(result.nextLevelClearChance).toBeLessThanOrEqual(1);
         expect(result.speedTierClearChance).toBeGreaterThanOrEqual(result.clearChance - 1e-9);
         expect(result.speedDelta).toBeGreaterThanOrEqual(0);
-        // Time in the room, plus a second of travel per entry — a room cleared
-        // 3 times in 5 is walked to 5/3 times per clear. Combat rooms are
-        // charged the same way, so the two figures can be read side by side.
-        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / (90 + 1 / 0.6), 6);
+        // Time in the room, plus one second of travel to reach it. Retries
+        // happen where you stand, so a room failed four times is still only
+        // walked to once. Combat rooms are charged the same way.
+        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / 91, 6);
     });
 
     test('efficiency tier reflects one fewer required progress unit', () => {

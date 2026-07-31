@@ -104,17 +104,16 @@ function clampSuccessChance(v) {
     return Math.min(1, Math.max(0.05, v));
 }
 
-/** Walking to a room. Paid on every entry, including the ones you lose. */
+/** Walking to a room. Retries happen where you stand, so this is paid once. */
 const ROOM_TRAVEL_SECONDS = 1;
 
 /**
  * A room's experience per hour, once the walk to it is paid for.
  *
- * The travel is charged per *entry*, not per clear, so a room you clear one
- * time in five is walked to five times over — hence one second times the
- * entries a clear takes. `expectedSeconds` covers the attempts themselves and
- * nothing else, which is why the two terms are separate rather than one being
- * folded into the other.
+ * Charged once per room rather than once per attempt: back-to-back retries
+ * happen where you are already standing, so failing a room five times still
+ * only involves walking to it once. `expectedSeconds` covers the attempts
+ * themselves, which is why the two are separate terms.
  *
  * Shared by fights and skilling rooms so their figures can be read side by
  * side. They were computed differently for a while, and two numbers in one
@@ -128,7 +127,7 @@ const ROOM_TRAVEL_SECONDS = 1;
 function roomXpPerHour(xpPerRoom, expectedSeconds, clearChance) {
     if (!(xpPerRoom > 0) || !(clearChance > 0)) return 0;
     if (!Number.isFinite(expectedSeconds) || expectedSeconds <= 0) return 0;
-    return (xpPerRoom * 3600) / (expectedSeconds + ROOM_TRAVEL_SECONDS / clearChance);
+    return (xpPerRoom * 3600) / (expectedSeconds + ROOM_TRAVEL_SECONDS);
 }
 
 /**

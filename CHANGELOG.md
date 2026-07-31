@@ -6,11 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
-### Combat EXP / Hour now pays for the walk to the room, like skilling always did
+### EXP / Hour pays for the walk to a room, once, on every room type
 
-- Skilling and enhancing rooms charged **one second of travel per entry** — a room you clear one time in five is walked to five times over, so the second is amortised across the entries a clear takes. Combat rooms charged nothing, so the two figures sat in the same panel measuring different things.
-- Combat now charges it too, through the same shared calculation, so the numbers can be read side by side. Combat figures drop slightly, and further the harder the room: a room cleared one time in twenty pays twenty seconds of walking per clear.
-- Skilling and enhancing figures are unchanged from before this branch.
+- Combat rooms charged nothing for travel while skilling and enhancing rooms did, so the two figures sat in the same panel measuring different things. Both now go through one shared calculation and can be read side by side.
+- The travel second is charged **once per room**, not once per attempt: back-to-back retries happen where you are already standing, so failing a room five times still only involves walking to it once. It was previously amortised over the attempts a clear takes, which charged a room cleared one time in twenty for twenty walks it never made.
+- Net effect: combat figures drop by a hair, and hard skilling rooms go **up** — a room cleared one time in twenty was being charged twenty seconds of imaginary walking and is now charged one.
 
 ### Combat experience corrected, and the skip list's combat rows get the full card
 
