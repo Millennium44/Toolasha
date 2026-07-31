@@ -1704,7 +1704,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Room action logs',
                 type: 'checkbox',
                 default: true,
-                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms (Logs button in the labyrinth panel)',
+                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, each set beside the clear chance the sim predicted. A second tab totals every fight ever recorded, so you can see where the sim is being contradicted (Logs button in the labyrinth panel)',
             },
             labyrinthAutoCalcTiles: {
                 id: 'labyrinthAutoCalcTiles',

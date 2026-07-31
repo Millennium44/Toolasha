@@ -5,6 +5,8 @@ import {
     foldFloorOutcomes,
     compareToPrediction,
     binomialTailLikelihood,
+    accuracyRows,
+    accuracySummary,
 } from './labyrinth-outcome-log.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
@@ -84,6 +86,95 @@ describe('foldFloorOutcomes', () => {
             readCombatRooms([[combat({ entryCount: 1 }), combat({ recommendedLevel: 199, entryCount: 2 })]])
         );
         expect(Object.keys(state.totals)).toHaveLength(2);
+    });
+});
+
+describe('foldFloorOutcomes prediction capture', () => {
+    test('stamps the rate the sim was claiming when the fights landed', () => {
+        const state = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 2 })])), () => 0.244);
+        expect(state.totals[outcomeKey('/monsters/mimic', 252)].predicted).toBeCloseTo(0.244);
+    });
+
+    test('a room with no sim yet keeps whatever was stamped before', () => {
+        const first = foldFloorOutcomes({}, {}, readCombatRooms(grid([combat({ entryCount: 1 })])), () => 0.3);
+        const next = foldFloorOutcomes(
+            first.totals,
+            first.seen,
+            readCombatRooms(grid([combat({ entryCount: 2 })])),
+            () => null
+        );
+        expect(next.totals[outcomeKey('/monsters/mimic', 252)]).toMatchObject({ attempts: 2, predicted: 0.3 });
+    });
+});
+
+describe('accuracyRows', () => {
+    const totals = {
+        [outcomeKey('/monsters/mimic', 252)]: {
+            monsterHrid: '/monsters/mimic',
+            roomLevel: 252,
+            attempts: 21,
+            clears: 0,
+            predicted: 0.244,
+        },
+        [outcomeKey('/monsters/wark', 100)]: {
+            monsterHrid: '/monsters/wark',
+            roomLevel: 100,
+            attempts: 4,
+            clears: 4,
+        },
+    };
+    const rows = (over = {}) => accuracyRows(totals, { interval: wilsonInterval, ...over });
+
+    test('most-fought first, and names the monster', () => {
+        expect(rows().map((row) => row.monster)).toEqual(['mimic', 'wark']);
+    });
+
+    test('judges against the stamped rate when nothing is cached', () => {
+        const mimic = rows()[0];
+        expect(mimic.verdict).toBe('sim too high');
+        expect(mimic.fromCache).toBe(false);
+        expect(mimic.likelihood).toBeLessThan(0.01);
+    });
+
+    test('a live sim result outranks the stamped one', () => {
+        const mimic = rows({ predictedFor: () => 0.02 })[0];
+        expect(mimic.verdict).toBe('consistent');
+        expect(mimic.fromCache).toBe(true);
+    });
+
+    test('a room that was never simmed is reported, not judged', () => {
+        const wark = rows()[1];
+        expect(wark.verdict).toBe('not simmed');
+        expect(wark.predicted).toBeNull();
+        expect(wark.likelihood).toBeNull();
+    });
+
+    test('survives an empty record', () => {
+        expect(accuracyRows(null, { interval: wilsonInterval })).toEqual([]);
+    });
+});
+
+describe('accuracySummary', () => {
+    const summary = () =>
+        accuracySummary([
+            { attempts: 21, clears: 0, predicted: 0.244, verdict: 'sim too high' },
+            { attempts: 10, clears: 6, predicted: 0.6, verdict: 'consistent' },
+            { attempts: 4, clears: 4, predicted: null, verdict: 'not simmed' },
+        ]);
+
+    test('totals every fight but only owes clears for the judged ones', () => {
+        // 4 unsimmed fights count toward attempts and clears, but the sim never
+        // made a claim about them, so they must not drag the expectation down
+        expect(summary()).toMatchObject({ buckets: 3, attempts: 35, clears: 10, judged: 31, judgedClears: 6 });
+        expect(summary().expected).toBeCloseTo(21 * 0.244 + 10 * 0.6);
+    });
+
+    test('counts the rows the record actually contradicts', () => {
+        expect(summary().contested).toBe(1);
+    });
+
+    test('says nothing about an empty record', () => {
+        expect(accuracySummary([])).toMatchObject({ buckets: 0, attempts: 0, expected: null });
     });
 });
 

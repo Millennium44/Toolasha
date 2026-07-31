@@ -11,7 +11,14 @@ import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
-import { readCombatRooms, foldFloorOutcomes, compareToPrediction, outcomeKey } from './labyrinth-outcome-log.js';
+import {
+    readCombatRooms,
+    foldFloorOutcomes,
+    compareToPrediction,
+    outcomeKey,
+    accuracyRows,
+    accuracySummary,
+} from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -760,6 +767,16 @@ class LabyrinthClearRate {
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
 
+        // The room log shows fights beside the rate that was predicted for them,
+        // and owns none of that: the sims and the fight record both live here.
+        // Handing it accessors rather than importing this module keeps the
+        // dependency one-way — this module already imports the log.
+        labyrinthRoomLogs.useSimSource({
+            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+            accuracy: () => this.accuracySnapshot(),
+            reset: () => this.resetOutcomes(),
+        });
+
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
             this.injectOverlays()
         );
@@ -960,12 +977,20 @@ class LabyrinthClearRate {
         }
     }
 
+    /** The rate the sim is currently claiming for a room, or null */
+    predictedClearChance(monsterHrid, roomLevel) {
+        const cached = this.getCachedCombatResult(monsterHrid, roomLevel);
+        return cached && Number.isFinite(cached.clearChance) ? cached.clearChance : null;
+    }
+
     /** Fold the current floor into the running record of how fights went */
     async recordOutcomes(roomData) {
         if (!roomData) return;
         await this.loadOutcomes();
 
-        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readCombatRooms(roomData));
+        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readCombatRooms(roomData), (hrid, level) =>
+            this.predictedClearChance(hrid, level)
+        );
         this._outcomes = folded.totals;
         this._outcomesSeen = folded.seen;
         if (!folded.changed) return;
@@ -983,6 +1008,31 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The whole record, judged, for anything that wants to show it.
+     * @returns {Promise<{rows: Array<Object>, summary: Object}>}
+     */
+    async accuracySnapshot() {
+        await this.loadOutcomes();
+        const rows = accuracyRows(this._outcomes, {
+            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+            interval: wilsonInterval,
+        });
+        return { rows, summary: accuracySummary(rows) };
+    }
+
+    /** Throw the fight record away and start counting again */
+    async resetOutcomes() {
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._outcomesLoaded = true;
+        try {
+            await storage.setJSON(OUTCOME_STORAGE_KEY, {}, 'settings');
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Clearing fight outcomes failed:', error);
+        }
+    }
+
+    /**
      * Set every predicted rate beside the rate actually observed, and say which
      * ones the record will not support.
      *
@@ -990,32 +1040,31 @@ class LabyrinthClearRate {
      * @returns {Promise<Array<Object>>} One row per monster and level seen
      */
     async labAccuracy() {
-        await this.loadOutcomes();
-
-        const rows = [];
-        for (const bucket of Object.values(this._outcomes)) {
-            const cached = this.getCachedCombatResult(bucket.monsterHrid, bucket.roomLevel);
-            const predicted = cached ? cached.clearChance : NaN;
-            const verdict = compareToPrediction(bucket.clears, bucket.attempts, predicted, wilsonInterval);
-            rows.push({
-                monster: String(bucket.monsterHrid).split('/').pop(),
-                level: bucket.roomLevel,
-                predicted: Number.isFinite(predicted) ? `${(predicted * 100).toFixed(1)}%` : 'not simmed',
-                observed: `${bucket.clears}/${bucket.attempts}`,
-                observedPct: `${(verdict.observed * 100).toFixed(1)}%`,
-                range: `${(verdict.low * 100).toFixed(0)}-${(verdict.high * 100).toFixed(0)}%`,
-                verdict: verdict.verdict,
-                likelihood: Number.isFinite(predicted) ? `${(verdict.likelihood * 100).toFixed(2)}%` : '',
-            });
-        }
-        rows.sort((a, b) => b.observed.split('/')[1] - a.observed.split('/')[1]);
+        const { rows, summary } = await this.accuracySnapshot();
+        const pct = (v, places = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '');
 
         console.log(
-            `[Toolasha] ${rows.length} monster/level buckets recorded. "likelihood" is how often the sim's own rate would ` +
-                'produce a record this lopsided — a small number means the sim is being contradicted.\n' +
-                'Rows reading "not simmed" need their tile calculated first, so a prediction exists to compare against.'
+            `[Toolasha] ${summary.attempts} labyrinth fights across ${summary.buckets} monster/level buckets.` +
+                (summary.expected === null
+                    ? ''
+                    : ` Over the ${summary.judged} of them the sim had a rate for, it predicted ` +
+                      `${summary.expected.toFixed(1)} clears and you got ${summary.judgedClears}.`) +
+                `\n"likelihood" is how often the sim's own rate would produce a record this lopsided — a small number ` +
+                'means the sim is being contradicted. Rows reading "not simmed" have no prediction on record and none ' +
+                'cached; calculate their tile once and the next fights will be judged.'
         );
-        console.table(rows);
+        console.table(
+            rows.map((row) => ({
+                monster: row.monster,
+                level: row.level,
+                predicted: row.predicted === null ? 'not simmed' : pct(row.predicted),
+                observed: `${row.clears}/${row.attempts}`,
+                observedPct: pct(row.observed),
+                range: `${pct(row.low, 0)}-${pct(row.high, 0)}`,
+                verdict: row.verdict,
+                likelihood: row.likelihood === null ? '' : pct(row.likelihood, 2),
+            }))
+        );
         return rows;
     }
 
