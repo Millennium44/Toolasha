@@ -72,12 +72,44 @@ export function wilsonInterval(successes, trials, z = Z_95) {
  * @returns {boolean} True once the interval sits wholly to one side
  */
 export function decidedAgainst(successes, trials, threshold, z = Z_95) {
+    return decideSide(successes, trials, threshold, { zAbove: z, zBelow: z }) !== null;
+}
+
+/**
+ * Confidence demanded before calling a rate *above* a bar. Deliberately
+ * stricter than the usual 95%, for two reasons.
+ *
+ * The rule is checked repeatedly as evidence accumulates, and a boundary tested
+ * over and over is crossed far more often than its nominal rate — measured on a
+ * rate one point under a 70% bar, checking after every fight called it "above"
+ * 39% of the time at z=1.96. And the two mistakes are not equal: calling a room
+ * clearable when it is not sends you to auto-fight it, while the reverse only
+ * costs a room you could have taken.
+ */
+export const Z_DECIDE_ABOVE = 3.0;
+
+/** The lenient side: being wrong here only forgoes a room */
+export const Z_DECIDE_BELOW = 2.0;
+
+/**
+ * Which side of a bar the sample has settled on, or null while it is still in
+ * doubt.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} threshold - The bar, as a proportion
+ * @param {Object} [z] - Confidence to demand each way
+ * @param {number} [z.zAbove=Z_DECIDE_ABOVE] - For calling it above the bar
+ * @param {number} [z.zBelow=Z_DECIDE_BELOW] - For calling it below
+ * @returns {'above'|'below'|null}
+ */
+export function decideSide(successes, trials, threshold, { zAbove = Z_DECIDE_ABOVE, zBelow = Z_DECIDE_BELOW } = {}) {
     const n = Math.floor(Number(trials) || 0);
-    if (n <= 0) return false;
     const bar = Number(threshold);
-    if (!Number.isFinite(bar)) return false;
-    const { low, high } = wilsonInterval(successes, n, z);
-    return low > bar || high < bar;
+    if (n <= 0 || !Number.isFinite(bar)) return null;
+    if (wilsonInterval(successes, n, zAbove).low > bar) return 'above';
+    if (wilsonInterval(successes, n, zBelow).high < bar) return 'below';
+    return null;
 }
 
 /**
@@ -96,6 +128,8 @@ export function decidedAgainst(successes, trials, threshold, z = Z_95) {
  * @param {number} [rule.minTrials=50] - Never stop before this many
  * @param {number} [rule.decideAgainst] - Stop once the interval excludes this
  *   proportion, for questions that only need a side rather than a figure
+ * @param {number} [rule.zAbove] - Confidence for calling it above the bar
+ * @param {number} [rule.zBelow] - Confidence for calling it below
  * @param {number} [rule.targetHalfWidth] - Interval half-width to reach, in
  *   proportion units; 0 or absent means precision never stops the run
  * @returns {boolean}
@@ -108,7 +142,9 @@ export function hasConverged(successes, trials, rule = {}) {
     if (n < Math.max(1, minTrials)) return false;
 
     const bar = Number(rule.decideAgainst);
-    if (Number.isFinite(bar) && bar > 0 && bar < 1) return decidedAgainst(successes, n, bar);
+    if (Number.isFinite(bar) && bar > 0 && bar < 1) {
+        return decideSide(successes, n, bar, { zAbove: rule.zAbove, zBelow: rule.zBelow }) !== null;
+    }
 
     const target = Number(rule.targetHalfWidth);
     if (!Number.isFinite(target) || target <= 0) return false;
