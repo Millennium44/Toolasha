@@ -6,9 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Room attempt counter
+
+- Rooms that have taken **more than one try** are marked on the map with a `↻N` badge in the bottom-left of the tile, and the room you are running now adds `try N` to the end of the action bar's clear readout. The map gave no sign of this before: a tile looks identical on your fourth attempt and your first.
+- An attempt is counted both when you walk into a room and when the room's action counter restarts under you, so the tally holds whichever way the game re-runs a failed room. Counts are per floor — room coordinates repeat on every floor — and survive a page refresh, but only for the run they were recorded in.
+
 ### Beacon plans stop chasing a corridor that was never required
 
-- **A beacon count you set now plans for coverage**: the beacons go wherever they reveal the most rooms, biased toward rooms between where you have already been and the exit. Previously a set count was forced into a chain of reveal areas covering an unbroken revealed path from the entrance to the exit, which pinned every beacon onto the entrance-to-exit line and clustered them by the exit corner — the odd-looking placements.
+- **A beacon count you set now plans for coverage**: the beacons go wherever they reveal the most rooms, with ties between equally dark spots settled toward the one on your way to the exit. Previously a set count was forced into a chain of reveal areas covering an unbroken revealed path from the entrance to the exit, which pinned every beacon onto the entrance-to-exit line and clustered them by the exit corner — the odd-looking placements.
 - **That corridor was never a real constraint.** Unrevealed rooms are walkable — the path planner routes through them and says so — so a floor can always be crossed without beacons. It now shapes only the answer that asks for it (count 0: the fewest beacons that cover a revealed path), and the set-count mode reports whether the way out ended up covered instead of being ruled by it.
 - **Fixed: asking for fewer beacons than a corridor needs planned nothing at all**, answering "Need at least 3 beacons for a covered path" when the question was where to put the two you have. A set count always gets a plan now.
 - **Fixed: an already-revealed path to the exit suppressed the plan entirely.** Asking for four beacons on a floor whose corridor was open returned none, however much of the floor was still dark; the same floor now gets 48 rooms revealed.
