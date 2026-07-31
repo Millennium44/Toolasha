@@ -23,6 +23,7 @@ import listingRefreshNavigator from '../features/market/listing-refresh-navigato
 import bulkSellAssistant from '../features/market/bulk-sell-assistant.js';
 import listingMarkers from '../features/market/listing-markers.js';
 import marketplaceBadgeFilter from '../features/market/marketplace-badge-filter.js';
+import marketHistoryPanel from '../features/market/mooket/index.js';
 import philoCalculator from '../features/market/philo-calculator.js';
 import tradeHistory from '../features/market/trade-history.js';
 import tradeHistoryDisplay from '../features/market/trade-history-display.js';
@@ -71,6 +72,7 @@ toolashaRoot.Market = {
     bulkSellAssistant,
     listingMarkers,
     marketplaceBadgeFilter,
+    marketHistoryPanel,
     philoCalculator,
     tradeHistory,
     tradeHistoryDisplay,

@@ -1141,6 +1141,20 @@ export const settingsGroups = {
                 default: false,
                 help: 'The game badges Marketplace in the sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill. This limits the sidebar badge to listings that have finished: filled completely, or cancelled and holding a refund. The badge on the My Listings tab is left alone, since once you are in the marketplace knowing there is something to collect is useful.',
             },
+            market_pooledHistory: {
+                id: 'market_pooledHistory',
+                label: 'Market: Price history panel',
+                type: 'checkbox',
+                default: false,
+                help: 'A floating chart of an item\u2019s ask, bid, traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org \u2014 a third party, which is told which items you look up. Off until you turn it on for that reason.',
+            },
+            market_pooledHistoryContribute: {
+                id: 'market_pooledHistoryContribute',
+                label: 'Market: Contribute to the pooled price history',
+                type: 'checkbox',
+                default: false,
+                help: 'Sends the order books you open back to the pooled history server, which is where the history you read comes from \u2014 every reader is someone else\u2019s missing data point. It sends more than reading does: which items you opened and when. Needs the price history panel on.',
+            },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
                 label: 'Market: Show top order age on My Listings',
