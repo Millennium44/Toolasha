@@ -15,6 +15,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### The live combat clear chance now replays the fight instead of extrapolating it
+
+- During a labyrinth fight, the readout is computed by **replaying that exact fight 400 times** through the combat engine — both sides rewound to their current health, the room timer already part-spent — and counting how many replays end in a clear. Each replay covers only the seconds the fight has left, so the whole thing costs a fraction of a tile badge's simulation.
+- This replaces racing two rates of health loss, which knew nothing about abilities, procs, healing or what a monster does at low health. The extrapolation is still there: it carries the display between replays and covers the first seconds before one has finished, and the tooltip shows both figures so they can be compared.
+- **What a replay still cannot see** is anything the server does not send: buff timers, ability cooldowns, food and drink remaining. Each replay starts those fresh, which flatters a fight whose cooldowns are actually spent — an error that shrinks as the fight goes on and the remaining window gets shorter.
+- A replay is tagged with the fight it came from and discarded when that fight ends, so a result landing late never describes a moment that has passed. Off via **Labyrinth: Replay the live fight for a better clear chance** if the extrapolation is preferred.
+
 ### Skip-level recommendations are now conservative where they used to guess
 
 - Measured against a 70% bar, the decision rule shipped an hour ago called a room clearable **39% of the time when its true rate was 69%**, and still 4.5% of the time at 66% — because a boundary re-tested after every fight is crossed far more often than its nominal confidence implies. That is the dangerous direction: it recommends auto-fighting a room that does not meet your bar.
