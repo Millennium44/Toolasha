@@ -671,6 +671,7 @@ export default {
     cleanup: () => guildXPTracker.disable(),
     resetMemberData: () => guildXPTracker.resetMemberData(),
     getRawMemberSample: (name) => guildXPTracker.getRawMemberSample(name),
+    debugState: () => guildXPTracker.debugState(),
 };
 
 export { guildXPTracker };
