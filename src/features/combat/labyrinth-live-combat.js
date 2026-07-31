@@ -193,15 +193,25 @@ export function estimateLiveClearChance(state) {
     };
 }
 
+/** Display granularity. Anything finer is jitter dressed up as precision. */
+const DISPLAY_STEP_PCT = 5;
+
 /**
  * The one-line form for the action bar.
+ *
+ * Quoted in steps of five. Rates measured off two health bars do not support a
+ * figure to the percentage point, and a readout wobbling between 71 and 73 as
+ * blows land reads as noise however accurate its average is. Certainty is left
+ * exact: 0% and 100% are claims worth making precisely.
+ *
  * @param {Object|null} estimate - Result of estimateLiveClearChance
  * @returns {string} Empty when there is nothing worth saying yet
  */
 export function formatLiveClearChance(estimate) {
     if (!estimate) return '';
     if (estimate.clearChance === null) return '';
-    const pct = (estimate.clearChance * 100).toFixed(0);
+    const raw = estimate.clearChance * 100;
+    const pct = raw <= 0 || raw >= 100 ? Math.round(raw) : Math.round(raw / DISPLAY_STEP_PCT) * DISPLAY_STEP_PCT;
     // A number the fight has not yet earned is marked, not hidden: watching it
     // firm up is itself informative
     return estimate.confident ? `Clear ~${pct}%` : `Clear ~${pct}%?`;

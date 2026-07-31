@@ -166,4 +166,19 @@ describe('formatLiveClearChance', () => {
     test('says nothing when there is nothing to say', () => {
         expect(formatLiveClearChance(null)).toBe('');
     });
+
+    test('quotes in fives, so blows landing do not jiggle the number', () => {
+        const shown = (clearChance) => formatLiveClearChance({ clearChance, confident: true });
+        expect(shown(0.71)).toBe('Clear ~70%');
+        expect(shown(0.73)).toBe('Clear ~75%');
+        expect(shown(0.724)).toBe('Clear ~70%');
+    });
+
+    test('leaves certainty exact rather than rounding it away', () => {
+        const shown = (clearChance) => formatLiveClearChance({ clearChance, confident: true });
+        expect(shown(1)).toBe('Clear ~100%');
+        expect(shown(0)).toBe('Clear ~0%');
+        // Just short of certain still rounds, so 97% never reads as a promise
+        expect(shown(0.97)).toBe('Clear ~95%');
+    });
 });

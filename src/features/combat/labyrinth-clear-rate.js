@@ -33,6 +33,8 @@ const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
 const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
 /** Combat ticks arrive ~3/s, so this only expires once the fight is over */
 const LIVE_COMBAT_STALE_MS = 5000;
+/** Ticks are far faster than anyone reads; the readout is drawn at this rate */
+const LIVE_COMBAT_REDRAW_MS = 1000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -680,6 +682,7 @@ class LabyrinthClearRate {
         this._pathData = null;
         this._fight = null;
         this._liveCombatTimeout = null;
+        this._liveCombatDrawnAt = 0;
         this.battleHandler = null;
     }
 
@@ -2268,15 +2271,20 @@ class LabyrinthClearRate {
             return;
         }
 
-        // battleId stays put across labyrinth attempts, so a new fight is
-        // recognised by the monster: a different maximum, or a full bar where
-        // the last one was damaged
+        // battleId stays put across labyrinth attempts and a retry of the same
+        // room brings back a monster with the same maximum, so neither says a
+        // new fight started. Two things do: health that went up, which only a
+        // fresh monster can do, and an attack counter that went down, which
+        // only a fresh battle can do. Without them, retrying a room kept the
+        // previous attempt's record — a start time minutes old, and a rate so
+        // slow it read as no chance at all.
         const fight = this._fight;
         const isNewFight =
             !fight ||
             fight.battleId !== data.battleId ||
             fight.monsterMaxHp !== monster.mHP ||
-            (monster.cHP >= monster.mHP && fight.lastMonsterHp < monster.mHP);
+            monster.cHP > fight.lastMonsterHp ||
+            player.atkCounter < fight.lastAtkCounter;
 
         if (isNewFight) {
             this._fight = {
@@ -2290,11 +2298,10 @@ class LabyrinthClearRate {
                 caughtStart: monster.cHP >= monster.mHP,
                 firstMonsterFraction: monster.cHP / monster.mHP,
                 firstPlayerFraction: player.cHP / player.mHP,
-                lastMonsterHp: monster.cHP,
             };
-        } else {
-            fight.lastMonsterHp = monster.cHP;
         }
+        this._fight.lastMonsterHp = monster.cHP;
+        this._fight.lastAtkCounter = Number(player.atkCounter) || 0;
 
         const started = this._fight;
         const observedSeconds = (Date.now() - started.startedAt) / 1000;
@@ -2316,10 +2323,19 @@ class LabyrinthClearRate {
         }
 
         // battle_updated stops arriving the moment the fight ends, and nothing
-        // else would take the readout down — so it expires itself. Ticks come
-        // about three a second, so this only fires when the fight is over.
+        // else would take the readout down — so it expires itself. Refreshed
+        // before the redraw throttle, because a tick we chose not to draw is
+        // still the fight telling us it is alive.
         if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
         this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
+
+        // Ticks arrive several times a second and the estimate moves on every
+        // one of them, which reads as flicker rather than as information. Nobody
+        // is deciding anything on the difference between two readings a third of
+        // a second apart, so only one per second is drawn.
+        const now = Date.now();
+        if (this._liveCombatDrawnAt && now - this._liveCombatDrawnAt < LIVE_COMBAT_REDRAW_MS) return;
+        this._liveCombatDrawnAt = now;
 
         const clock = estimate.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
         this.renderLiveNode(` [${text}${clock}]`, [
@@ -2343,6 +2359,7 @@ class LabyrinthClearRate {
             this._liveCombatTimeout = null;
         }
         if (this._fight && !this.inLabyrinthFight()) this._fight = null;
+        this._liveCombatDrawnAt = 0;
         document.querySelectorAll(`.${LIVE_COMBAT_CLASS}`).forEach((el) => el.remove());
     }
 

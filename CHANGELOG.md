@@ -15,6 +15,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
 - **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
 
+### Fixed: the live clear chance flickered and read ~0% on a retried room
+
+- **Retrying a room kept the previous attempt's fight record.** Neither the battle id nor the monster's maximum health changes when you re-enter the same room, and if the first update of the new fight already carried damage there was nothing left to notice it by — so the estimate measured against a start time from minutes earlier and read as no chance at all. A new fight is now recognised by health that went up, which only a fresh monster can do, and by an attack counter that went down, which only a fresh battle can do.
+- **The readout is drawn once a second** rather than on every combat tick. Ticks arrive several times a second and the estimate moves on all of them, which reads as flicker rather than as information.
+- **It is quoted in steps of five.** Rates measured off two health bars do not support a figure to the percentage point, and a number wobbling between 71 and 73 as blows land is noise however accurate its average is. 0% and 100% stay exact, being claims worth making precisely.
+
 ### Live clear chance in labyrinth combat rooms
 
 - Combat rooms now show a **live clear chance** in the action bar, beside the room name: `[Clear ~72% | 48s left]`. Until now the only number for a fight was the tile badge's win rate, simulated before you walked in — it says nothing about how the fight in front of you is going.
