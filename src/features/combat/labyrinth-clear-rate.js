@@ -18,6 +18,7 @@ import {
     outcomeKey,
     accuracyRows,
     accuracySummary,
+    foldRoomResult,
 } from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
@@ -774,7 +775,8 @@ class LabyrinthClearRate {
         // Handing it accessors rather than importing this module keeps the
         // dependency one-way — this module already imports the log.
         labyrinthRoomLogs.useSimSource({
-            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+            forecast: (hrid, level, kind) => this.roomForecast(hrid, level, kind),
+            record: (result) => this.recordRoomResult(result),
             accuracy: () => this.accuracySnapshot(),
             reset: () => this.resetOutcomes(),
         });
@@ -1018,10 +1020,53 @@ class LabyrinthClearRate {
         return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
     }
 
-    /** The rate the sim is currently claiming for a room, or null */
-    predictedClearChance(monsterHrid, roomLevel) {
-        const cached = this.getCachedCombatResult(monsterHrid, roomLevel);
-        return cached && Number.isFinite(cached.clearChance) ? cached.clearChance : null;
+    /**
+     * Everything the calculator claims about a room before you enter it.
+     *
+     * A fight's claim comes out of the sim cache and only exists once that tile
+     * has been calculated. A skilling or enhancing room's is closed-form maths
+     * and can be worked out on demand, which is why those rooms can be judged
+     * from the first one you walk into while a fight cannot.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @param {number} roomLevel - Room level
+     * @param {string} [kind] - 'combat' or 'skilling'; inferred from the hrid otherwise
+     * @returns {Object|null} { clearChance, expectedSeconds, successChance, doubleChance, xpPerRoom, xpPerHour }
+     */
+    roomForecast(subjectHrid, roomLevel, kind) {
+        const hrid = String(subjectHrid || '');
+        const level = Math.max(0, Math.floor(Number(roomLevel) || 0));
+        if (!hrid || level <= 0) return null;
+
+        const skilling = kind === 'skilling' || hrid.startsWith('/skills/');
+        if (!skilling) return this.getCachedCombatResult(hrid, level);
+
+        try {
+            return hrid === '/skills/enhancing'
+                ? this.computeEnhancingClear(level)
+                : this.computeSkillingClear(hrid, level);
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Forecasting a skilling room failed:', error);
+            return null;
+        }
+    }
+
+    /** The clear chance the calculator is currently claiming for a room, or null */
+    predictedClearChance(subjectHrid, roomLevel, kind) {
+        const forecast = this.roomForecast(subjectHrid, roomLevel, kind);
+        return forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null;
+    }
+
+    /**
+     * Fold one finished room — its duration, experience and action outcomes —
+     * into the record the accuracy view reads.
+     * @param {Object} result - See foldRoomResult
+     */
+    async recordRoomResult(result) {
+        if (!result?.subjectHrid) return;
+        await this.loadOutcomes();
+        this._outcomes = foldRoomResult(this._outcomes, result);
+        await this.saveOutcomes();
     }
 
     /**
@@ -1035,7 +1080,7 @@ class LabyrinthClearRate {
 
         const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readFloorRooms(roomData), {
             scope: this.outcomeScope(labyrinth),
-            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
         });
         this._outcomes = folded.totals;
         this._outcomesSeen = folded.seen;
@@ -1100,7 +1145,7 @@ class LabyrinthClearRate {
     async accuracySnapshot() {
         await this.loadOutcomes();
         const rows = accuracyRows(this._outcomes, {
-            predictedFor: (hrid, level) => this.predictedClearChance(hrid, level),
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
             interval: wilsonInterval,
         });
         return { rows, summary: accuracySummary(rows) };
@@ -1137,7 +1182,8 @@ class LabyrinthClearRate {
         );
         console.table(
             rows.map((row) => ({
-                monster: row.monster,
+                room: row.monster,
+                kind: row.kind,
                 level: row.level,
                 predicted: row.predicted === null ? 'not simmed' : pct(row.predicted),
                 observed: `${row.clears}/${row.attempts}`,
@@ -1145,6 +1191,15 @@ class LabyrinthClearRate {
                 range: `${pct(row.low, 0)}-${pct(row.high, 0)}`,
                 verdict: row.verdict,
                 likelihood: row.likelihood === null ? '' : pct(row.likelihood, 2),
+                // Skilling rooms only: the server states the rate it is using,
+                // so the formula can be checked against the truth rather than
+                // only against a sample of outcomes
+                calcSuccess: row.rates?.success ? pct(row.rates.success.predicted) : '',
+                serverSuccess: row.rates?.success ? pct(row.rates.success.server) : '',
+                hitSuccess: row.rates?.success ? pct(row.rates.success.observed) : '',
+                formulaOff: row.rates?.success?.formulaOff ? 'YES' : '',
+                seconds: row.timing ? `${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s` : '',
+                xpPerHour: row.measured?.xpPerHour ? Math.round(row.measured.xpPerHour).toLocaleString() : '',
             }))
         );
         return rows;

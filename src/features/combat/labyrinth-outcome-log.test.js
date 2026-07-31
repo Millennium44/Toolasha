@@ -7,6 +7,8 @@ import {
     binomialTailLikelihood,
     accuracyRows,
     accuracySummary,
+    foldRoomResult,
+    roomMeasurements,
 } from './labyrinth-outcome-log.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
@@ -59,7 +61,7 @@ describe('foldFloorOutcomes', () => {
             grid([combat({ entryCount: 2 })]),
             grid([clearedRoom()]),
         ]);
-        expect(state.totals[MIMIC]).toMatchObject({ attempts: 2, clears: 1, monsterHrid: '/monsters/mimic' });
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 2, clears: 1, subjectHrid: '/monsters/mimic' });
     });
 
     test('a stripped room reporting no entries does not restart the count', () => {
@@ -158,12 +160,95 @@ describe('foldFloorOutcomes', () => {
         expect(Object.keys(state.totals)).toHaveLength(2);
     });
 
-    test('a cleared skilling room is credited to nobody', () => {
+    test('a skilling room is counted the same way a fight is', () => {
+        // Failed by running out of the two minutes rather than by dying, but
+        // still a room the calculator gave a chance of clearing
         const state = foldAll([
             grid([{ skillHrid: '/skills/milking', recommendedLevel: 240, entryCount: 2 }]),
             grid([clearedRoom()]),
         ]);
-        expect(state.totals).toEqual({});
+        expect(state.totals[outcomeKey('/skills/milking', 240)]).toMatchObject({
+            attempts: 2,
+            clears: 1,
+            kind: 'skilling',
+            subjectHrid: '/skills/milking',
+        });
+    });
+
+    test('a square that held a skill and now holds a monster starts over', () => {
+        const state = foldAll([
+            grid([{ skillHrid: '/skills/milking', recommendedLevel: 240, entryCount: 3, isCleared: true }]),
+            grid([combat({ entryCount: 1 })]),
+        ]);
+        expect(state.totals[outcomeKey('/skills/milking', 240)]).toMatchObject({ attempts: 3, clears: 1 });
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 1, clears: 0, kind: 'combat' });
+    });
+});
+
+describe('foldRoomResult', () => {
+    const result = (over = {}) => ({
+        subjectHrid: '/skills/milking',
+        roomLevel: 240,
+        kind: 'skilling',
+        seconds: 60,
+        xp: 12000,
+        actions: 20,
+        successes: 14,
+        doubles: 3,
+        predictedSeconds: 55,
+        predictedSuccess: 0.72,
+        serverSuccess: 0.7,
+        ...over,
+    });
+    const KEY = outcomeKey('/skills/milking', 240);
+
+    test('accumulates rooms, time, experience and actions', () => {
+        const totals = foldRoomResult(foldRoomResult({}, result()), result({ seconds: 80, xp: 13000 }));
+        expect(totals[KEY]).toMatchObject({ rooms: 2, seconds: 140, xp: 25000, actions: 40, successes: 28 });
+    });
+
+    test('a room with nothing in it is not a room', () => {
+        expect(foldRoomResult({}, { roomLevel: 240 })).toEqual({});
+        expect(foldRoomResult(null, null)).toEqual({});
+    });
+
+    test('keeps the entry counting a floor fold already did', () => {
+        const folded = foldAll([grid([{ skillHrid: '/skills/milking', recommendedLevel: 240, entryCount: 4 }])]);
+        const totals = foldRoomResult(folded.totals, result());
+        expect(totals[KEY]).toMatchObject({ attempts: 4, rooms: 1, seconds: 60 });
+    });
+
+    test('the newest prediction replaces the last, rather than averaging with it', () => {
+        // Averaging today's prediction with one made for gear since replaced
+        // produces a number nothing ever claimed
+        const totals = foldRoomResult(foldRoomResult({}, result()), result({ predictedSuccess: 0.9 }));
+        expect(totals[KEY].predictedSuccess).toBe(0.9);
+    });
+});
+
+describe('roomMeasurements', () => {
+    test('turns the running totals into rates', () => {
+        const measured = roomMeasurements({
+            rooms: 2,
+            seconds: 120,
+            xp: 24000,
+            actions: 40,
+            successes: 28,
+            doubles: 6,
+        });
+        expect(measured).toMatchObject({ rooms: 2, secondsPerRoom: 60, success: 0.7, double: 0.15 });
+        expect(measured.xpPerHour).toBe(720000);
+    });
+
+    test('says nothing about a room nobody finished', () => {
+        expect(roomMeasurements({ attempts: 9, clears: 0 })).toBeNull();
+        expect(roomMeasurements(null)).toBeNull();
+    });
+
+    test('no actions means no rate, rather than a rate of zero', () => {
+        const measured = roomMeasurements({ rooms: 1, seconds: 90, xp: 0 });
+        expect(measured.success).toBeNull();
+        expect(measured.xpPerHour).toBeNull();
     });
 });
 

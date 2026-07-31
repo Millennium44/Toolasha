@@ -19,14 +19,26 @@
  */
 
 /**
- * Key an accumulator bucket. Level matters as much as the monster — the same
- * creature at level 200 and level 260 are different fights.
- * @param {string} monsterHrid - Monster
+ * Key an accumulator bucket. Level matters as much as what is in the room — the
+ * same creature at level 200 and level 260 are different fights, and the same
+ * skill at two levels is two different rooms.
+ * @param {string} subjectHrid - Monster or skill
  * @param {number} roomLevel - Room level
  * @returns {string}
  */
-export function outcomeKey(monsterHrid, roomLevel) {
-    return `${monsterHrid}@${Math.max(0, Math.floor(Number(roomLevel) || 0))}`;
+export function outcomeKey(subjectHrid, roomLevel) {
+    return `${subjectHrid}@${Math.max(0, Math.floor(Number(roomLevel) || 0))}`;
+}
+
+/**
+ * What a bucket is about. Older records only ever held fights and named the
+ * field `monsterHrid`; reading through both keeps them working rather than
+ * throwing away a record to rename a key.
+ * @param {Object} bucket - Accumulator bucket
+ * @returns {string}
+ */
+export function bucketSubject(bucket) {
+    return bucket?.subjectHrid || bucket?.monsterHrid || '';
 }
 
 /**
@@ -58,7 +70,7 @@ function rateOrNaN(value) {
  * be a fight is the fold's job, since only it remembers what was there before.
  *
  * @param {Array<Array<Object|null>>} roomData - Floor grid
- * @returns {Array<Object>} { coord, monsterHrid, roomLevel, entryCount, isCleared }
+ * @returns {Array<Object>} { coord, monsterHrid, skillHrid, roomLevel, entryCount, isCleared }
  */
 export function readFloorRooms(roomData) {
     if (!Array.isArray(roomData)) return [];
@@ -72,6 +84,7 @@ export function readFloorRooms(roomData) {
             rooms.push({
                 coord: `${x},${y}`,
                 monsterHrid: room.monsterHrid || '',
+                skillHrid: room.skillHrid || '',
                 roomLevel: Math.max(0, Math.floor(Number(room.recommendedLevel) || 0)),
                 entryCount: Math.max(0, Math.floor(Number(room.entryCount) || 0)),
                 isCleared: !!room.isCleared,
@@ -107,12 +120,18 @@ export function readFloorRooms(roomData) {
  * Comparing a fight to the number that was on screen when you walked into it is
  * also the honest comparison: that is the claim the sim actually made.
  *
- * @param {Object} totals - { [key]: { attempts, clears, monsterHrid, roomLevel } }
+ * Skilling and enhancing rooms are counted exactly like fights. A skilling room
+ * is failed by running out of the two minutes rather than by dying, but it is
+ * still a room the calculator gave a chance of clearing and still a room you
+ * either cleared or did not, so the same entry counting answers the same
+ * question about it.
+ *
+ * @param {Object} totals - { [key]: { attempts, clears, subjectHrid, roomLevel } }
  * @param {Object} seen - Per-room state from the last fold, keyed by coord
  * @param {Array<Object>} rooms - Output of readFloorRooms
  * @param {Object} [options] - { scope, predictedFor }
  * @param {string} [options.scope] - Run-and-floor identity of this grid
- * @param {Function} [options.predictedFor] - (monsterHrid, roomLevel) => rate or null
+ * @param {Function} [options.predictedFor] - (subjectHrid, roomLevel, kind) => rate or null
  * @returns {{totals: Object, seen: Object, changed: boolean, seenChanged: boolean}} New state
  */
 export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
@@ -133,19 +152,22 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         // The same square on the same floor of the same run. A room that still
         // names a monster must name the same one; a stripped room names none,
         // and the scope is what stops that matching anything at all.
+        const roomSubject = room.monsterHrid || room.skillHrid || '';
         const continuing =
             !!before &&
             before.scope === scope &&
-            (!room.monsterHrid || !before.monsterHrid || before.monsterHrid === room.monsterHrid);
+            (!roomSubject || !before.subjectHrid || before.subjectHrid === roomSubject);
 
-        const monsterHrid = room.monsterHrid || (continuing ? before.monsterHrid : '');
+        const subjectHrid = roomSubject || (continuing ? before.subjectHrid : '');
+        const kind = room.monsterHrid ? 'combat' : room.skillHrid ? 'skilling' : continuing ? before.kind : '';
         const roomLevel = room.roomLevel || (continuing ? before.roomLevel : 0);
         const priorEntries = continuing ? before.entryCount : 0;
         const priorCleared = continuing ? before.isCleared : false;
 
         const next = {
             scope,
-            monsterHrid,
+            subjectHrid,
+            kind,
             roomLevel,
             // A stripped room reports no entries. Keeping the count we had stops
             // the next fold reading that drop to zero as a fresh run of attempts
@@ -156,24 +178,26 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         if (
             !before ||
             before.scope !== next.scope ||
-            before.monsterHrid !== next.monsterHrid ||
+            before.subjectHrid !== next.subjectHrid ||
             before.entryCount !== next.entryCount ||
             before.isCleared !== next.isCleared
         ) {
             seenChanged = true;
         }
-        if (!monsterHrid) continue;
+        if (!subjectHrid) continue;
 
         const newEntries = Math.max(0, room.entryCount - priorEntries);
         const newClear = room.isCleared && !priorCleared ? 1 : 0;
         if (newEntries === 0 && newClear === 0) continue;
 
-        const key = outcomeKey(monsterHrid, roomLevel);
-        const bucket = nextTotals[key] || { monsterHrid, roomLevel, attempts: 0, clears: 0 };
-        const predicted = predictedFor ? rateOrNaN(predictedFor(monsterHrid, roomLevel)) : NaN;
+        const key = outcomeKey(subjectHrid, roomLevel);
+        const bucket = nextTotals[key] || { subjectHrid, kind, roomLevel, attempts: 0, clears: 0 };
+        const predicted = predictedFor ? rateOrNaN(predictedFor(subjectHrid, roomLevel, kind)) : NaN;
         const clears = bucket.clears + newClear;
         nextTotals[key] = {
             ...bucket,
+            subjectHrid,
+            kind: kind || bucket.kind || '',
             // A room won on the first try can clear before any update showed it
             // being entered, and a clear that outran its own attempt would give
             // a rate above 100%. The victory was an attempt whether or not the
@@ -186,6 +210,89 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
     }
 
     return { totals: nextTotals, seen: nextSeen, changed, seenChanged };
+}
+
+/**
+ * Fold one finished room into the record.
+ *
+ * The floor's entry counts answer "did it clear", which is all a fight will
+ * tell you. A skilling room says far more: the server states the success and
+ * double chance it is using, and then plays out every action, so three numbers
+ * can be set beside each other — what Toolasha's formula predicted, what the
+ * server says the rate is, and what actually happened. The first two
+ * disagreeing is a bug in the formula and needs no statistics at all; the last
+ * two disagreeing needs a sample.
+ *
+ * Time and experience are folded in the same pass because they are only
+ * knowable per finished room: the floor never says how long anything took.
+ *
+ * @param {Object} totals - The record
+ * @param {Object} result - { subjectHrid, roomLevel, kind, seconds, xp, actions,
+ *   successes, doubles, predictedSeconds, predictedSuccess, predictedDouble,
+ *   serverSuccess, serverDouble }
+ * @returns {Object} New totals
+ */
+export function foldRoomResult(totals, result) {
+    const subjectHrid = result?.subjectHrid;
+    if (!subjectHrid) return totals || {};
+
+    const roomLevel = Math.max(0, Math.floor(Number(result.roomLevel) || 0));
+    const key = outcomeKey(subjectHrid, roomLevel);
+    const bucket = (totals || {})[key] || { subjectHrid, kind: result.kind || '', roomLevel, attempts: 0, clears: 0 };
+    const add = (field, value) => (bucket[field] || 0) + Math.max(0, Number(value) || 0);
+
+    // Predictions are last-write-wins rather than averaged. They are what the
+    // calculator says for the gear you have on now, and averaging today's
+    // prediction with one made for gear you have since replaced produces a
+    // number nothing ever claimed.
+    const stamp = {};
+    for (const field of ['predictedSeconds', 'predictedSuccess', 'predictedDouble', 'serverSuccess', 'serverDouble']) {
+        const value = rateOrNaN(result[field]);
+        if (Number.isFinite(value)) stamp[field] = value;
+    }
+
+    return {
+        ...totals,
+        [key]: {
+            ...bucket,
+            subjectHrid,
+            kind: result.kind || bucket.kind || '',
+            roomLevel,
+            rooms: add('rooms', 1),
+            seconds: add('seconds', result.seconds),
+            xp: add('xp', result.xp),
+            actions: add('actions', result.actions),
+            successes: add('successes', result.successes),
+            doubles: add('doubles', result.doubles),
+            ...stamp,
+        },
+    };
+}
+
+/**
+ * What one bucket's finished rooms measured, or null where nothing was.
+ * @param {Object} bucket - Accumulator bucket
+ * @returns {Object|null} { rooms, secondsPerRoom, xpPerHour, success, double, actions }
+ */
+export function roomMeasurements(bucket) {
+    const rooms = Math.max(0, Math.floor(Number(bucket?.rooms) || 0));
+    if (!rooms) return null;
+
+    const seconds = Math.max(0, Number(bucket.seconds) || 0);
+    const actions = Math.max(0, Math.floor(Number(bucket.actions) || 0));
+    const xp = Math.max(0, Number(bucket.xp) || 0);
+
+    return {
+        rooms,
+        actions,
+        seconds,
+        secondsPerRoom: seconds > 0 ? seconds / rooms : null,
+        // Measured throughput: real experience over real time. Not the
+        // calculator's figure, which assumes the room goes to plan.
+        xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
+        success: actions > 0 ? (Number(bucket.successes) || 0) / actions : null,
+        double: actions > 0 ? (Number(bucket.doubles) || 0) / actions : null,
+    };
 }
 
 /**
@@ -238,16 +345,17 @@ export function compareToPrediction(clears, attempts, predicted, interval) {
 export function accuracyRows(totals, { predictedFor, interval } = {}) {
     const rows = [];
     for (const bucket of Object.values(totals || {})) {
-        const live = predictedFor ? rateOrNaN(predictedFor(bucket.monsterHrid, bucket.roomLevel)) : NaN;
+        const subjectHrid = bucketSubject(bucket);
+        const live = predictedFor ? rateOrNaN(predictedFor(subjectHrid, bucket.roomLevel, bucket.kind)) : NaN;
         const predicted = Number.isFinite(live) ? live : rateOrNaN(bucket.predicted);
         const known = Number.isFinite(predicted);
         const verdict = compareToPrediction(bucket.clears, bucket.attempts, predicted, interval);
+        const measured = roomMeasurements(bucket);
 
         rows.push({
-            monsterHrid: bucket.monsterHrid,
-            monster: String(bucket.monsterHrid || '')
-                .split('/')
-                .pop(),
+            subjectHrid,
+            kind: bucket.kind || (subjectHrid.startsWith('/skills/') ? 'skilling' : 'combat'),
+            monster: subjectHrid.split('/').pop(),
             level: bucket.roomLevel,
             attempts: bucket.attempts,
             clears: bucket.clears,
@@ -258,10 +366,69 @@ export function accuracyRows(totals, { predictedFor, interval } = {}) {
             high: verdict.high,
             likelihood: known ? verdict.likelihood : null,
             verdict: known ? verdict.verdict : 'not simmed',
+            measured,
+            timing: roomTiming(bucket, measured),
+            rates: actionRates(bucket, measured, interval),
         });
     }
     rows.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
     return rows;
+}
+
+/** How long the calculator said a room takes against how long it took */
+function roomTiming(bucket, measured) {
+    const predicted = rateOrNaN(bucket.predictedSeconds);
+    if (!measured?.secondsPerRoom || !Number.isFinite(predicted) || predicted <= 0) return null;
+
+    const actual = measured.secondsPerRoom;
+    return {
+        predicted,
+        actual,
+        ratio: actual / predicted,
+        // Only rooms that were finished have a meaningful duration, and the
+        // sample is small enough that a factor is more honest than a verdict
+        rooms: measured.rooms,
+    };
+}
+
+/**
+ * Per-action success and double: what the calculator predicted, what the server
+ * says it is using, and what the actions actually did.
+ *
+ * The server's own figure is the sharpest test in the whole record. It arrives
+ * with every action, it needs no sample at all, and if the calculator disagrees
+ * with it the formula is simply wrong — no amount of play will make a wrong
+ * formula right, and no amount will reveal it either unless the two are set
+ * side by side.
+ */
+function actionRates(bucket, measured, interval) {
+    if (!measured?.actions) return null;
+
+    const out = {};
+    for (const [name, field, observedRate] of [
+        ['success', 'Success', measured.success],
+        ['double', 'Double', measured.double],
+    ]) {
+        const predicted = rateOrNaN(bucket[`predicted${field}`]);
+        const server = rateOrNaN(bucket[`server${field}`]);
+        const hits = Math.round(observedRate * measured.actions);
+        const check = compareToPrediction(hits, measured.actions, server, interval);
+
+        out[name] = {
+            predicted: Number.isFinite(predicted) ? predicted : null,
+            server: Number.isFinite(server) ? server : null,
+            observed: observedRate,
+            low: check.low,
+            high: check.high,
+            verdict: Number.isFinite(server) ? check.verdict : 'no server rate',
+            // A formula that disagrees with the rate the server states is wrong
+            // outright, which is a different and much louder problem than a run
+            // of bad luck
+            formulaOff:
+                Number.isFinite(predicted) && Number.isFinite(server) ? Math.abs(predicted - server) > 0.005 : false,
+        };
+    }
+    return out;
 }
 
 /**

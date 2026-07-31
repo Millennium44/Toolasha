@@ -1704,7 +1704,16 @@ export const settingsGroups = {
                 label: 'Labyrinth: Room action logs',
                 type: 'checkbox',
                 default: true,
-                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, each set beside the clear chance the sim predicted. A second tab totals every fight ever recorded, so you can see where the sim is being contradicted (Logs button in the labyrinth panel)',
+                help: 'Records per-action success/fail/double logs for labyrinth skilling rooms and per-attempt win/death/timeout logs for combat rooms, each set beside the clear chance the calculator predicted, grouped by floor with experience per hour. A second tab totals every room ever recorded, so you can see where the calculator is being contradicted (Logs button in the labyrinth panel)',
+            },
+            labyrinthRoomLogSize: {
+                id: 'labyrinthRoomLogSize',
+                label: 'Labyrinth: Rooms of history to keep',
+                type: 'number',
+                default: 120,
+                min: 20,
+                max: 500,
+                help: 'A floor is around thirty rooms, so anything near that shows barely one floor and nothing to compare it against. 120 keeps roughly three floors. Each room is a few hundred bytes, and the long-term accuracy record is kept separately and never trimmed',
             },
             labyrinthAutoCalcTiles: {
                 id: 'labyrinthAutoCalcTiles',
