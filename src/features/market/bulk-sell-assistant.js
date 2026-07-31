@@ -30,6 +30,7 @@ import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -54,6 +55,14 @@ class BulkSellAssistant {
         this.advanceTimeout = null;
         this.modalPoll = null;
         this.selectedTabId = 'all';
+        /**
+         * Other scripts' claims on inventory: name -> () => iterable of hold
+         * keys. Kept deliberately ignorant of why anything is held — a flip
+         * waiting to be relisted, a crafting reserve, a gift — so nothing about
+         * the reason has to live in here.
+         */
+        this.holdProviders = new Map();
+        this.heldCount = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
         this.toggleBtn = null;
@@ -64,6 +73,43 @@ class BulkSellAssistant {
     _tabPrefKey() {
         const charId = dataManager.getCurrentCharacterId();
         return charId ? `${charId}_bulkSell_lastTab` : null;
+    }
+
+    /**
+     * Register a claim on inventory, so those items are skipped by the sell
+     * queue. The assistant never learns why — a caller supplies keys and takes
+     * them away again when the claim ends.
+     *
+     *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
+     *         'flip-finder',
+     *         () => ['/items/cheese', '/items/cheese_sword+3']
+     *     );
+     *
+     * @param {string} name - Identifies the caller, and reports its errors
+     * @param {Function} provide - Returns an iterable of hold keys, called
+     *   afresh each time a queue is built so it can change between runs
+     * @returns {Function} Removes the provider
+     */
+    addHoldProvider(name, provide) {
+        if (typeof provide !== 'function') {
+            throw new TypeError('addHoldProvider needs a function returning the keys to hold');
+        }
+        const id = String(name || 'anonymous');
+        this.holdProviders.set(id, provide);
+        return () => this.holdProviders.delete(id);
+    }
+
+    /**
+     * @param {string} name - The name it was registered under
+     * @returns {boolean} Whether anything was removed
+     */
+    removeHoldProvider(name) {
+        return this.holdProviders.delete(String(name));
+    }
+
+    /** The keys currently claimed, for a caller checking its own work */
+    heldKeys() {
+        return [...collectHeldKeys(this.holdProviders)];
     }
 
     initialize() {
@@ -382,19 +428,30 @@ class BulkSellAssistant {
         }
 
         const clientData = dataManager.getInitClientData();
+        const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+            console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
+        );
+        let held = 0;
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
             if (item.itemHrid === '/items/coin') return false;
             if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
+            const key = holdKey(item.itemHrid, item.enhancementLevel);
+            // Held items are counted, not silently dropped: an item vanishing
+            // from the sell queue with no explanation is indistinguishable from
+            // a bug
+            if (heldKeys.has(key)) {
+                held++;
+                return false;
+            }
             if (tabItems) {
-                const level = item.enhancementLevel || 0;
-                const key = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
                 if (!tabItems.has(key)) return false;
                 if (aboveItems.has(key)) return false;
             }
             return true;
         });
+        this.heldCount = held;
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
@@ -416,13 +473,17 @@ class BulkSellAssistant {
             );
 
         if (!this.queue.length) {
-            this.statusNote = tabItems ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';
+            this.statusNote = tabItems
+                ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
+                : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
             this.state = 'idle';
             this._render();
             return;
         }
         this.index = 0;
-        this.statusNote = '';
+        // Say so rather than letting the count quietly differ from what is in
+        // the inventory
+        this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
         this._prepareCurrent();
     }
 
