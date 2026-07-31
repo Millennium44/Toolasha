@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
@@ -28,9 +29,19 @@ const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
+const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
+const ATTEMPT_STORAGE_KEY = 'labyrinthRoomAttempts';
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
+
+/**
+ * The floor's fixed corners: entrance top-left, exit bottom-right. Position is
+ * the reliable structural signal — unrevealed rooms carry no room type, so a
+ * fresh floor has nothing else to key off.
+ */
+const LABYRINTH_ENTRANCE = 0;
+const labyrinthExit = (n) => n - 1;
 
 /** Beacon reveal radius: Manhattan distance 2 — a 13-room diamond */
 const BEACON_RADIUS = 2;
@@ -193,12 +204,13 @@ export function computeLabyrinthPath(tiles, cols) {
  * @param {boolean[]} passable - Flat grid of walkable cells (entrance/exit
  *   are treated as walkable regardless)
  * @param {number} cols - Grid width
+ * @param {number} [exitIdx] - Floor exit; defaults to the top-right corner
  * @returns {number} Disjoint route count (capped at 4)
  */
-export function countDisjointRoutes(passable, cols) {
+export function countDisjointRoutes(passable, cols, exitIdx = labyrinthExit(passable.length)) {
     const n = passable.length;
     if (!n || !cols) return 0;
-    const walkable = (i) => i === 0 || i === n - 1 || !!passable[i];
+    const walkable = (i) => i === LABYRINTH_ENTRANCE || i === exitIdx || !!passable[i];
     const neighbors = (i) => {
         const out = [];
         if (i % cols > 0) out.push(i - 1);
@@ -219,14 +231,14 @@ export function countDisjointRoutes(passable, cols) {
     };
     for (let i = 0; i < n; i++) {
         if (!walkable(i)) continue;
-        addEdge(2 * i, 2 * i + 1, i === 0 || i === n - 1 ? 99 : 1);
+        addEdge(2 * i, 2 * i + 1, i === LABYRINTH_ENTRANCE || i === exitIdx ? 99 : 1);
         for (const nb of neighbors(i)) {
             if (walkable(nb)) addEdge(2 * i + 1, 2 * nb, 99);
         }
     }
 
-    const source = 1; // entrance out-node
-    const sink = 2 * (n - 1); // exit in-node
+    const source = 2 * LABYRINTH_ENTRANCE + 1; // entrance out-node
+    const sink = 2 * exitIdx; // exit in-node
     let flow = 0;
     while (flow < 4) {
         const prev = new Map([[source, null]]);
@@ -392,8 +404,10 @@ function beaconChainReach(grid, n, startRegion, endRegion) {
  * detour needed to visit it. Straight Manhattan distances, because the
  * labyrinth has no walls — every cell is a room, so nothing blocks a detour.
  *
- * Weighting coverage by this is what keeps a beacon off the far corner of the
- * map: those rooms are revealed just as cheaply, but you will never walk them.
+ * This only breaks ties between placements that reveal the same number of
+ * rooms, never outweighing coverage. Scoring rooms by it directly was tried
+ * and dropped: it bought a tidier line of beacons by leaving whole corners of
+ * the floor dark, and a revealed room is worth having wherever it sits.
  *
  * @param {Object} grid - beaconGrid helpers
  * @param {number} n - Cell count
@@ -413,27 +427,33 @@ function detourCosts(grid, n, startRegion, exitIdx) {
 
 /**
  * Place exactly `count` beacons to reveal as much of the floor as possible,
- * preferring rooms on the way to the exit. Greedy by marginal gain, then a
+ * settling ties toward rooms on the way out. Greedy by marginal gain, then a
  * re-placement pass per beacon: greedy alone takes the densest spot first even
  * when two beacons placed together would tile the dark region better.
  *
  * @param {Object} grid - beaconGrid helpers
  * @param {boolean[]} revealed - Flat grid of already-revealed rooms
  * @param {number} count - Beacons to place
- * @param {number[]} weight - Per-cell worth of revealing that room
+ * @param {number[]} detour - Per-cell detour cost, the tie-break
  * @returns {number[]} Beacon centers
  */
-function placeBeaconsForCoverage(grid, revealed, count, weight) {
+function placeBeaconsForCoverage(grid, revealed, count, detour) {
     const { diamond } = grid;
     const n = revealed.length;
 
+    // Rooms revealed first, total detour second — a placement that uncovers
+    // more of the floor always wins, however far off the route it sits
     const gainOf = (c, union) => {
-        let total = 0;
+        let rooms = 0;
+        let cost = 0;
         for (const d of diamond(c)) {
-            if (!revealed[d] && !union.has(d)) total += weight[d];
+            if (revealed[d] || union.has(d)) continue;
+            rooms++;
+            cost += detour[d];
         }
-        return total;
+        return { rooms, cost };
     };
+    const better = (a, b) => a.rooms > b.rooms || (a.rooms === b.rooms && a.cost < b.cost);
     const coverageOf = (centers) => {
         const union = new Set();
         for (const c of centers) {
@@ -445,16 +465,16 @@ function placeBeaconsForCoverage(grid, revealed, count, weight) {
     };
     const bestCenterAgainst = (union, taken, incumbent) => {
         let center = incumbent;
-        let best = incumbent >= 0 ? gainOf(incumbent, union) : 0;
+        let best = incumbent >= 0 ? gainOf(incumbent, union) : { rooms: 0, cost: Infinity };
         for (let c = 0; c < n; c++) {
             if (c === incumbent || taken.has(c)) continue;
             const gain = gainOf(c, union);
-            if (gain > best) {
+            if (better(gain, best)) {
                 best = gain;
                 center = c;
             }
         }
-        return best > 0 ? center : -1;
+        return best.rooms > 0 ? center : -1;
     };
 
     const beacons = [];
@@ -508,8 +528,8 @@ function placeBeaconsForCoverage(grid, revealed, count, weight) {
 export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
     const n = revealed.length;
     if (!n || !cols) return null;
-    const entranceIdx = 0;
-    const exitIdx = n - 1;
+    const entranceIdx = LABYRINTH_ENTRANCE;
+    const exitIdx = labyrinthExit(n);
     const grid = beaconGrid(n, cols);
     const { manhattan, neighbors, diamond, regionFrom } = grid;
 
@@ -538,8 +558,8 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
     // A set count answers "where do I put the beacons I have", so it is planned
     // for coverage whether or not the way out is already open
     if (beaconCount > 0) {
-        const weight = detourCosts(grid, n, startRegion, exitIdx).map((detour) => 1 / (1 + detour));
-        const beacons = placeBeaconsForCoverage(grid, revealed, beaconCount, weight);
+        const detour = detourCosts(grid, n, startRegion, exitIdx);
+        const beacons = placeBeaconsForCoverage(grid, revealed, beaconCount, detour);
         const covered = new Set();
         for (const c of beacons) {
             for (const d of diamond(c)) {
@@ -655,6 +675,10 @@ class LabyrinthClearRate {
         this.snapshotUpdateHandler = null;
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
+        this.roomAttempts = new Map();
+        this._attemptRunKey = null;
+        this._attemptHead = null;
+        this._attemptActionCounter = null;
     }
 
     initialize() {
@@ -706,6 +730,7 @@ class LabyrinthClearRate {
         const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
             this.seedFromCharacterData();
             this.injectTileControls();
+            this.refreshAttemptBadges();
             this.pruneClearedTileBadges();
             this.pruneClearedPathOverlays();
             this.pruneUsedBeaconOverlays();
@@ -716,6 +741,7 @@ class LabyrinthClearRate {
             this.seedFromCharacterData();
             this.injectTileControls();
             this.scheduleAutoTileCalc();
+            this.restoreAttempts();
         }, 500);
 
         setTimeout(() => {
@@ -817,6 +843,7 @@ class LabyrinthClearRate {
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
         document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
+        document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
         if (this.autoTileTimer) {
             clearTimeout(this.autoTileTimer);
@@ -860,7 +887,160 @@ class LabyrinthClearRate {
         this.isInitialized = false;
     }
 
+    // -------------------------------------------------------------------------
+    // Room attempts
+    //
+    // A room you fail to clear is one you come back to, and the map gives no
+    // sign of it: the tile looks the same on your fourth try as on your first.
+    // Two things start a fresh attempt, and the game may use either, so both
+    // are counted — walking into the room (the path head moves onto it) and the
+    // room's action counter restarting while you are standing in it.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Identify the run a count belongs to. Room coordinates repeat on every
+     * floor, so the floor is part of the key — otherwise descending would carry
+     * the last floor's tallies onto the new map.
+     * @param {Object} labyrinth - labyrinth payload
+     * @returns {string}
+     */
+    attemptRunKey(labyrinth) {
+        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
+    }
+
+    /**
+     * Follow the path head, counting an attempt each time it enters a room.
+     * @param {Object} labyrinth - labyrinth payload from labyrinth_updated
+     */
+    trackAttemptFromPath(labyrinth) {
+        if (!labyrinth) return;
+        const runKey = this.attemptRunKey(labyrinth);
+        if (runKey !== this._attemptRunKey) {
+            this._attemptRunKey = runKey;
+            this.roomAttempts = new Map();
+            this._attemptHead = null;
+            this._attemptActionCounter = null;
+        }
+
+        let path = labyrinth.pathData;
+        if (typeof path === 'string' && path) {
+            try {
+                path = JSON.parse(path);
+            } catch {
+                path = null;
+            }
+        }
+        const head = Array.isArray(path) ? path[0] : null;
+        if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return;
+
+        const roomKey = `${head.x},${head.y}`;
+        if (roomKey === this._attemptHead) return;
+        this._attemptHead = roomKey;
+        this._attemptActionCounter = null;
+        this.countAttempt(roomKey);
+    }
+
+    /**
+     * Count a fresh attempt when the room restarts under you: the action
+     * counter can only go backwards by starting the room over.
+     * @param {Object} progress - labyrinth_room_progress payload
+     */
+    trackAttemptFromProgress(progress) {
+        if (!this._attemptHead) return;
+        const counter = Math.floor(Number(progress?.actionCounter));
+        if (!Number.isFinite(counter)) return;
+        if (this._attemptActionCounter !== null && counter < this._attemptActionCounter) {
+            this.countAttempt(this._attemptHead);
+        }
+        this._attemptActionCounter = counter;
+    }
+
+    /**
+     * @param {string} roomKey - "x,y"
+     */
+    countAttempt(roomKey) {
+        this.roomAttempts.set(roomKey, (this.roomAttempts.get(roomKey) || 0) + 1);
+        this.persistAttempts();
+        this.refreshAttemptBadges();
+    }
+
+    /** Attempts on the room being run right now, 0 when it is not known */
+    currentRoomAttempts() {
+        return this._attemptHead ? this.roomAttempts.get(this._attemptHead) || 0 : 0;
+    }
+
+    async persistAttempts() {
+        try {
+            await storage.setJSON(
+                ATTEMPT_STORAGE_KEY,
+                { runKey: this._attemptRunKey, head: this._attemptHead, attempts: [...this.roomAttempts] },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Persisting room attempts failed:', error);
+        }
+    }
+
+    /**
+     * Restore the tallies after a page refresh, but only for the run they were
+     * recorded in — a stored count from a finished run would otherwise show up
+     * on a fresh floor's identically numbered rooms.
+     */
+    async restoreAttempts() {
+        try {
+            const stored = await storage.getJSON(ATTEMPT_STORAGE_KEY, 'settings', null);
+            if (!stored?.runKey || !Array.isArray(stored.attempts)) return;
+            const labyrinth = dataManager.characterData?.characterLabyrinth || this.getLabyrinthFromReactState();
+            if (!labyrinth || this.attemptRunKey(labyrinth) !== stored.runKey) return;
+            if (this._attemptRunKey && this._attemptRunKey !== stored.runKey) return;
+
+            this._attemptRunKey = stored.runKey;
+            this._attemptHead = this._attemptHead || stored.head || null;
+            for (const [roomKey, count] of stored.attempts) {
+                if (!this.roomAttempts.has(roomKey)) this.roomAttempts.set(roomKey, count);
+            }
+            this.refreshAttemptBadges();
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Restoring room attempts failed:', error);
+        }
+    }
+
+    /**
+     * Mark every room that has taken more than one try. One attempt is the
+     * normal case and carries no information, so only repeats are drawn.
+     */
+    refreshAttemptBadges() {
+        document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
+        if (!this.roomAttempts.size || !this.roomData) return;
+        const flat = this.roomData.flat();
+        const cols = Array.isArray(this.roomData[0]) ? this.roomData[0].length : 0;
+        if (!cols) return;
+        const cells = this.findRoomGridCells(flat.length);
+        if (cells.length !== flat.length) return;
+
+        for (const [roomKey, count] of this.roomAttempts) {
+            if (count < 2) continue;
+            const [x, y] = roomKey.split(',').map(Number);
+            const cell = cells[y * cols + x];
+            if (!cell) continue;
+
+            const cellStyle = window.getComputedStyle(cell);
+            if (cellStyle.position === 'static') cell.style.position = 'relative';
+
+            const badge = document.createElement('div');
+            badge.className = ATTEMPT_BADGE_CLASS;
+            badge.title = `${count} attempts at this room this floor`;
+            badge.textContent = `↻${count}`;
+            badge.style.cssText =
+                'position:absolute; left:1px; bottom:1px; z-index:9; padding:0 3px; border-radius:3px; ' +
+                'background:rgba(0,0,0,0.7); color:#ffc866; font-size:8px; font-weight:700; line-height:1.4; ' +
+                'pointer-events:none;';
+            cell.appendChild(badge);
+        }
+    }
+
     onLabyrinthUpdated(data) {
+        this.trackAttemptFromPath(data.labyrinth);
         const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
@@ -877,6 +1057,7 @@ class LabyrinthClearRate {
             }
             this.injectTileControls();
             this.pruneClearedTileBadges();
+            this.refreshAttemptBadges();
             // Re-run after React repaints the cleared tile (the WS message
             // usually arrives before the DOM updates)
             if (this.pruneTileTimer) clearTimeout(this.pruneTileTimer);
@@ -2117,6 +2298,7 @@ class LabyrinthClearRate {
      * Handle incoming labyrinth_room_progress WS message
      */
     onLiveProgress(data) {
+        this.trackAttemptFromProgress(data);
         if (!config.getSetting('labyrinthLiveProgress')) return;
         this.refreshLiveProgress(data);
     }
@@ -2233,17 +2415,21 @@ class LabyrinthClearRate {
         }
 
         const chancePct = (estimate.clearChance * 100).toFixed(1);
-        const attemptText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
+        const actionText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
+        // Only past the first, since every room is on its first try until it is not
+        const tries = this.currentRoomAttempts();
+        const tryText = tries > 1 ? ` | try ${tries}` : '';
         if (estimate.isEnhancing) {
-            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${attemptText}]`;
+            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
         } else {
-            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${attemptText}]`;
+            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
         }
 
         const tooltipLines = [
             `Success: ${(estimate.successChance * 100).toFixed(1)}% | Double: ${(estimate.doubleChance * 100).toFixed(1)}%`,
             `Actions: ${estimate.actionCounter}/${estimate.totalAttempts}`,
         ];
+        if (tries > 1) tooltipLines.push(`Attempt ${tries} at this room`);
         if (estimate.isEnhancing) {
             tooltipLines.push(`Enhance: +${estimate.currentLevel}/+${estimate.targetLevel}`);
         } else {

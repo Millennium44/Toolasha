@@ -332,21 +332,23 @@ describe('computeBeaconPlan', () => {
         expect(plan.revealedNew).toBe(1);
     });
 
-    test('coverage beats a far corner when the rooms are equally cheap to reveal', () => {
-        // Entrance region across the top, exit bottom-right, and a single
-        // beacon: it belongs on the way out, not in the opposite corner
+    test('two equally dark pockets, and the beacon lights the one on the way out', () => {
         const cols = 9;
-        const revealed = new Array(81).fill(false);
-        for (let x = 0; x < 9; x++) revealed[x] = true;
-        const plan = computeBeaconPlan(revealed, cols, 1);
-
-        const [center] = plan.beacons;
-        const detour = (i) => {
-            const cx = i % cols;
-            const cy = Math.floor(i / cols);
-            return cy + (8 - cx) + (8 - cy) - 8; // from the top row, out to (8,8)
+        const idx = (x, y) => y * cols + x;
+        const revealed = new Array(81).fill(true);
+        const darken = (cx, cy) => {
+            for (let y = 0; y < 9; y++) {
+                for (let x = 0; x < 9; x++) {
+                    if (Math.abs(x - cx) + Math.abs(y - cy) <= 2) revealed[idx(x, y)] = false;
+                }
+            }
         };
-        expect(detour(center)).toBeLessThanOrEqual(2);
+        darken(5, 6); // between the revealed floor and the exit at (8,8)
+        darken(6, 2); // the same 13 rooms, but nothing out there is on the way
+
+        const plan = computeBeaconPlan(revealed, cols, 1);
+        expect(plan.revealedNew).toBe(13); // both pockets are worth the same
+        expect(plan.beacons).toEqual([idx(5, 6)]);
     });
 });
 
