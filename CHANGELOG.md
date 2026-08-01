@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Treasure: a ledger of what your chests actually paid out
+
+New setting, on by default, and a **Treasure** button on the settings page that opens a draggable panel.
+
+- Toolasha already prices a chest before you open it, in tooltips and in net worth. That is a claim about the long run. This is the record of whether the long run has turned up: how many of each chest you have opened, what came out, and what the drop tables say they owed you — as a running total and per chest, worst first.
+- **Expand a chest to see which item is responsible.** A chest sitting 30% down is usually one rare that has not come up rather than something wrong across the board, and the totals alone cannot tell those apart. Items that never dropped are listed too — the missing row is the whole story on an unlucky chest.
+- Chests are ordered by how far from expectation they sit, not alphabetically. The reason to open the panel is to find out which one let you down.
+- **Tracking runs whether or not the panel is open.** A ledger you have to remember to start is empty when you finally want to read it.
+- Items with no market price sit out of both sides of the comparison, so a chest full of unsellable junk is not counted as a shortfall.
+- A chest a percent or two off expectation is left uncoloured. Every chest is slightly off; colouring that would make the panel a wall of red and green saying nothing.
+
+**Fixed on the way through: chest openings were being silently dropped.** `loot_opened` went through the WebSocket layer's content-hash dedup, which compares the first 100 characters — and opening the same chest twice in a row produces two messages identical that far in. The second was discarded before any handler saw it. Nothing used the message until now, so nothing noticed. It now takes the same short-TTL path `action_completed` uses, which still collapses genuine duplicates from the double-listener case.
+
 ### Drop luck now shows in the battle panel
 
 New setting, on by default. Coming back from combat, a line appears beside Total revenue: **`Drop luck: 73rd percentile — 27 runs in 100 beat it`**, green when the session went well, red when it did not.

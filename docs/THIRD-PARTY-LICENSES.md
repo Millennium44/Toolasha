@@ -48,9 +48,15 @@ Ported so far, all of it the analysis rather than the panels around it:
   `combatDropRate`, `combatRareFind`, `combatDropQuantity`, party size and the dungeon multiplier
   turn a table's numbers into the rates a player actually sees.
 
-`src/features/combat/combat-drop-luck.js` displays the result. The panel, its wording and its
-placement are Toolasha's own — LYuck is a floating window of its own, and this is a line in the
-game's battle panel.
+- `src/utils/chest-tally.js` — the chest ledger from TReasure: fold each opening into a running
+  total, compare it against what the drop table owed, and break the verdict down per item. The
+  idea and the ledger's shape are Frotty's; the code is written against Toolasha's own storage
+  and pricing.
+
+`src/features/combat/combat-drop-luck.js` and `src/features/inventory/treasure-tracker.js`
+display the results. The panels, their wording and their placement are Toolasha's own — LYuck and
+TReasure are floating windows in a suite of twenty-one, while these are a line in the game's own
+battle panel and a single panel opened from the settings page.
 
 Deliberately not ported: the chest expected-value fixed point and token-shop valuation.
 `src/features/market/expected-value-calculator.js` and `src/utils/token-valuation.js` already do

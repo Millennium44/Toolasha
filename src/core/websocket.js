@@ -314,6 +314,11 @@ class WebSocketHook {
             messageType === 'loadouts_updated' ||
             messageType === 'setting_updated' ||
             messageType === 'labyrinth_room_progress' ||
+            // Opening the same chest twice in a row produces two messages whose
+            // first 100 characters are identical — same type, same chest, same
+            // count — so the content hash would drop the second and the treasure
+            // ledger would undercount every repeat opening
+            messageType === 'loot_opened' ||
             messageType === 'leaderboard_updated';
 
         if (!skipDedup) {
@@ -331,14 +336,16 @@ class WebSocketHook {
             if (this.processedMessages.size > 100) {
                 this.cleanupProcessedMessages();
             }
-        } else if (messageType === 'action_completed') {
-            // action_completed bypasses the content-hash dedup (Gabriel's fix, commit 1007215)
+        } else if (messageType === 'action_completed' || messageType === 'loot_opened') {
+            // action_completed and loot_opened bypass the content-hash dedup (Gabriel's fix,
+            // commit 1007215, and the treasure ledger respectively)
             // but the WebSocket prototype wrapper can fire two listeners for the same physical
             // message object. The WeakSet guard catches same-object duplicates, but if two
             // independent listeners each receive a distinct MessageEvent wrapping the same
             // payload, both pass the WeakSet check and processMessage is called twice.
             // Use a short 50ms TTL keyed on full message content to collapse these duplicates.
-            // Two genuine consecutive action_completed messages are always seconds apart.
+            // Two genuine consecutive messages of either type are far enough apart that a
+            // byte-identical repeat inside 50ms is a duplicate rather than a second event.
             const now = Date.now();
             if (this.recentActionCompleted.has(message)) {
                 return; // Duplicate from second listener — skip
