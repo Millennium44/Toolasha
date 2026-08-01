@@ -68,16 +68,22 @@ export function orderTiles(tiles, pinned, hridOf) {
     const list = tiles || [];
     const rank = new Map((pinned || []).map((hrid, index) => [hrid, index]));
 
+    // The "Remove" cell shares the grid and stands for no item. It keeps the
+    // first slot rather than being swept along with the unpinned items, so
+    // pinning something does not push the way to clear the selection down
+    // behind it.
+    const fixed = [];
     const front = [];
     const rest = [];
     for (const tile of list) {
         const hrid = hridOf(tile);
-        if (rank.has(hrid)) front.push(tile);
+        if (!hrid) fixed.push(tile);
+        else if (rank.has(hrid)) front.push(tile);
         else rest.push(tile);
     }
     front.sort((a, b) => rank.get(hridOf(a)) - rank.get(hridOf(b)));
 
-    return [...front, ...rest];
+    return [...fixed, ...front, ...rest];
 }
 
 /**
