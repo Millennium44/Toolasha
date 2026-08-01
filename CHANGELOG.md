@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Treasure panel lists every chest, and its columns line up
+
+- **Every chest in the game is listed, not only the ones you have opened.** The panel is also where you look up what a chest is worth before deciding to open it, and a list of your own history cannot answer that. Unopened chests show their name and value, dimmed, with no verdict and no Reset — there is nothing to reset and no verdict to give.
+- Chests you have opened still sort worst-first; the rest follow by what one is worth, so the list stays useful rather than alphabetical.
+- A chest the game has stopped listing keeps its history rather than disappearing from the panel at the next update.
+- **The three columns now line up.** Each was laid out with flex, so counts, values and percentages drifted with the width of whatever was above them, and the expected column ran off the panel's edge — the last figure was cut mid-number. Every band now shares one grid, each column has fixed sub-columns, digits are tabular so a changing value does not make the column jitter, and the panel is wide enough for four figures.
+- Chest headers carry what one chest is worth beside the name, and a per-chest Reset.
+
 ### Double-click an overlay row to open the panel behind it
 
 - A row is a summary; the detail it provokes a question about now lives one gesture away. Rows that own a panel show a pointer cursor and a hint on hover; rows that do not are simply not interactive.
