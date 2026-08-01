@@ -1003,6 +1003,86 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.88.0](https://github.com/Millennium44/Toolasha/compare/v2.87.0...v2.88.0) (2026-08-01)
+
+### Features
+
+- **alchemy:** pin items in the item picker, per action ([1c16bff](https://github.com/Millennium44/Toolasha/commit/1c16bff0337ff50420b9b381a2efba6237045f36))
+- **labsim:** stop each tab on the question it is asking ([981f015](https://github.com/Millennium44/Toolasha/commit/981f015bb44fb70332bcb3ec4fa9ba8bcf3bf69f))
+- labyrinth results tracking, market history panel, battle panel scaling, alchemy pins ([#5](https://github.com/Millennium44/Toolasha/issues/5)) ([4232920](https://github.com/Millennium44/Toolasha/commit/423292043db49005a484e7c1cc809145decb9cb1))
+- **labyrinth:** check skilling rooms too, and show what a floor is worth ([793019c](https://github.com/Millennium44/Toolasha/commit/793019cb5b6ff2dd2750ac8bba1e087b1a199118))
+- **labyrinth:** combat experience figures, and a reachable logs tab ([791e199](https://github.com/Millennium44/Toolasha/commit/791e199cade83849abd1af09ef5430df621fd59a))
+- **labyrinth:** count room attempts, and fix the beacon coverage tie-break ([cf5e0e7](https://github.com/Millennium44/Toolasha/commit/cf5e0e767758426493f2afeccf620539f6fb7ffb))
+- **labyrinth:** decide skip-level probes instead of measuring them ([69e15c1](https://github.com/Millennium44/Toolasha/commit/69e15c1b5c4601868b4b992c6578e8ada2a82db4))
+- **labyrinth:** distinguish a skip threshold set below the recommendation ([375c77a](https://github.com/Millennium44/Toolasha/commit/375c77a3367f0f662efda5f0e80e87a25b057f7c))
+- **labyrinth:** live clear chance during combat rooms ([903f603](https://github.com/Millennium44/Toolasha/commit/903f603968163e7e7c48bbfe2ef8aa0d4bd752c2))
+- **labyrinth:** log combat rooms and judge the sim against them ([41aff64](https://github.com/Millennium44/Toolasha/commit/41aff64eaa7ae6cbb0d13156e1a3c0b42f84d7a1))
+- **labyrinth:** record real fight outcomes and check the sim against them ([2a02a9c](https://github.com/Millennium44/Toolasha/commit/2a02a9c292f9421140b938add0964f7377d5a7c9))
+- **labyrinth:** replay the live fight for the combat clear chance ([830a118](https://github.com/Millennium44/Toolasha/commit/830a118a24d6650ce0f366710f25e66ca00fa6da))
+- **labyrinth:** socket capture tool and a live combat clear-chance estimator ([f3e6169](https://github.com/Millennium44/Toolasha/commit/f3e616992d2831317c005d54003f5c6b3475410b))
+- **labyrinth:** stop combat sims on precision instead of simulated hours ([7690ccc](https://github.com/Millennium44/Toolasha/commit/7690ccc64e5c219e96de52d55f2e0d4d1e0d6d4f))
+- **market:** drag the Bulk Sell panel, and stop the run when it closes ([0f095ae](https://github.com/Millennium44/Toolasha/commit/0f095ae384135c775bb43108c72da8ed1e5a773d))
+- **market:** let other scripts hold items back from Bulk Sell ([30961bb](https://github.com/Millennium44/Toolasha/commit/30961bb1f277fef16c1afca16f29ffd6d0d108d6))
+- **market:** let other scripts mark Market History rows ([cdabaa1](https://github.com/Millennium44/Toolasha/commit/cdabaa16c28bf34aa9781bada289d5df728e43ae))
+- **market:** open an item's marketplace page from Market History ([98acb92](https://github.com/Millennium44/Toolasha/commit/98acb92880ed023c523d7f36a8af01914d092052))
+- **market:** price history panel, adapted from mooket II ([a10db41](https://github.com/Millennium44/Toolasha/commit/a10db41617091b251b2086f965d05138a2a753e9))
+- **market:** quieten the sidebar badge, and mark live listings ([c8aedde](https://github.com/Millennium44/Toolasha/commit/c8aedde56aae7d34edb7a1ae1704662b7086c766))
+- **market:** toggle the history panel from a tab, and one switch for the pool ([1999f49](https://github.com/Millennium44/Toolasha/commit/1999f499fb76755cb8072214cea4f0ca252970e4))
+- payback, repay time and rank scoring in the upgrade advisor ([5deaf86](https://github.com/Millennium44/Toolasha/commit/5deaf86bad3b579e2900601a300393606976a34b))
+- resize from either side, rename Payback to Time, widen score default ([4e4bfe4](https://github.com/Millennium44/Toolasha/commit/4e4bfe494169799c89892c5f20f78f48c2d1fd41))
+- sticky headers, more upgrade columns, configurable Score ([7b821c2](https://github.com/Millennium44/Toolasha/commit/7b821c2ebe40c136afe42b0a2437d9fd47a3425a))
+- **ui:** close the Bulk Sell panel, and toggle the net worth chart ([a2dfe6c](https://github.com/Millennium44/Toolasha/commit/a2dfe6c0d5282bc1620927150fe5b3ad1201237b))
+- **ui:** resize the battle panel from settings, per character ([f5fe328](https://github.com/Millennium44/Toolasha/commit/f5fe328af1e0ee54b11a5c848a36fc644bf5d266))
+
+### Bug Fixes
+
+- **actions:** decide bar width from the action queue, not the header text ([8e09615](https://github.com/Millennium44/Toolasha/commit/8e09615248d095502a039014adb16b386de62760))
+- **actions:** keep annotations out of the parsed action name ([d5cf297](https://github.com/Millennium44/Toolasha/commit/d5cf2972ffd4dfa062ec61b1429a16bb08c9ab3a))
+- **alchemy:** find the item picker by structure, not by a label ([a87191d](https://github.com/Millennium44/Toolasha/commit/a87191d4bf721834ef4c4e72060c4909a5f13a64))
+- **alchemy:** identify the item picker by what was clicked ([802f5b2](https://github.com/Millennium44/Toolasha/commit/802f5b259e361215570b0a56399e455844a77594))
+- **alchemy:** keep the Remove cell at the front of the grid ([3a65c0a](https://github.com/Millennium44/Toolasha/commit/3a65c0a2e56f61e81345fd19c43e8f8edc54aa3a))
+- **alchemy:** pin every tile, not just the first ([31ed31f](https://github.com/Millennium44/Toolasha/commit/31ed31f1c626c9e26b645f80eaa8c4772fcf3431))
+- **alchemy:** stop the reorder displacing the Remove cell ([c4b4bbf](https://github.com/Millennium44/Toolasha/commit/c4b4bbf95d1b9f92900803f4cfee4ab29c6ef1bc))
+- **combat:** drop the battle counter when the action changes ([08150d1](https://github.com/Millennium44/Toolasha/commit/08150d10173f34b7f2aad0d25bf5901dc18d660b))
+- easier panel resize, narrower upgrade columns, stable Columns menu ([4064228](https://github.com/Millennium44/Toolasha/commit/40642280a06b6965dd375736b56cb458899b272c))
+- **guild:** drop leaderboard readings that repeat the last one ([97ff6f0](https://github.com/Millennium44/Toolasha/commit/97ff6f0a338d7b803b90d9b0ea6551f16c8b3b7b))
+- **guild:** expose debugState through the module's feature interface ([dd99e82](https://github.com/Millennium44/Toolasha/commit/dd99e825044eee732f3c95d1fc483a50cf3f4950))
+- **labyrinth:** charge combat rooms for the walk to them too ([6cea453](https://github.com/Millennium44/Toolasha/commit/6cea453566a264c0e7759614285c0c43b7ffe69c))
+- **labyrinth:** charge room travel once, not once per attempt ([1712c95](https://github.com/Millennium44/Toolasha/commit/1712c9524f6ba487eaa1f9a741c9339c9e416573))
+- **labyrinth:** count the wins the accuracy record was blind to ([36c1bd0](https://github.com/Millennium44/Toolasha/commit/36c1bd029599574dbb7a06bce7e09dab2f48c70f))
+- **labyrinth:** credit a room's experience when it actually arrives ([54747d7](https://github.com/Millennium44/Toolasha/commit/54747d765fedc88934f9143d1aaa04590b12859b))
+- **labyrinth:** detect a retried fight, and stop the clear chance flickering ([5cd21c4](https://github.com/Millennium44/Toolasha/commit/5cd21c45200d2900eceadbaaa82e321e21a8c56a))
+- **labyrinth:** find combat fields by diffing payloads, not by guessing names ([e0fbffa](https://github.com/Millennium44/Toolasha/commit/e0fbffa04087b64a683f790a454c269d2f6227bf))
+- **labyrinth:** load the fight record for anything that reads it ([9d57e7f](https://github.com/Millennium44/Toolasha/commit/9d57e7fa70e3e28ea4df21316108781a65a9197c))
+- **labyrinth:** make skip-level decisions conservative, not just fast ([32cba6d](https://github.com/Millennium44/Toolasha/commit/32cba6dd48e1a11590a9b08474a3c0f7d64cc6db))
+- **labyrinth:** move the attempt badge off the ETA, exempt battle_updated from dedup ([1702e12](https://github.com/Millennium44/Toolasha/commit/1702e12fd78031087829f60b7c48c033fe574573))
+- **labyrinth:** pay combat rooms on completion, and show the full card ([ffdcb7d](https://github.com/Millennium44/Toolasha/commit/ffdcb7d16024bac7a1579388d1cab54c341c652d))
+- **labyrinth:** plan a set beacon count for coverage, not a corridor ([748cb38](https://github.com/Millennium44/Toolasha/commit/748cb389e24673f54dc6418f4b5a1ee2d2f0eee9))
+- **labyrinth:** read the current room from the head of the path queue ([2881d3e](https://github.com/Millennium44/Toolasha/commit/2881d3efe611af5377abdd13daefc3bd63c7133a))
+- **market:** move the History tab last, and mark panel tabs as panels ([14e08eb](https://github.com/Millennium44/Toolasha/commit/14e08eb03f11e2f13880877d039110efab3a5bd9))
+- **market:** redraw an open history table when a marker registers ([f8442ff](https://github.com/Millennium44/Toolasha/commit/f8442fff738fb8a5753f1bd8e2c0f07484216d45))
+- quote gold-per at 0.01%, correct the Payback tooltip ([e965415](https://github.com/Millennium44/Toolasha/commit/e9654156ece0c3e5887667fc69af849a855136b5))
+
+### Code Refactoring
+
+- **labyrinth:** put skilling experience per hour on the same basis as combat ([1da9d7f](https://github.com/Millennium44/Toolasha/commit/1da9d7f78cb2c18a886864db743217683eea93ff))
+- **market:** drop the My Listings marker setting ([e82da7f](https://github.com/Millennium44/Toolasha/commit/e82da7fc1d7423d9e5f1b2aea2e75939685a57d1))
+
+### Documentation
+
+- credit dakonglong for the labyrinth simulator ([6d5bd95](https://github.com/Millennium44/Toolasha/commit/6d5bd95a591ec0c03c68a415c824410060d12992))
+- credit jigglymoose for JIGS ([28162e6](https://github.com/Millennium44/Toolasha/commit/28162e641d1375d11748ddb32c95f928586556a5))
+- reword the JIGS credit to thank jigglymoose for ideas ([1a2d26f](https://github.com/Millennium44/Toolasha/commit/1a2d26fa385b798e91eba0f3cb9fe77f6703cc8d))
+- track the third-party attribution file ([570de12](https://github.com/Millennium44/Toolasha/commit/570de12cb42041ac244851e4cb9c6db6caff20f6))
+
+### Styles
+
+- **labyrinth:** say "Attempt [#2](https://github.com/Millennium44/Toolasha/issues/2)" in the room header ([b62f162](https://github.com/Millennium44/Toolasha/commit/b62f16226e712e2be2066ddc674cab5ccfe54b43))
+
+### Reverts
+
+- "fix(alchemy): stop the reorder displacing the Remove cell" ([28aaea7](https://github.com/Millennium44/Toolasha/commit/28aaea74cb0de3c5dcdb6b920a2084826975d9e8))
+
 ## [2.87.0](https://github.com/Millennium44/Toolasha/compare/v2.86.0...v2.87.0) (2026-07-30)
 
 ### Features
