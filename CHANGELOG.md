@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### MWI Combat Suite is vendored as source material, with attribution
+
+- Frotty's **MWI Combat Suite v0.9.36235** now sits verbatim in `third-party/mwi-combat-suite/`, under the MIT licence it declares. Nothing there is imported, bundled, linted or executed — the build reads `src/`, so the copy is inert and no behaviour changes.
+- It is committed rather than read once and discarded because MIT attribution has to name something identifiable. "Adapted from a version of Frotty's script" is not attribution if nobody can say which version; the exact 42,155 lines make every later claim checkable against the original, and diffable against a future release.
+- `docs/THIRD-PARTY-LICENSES.md` records it, and marks the difference from the Scaley Way Idle entry already there. Same author, but that script carries no licence and could only lend an idea; this one is MIT, so the code itself can be reused.
+- The vendored README inventories all twenty-one tools and calls out the four pieces worth porting first — the drop-luck CDF analysis, the enhancement Markov chain, the expected-spawn DP and the chest EV fixed point. Those are pure computation and port cleanly with tests; the rest are panels.
+- **Nothing has been ported yet.** Which of the twenty-one Toolasha should grow is a call worth making one feature at a time.
+
 ### Fixed: the alchemy pins never appeared
 
 The picker could not be recognised at all, which also means the existing item dimming has been silently doing nothing — it shared the logic. Three things were wrong:

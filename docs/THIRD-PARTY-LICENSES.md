@@ -20,6 +20,20 @@ repositioning of the two areas by drag handle is not reproduced.
 Credit for the idea and for working out which parts of the battle panel are worth resizing
 belongs to Frotty.
 
+## MWI Combat Suite
+
+`third-party/mwi-combat-suite/` holds **MWI Combat Suite v0.9.36235** by Frotty verbatim, under
+the MIT licence it declares in its own userscript header. It is source material: nothing in that
+directory is imported, bundled, linted, or executed, and Toolasha ships none of it today.
+
+Same author as Scaley Way Idle above, but not the same situation. Scaley Way Idle carries no
+licence, so that feature could take the idea and nothing else. This one is MIT, which permits the
+code itself to be reused — so the copy is kept in the repository rather than read once and
+discarded, and anything ported out of it will be recorded here with what was taken.
+
+Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what the script contains, and which
+parts are worth porting, in `third-party/mwi-combat-suite/README.md`.
+
 ## mooket II
 
 `src/features/market/mooket/` is adapted from **mooket II** by Q7, used under the MIT
