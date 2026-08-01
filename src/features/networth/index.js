@@ -12,6 +12,8 @@ import { networthHeaderDisplay, networthInventoryDisplay } from './networth-disp
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPauseRegistry } from '../../utils/pause-registry.js';
 import networthCache from './networth-cache.js';
+import { registerRow } from '../../utils/overlay-rows.js';
+import { formatLargeNumber } from '../../utils/formatters.js';
 import networthHistory from './networth-history.js';
 import networthHistoryChart from './networth-history-chart.js';
 import { initExclusions } from './networth-exclusions.js';
@@ -232,5 +234,29 @@ class NetworthFeature {
 }
 
 const networthFeature = new NetworthFeature();
+
+// Registered at module scope so the overlay has the row regardless of start-up
+// order. Reads the value the feature last calculated rather than calculating:
+// a full networth pass prices every item you own and runs a worker pool, which
+// is not something a row redrawn every second may do. The figure refreshes when
+// the feature itself recalculates, on item and price changes.
+registerRow({
+    key: 'netWorth',
+    name: 'Net Worth',
+    render: (container) => {
+        container.replaceChildren();
+        const total = networthFeature.currentData?.totalNetworth;
+        if (!(total > 0)) return;
+
+        Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
+        const label = document.createElement('span');
+        label.textContent = 'Net worth';
+        const value = document.createElement('span');
+        value.textContent = formatLargeNumber(Math.round(total));
+        value.style.whiteSpace = 'nowrap';
+        container.appendChild(label);
+        container.appendChild(value);
+    },
+});
 
 export default networthFeature;

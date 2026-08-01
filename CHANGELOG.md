@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Five more overlay rows, from calculators Toolasha already had
+
+The overlay had two rows and both needed something to have happened first, so a fresh install showed an empty box. These read figures the codebase already computes.
+
+- **Revenue** — income, what it cost to earn, and what is left: `75.8M − 11.9M = 63.9M/day`. The third number is the only one worth acting on and the one an income figure alone quietly overstates.
+- **Experience/hr** and **Deaths/hr** — the same figures the Combat Statistics popup shows, on the overlay so they can be watched during a run rather than opened after one. Zero deaths is left uncoloured: it is the goal, not a shortfall.
+- **Net worth** — reads the value the networth feature last calculated rather than calculating. A full pass prices every item you own and runs a worker pool, which is not something a row redrawn every second may do; it refreshes when the feature itself recalculates.
+- **Houses** — how many room upgrades your coins cover, and the cheapest one. Counted per room rather than as a basket, because buying the cheapest changes what you can afford next, so "you could buy all six" would be false.
+
+Nothing new is computed for the three combat rows — `calculatePlayerStats` is the same function the popup calls. The result is cached for a few seconds, since that function prices every item in the loot map and the overlay redraws every second.
+
+**The combat bundle is now 2,648 bytes under its 2 MB limit.** Adding the three combat rows took roughly 6 KB of the 8 KB that was left. The next feature that touches that bundle will break the build, and splitting it is now the blocking problem rather than a tidy-up.
+
 ### Treasure pops up what an opening actually paid
 
 New setting, on by default. Open a chest and a panel appears beside the game's own Opened Loot dialog, itemised.

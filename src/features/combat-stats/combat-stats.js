@@ -5,6 +5,9 @@
 
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import combatStatsUI from './combat-stats-ui.js';
+// Imported for its side effect: the module registers this feature's overlay rows
+// at module scope, so they exist whether or not the feature has started
+import './combat-stats-rows.js';
 
 /**
  * Initialize combat statistics feature
