@@ -25,7 +25,14 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { recordOpening, resetTally, chestPerformance, summariseTally, tallyTotals } from '../../utils/chest-tally.js';
+import {
+    recordOpening,
+    resetTally,
+    chestPerformance,
+    chestBreakdown,
+    summariseTally,
+    tallyTotals,
+} from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -88,6 +95,22 @@ export function itemName(itemHrid) {
     const details = dataManager.getItemDetails?.(itemHrid);
     if (details?.name) return details.name;
     return itemHrid.replace('/items/', '').replace(/_/g, ' ');
+}
+
+/**
+ * A count small enough that rounding it would say the wrong thing.
+ *
+ * A rare owed 0.002 of itself per chest rounds to zero, which reads as the chest
+ * owing you nothing rather than a one-in-five-hundred chance.
+ *
+ * @param {number} count - Expected count
+ * @returns {string} Readable count
+ */
+export function smallCount(count) {
+    if (count >= 10) return formatLargeNumber(Math.round(count));
+    if (count >= 1) return count.toFixed(2);
+    if (count >= 0.001) return count.toFixed(3);
+    return count.toExponential(1);
 }
 
 class TreasureTracker {
@@ -704,38 +727,160 @@ class TreasureTracker {
     }
 
     /**
-     * The items behind a chest's verdict, which is where a shortfall turns out
-     * to be one unlucky rare rather than something wrong across the board.
-     * @param {Object} row - From `summariseTally`
+     * The three views of one chest, side by side.
+     *
+     * Last opening, every opening, and what was owed — read across a row rather
+     * than down a column, because the question is always "how does this compare
+     * with that" and one column alone cannot answer it. The item order is shared
+     * by all three, so a row means the same item in each.
+     *
+     * @param {Object} row - From `summariseTally`, carrying the chest hrid
      * @returns {HTMLElement}
      */
     _itemBreakdown(row) {
-        const list = document.createElement('div');
-        Object.assign(list.style, {
-            padding: '2px 4px 6px 18px',
-            fontSize: '12px',
-            color: COLORS.textDim,
+        const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[row.chestHrid];
+        const { last, total, items } = chestBreakdown(this.tally[row.chestHrid], dropTable, this._priceOf());
+
+        const wrap = document.createElement('div');
+        wrap.style.padding = '4px 2px 8px';
+
+        wrap.appendChild(
+            this._columnRow(
+                [`LAST (×${last.opened || 0})`, `TOTAL (×${total.opened})`, `EXPECTED (×1 / ×${total.opened})`],
+                { bold: true, color: '#7fb3ff', align: 'center' }
+            )
+        );
+        wrap.appendChild(this._columnSummary(last, total));
+
+        for (const item of items) wrap.appendChild(this._breakdownRow(item));
+        return wrap;
+    }
+
+    /**
+     * A three-column line of plain text.
+     * @param {string[]} cells - Three strings
+     * @param {Object} style - `{ bold, color, align }`
+     * @returns {HTMLElement}
+     */
+    _columnRow(cells, style = {}) {
+        const rowEl = document.createElement('div');
+        Object.assign(rowEl.style, {
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1.2fr',
+            gap: '8px',
+            fontSize: '11px',
+            padding: '2px 0',
+            fontWeight: style.bold ? 'bold' : 'normal',
+            color: style.color || 'inherit',
+            textAlign: style.align || 'left',
+        });
+        for (const text of cells) {
+            const cell = document.createElement('div');
+            cell.textContent = text;
+            rowEl.appendChild(cell);
+        }
+        return rowEl;
+    }
+
+    /**
+     * The verdict under each column title.
+     * @param {Object} last - Performance of the last opening
+     * @param {Object} total - Performance of every opening
+     * @returns {HTMLElement}
+     */
+    _columnSummary(last, total) {
+        const lastVerdict = formatReturn(last.ratio);
+        const totalVerdict = formatReturn(total.ratio);
+
+        const summary = this._columnRow(
+            [
+                `${formatLargeNumber(Math.round(last.actualValue))} (${lastVerdict.text})`,
+                `${formatLargeNumber(Math.round(total.actualValue))} (${totalVerdict.text})`,
+                formatLargeNumber(Math.round(total.expectedValue)),
+            ],
+            { align: 'center' }
+        );
+        summary.children[0].style.color = lastVerdict.color;
+        summary.children[1].style.color = totalVerdict.color;
+        summary.children[2].style.color = COLORS.textDim;
+        Object.assign(summary.style, {
+            borderBottom: `1px solid ${COLORS.border}`,
+            paddingBottom: '5px',
+            marginBottom: '4px',
+        });
+        return summary;
+    }
+
+    /**
+     * One item across all three columns.
+     * @param {Object} item - From `chestBreakdown`
+     * @returns {HTMLElement}
+     */
+    _breakdownRow(item) {
+        const rowEl = document.createElement('div');
+        Object.assign(rowEl.style, {
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1.2fr',
+            gap: '8px',
+            fontSize: '11px',
+            padding: '1px 0',
+            alignItems: 'center',
         });
 
-        for (const item of row.items) {
-            const line = document.createElement('div');
-            Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
+        rowEl.appendChild(this._breakdownCell(item, item.lastCount, item.lastValue, item.lastRatio, true));
+        rowEl.appendChild(this._breakdownCell(item, item.totalCount, item.totalValue, item.totalRatio, false));
 
-            const name = document.createElement('span');
-            name.textContent = itemName(item.itemHrid);
+        // The expected column carries both scales: one chest, and the run so far
+        const expected = document.createElement('div');
+        Object.assign(expected.style, {
+            display: 'flex',
+            gap: '5px',
+            justifyContent: 'flex-end',
+            color: COLORS.textDim,
+        });
+        expected.append(
+            this._span(smallCount(item.expectedPerChest)),
+            this._span(formatLargeNumber(Math.round(item.expectedPerChestValue))),
+            this._span(`| ${smallCount(item.expectedTotal)}`),
+            this._span(formatLargeNumber(Math.round(item.expectedTotalValue)))
+        );
+        rowEl.appendChild(expected);
+        return rowEl;
+    }
 
-            const counts = document.createElement('span');
-            counts.style.whiteSpace = 'nowrap';
-            const expected = item.expectedCount < 10 ? item.expectedCount.toFixed(2) : Math.round(item.expectedCount);
-            counts.textContent = `${formatLargeNumber(item.actualCount)} of ${expected}`;
-            if (item.actualValue > item.expectedValue) counts.style.color = COLORS.good;
-            else if (item.actualValue < item.expectedValue) counts.style.color = COLORS.bad;
+    /**
+     * @param {Object} item - The item, for its icon
+     * @param {number} count - What dropped
+     * @param {number} value - What it was worth
+     * @param {number|null} ratio - Against expectation
+     * @param {boolean} withIcon - Only the first column carries the icon
+     * @returns {HTMLElement}
+     */
+    _breakdownCell(item, count, value, ratio, withIcon) {
+        const cell = document.createElement('div');
+        Object.assign(cell.style, { display: 'flex', gap: '4px', alignItems: 'center' });
+        if (withIcon) cell.appendChild(this._icon(item.itemHrid, 13));
 
-            line.appendChild(name);
-            line.appendChild(counts);
-            list.appendChild(line);
-        }
-        return list;
+        const verdict = formatReturn(ratio);
+        const valueEl = this._span(value > 0 ? formatLargeNumber(Math.round(value)) : '');
+        valueEl.style.color = COLORS.good;
+        valueEl.style.marginLeft = 'auto';
+        const diffEl = this._span(ratio === null ? '' : `(${verdict.text})`);
+        diffEl.style.color = verdict.color;
+
+        cell.append(this._span(formatLargeNumber(count)), valueEl, diffEl);
+        return cell;
+    }
+
+    /**
+     * @param {string} text - Content
+     * @returns {HTMLElement}
+     */
+    _span(text) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        span.style.whiteSpace = 'nowrap';
+        return span;
     }
 }
 
@@ -770,6 +915,7 @@ registerRow({
         container.appendChild(label);
         container.appendChild(value);
     },
+    onOpen: () => treasureTracker.show(),
 });
 
 export default treasureTracker;
