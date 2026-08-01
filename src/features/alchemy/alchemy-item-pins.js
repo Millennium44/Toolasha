@@ -216,20 +216,14 @@ class AlchemyItemPins {
             for (const tile of tiles) this.decorateTile(tile, action, pinned);
             if (sameOrder(tiles, desired)) return;
 
-            // Permute the tiles among the slots they already occupy, rather
-            // than lifting them all out and putting them back at one anchor.
-            // Anything else sharing the grid — the Remove cell, spacers — is
-            // never touched, so it cannot be carried along or left behind.
-            const slots = tiles.map((tile) => {
-                const slot = document.createComment('mwi-pin-slot');
-                grid.insertBefore(slot, tile);
-                return slot;
-            });
-            for (const tile of tiles) tile.remove();
-            slots.forEach((slot, index) => {
-                grid.insertBefore(desired[index], slot);
-                slot.remove();
-            });
+            // Anchored on the first tile so anything else sharing the grid —
+            // the Remove button sits ahead of them — keeps its place
+            const marker = document.createComment('mwi-pins');
+            grid.insertBefore(marker, tiles[0]);
+            const fragment = document.createDocumentFragment();
+            for (const tile of desired) fragment.appendChild(tile);
+            grid.insertBefore(fragment, marker);
+            marker.remove();
         } finally {
             this.applying = false;
         }
