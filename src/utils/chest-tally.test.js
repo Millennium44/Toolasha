@@ -18,7 +18,7 @@ const priceOf = (hrid) => ({ '/items/coin': 1, '/items/rare': 100000, '/items/ju
 describe('recordOpening', () => {
     test('records the first opening', () => {
         const tally = recordOpening({}, CHEST, 1, [{ itemHrid: '/items/coin', count: 200 }]);
-        expect(tally[CHEST]).toEqual({ opened: 1, loot: { '/items/coin': 200 } });
+        expect(tally[CHEST]).toMatchObject({ opened: 1, loot: { '/items/coin': 200 } });
     });
 
     test('accumulates across openings', () => {
@@ -27,7 +27,7 @@ describe('recordOpening', () => {
             { itemHrid: '/items/coin', count: 600 },
             { itemHrid: '/items/rare', count: 1 },
         ]);
-        expect(tally[CHEST]).toEqual({ opened: 8, loot: { '/items/coin': 1600, '/items/rare': 1 } });
+        expect(tally[CHEST]).toMatchObject({ opened: 8, loot: { '/items/coin': 1600, '/items/rare': 1 } });
     });
 
     test('leaves the tally it was given alone', () => {
@@ -51,7 +51,7 @@ describe('recordOpening', () => {
 
     test('an opening that gave nothing still counts as an opening', () => {
         // Otherwise a chest that can come up empty looks better than it is
-        expect(recordOpening({}, CHEST, 2, [])[CHEST]).toEqual({ opened: 2, loot: {} });
+        expect(recordOpening({}, CHEST, 2, [])[CHEST]).toMatchObject({ opened: 2, loot: {} });
     });
 });
 
@@ -169,5 +169,32 @@ describe('tallyTotals', () => {
 
     test('no history is no verdict', () => {
         expect(tallyTotals([]).ratio).toBeNull();
+    });
+});
+
+describe('the most recent opening', () => {
+    test('is kept apart from the running total', () => {
+        let tally = recordOpening({}, CHEST, 5, [{ itemHrid: '/items/coin', count: 1000 }]);
+        tally = recordOpening(tally, CHEST, 2, [{ itemHrid: '/items/coin', count: 500 }]);
+
+        expect(tally[CHEST].opened).toBe(7);
+        expect(tally[CHEST].loot).toEqual({ '/items/coin': 1500 });
+        expect(tally[CHEST].last).toEqual({ opened: 2, loot: { '/items/coin': 500 } });
+    });
+
+    test('is the same shape as the total, so one judge serves both', () => {
+        // chestPerformance takes { opened, loot } — feeding it `last` judges a
+        // single opening with no second code path
+        const tally = recordOpening({}, CHEST, 1, [{ itemHrid: '/items/coin', count: 200 }]);
+        const result = chestPerformance(tally[CHEST].last, dropTable, priceOf);
+        expect(result.opened).toBe(1);
+        expect(result.actualValue).toBe(200);
+        expect(result.expectedValue).toBeCloseTo(1200, 6);
+    });
+
+    test('an opening that gave nothing still replaces the previous one', () => {
+        let tally = recordOpening({}, CHEST, 1, [{ itemHrid: '/items/rare', count: 1 }]);
+        tally = recordOpening(tally, CHEST, 1, []);
+        expect(tally[CHEST].last).toEqual({ opened: 1, loot: {} });
     });
 });
