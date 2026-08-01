@@ -30,6 +30,8 @@ import {
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { getItemPrices } from '../../utils/market-data.js';
+import { forecastAll, costPerDaySides, partyOutlook } from '../../utils/consumable-forecast.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -200,16 +202,17 @@ registerRow({
 registerRow({
     key: 'consumables',
     name: 'Consumables',
-    defaultSize: { width: 220, height: 40 },
+    defaultSize: { width: 240, height: 58 },
     render: (container) => {
-        const stats = currentStats();
-        const breakdown = stats?.consumableBreakdown || [];
-        const running = breakdown.filter((entry) => Number.isFinite(entry.timeToZeroSeconds));
-        if (!stats || !running.length) return blank(container);
+        const players = consumablePlayers();
+        const { you, party, partyName } = partyOutlook(players);
+        if (!you && !party) return blank(container);
 
-        const soonest = running.reduce((worst, entry) =>
-            entry.timeToZeroSeconds < worst.timeToZeroSeconds ? entry : worst
-        );
+        // Costed through the same forecast the panel uses, so the tile can show
+        // both sides of the book the way the panel does and the two are read off
+        // one calculation rather than two that happen to agree
+        const mine = players.find((player) => player.isCurrent)?.forecasts || [];
+        const sides = costPerDaySides(mine);
 
         container.replaceChildren();
         Object.assign(container.style, {
@@ -220,40 +223,44 @@ registerRow({
             overflow: 'hidden',
         });
 
-        // The icon and the name open the marketplace, because a row that says
-        // "six hours left" is read while deciding whether to go and buy more
-        const top = document.createElement('div');
-        Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
-
-        const icon = itemIcon(soonest.itemHrid, 16);
-        linkToMarketplace(icon, soonest.itemHrid, navigateToMarketplace);
-        top.appendChild(icon);
-
-        const name = document.createElement('span');
-        name.textContent = soonest.itemName;
-        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-        linkToMarketplace(name, soonest.itemHrid, navigateToMarketplace);
-        top.appendChild(name);
-
-        const rest = document.createElement('span');
-        rest.style.marginLeft = 'auto';
-        drawLine(rest, [
-            {
-                text: shortDuration(soonest.timeToZeroSeconds),
-                // Under an hour is the point at which it is worth acting now
-                color: soonest.timeToZeroSeconds < 3600 ? ROW_COLORS.bad : ROW_COLORS.good,
-            },
-            { text: `· ${formatLargeNumber(soonest.inventoryAmount)}`, color: ROW_COLORS.dim },
+        const first = document.createElement('div');
+        drawLine(first, [
+            { text: 'You:', color: ROW_COLORS.dim },
+            { text: you ? shortDuration(you.secondsLeft) : '--', color: runOutColor(you) },
+            { text: 'Party:', color: ROW_COLORS.dim, push: true },
+            { text: party ? shortDuration(party.secondsLeft) : '--', color: runOutColor(party) },
         ]);
-        top.appendChild(rest);
-        container.appendChild(top);
+        if (partyName) first.title = `${partyName} runs out first in the party.`;
+        container.appendChild(first);
 
-        const bottom = document.createElement('div');
-        drawLine(bottom, [
+        // The item that stops you, with its icon — clicking either opens the
+        // marketplace, which is where you go next when the answer is "soon"
+        const limiting = you || party;
+        const second = document.createElement('div');
+        Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
+
+        const icon = itemIcon(limiting.itemHrid, 16);
+        linkToMarketplace(icon, limiting.itemHrid, navigateToMarketplace);
+
+        const remaining = document.createElement('span');
+        remaining.textContent = `${formatLargeNumber(limiting.held)} remaining`;
+        remaining.style.color = runOutColor(limiting);
+        Object.assign(remaining.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        linkToMarketplace(remaining, limiting.itemHrid, navigateToMarketplace);
+
+        second.append(icon, remaining);
+        container.appendChild(second);
+
+        const third = document.createElement('div');
+        drawLine(third, [
             { text: 'Cost/day', color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(stats.dailyConsumableCosts)), color: ROW_COLORS.bad, push: true },
+            {
+                text: `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`,
+                color: ROW_COLORS.bad,
+                push: true,
+            },
         ]);
-        container.appendChild(bottom);
+        container.appendChild(third);
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
@@ -325,4 +332,39 @@ function clock(seconds) {
     const minutes = Math.floor((whole % 3600) / 60);
     const secs = whole % 60;
     return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+/**
+ * Every player's consumables, forecast.
+ *
+ * The same assembly the Consumables panel does, from the same collector and the
+ * same prices. The judgement about what those numbers mean lives in
+ * `utils/consumable-forecast.js`, so the two views share it rather than each
+ * deciding for itself what "runs out first" means.
+ *
+ * @returns {Array<{name: string, isCurrent: boolean, forecasts: Array<Object>}>}
+ */
+function consumablePlayers() {
+    const data = combatStatsDataCollector.getLatestData();
+    if (!data?.players?.length) return [];
+
+    const duration = data.durationSeconds || 0;
+    return data.players.map((player) => ({
+        name: player.name || 'Unknown',
+        isCurrent: !!player.isCurrentPlayer,
+        forecasts: forecastAll(calculatePlayerStats(player, duration)?.consumableBreakdown, (hrid) =>
+            getItemPrices(hrid)
+        ),
+    }));
+}
+
+/**
+ * How urgent a countdown is.
+ * @param {Object|null} entry - A forecast, or null when there is no answer
+ * @returns {string} A colour
+ */
+function runOutColor(entry) {
+    if (!entry) return ROW_COLORS.dim;
+    // An hour is the point at which it is worth stopping what you are doing
+    return entry.secondsLeft < 3600 ? ROW_COLORS.bad : ROW_COLORS.good;
 }

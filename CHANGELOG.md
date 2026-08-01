@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Consumables tile answers for you and for the party
+
+- Reads `You: 1.2d   Party: --` the way MCS's does. **Two answers, because they are two different things to act on**: your own countdown is what you can do something about right now, and the party's is what ends the run regardless of how well stocked you are. Rolling them into one figure loses whichever of the two you needed.
+- The party figure **excludes you** — it answers "and how is everyone else doing", which is the only part of it you cannot already see. Hovering names whoever in the party runs dry first.
+- Under it, the item that stops you with its icon and how many remain, then the daily bill at **both sides of the book** to match the panel. Clicking the icon or the count opens the marketplace, which is where you go next when the answer is "soon".
+- The tile and the panel now read their figures off one calculation. `partyOutlook` and the rest of the judgement live in `utils/consumable-forecast.js`, so neither view decides for itself what "runs out first" means.
+
 ### The Consumables panel reads like CRack's, and items open the marketplace
 
 - **Laid out the way MCS lays it out**: the count you hold, the item's icon, its name, the daily rate, the cost, the shortfall, and the countdown — in that order, so the eye lands on the stock figure first.

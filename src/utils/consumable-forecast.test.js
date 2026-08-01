@@ -5,6 +5,7 @@ import {
     firstToRunOut,
     costPerDay,
     costPerDaySides,
+    partyOutlook,
     refillFor,
     refillAll,
 } from './consumable-forecast.js';
@@ -180,5 +181,47 @@ describe('two-sided pricing', () => {
         const totals = costPerDaySides(forecastAll([drink, drink], pricesFor));
         expect(totals.ask).toBeCloseTo(2880, 6);
         expect(totals.bid).toBeCloseTo(1920, 6);
+    });
+});
+
+describe('partyOutlook', () => {
+    const player = (name, isCurrent, seconds) => ({
+        name,
+        isCurrent,
+        forecasts: forecastAll([{ ...drink, inventoryAmount: seconds / 3600 }]),
+    });
+
+    test('answers for you and for everyone else separately', () => {
+        const outlook = partyOutlook([player('You', true, 7200), player('Them', false, 3600)]);
+        expect(Math.round(outlook.you.secondsLeft)).toBe(7200);
+        expect(Math.round(outlook.party.secondsLeft)).toBe(3600);
+        expect(outlook.partyName).toBe('Them');
+    });
+
+    test('the party figure excludes you', () => {
+        // It answers "how is everyone else doing" — the part you cannot already
+        // see — so your own stock must not win it
+        const outlook = partyOutlook([player('You', true, 60), player('Them', false, 7200)]);
+        expect(Math.round(outlook.party.secondsLeft)).toBe(7200);
+    });
+
+    test('the party is the soonest of them, not the last one listed', () => {
+        const outlook = partyOutlook([player('A', false, 7200), player('B', false, 1800)]);
+        expect(outlook.partyName).toBe('B');
+    });
+
+    test('solo has no party answer rather than a copy of yours', () => {
+        const outlook = partyOutlook([player('You', true, 3600)]);
+        expect(outlook.party).toBeNull();
+        expect(outlook.partyName).toBeNull();
+    });
+
+    test('a player consuming nothing is not the party answer', () => {
+        const idle = { name: 'Idle', isCurrent: false, forecasts: forecastAll([{ ...drink, consumptionRate: 0 }]) };
+        expect(partyOutlook([player('You', true, 3600), idle]).party).toBeNull();
+    });
+
+    test('survives no players', () => {
+        expect(partyOutlook([])).toEqual({ you: null, party: null, partyName: null });
     });
 });
