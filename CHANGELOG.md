@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Every feature that adds marketplace tabs now finds the visible marketplace
+
+- `visibleTabsContainer` moved into `utils/marketplace-tabs.js` beside the tab machinery it serves, and **Missing Materials, the Crafting Plan, Guild Credit Value and the consumables restock all use it**. Each of them took the first tab bar in the document, which is the hidden full-page marketplace whenever the popout is the one you are looking at — so their tabs went somewhere real and invisible.
+- That failure only showed up in the restock because the others are reached from flows that happen to land on the full marketplace page. The bug was the same in all four; only the route hid it.
+
+**Still using the first match:** `house-cost-display.js`, `market-history-viewer.js` and `sell-queue.js` do the same lookup and were left alone, since they were not part of this change and are reached by their own routes. They are the next candidates if tabs ever go missing there.
+
 ### Fixed: the restock tabs went onto the marketplace you could not see
 
 - **There is more than one marketplace.** It opens as a popout over whatever you were doing, and the full marketplace page keeps its own tab bar in the document behind it. Both match the same selector, and the search took whichever came first — frequently the hidden one.

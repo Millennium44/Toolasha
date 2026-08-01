@@ -19,6 +19,7 @@ import {
     removeMaterialTabs,
     removeShrineMarketTabs,
     updateTabBadge,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 
@@ -892,7 +893,7 @@ class GuildCreditValue {
                 let referenceTab = null;
                 for (let i = 0; i < 20; i++) {
                     await new Promise((r) => setTimeout(r, 100));
-                    tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                    tabsContainer = visibleTabsContainer();
                     referenceTab = tabsContainer
                         ? Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'))
                         : null;

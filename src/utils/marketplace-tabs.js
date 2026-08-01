@@ -97,6 +97,37 @@ export function createMaterialTab(material, referenceTab, onClickCallback) {
 }
 
 /**
+ * The marketplace tab bar you can actually see.
+ *
+ * There can be more than one. The marketplace opens as a popout over whatever
+ * you were doing, and the full marketplace page keeps its own tab bar in the
+ * document behind it — so `querySelector` returns whichever comes first, which
+ * is frequently the hidden one. Tabs added there are added correctly and are
+ * invisible, which is the worst shape a bug can take: nothing appears, and
+ * visiting the real marketplace first "fixes" it by making the bar that was
+ * already being picked the one on screen.
+ *
+ * Every candidate is checked and the displayed one wins.
+ *
+ * @param {string} [contains] - Text a tab must contain, to tell a marketplace bar
+ *   from any other tab strip on the page
+ * @returns {HTMLElement|null} The visible tab bar
+ */
+export function visibleTabsContainer(contains = 'My Listings') {
+    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+        if (contains && !Array.from(container.children).some((tab) => tab.textContent.includes(contains))) continue;
+
+        // `offsetParent` is null under any `display: none` ancestor, which is how
+        // the game parks the panel you are not looking at
+        if (container.offsetParent === null) continue;
+        if (!container.getBoundingClientRect().width) continue;
+
+        return container;
+    }
+    return null;
+}
+
+/**
  * Remove all custom material tabs from the marketplace
  */
 export function removeMaterialTabs() {
