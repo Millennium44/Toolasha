@@ -20,6 +20,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
@@ -727,7 +728,7 @@ async function waitForMarketplace() {
 
     for (let i = 0; i < maxAttempts; i++) {
         // Check for marketplace panel by looking for tabs container
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         if (tabsContainer) {
             // Verify it's the marketplace tabs (has "Market Listings" tab)
             const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
@@ -913,7 +914,7 @@ async function handleReturnToAction() {
  * @param {Object|null} strategyInfo - Auto-calculated protection strategy info
  */
 function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
-    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+    const tabsContainer = visibleTabsContainer();
 
     if (!tabsContainer) {
         console.error('[MissingMats] Tabs container not found');

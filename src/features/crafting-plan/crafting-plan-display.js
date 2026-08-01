@@ -17,6 +17,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
@@ -475,7 +476,7 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
 
             // Wait for marketplace to appear
             for (let i = 0; i < 50; i++) {
-                const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                const tabsContainer = visibleTabsContainer();
                 if (tabsContainer) {
                     const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
                         btn.textContent.includes('Market Listings')
@@ -580,7 +581,7 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
  * @param {Array} missingMaterials - Array of { itemHrid, itemName, missing, required, isTradeable }
  */
 function createCraftingPlanTabs(missingMaterials) {
-    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+    const tabsContainer = visibleTabsContainer();
     if (!tabsContainer) return;
 
     removeMaterialTabs();
