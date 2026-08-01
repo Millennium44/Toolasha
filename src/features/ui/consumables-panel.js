@@ -52,6 +52,7 @@ import {
 } from '../../utils/consumable-forecast.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
+import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 
@@ -200,6 +201,18 @@ class ConsumablesPanel {
         } catch (error) {
             console.error('[ConsumablesPanel] Reading the order book failed:', error);
             return null;
+        }
+    }
+
+    /**
+     * Send the whole restock to the marketplace as tabs.
+     * @param {Array<Object>} shortfall - What to buy
+     */
+    _openShoppingList(shortfall) {
+        try {
+            openShoppingList(shortfall);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Building the shopping list failed:', error);
         }
     }
 
@@ -403,7 +416,13 @@ class ConsumablesPanel {
             section.appendChild(this._entryRow(entry, entry === soonest));
         }
 
-        section.appendChild(this._footer(sides, need));
+        // What each row is short of, which is the list the marketplace tabs are
+        // built from — worked out here so the footer and the rows cannot differ
+        const shortfall = player.forecasts
+            .map((entry) => ({ ...refillFor(entry, this.target.seconds), itemHrid: entry.itemHrid, name: entry.name }))
+            .filter((item) => item.count > 0);
+
+        section.appendChild(this._footer(sides, need, shortfall));
         return section;
     }
 
@@ -532,9 +551,10 @@ class ConsumablesPanel {
     /**
      * @param {{ask: number, bid: number}} sides - Cost per day
      * @param {{items: number, cost: number, unpriced: number}} need - Total shortfall
+     * @param {Array<Object>} shortfall - What to buy, per item
      * @returns {HTMLElement}
      */
-    _footer(sides, need) {
+    _footer(sides, need, shortfall) {
         const footer = document.createElement('div');
         Object.assign(footer.style, {
             display: 'flex',
@@ -557,10 +577,22 @@ class ConsumablesPanel {
         const buy = document.createElement('span');
         buy.style.marginLeft = 'auto';
         buy.style.whiteSpace = 'nowrap';
+
         if (need.items) {
-            buy.textContent = `Buy ${formatLargeNumber(need.items)} · ${formatLargeNumber(Math.round(need.cost))}`;
+            // The whole restock in one gesture. Buying it a row at a time means
+            // a trip back to this panel between each one, and this panel is
+            // behind the marketplace you would be standing in.
+            buy.textContent = `Buy all ${formatLargeNumber(need.items)} · ${formatLargeNumber(Math.round(need.cost))}`;
             buy.style.color = ROW_COLORS.gold;
-            if (need.unpriced) buy.title = `${need.unpriced} item(s) could not be priced and are not in this total.`;
+            buy.style.cursor = 'pointer';
+            buy.style.textDecoration = 'underline dotted';
+            buy.title =
+                'Open the marketplace with a tab per item, each showing what is missing.' +
+                (need.unpriced ? `\n${need.unpriced} item(s) could not be priced and are not in this total.` : '');
+            buy.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this._openShoppingList(shortfall);
+            });
         } else {
             buy.textContent = 'Stocked ✓';
             buy.style.color = ROW_COLORS.good;

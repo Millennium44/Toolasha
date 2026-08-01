@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Buy the whole restock at once, as marketplace tabs
+
+- The footer's total is now a **Buy all** button. It opens the marketplace with **a tab per short item, each reading "Missing: N"** — the same tabs the missing-materials features already put there — and each one opens its item with the quantity filled in. The row of tabs is the shopping list: what is left to buy is what is still red.
+- Buying a row at a time was the wrong gesture for a restock. Six items meant six trips back to a panel sitting behind the marketplace you were standing in.
+- **Nothing about the tabs is new.** `createMaterialTab` draws them, the autofill manager fills the quantity, and the marketplace cleanup observer takes them away when you leave. A second implementation of marketplace tabs would only be a second set of bugs about where the game moved its tab bar.
+
 ### The buy recommendation now measures the queue instead of assuming it
 
 - The order-against-instant call used a flat six-hour guess at how long a buy order takes to fill. It now reads the **real order book** — the queue length estimator already caches every book the game has sent — and estimates the wait from the depth at the best bid and the listing timestamps behind it.
