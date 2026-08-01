@@ -69,7 +69,7 @@ import { askChoice } from '../../utils/choice-dialog.js';
 import {
     resolveLayout,
     autoGrid,
-    resolveOverlaps,
+    compactColumns,
     contentBounds,
     clampTile,
     clampZoom,
@@ -86,7 +86,9 @@ const DEFAULT_PANEL = { width: 480, height: 320 };
 const ZOOM_STEP = 10;
 
 const COLORS = {
-    background: 'rgba(8, 10, 20, 0.9)',
+    // Nearly opaque: at 0.9 the game's inventory grid read straight through the
+    // tiles, and a figure you have to pick out of a background is not a glance
+    background: 'rgba(8, 10, 20, 0.97)',
     headerBg: 'rgba(20, 24, 40, 0.85)',
     border: 'rgba(120, 160, 255, 0.3)',
     text: '#e8ecf5',
@@ -121,6 +123,8 @@ class OverlayPanel {
         this.lockBtn = null;
         /** True while a tile is being dragged or resized, so refreshes hold off */
         this.interacting = false;
+        /** The layout before the last bulk change, so it can be put back */
+        this.undoState = null;
     }
 
     async initialize() {
@@ -215,7 +219,7 @@ class OverlayPanel {
         this.panel.appendChild(this.scrollEl);
 
         this.pickerEl = this._createPicker();
-        this.panel.appendChild(this.pickerEl);
+        document.body.appendChild(this.pickerEl);
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -226,6 +230,7 @@ class OverlayPanel {
             onResize: (size) => {
                 saveGeometry(GEOMETRY_KEY, size);
                 this._renderBody();
+                this._placePicker();
             },
         });
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 }).then(() => this._renderBody());
@@ -269,9 +274,12 @@ class OverlayPanel {
         this._refreshLockButton();
 
         const gearBtn = this._iconButton('⚙', 'Choose rows and arrange the layout', () => {
-            const hidden = this.pickerEl.style.display === 'none';
-            this.pickerEl.style.display = hidden ? '' : 'none';
-            if (hidden) this._renderPicker();
+            const opening = !this.isPickerOpen;
+            this.pickerEl.style.display = opening ? '' : 'none';
+            if (opening) {
+                this._renderPicker();
+                this._placePicker();
+            }
         });
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
 
@@ -281,6 +289,8 @@ class OverlayPanel {
 
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+            // It is anchored to the panel, so it has to come along
+            this._placePicker();
         });
         return header;
     }
@@ -320,22 +330,63 @@ class OverlayPanel {
         return button;
     }
 
+    /**
+     * The settings popover.
+     *
+     * Its own floating element rather than a section of the panel. Inside, it
+     * took its height out of the tiles — opening the gear squashed the layout
+     * you were opening the gear to arrange, which is the wrong way round.
+     *
+     * @returns {HTMLElement}
+     */
     _createPicker() {
         const picker = document.createElement('div');
         Object.assign(picker.style, {
             display: 'none',
-            padding: '7px 8px 8px',
-            borderTop: `1px solid ${COLORS.border}`,
-            background: 'rgba(0, 0, 0, 0.3)',
+            position: 'fixed',
+            zIndex: String(config.Z_FLOATING_PANEL + 1),
+            padding: '8px 10px 9px',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '8px',
+            background: COLORS.background,
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            color: COLORS.text,
             fontSize: '12px',
-            flex: '0 0 auto',
-            maxHeight: '45%',
+            maxHeight: '50vh',
             overflow: 'auto',
         });
         return picker;
     }
 
+    /** Whether the settings popover is up */
+    get isPickerOpen() {
+        return this.pickerEl && this.pickerEl.style.display !== 'none';
+    }
+
+    /**
+     * Put the popover above the panel, or below it when there is no room.
+     *
+     * Measured after it is drawn, because its height depends on how many rows
+     * are registered — and the whole point of it being above is that it does not
+     * cover the layout you are arranging.
+     */
+    _placePicker() {
+        if (!this.isPickerOpen || !this.panel) return;
+
+        const anchor = this.panel.getBoundingClientRect();
+        this.pickerEl.style.width = `${Math.max(320, anchor.width)}px`;
+
+        const self = this.pickerEl.getBoundingClientRect();
+        const above = anchor.top - self.height - 6;
+
+        this.pickerEl.style.left = `${Math.max(4, Math.min(anchor.left, window.innerWidth - self.width - 4))}px`;
+        this.pickerEl.style.top =
+            above >= 4 ? `${above}px` : `${Math.min(anchor.bottom + 6, window.innerHeight - self.height - 4)}px`;
+    }
+
     _renderPicker() {
+        // Reachable from a bulk change that a closed panel can still make
+        if (!this.pickerEl) return;
         this.pickerEl.replaceChildren();
 
         const resolved = resolveRows(registeredRows(), this.settings);
@@ -458,13 +509,20 @@ class OverlayPanel {
         reset.style.color = '#ff9d9d';
         reset.style.marginLeft = 'auto';
 
+        // Only there when there is something to take back, so it never reads as
+        // a button that does nothing
+        const undo = this.undoState
+            ? this._textButton(`Undo ${this.undoState.what}`, 'Put the layout back to before that', () => this._undo())
+            : null;
+        if (undo) undo.style.color = COLORS.accent;
+
         const hint = document.createElement('div');
         hint.textContent = this.settings.locked
             ? 'Unlock (🔒) to drag tiles. Ctrl+scroll a tile to resize its text.'
             : 'Drag tiles to move, corner to resize, Ctrl+scroll to resize text.';
         Object.assign(hint.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
 
-        controls.append(autogrid, importBtn, exportBtn, reset, hint);
+        controls.append(autogrid, importBtn, exportBtn, ...(undo ? [undo] : []), reset, hint);
         return controls;
     }
 
@@ -507,8 +565,40 @@ class OverlayPanel {
         this._renderPicker();
     }
 
+    /**
+     * Keep the layout as it stands, so the next bulk change can be taken back.
+     *
+     * Autogrid, Reset and Import each throw away an arrangement that may have
+     * taken a while to get right, and none of them can be judged until after it
+     * has happened — you press Autogrid to find out what Autogrid does.
+     *
+     * @param {string} what - What is about to happen, for the button's label
+     */
+    _snapshot(what) {
+        this.undoState = {
+            what,
+            positions: { ...this.settings.positions },
+            sizes: { ...this.settings.sizes },
+            zoom: { ...this.settings.zoom },
+        };
+    }
+
+    /** Put the layout back to before the last bulk change */
+    _undo() {
+        if (!this.undoState) return;
+
+        const { positions, sizes, zoom } = this.undoState;
+        this.settings = { ...this.settings, positions, sizes, zoom };
+        this.undoState = null;
+        this._save();
+        this._renderBody();
+        this._renderPicker();
+        this._placePicker();
+    }
+
     /** Repack every visible tile against the top left */
     _autoGrid() {
+        this._snapshot('Autogrid');
         const laid = this._layout();
         const positions = { ...this.settings.positions };
         for (const { key, x, y } of autoGrid(laid, this._canvasWidth(), this.settings.snapToGrid ? GRID : 1)) {
@@ -517,10 +607,13 @@ class OverlayPanel {
         this.settings.positions = positions;
         this._save();
         this._renderBody();
+        this._renderPicker();
+        this._placePicker();
     }
 
     /** Forget every position, size and zoom, and the panel's own geometry with them */
     _resetLayout() {
+        this._snapshot('Reset');
         this.settings.positions = {};
         this.settings.sizes = {};
         this.settings.zoom = {};
@@ -530,6 +623,7 @@ class OverlayPanel {
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
         this._renderBody();
         this._renderPicker();
+        this._placePicker();
     }
 
     /**
@@ -590,19 +684,20 @@ class OverlayPanel {
                 });
                 if (!answer) return;
 
+                this._snapshot('Import');
                 this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
 
                 // OPanel measured those tiles against OPanel's rendering, and
-                // the same rows drawn here are not the same size — so growing
-                // them to fit puts them on top of each other unless the pile is
-                // pulled apart afterwards
+                // the same rows drawn here are not the same size — so they are
+                // grown to fit and then settled, which resolves the collisions
+                // that causes and closes the gaps it leaves
                 const laid = resolveLayout(
                     resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
                     this.settings,
                     this._canvasWidth()
                 );
                 const positions = { ...this.settings.positions };
-                for (const { key, x, y } of resolveOverlaps(laid, this._canvasWidth())) positions[key] = { x, y };
+                for (const { key, x, y } of compactColumns(laid, this._canvasWidth())) positions[key] = { x, y };
                 this.settings.positions = positions;
 
                 this._save();
@@ -629,6 +724,7 @@ class OverlayPanel {
                 this._refreshLockButton();
                 this._renderPicker();
                 this._renderBody();
+                this._placePicker();
             } catch (error) {
                 console.error('[OverlayPanel] Importing the layout failed:', error);
                 window.alert('Could not read that file.');
@@ -963,13 +1059,15 @@ class OverlayPanel {
         this.detachResize = null;
         this.tiles.clear();
 
+        this.pickerEl?.remove();
+        this.pickerEl = null;
+
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
             this.panel = null;
             this.canvasEl = null;
             this.scrollEl = null;
-            this.pickerEl = null;
         }
     }
 }
