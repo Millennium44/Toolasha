@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### GWhiz, part one: combat level and what moves it
+
+- **A Combat Level row and panel.** The game shows a whole number, which hides the two facts worth acting on: combat level is a weighted average, so the fraction you have already earned is invisible, and the skill that would finish it soonest is not the one most people are training.
+- **The formula is spelled out**, the way GWhiz does it: `0.1 × (110 + 100 + 129 + 120 + 134) + 0.5 × 134 = 126.300`, with a bar for the 0.3 the displayed `126` throws away.
+- **A level of the offensive skill you are actually using is worth six of any other**, because it counts twice in the formula — once in the sum and once on its own. The panel says how many levels of each skill would raise Combat, and the row names the shortest route.
+- **An offensive skill sitting behind a higher one is worth nothing at all** until it overtakes, so it says so rather than reporting `0` — which would read as "already done" for a skill that will never do it on its own.
+- Each skill also carries its measured experience rate and the countdown to its next level, over a rolling ten minutes.
+
+The arithmetic is in `utils/combat-level.js` with 22 tests, checked against the figures GWhiz shows for the same build — `126.300` and "2 levels of Melee" are both reproduced from the screenshot's own numbers.
+
+**Still to port from GWhiz:** the session timer and exp total, the TTL selector with arbitrary target levels, the per-skill target table, Charms, and the Exp Lookup.
+
 ### Every feature that adds marketplace tabs now finds the visible marketplace
 
 - `visibleTabsContainer` moved into `utils/marketplace-tabs.js` beside the tab machinery it serves, and **Missing Materials, the Crafting Plan, Guild Credit Value and the consumables restock all use it**. Each of them took the first tab bar in the document, which is the hidden full-page marketplace whenever the popout is the one you are looking at — so their tabs went somewhere real and invisible.

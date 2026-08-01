@@ -96,6 +96,7 @@ import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 // Dev tools
 import pformancePanel from '../features/dev/pformance-panel.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
+import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -167,6 +168,7 @@ toolashaRoot.UI = {
     queueMonitor,
     pformancePanel,
     consumablesPanel,
+    combatLevelPanel,
 };
 
 console.log('[Toolasha] UI library loaded');

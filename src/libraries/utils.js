@@ -41,6 +41,7 @@ import * as overlayRows from '../utils/overlay-rows.js';
 import * as overlayLayout from '../utils/overlay-layout.js';
 import * as overlayFormat from '../utils/overlay-format.js';
 import * as orderBook from '../utils/order-book.js';
+import * as combatLevel from '../utils/combat-level.js';
 import * as opanelConfig from '../utils/opanel-config.js';
 import * as skillProgress from '../utils/skill-progress.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
@@ -107,6 +108,7 @@ toolashaRoot.Utils = {
     overlayLayout,
     overlayFormat,
     orderBook,
+    combatLevel,
     opanelConfig,
     skillProgress,
     panelGeometry,
