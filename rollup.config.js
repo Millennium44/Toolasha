@@ -102,7 +102,17 @@ const utilsExternalGlobals = new Map([
 // Must be external so they reference the shared Combat.* globals instead of bundling duplicates
 const combatFeatureExternals = new Map([
     // loadout-snapshot is accessed lazily at runtime via window.Toolasha.Combat.loadoutSnapshot
-    // No entries needed here; kept as a hook for future cross-bundle combat singletons
+    // The collector is a stateful singleton fed by the websocket: a second copy in
+    // another bundle would sit there receiving nothing, so it is shared rather
+    // than duplicated. The calculator comes with it because they are read together.
+    [
+        normalize(join(__dirname, 'src/features/combat-stats/combat-stats-data-collector.js')),
+        'Toolasha.Combat.combatStatsDataCollector',
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat-stats/combat-stats-calculator.js')),
+        'Toolasha.Combat.combatStatsCalculator',
+    ],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

@@ -6,6 +6,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A Consumables panel: what runs out, when, and what to buy
+
+- The overlay row answers "what runs out first, and when". That is the figure worth watching, but not the one worth acting on — when the answer is "six hours", the next question is immediately "so what do I buy, and how much". **Double-click the Consumables row** to open the panel that holds it.
+- **Every line is measured against a duration you pick** — 8 hours, a day, three days, a week, cycled from the header. A list of stock levels says what you have; the same list against "last me a day" says what to do about it, and the two readings differ per consumable because they are drunk at different rates.
+- Each row shows what is held, how many go per day, how long it lasts, and **what to buy** — the shortfall from what you already hold, rounded up, priced. Half a drink is not a drink, and a refill that leaves you one short leaves you stopped.
+- **The headline is a minimum, not a mean.** A character stops when its _first_ consumable runs out. Anything not being consumed is kept out of that entirely rather than counted as lasting forever and quietly winning it — an unused slot reads as `∞` in the list and is ignored by the verdict.
+- **Party members are listed**, because a party run stops when the first member runs dry and that member is frequently not you.
+- Unpriced consumables are counted separately rather than as free, so a total is never quietly smaller than the truth.
+
+### Tile text buttons moved to the bottom left
+
+- They sat top right, which is where a tile's value sits — so hovering to resize the text covered the number you were sizing. Bottom right belongs to the resize grip, so bottom left it is.
+
+### The combat bundle had 19 KB left
+
+- Adding the panel there would have left the next feature unable to build. The panel reads combat data but is otherwise a panel, so it lives in the UI bundle, and the collector it reads — a stateful singleton fed by the websocket — is now declared shared rather than copied into a second instance that would sit there receiving nothing. Verified in the built files: one collector, in combat, referenced by ui through the shared global. Headroom is back to 42 KB.
+
 ### Fixed: importing a layout wider than the panel folded it in half
 
 - The layout was laid out against the width the panel **currently** was, and the panel is only resized to fit a moment later. A canvas narrower than the file asks for does not scroll — it _clamps_, pulling every tile past the right edge back inside it. That dropped the right-hand column on top of the left one, and settling then stacked the collision into a single very tall column with holes in it.
