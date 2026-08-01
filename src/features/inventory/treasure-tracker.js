@@ -37,7 +37,9 @@ import {
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { makeDraggable } from '../../utils/floating-panel.js';
+import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
+import { restoreGeometry, saveGeometry, clearGeometry } from '../../utils/panel-geometry.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 import {
     toExport,
     fromToolashaExport,
@@ -52,6 +54,11 @@ const STORAGE_KEY = 'treasureTally';
 const SETTINGS_KEY = 'treasureSettings';
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
+/** Where each of the two is remembered; they are moved and sized independently */
+const PANEL_GEOMETRY_KEY = 'treasurePanel';
+const POPUP_GEOMETRY_KEY = 'treasurePopup';
+/** What the ledger opens at before anyone has resized it */
+const DEFAULT_PANEL = { width: 720, height: 560 };
 /** The game's own dialog, which the popup wants to sit beside */
 const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalContainer"])';
 /** Gap between the two, and how far off a screen edge the popup may not go */
@@ -98,7 +105,7 @@ const COWBELLS_PER_BAG = 10;
 /** The bag's own market tax, which you pay to turn cowbells into coins */
 const COWBELL_BAG_TAX = 0.18;
 
-const DEFAULT_SETTINGS = { capeValue: 'token', valueCowbells: true, hiddenChests: [] };
+const DEFAULT_SETTINGS = { capeValue: 'token', valueCowbells: true, hiddenChests: [], popupPinned: false };
 
 /**
  * How a chest's return reads against expectation.
@@ -220,7 +227,19 @@ class TreasureTracker {
         this.popup = this._buildPopup(chestHrid, opening, lifetime);
         document.body.appendChild(this.popup);
         registerFloatingPanel(this.popup);
-        this._placeBesideDialog(0);
+
+        // Size is always remembered; where it goes is not, unless you have moved
+        // it. Auto-placement is the whole point of this popup, and a remembered
+        // position would silently switch that off the first time you nudged it
+        // out of the way — so only a deliberate drag pins it, and only a pinned
+        // popup has a position stored to restore.
+        //
+        // Placed after the size is back rather than before, because placement
+        // measures the popup and a width applied afterwards would move the edge
+        // it was measured against.
+        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }).then(() => {
+            if (!this.settings.popupPinned) this._placeBesideDialog(0);
+        });
     }
 
     /**
@@ -445,7 +464,9 @@ class TreasureTracker {
         popup.appendChild(header);
 
         const body = document.createElement('div');
-        body.style.padding = '8px 11px 10px';
+        // Scrolls rather than grows, so a chest that paid out twenty items does
+        // not make a popup taller than the window
+        Object.assign(body.style, { padding: '8px 11px 10px', flex: '1', overflow: 'auto', minHeight: '0' });
         popup.appendChild(body);
 
         const subtitle = document.createElement('div');
@@ -506,7 +527,18 @@ class TreasureTracker {
         });
         body.appendChild(full);
 
-        this._detachPopupDrag = makeDraggable(popup, header);
+        // Moving it is what pins it. Nothing else in the popup says "stay here",
+        // and a dedicated pin button would be a control most people never need.
+        this._detachPopupDrag = makeDraggable(popup, header, (position) => {
+            this.settings.popupPinned = true;
+            this._saveSettings();
+            saveGeometry(POPUP_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+        });
+        this._detachPopupResize = makeResizable(popup, {
+            minWidth: 260,
+            minHeight: 120,
+            onResize: (size) => saveGeometry(POPUP_GEOMETRY_KEY, size),
+        });
         return popup;
     }
 
@@ -582,6 +614,8 @@ class TreasureTracker {
         this._dialogRetry = null;
         this._detachPopupDrag?.();
         this._detachPopupDrag = null;
+        this._detachPopupResize?.();
+        this._detachPopupResize = null;
         if (!this.popup) return;
         unregisterFloatingPanel(this.popup);
         this.popup.remove();
@@ -596,7 +630,8 @@ class TreasureTracker {
             top: '80px',
             right: '80px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '720px',
+            width: `${DEFAULT_PANEL.width}px`,
+            height: `${DEFAULT_PANEL.height}px`,
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
@@ -611,12 +646,21 @@ class TreasureTracker {
         this.panel.appendChild(this._createHeader());
 
         this.contentEl = document.createElement('div');
-        Object.assign(this.contentEl.style, { padding: '8px 10px', overflow: 'auto', maxHeight: '520px' });
+        Object.assign(this.contentEl.style, { padding: '8px 10px', overflow: 'auto', flex: '1' });
         this.panel.appendChild(this.contentEl);
 
-        this._makeDraggable();
+        this._detachDrag = makeDraggable(this.panel, this.headerEl, (position) => {
+            saveGeometry(PANEL_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+        });
+        this._detachResize = makeResizable(this.panel, {
+            minWidth: 420,
+            minHeight: 200,
+            onResize: (size) => saveGeometry(PANEL_GEOMETRY_KEY, size),
+        });
+
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+        restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, { width: 420, height: 200 });
         this._render();
     }
 
@@ -758,8 +802,30 @@ class TreasureTracker {
         buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
         buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
 
-        const wipe = this._actionButton('Delete all history', () => {
-            if (!window.confirm('Delete every chest opening recorded so far? This cannot be undone.')) return;
+        // Only offered once there is something to undo — a control that does
+        // nothing most of the time is a control you learn to ignore
+        if (this.settings.popupPinned) {
+            buttons.appendChild(
+                this._actionButton('Unpin popup', () => {
+                    this.settings.popupPinned = false;
+                    this._saveSettings();
+                    clearGeometry(POPUP_GEOMETRY_KEY);
+                    this._render();
+                })
+            );
+        }
+
+        const wipe = this._actionButton('Delete all history', async () => {
+            const confirmed = await askChoice({
+                title: 'Delete all chest history',
+                message: 'Every chest opening recorded so far. This cannot be undone.',
+                choices: [
+                    { value: 'delete', label: 'Delete everything', tone: 'danger' },
+                    { value: null, label: 'Cancel' },
+                ],
+            });
+            if (!confirmed) return;
+
             this.tally = resetTally(this.tally);
             this._save();
             this._render();
@@ -835,13 +901,10 @@ class TreasureTracker {
                 }
 
                 const chests = Object.keys(read.tally).length;
-                const append = window.confirm(
-                    `Import ${chests} chest${chests === 1 ? '' : 's'}.\n\n` +
-                        'OK to ADD these to what you already have.\n' +
-                        'Cancel to REPLACE your history with the file.'
-                );
+                const mode = await this._askImportMode(`Import ${chests} chest${chests === 1 ? '' : 's'}.`);
+                if (!mode) return;
 
-                this.tally = mergeTally(this.tally, read.tally, append ? 'append' : 'replace');
+                this.tally = mergeTally(this.tally, read.tally, mode);
                 if (Object.keys(read.settings || {}).length) {
                     this.settings = { ...this.settings, ...read.settings };
                     this._saveSettings();
@@ -857,8 +920,36 @@ class TreasureTracker {
         input.click();
     }
 
+    /**
+     * Ask what to do with an imported ledger.
+     *
+     * Three answers, and three buttons. Squeezing them into OK and Cancel means a
+     * sentence explaining which is which, which has to be read twice and can
+     * still be read wrong — and reading it wrong overwrites a history that took
+     * months to accumulate.
+     *
+     * @param {string} message - What is about to be imported
+     * @returns {Promise<string|null>} `'append'`, `'replace'`, or null to do nothing
+     */
+    async _askImportMode(message) {
+        return askChoice({
+            title: 'Import chest history',
+            message,
+            choices: [
+                { value: 'append', label: 'Add', hint: 'Add these counts to what you already have', tone: 'primary' },
+                {
+                    value: 'replace',
+                    label: 'Replace',
+                    hint: 'Throw away your history and use the file',
+                    tone: 'danger',
+                },
+                { value: null, label: 'Cancel', hint: 'Leave your history alone' },
+            ],
+        });
+    }
+
     /** Read Edible Tools' chest history out of its own storage */
-    _importEdibleTools() {
+    async _importEdibleTools() {
         try {
             const raw = window.localStorage.getItem('Edible_Tools');
             if (!raw) {
@@ -895,13 +986,12 @@ class TreasureTracker {
                 ? `\n\n${unmatched.length} name${unmatched.length === 1 ? '' : 's'} could not be matched and will be left out:\n` +
                   unmatched.slice(0, 8).join(', ')
                 : '';
-            const append = window.confirm(
-                `Import ${chests} chest${chests === 1 ? '' : 's'} from Edible Tools.${warning}\n\n` +
-                    'OK to ADD these to what you already have.\n' +
-                    'Cancel to REPLACE your history with them.'
+            const mode = await this._askImportMode(
+                `Import ${chests} chest${chests === 1 ? '' : 's'} from Edible Tools.${warning}`
             );
+            if (!mode) return;
 
-            this.tally = mergeTally(this.tally, tally, append ? 'append' : 'replace');
+            this.tally = mergeTally(this.tally, tally, mode);
             this._save();
             this._render();
         } catch (error) {
@@ -936,34 +1026,11 @@ class TreasureTracker {
         return button;
     }
 
-    _makeDraggable() {
-        let offsetX = 0;
-        let offsetY = 0;
-
-        const onMouseMove = (event) => {
-            if (!this.isDragging) return;
-            this.panel.style.left = `${event.clientX - offsetX}px`;
-            this.panel.style.right = 'auto';
-            this.panel.style.top = `${event.clientY - offsetY}px`;
-        };
-        const onMouseUp = () => {
-            this.isDragging = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-        };
-
-        this.headerEl.addEventListener('mousedown', (event) => {
-            bringPanelToFront(this.panel);
-            this.isDragging = true;
-            const rect = this.panel.getBoundingClientRect();
-            offsetX = event.clientX - rect.left;
-            offsetY = event.clientY - rect.top;
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-        });
-    }
-
     _removePanel() {
+        this._detachDrag?.();
+        this._detachDrag = null;
+        this._detachResize?.();
+        this._detachResize = null;
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
         this.panel.remove();
@@ -1371,6 +1438,7 @@ const treasureTracker = new TreasureTracker();
 registerRow({
     key: 'treasure',
     name: 'Treasure',
+    defaultSize: { width: 200, height: 30 },
     render: (container) => {
         if (!treasureTracker.isInitialized) {
             container.replaceChildren();

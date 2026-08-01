@@ -333,6 +333,7 @@ const combatDropLuck = new CombatDropLuck();
 registerRow({
     key: 'luck',
     name: 'Drop Luck',
+    defaultSize: { width: 200, height: 40 },
     render: (container) => {
         container.replaceChildren();
         const result = combatDropLuck.lastResult;

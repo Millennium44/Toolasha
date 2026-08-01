@@ -81,6 +81,7 @@ function layout(container, label, value) {
 registerRow({
     key: 'combatRevenue',
     name: 'Combat Revenue',
+    defaultSize: { width: 280, height: 40 },
     render: (container) => {
         const stats = currentStats();
         if (!stats) {
@@ -120,6 +121,7 @@ registerRow({
 registerRow({
     key: 'experiencePerHour',
     name: 'Experience/hr',
+    defaultSize: { width: 180, height: 30 },
     render: (container) => {
         const stats = currentStats();
         if (!stats?.expPerHour) {
@@ -133,6 +135,7 @@ registerRow({
 registerRow({
     key: 'deathsPerHour',
     name: 'Deaths/hr',
+    defaultSize: { width: 130, height: 30 },
     render: (container) => {
         const stats = currentStats();
         if (!stats) {
