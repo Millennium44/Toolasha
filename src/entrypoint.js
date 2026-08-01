@@ -435,6 +435,13 @@ function registerFeatures() {
             module: Combat.combatSummary,
             async: false,
         },
+        {
+            key: 'combatDropLuck',
+            name: 'Combat Drop Luck',
+            category: 'Combat',
+            module: Combat.combatDropLuck,
+            async: false,
+        },
         { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: false },
         {
             key: 'labyrinthTracker',

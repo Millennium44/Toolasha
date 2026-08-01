@@ -1743,6 +1743,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays encounters/hour, revenue, experience rates when returning from combat',
             },
+            combatDropLuck: {
+                id: 'combatDropLuck',
+                label: 'Combat Drop Luck: Show how lucky a session was on return',
+                type: 'checkbox',
+                default: true,
+                help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
+            },
             combatSim: {
                 id: 'combatSim',
                 label: 'Combat Simulator',

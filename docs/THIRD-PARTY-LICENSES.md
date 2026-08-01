@@ -43,6 +43,14 @@ Ported so far, all of it the analysis rather than the panels around it:
 - `src/utils/spawn-expectation.js` — the expected-spawn dynamic programme, from
   `LuckyDropAnalyzer.computeExpectedSpawns`. Same states and recurrence; spawn rates normalised
   by the table's total, matching how the game draws.
+- `src/utils/combat-drop-model.js` — the drop-rate and quantity arithmetic from
+  `RuckBattleData.getDropData` and `LuckyDropAnalyzer.getTierDropRate`: how difficulty tier,
+  `combatDropRate`, `combatRareFind`, `combatDropQuantity`, party size and the dungeon multiplier
+  turn a table's numbers into the rates a player actually sees.
+
+`src/features/combat/combat-drop-luck.js` displays the result. The panel, its wording and its
+placement are Toolasha's own — LYuck is a floating window of its own, and this is a line in the
+game's battle panel.
 
 Deliberately not ported: the chest expected-value fixed point and token-shop valuation.
 `src/features/market/expected-value-calculator.js` and `src/utils/token-valuation.js` already do

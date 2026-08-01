@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Drop luck now shows in the battle panel
+
+New setting, on by default. Coming back from combat, a line appears beside Total revenue: **`Drop luck: 73rd percentile — 27 runs in 100 beat it`**, green when the session went well, red when it did not.
+
+- Revenue on its own cannot answer "was that bad, or was that just Tuesday?". A zone's average says nothing about its spread, and the zones worth grinding are the ones where a rare drop carries most of the value — where the typical session is well under average and one lucky hour is worth a day. This says where the session actually sits.
+- The tooltip carries the caveats so the line stays one glance wide: how many battles it covers, that unpriced drops are excluded, and — when the game did not hand over your drop stats — that the figure assumes none.
+- **Dungeons are skipped rather than guessed at.** They pay from a reward table on completion instead of per monster, which is a different distribution; a number built from the wrong model would look exactly as convincing as a right one.
+- Priced through your existing pricing-mode setting, and the session's takings are counted with the same prices as the distribution they are compared against — otherwise the figure would measure the bid/ask spread and call it luck.
+- Drops with no market price are left out of both sides. Counting them as free would make every session containing one look unlucky.
+- The transform takes about a tenth of a second on a busy zone, so it runs after the panel has drawn rather than before — the line says "working it out…" for a moment instead of freezing the panel.
+
+**One assumption is worth knowing about**, because it is invisible when wrong: drop quantity bonuses produce fractional counts, and this takes the game to settle a count of 1.1 as one item nine times in ten and two the tenth, rather than throwing the fraction away. On a zone where a rare carries the value the two readings differ by about 5% of total income — the rare being exactly the drop whose count is small enough for the fraction to be most of the bonus. If your luck reads consistently low, this is the first thing to suspect.
+
+- Checked end to end against a simulation of a realistic zone — two monsters on a strength cap, a boss every tenth battle, a rare worth a quarter million, drop-rate and quantity bonuses applied — matching at every quantile from the 2nd to the 98th to within 0.002.
+
 ### Drop luck and expected spawns, ported from MWI Combat Suite
 
 Two analysis engines from Frotty's script, as pure utilities with tests. **Nothing calls them yet** — no setting, no panel, no change to how Toolasha behaves. Wiring them to something you can see is a separate decision.
