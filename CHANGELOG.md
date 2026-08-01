@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Fixed: the overlay would have shown nothing in the released build
+
+Caught by CI, not by testing — the dev build is a single bundle where the mistake cannot happen.
+
+- The released script is six bundles loaded in order (core, utils, market, actions, combat, ui), and a module not declared shared is **copied into every bundle that imports it, each copy with its own state**. The overlay's row list sat in the UI bundle, so combat features registered into one list, inventory features into a second, and the panel drew from a third — an empty one. Ui also loads last, so a combat feature registering at start-up was reaching for a bundle that did not exist yet.
+- The list moved to `src/utils/overlay-rows.js` and is declared shared in `rollup.config.js`. Utils loads before every feature bundle, so there is now exactly one list and it exists before anyone registers into it. Verified against the built files: all three bundles reference the shared registry and none carries a private copy.
+- **`dist/libraries/toolasha-combat.js` went over the 2 MB limit**, which is what made CI fail. Removing the duplicated overlay code brought it back under — but only by 8 KB. The next feature added to the combat bundle will break it again, and splitting that bundle is the real fix.
+
 ### Overlay Panel: one floating panel features add a row to
 
 New setting, on by default, with an **Overlay** button on the settings page. The gear inside chooses which rows show and in what order; the panel remembers where you dragged it and whether it was open, so it comes back after a refresh.

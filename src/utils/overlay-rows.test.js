@@ -1,18 +1,6 @@
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, Z_FLOATING_PANEL: 1100 } }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
-vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerInterval: () => {}, clearAll: () => {} }),
-}));
-vi.mock('../../utils/panel-z-index.js', () => ({
-    registerFloatingPanel: () => {},
-    unregisterFloatingPanel: () => {},
-    bringPanelToFront: () => {},
-}));
-vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => () => {}, clampToViewport: () => null }));
-
-const { registerRow, registeredRows, resolveRows, moveRow } = await import('./overlay-panel.js');
+import { registerRow, registeredRows, resolveRows, moveRow } from './overlay-rows.js';
 
 const row = (key, defaultVisible = true) => ({ key, name: key, render: () => {}, defaultVisible });
 

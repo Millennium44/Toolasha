@@ -37,6 +37,7 @@ import * as pricingHelper from '../utils/pricing-helper.js';
 import * as cleanupRegistry from '../utils/cleanup-registry.js';
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
+import * as overlayRows from '../utils/overlay-rows.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -78,6 +79,7 @@ toolashaRoot.Utils = {
     cleanupRegistry,
     houseCostCalculator,
     enhancementCalculator,
+    overlayRows,
 };
 
 console.log('[Toolasha] Utils library loaded');

@@ -13,7 +13,7 @@
  * ## Adding a row
  *
  * ```js
- * import { registerRow } from '../ui/overlay-panel.js';
+ * import { registerRow } from '../../utils/overlay-rows.js';
  *
  * registerRow({
  *     key: 'treasure',            // stable — it is the storage key for visibility and order
@@ -24,9 +24,10 @@
  * });
  * ```
  *
- * Register at module scope, not inside `initialize`. Rows are collected in a
- * module-level list so registration order and feature start-up order do not have
- * to agree, and a row whose feature is switched off simply renders nothing.
+ * Register at module scope, not inside `initialize`. The list lives in
+ * `utils/overlay-rows.js` rather than here — see that file for why the bundle
+ * layout forces it — so registration order and feature start-up order do not
+ * have to agree, and a row whose feature is off simply renders nothing.
  *
  * ## Redrawing
  *
@@ -47,6 +48,7 @@ import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, clampToViewport } from '../../utils/floating-panel.js';
+import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
 
 const STORAGE_KEY = 'overlayPanel';
 const PANEL_ID = 'toolasha-overlay-panel';
@@ -60,105 +62,6 @@ const COLORS = {
     textDim: 'rgba(232, 236, 245, 0.5)',
     accent: '#9ec4ff',
 };
-
-/**
- * Rows, in registration order.
- *
- * Module-level so a feature can register while the shell is still asleep — the
- * alternative is every feature having to know whether the panel has started yet.
- * @type {Array<{key: string, name: string, render: Function, defaultVisible: boolean}>}
- */
-const rows = [];
-
-/**
- * Add a row to the overlay.
- *
- * Safe to call before the panel exists, and safe to call twice — a repeated key
- * replaces the earlier definition rather than drawing the row twice, so a feature
- * that re-initialises does not double up.
- *
- * @param {Object} row - Row definition
- * @param {string} row.key - Stable identifier, used as the storage key
- * @param {string} row.name - Label in the row picker
- * @param {Function} row.render - `(container: HTMLElement) => void`, called per refresh
- * @param {boolean} [row.defaultVisible] - Whether it starts on
- */
-export function registerRow({ key, name, render, defaultVisible = true }) {
-    if (!key || typeof render !== 'function') {
-        console.error('[OverlayPanel] A row needs a key and a render function:', key);
-        return;
-    }
-
-    const definition = { key, name: name || key, render, defaultVisible };
-    const existing = rows.findIndex((row) => row.key === key);
-    if (existing >= 0) rows[existing] = definition;
-    else rows.push(definition);
-}
-
-/**
- * The registered rows, in the order they should be offered.
- * Exported for tests and for anything that wants to know what is available.
- * @returns {Array<Object>} Row definitions
- */
-export function registeredRows() {
-    return [...rows];
-}
-
-/**
- * Put saved settings and the rows that actually exist together.
- *
- * Kept pure so the awkward cases are testable: a row saved in the order but since
- * removed from the code, and a row added by an update that no saved order has
- * heard of. The first must not leave a hole and the second must not be lost at
- * the bottom of a list nobody knows to look at.
- *
- * @param {Array<Object>} available - Registered rows
- * @param {Object} saved - `{ visible: {key: bool}, order: string[] }`
- * @returns {Array<Object>} Rows to draw, in order, each with `visible`
- */
-export function resolveRows(available, saved) {
-    const order = saved?.order || [];
-    const visible = saved?.visible || {};
-
-    const known = new Map(available.map((row) => [row.key, row]));
-    const ordered = [];
-
-    for (const key of order) {
-        const row = known.get(key);
-        // A key left over from a row that no longer exists
-        if (!row) continue;
-        ordered.push(row);
-        known.delete(key);
-    }
-    // Anything the saved order has not heard of is new, and goes at the end
-    ordered.push(...known.values());
-
-    return ordered.map((row) => ({
-        ...row,
-        visible: visible[row.key] ?? row.defaultVisible,
-    }));
-}
-
-/**
- * Move a key one place through an order.
- *
- * Works on the full order rather than only the visible rows, so hiding a row and
- * showing it again does not quietly move it.
- *
- * @param {string[]} order - Current order
- * @param {string} key - What to move
- * @param {number} delta - -1 for up, 1 for down
- * @returns {string[]} A new order
- */
-export function moveRow(order, key, delta) {
-    const index = order.indexOf(key);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= order.length) return order;
-
-    const next = [...order];
-    [next[index], next[target]] = [next[target], next[index]];
-    return next;
-}
 
 class OverlayPanel {
     constructor() {
@@ -377,7 +280,7 @@ class OverlayPanel {
     _renderPicker() {
         this.pickerEl.replaceChildren();
 
-        const resolved = resolveRows(rows, this.settings);
+        const resolved = resolveRows(registeredRows(), this.settings);
         if (!resolved.length) {
             const empty = document.createElement('div');
             empty.style.color = COLORS.textDim;
@@ -443,13 +346,13 @@ class OverlayPanel {
     _renderBody() {
         if (!this.bodyEl) return;
 
-        const resolved = resolveRows(rows, this.settings).filter((row) => row.visible);
+        const resolved = resolveRows(registeredRows(), this.settings).filter((row) => row.visible);
         if (!resolved.length) {
             this.containers.clear();
             this.bodyEl.replaceChildren();
             const empty = document.createElement('div');
             empty.style.color = COLORS.textDim;
-            empty.textContent = rows.length ? 'Every row is switched off — see ⚙.' : 'Nothing to show yet.';
+            empty.textContent = registeredRows().length ? 'Every row is switched off — see ⚙.' : 'Nothing to show yet.';
             this.bodyEl.appendChild(empty);
             return;
         }
