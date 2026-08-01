@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The buy recommendation now measures the queue instead of assuming it
+
+- The order-against-instant call used a flat six-hour guess at how long a buy order takes to fill. It now reads the **real order book** — the queue length estimator already caches every book the game has sent — and estimates the wait from the depth at the best bid and the listing timestamps behind it.
+- **The timestamps are the only rate signal there is.** Twenty listings at one price spanning ten minutes is a level that churns; twenty spanning a week is a level where an order is a week-long proposition. Fill time is depth ahead ÷ the rate depth arrived at, which assumes a level drains about as fast as it fills — true in a liquid market, false in a moving one, and stated in the module rather than buried.
+- Queue depth is extrapolated past the twenty listings the game shows, using the same arithmetic as the queue length display, so the two never disagree.
+- **It says which answer you got.** With a measured wait the hover reads "fills in about 40 minutes"; without one it says no order book has been seen for that item yet and suggests opening it once. A guess presented as a measurement is worse than a guess labelled as one.
+- Measuring changes the answer both ways: a fast-filling book now recommends an order where the flat assumption refused one, and a slow book refuses an order the assumption would have allowed.
+
 ### Buy the shortfall, in equipped order, with exact drink rates
 
 - **Click the Buy figure to open the marketplace with the quantity already filled in**, through the same autofill the missing-materials features use. It opens the buy modal rather than buying: this is a decision about spending coins, and a panel that spends them for you is a panel you have to watch.
