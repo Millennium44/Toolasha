@@ -149,6 +149,72 @@ export function clampZoom(zoom) {
 }
 
 /**
+ * Nudge tiles apart until none of them overlap.
+ *
+ * For an imported layout rather than for a layout built here. A layout built
+ * here cannot overlap — every drag is clamped as it happens — but a layout that
+ * came from OPanel was measured against OPanel's rendering, and the same rows
+ * drawn by this overlay are not the same size. Import it verbatim and tiles land
+ * on top of one another.
+ *
+ * Each tile keeps its position if it can, and otherwise takes the first free
+ * spot **at or below** where it wanted to be. Downward rather than in any
+ * direction, because the arrangement being imported is worth preserving: the
+ * reading order survives, and the layout stretches rather than scrambles.
+ *
+ * @param {Array<Object>} tiles - Tiles with `key`, `x`, `y`, `width`, `height`
+ * @param {number} width - Canvas width
+ * @param {number} [grid] - Step to search on
+ * @returns {Array<{key: string, x: number, y: number}>} Positions that do not collide
+ */
+export function resolveOverlaps(tiles, width, grid = GRID) {
+    const step = grid > 1 ? grid : GRID;
+    const placed = [];
+    const positions = [];
+
+    // Top to bottom, then left to right: a tile that was above another before
+    // should still be above it after
+    const ordered = [...tiles].sort((a, b) => a.y - b.y || a.x - b.x);
+
+    for (const tile of ordered) {
+        const size = { width: tile.width, height: tile.height };
+        let spot = clampTile({ x: tile.x, y: tile.y }, size, { width });
+
+        if (placed.some((other) => overlaps({ ...spot, ...size }, other))) {
+            spot = findFreeSpotBelow(placed, size, spot.x, spot.y, step);
+        }
+
+        placed.push({ ...spot, ...size });
+        positions.push({ key: tile.key, x: spot.x, y: spot.y });
+    }
+    return positions;
+}
+
+/**
+ * The first free spot directly below a tile's own column.
+ *
+ * The column is held rather than searched. An OPanel layout is two columns, and
+ * a tile that resolves a collision by sliding into the other one has not been
+ * nudged, it has been scrambled — so a tile only ever moves straight down, which
+ * always terminates because below everything is free by definition.
+ *
+ * @param {Array<Object>} placed - Tiles already positioned
+ * @param {{width: number, height: number}} size - The tile to place
+ * @param {number} x - The column to stay in
+ * @param {number} fromY - Where to start looking
+ * @param {number} step - Search step
+ * @returns {{x: number, y: number}} Somewhere free in the same column
+ */
+function findFreeSpotBelow(placed, size, x, fromY, step) {
+    const bottom = placed.reduce((max, tile) => Math.max(max, tile.y + tile.height), fromY);
+
+    for (let y = snap(fromY, step); y <= bottom; y += step) {
+        if (!placed.some((tile) => overlaps({ x, y, ...size }, tile))) return { x, y };
+    }
+    return { x, y: snap(bottom, step) };
+}
+
+/**
  * Repack every tile against the top-left, in order, wrapping at the canvas edge.
  *
  * Rows within a wrapped line share the height of the tallest, so a short tile

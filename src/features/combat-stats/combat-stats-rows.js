@@ -19,8 +19,8 @@
 
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { formatLargeNumber, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
-import { row, rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
+import { row, rows, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -206,7 +206,7 @@ registerRow({
             [
                 { text: soonest.itemName, ellipsis: true },
                 {
-                    text: timeReadable(soonest.timeToZeroSeconds),
+                    text: shortDuration(soonest.timeToZeroSeconds),
                     // Under an hour is the point at which it is worth acting now
                     color: soonest.timeToZeroSeconds < 3600 ? ROW_COLORS.bad : ROW_COLORS.good,
                     push: true,

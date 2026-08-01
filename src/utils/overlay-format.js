@@ -141,3 +141,35 @@ export function signedPercent(percent, band = 5) {
     if (percent < -band) return { text, color: ROW_COLORS.bad };
     return { text, color: ROW_COLORS.dim };
 }
+
+/**
+ * A duration short enough to sit in a tile.
+ *
+ * `timeReadable` writes "71 days 9h 55m", which is right in a tooltip and wrong
+ * in a tile forty pixels wide — it pushed the label it sat beside down to a
+ * single letter. Two units at most, and the small one drops off once the large
+ * one is big enough to make it noise.
+ *
+ * @param {number} seconds - Duration
+ * @returns {string} e.g. `45s`, `12m`, `3h 20m`, `4d 16h`, `71d`
+ */
+export function shortDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '—';
+
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+
+    if (seconds < 86400) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+    }
+
+    const days = Math.floor(seconds / 86400);
+    // Past a month the hours are noise beside the days, and the space they take
+    // is the space the label beside them needs
+    if (days >= 30) return `${days}d`;
+
+    const hours = Math.floor((seconds % 86400) / 3600);
+    return hours ? `${days}d ${hours}h` : `${days}d`;
+}
