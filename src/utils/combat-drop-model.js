@@ -30,6 +30,8 @@
  * `docs/THIRD-PARTY-LICENSES.md`.
  */
 
+import { expectedSpawnsPerWave } from './spawn-expectation.js';
+
 /** What the game gives every character before gear and buffs */
 const NO_DROP_BONUSES = { combatDropRate: 0, combatRareFind: 0, combatDropQuantity: 0 };
 
@@ -201,5 +203,56 @@ export function lootValue(lootMap, priceOf) {
         const price = priceOf(loot.itemHrid);
         if (price > 0) total += price * (loot.count || 0);
     }
+    return total;
+}
+
+/**
+ * What one drop pays on average, counting the times it does not land.
+ * @param {Object} drop - A priced drop from `buildCombatSession`
+ * @returns {number} Coins per attempt
+ */
+function dropMean(drop) {
+    // The mean of the integerised count is the continuous mean it was built
+    // from — the discretisation in `drop-luck.js` splits mass between neighbours
+    // in proportion to distance, which is exactly what preserves it
+    const meanCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+    return drop.dropRate * meanCount * drop.price;
+}
+
+/**
+ * What a session was owed on average.
+ *
+ * The percentile from `sessionLuck` says where a session sits among all the
+ * sessions it could have been, which is the honest answer but not an intuitive
+ * one — on a zone where a rare carries the value, a perfectly ordinary session
+ * sits at the 30th percentile and reads as bad luck. This is the other half of
+ * that: how far above or below par the takings actually were, in coins.
+ *
+ * Computed in closed form rather than from the distribution. The mean of a sum
+ * is the sum of the means whatever the shape, so no inversion is needed and this
+ * costs microseconds where the percentile costs a tenth of a second.
+ *
+ * @param {Object} session - As `buildCombatSession` returns
+ * @returns {number} Expected income in coins
+ */
+export function sessionMean({ spawnInfo, monsterDrops, bossDrops = {}, normalCount, bossCount = 0 }) {
+    let total = 0;
+
+    const perWave = expectedSpawnsPerWave(spawnInfo);
+    for (const [hrid, spawns] of Object.entries(perWave)) {
+        const drops = monsterDrops?.[hrid];
+        if (!drops?.length) continue;
+
+        const perKill = drops.reduce((sum, drop) => sum + dropMean(drop), 0);
+        total += perKill * spawns * (normalCount || 0);
+    }
+
+    // Every boss in the table turns up on a boss wave, so they are counted
+    // outright rather than weighted by a spawn rate
+    for (const drops of Object.values(bossDrops)) {
+        const perKill = drops.reduce((sum, drop) => sum + dropMean(drop), 0);
+        total += perKill * (bossCount || 0);
+    }
+
     return total;
 }

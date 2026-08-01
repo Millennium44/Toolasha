@@ -6,6 +6,7 @@ import {
     splitBattles,
     buildCombatSession,
     lootValue,
+    sessionMean,
 } from './combat-drop-model.js';
 
 const priceOf = (hrid) => ({ '/items/a': 100, '/items/rare': 50000, '/items/worthless': 0 })[hrid] ?? null;
@@ -186,5 +187,43 @@ describe('lootValue', () => {
 
     test('survives no loot at all', () => {
         expect(lootValue(null, priceOf)).toBe(0);
+    });
+});
+
+describe('sessionMean', () => {
+    // One monster, always spawning once, dropping one item worth 100 at a rate
+    // of one in ten — so ten waves are owed 100
+    const session = {
+        spawnInfo: { maxSpawnCount: 1, spawns: [{ combatMonsterHrid: '/m/a', rate: 1 }] },
+        monsterDrops: { '/m/a': [{ minCount: 1, maxCount: 1, dropRate: 0.1, price: 100 }] },
+        normalCount: 10,
+        bossCount: 0,
+    };
+
+    test('pays rate times count times price, per wave', () => {
+        expect(sessionMean(session)).toBeCloseTo(100, 6);
+    });
+
+    test('a count range pays its midpoint', () => {
+        const ranged = {
+            ...session,
+            monsterDrops: { '/m/a': [{ minCount: 1, maxCount: 3, dropRate: 1, price: 10 }] },
+        };
+        expect(sessionMean(ranged)).toBeCloseTo(200, 6);
+    });
+
+    test('bosses are counted outright, not weighted by a spawn rate', () => {
+        // Every boss in the table turns up on a boss wave
+        const withBoss = {
+            ...session,
+            normalCount: 0,
+            bossCount: 4,
+            bossDrops: { '/m/b': [{ minCount: 2, maxCount: 2, dropRate: 0.5, price: 1000 }] },
+        };
+        expect(sessionMean(withBoss)).toBeCloseTo(4000, 6);
+    });
+
+    test('a monster with no priced drops contributes nothing rather than throwing', () => {
+        expect(sessionMean({ ...session, monsterDrops: {} })).toBe(0);
     });
 });

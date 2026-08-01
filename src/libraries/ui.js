@@ -47,6 +47,8 @@ import taskAutoReroll from '../features/tasks/task-auto-reroll.js';
 // Skills
 import remainingXP from '../features/skills/remaining-xp.js';
 import xpTracker from '../features/skills/xp-tracker.js';
+// Side-effect import: registers the Time to Level overlay row
+import '../features/skills/skill-ttl-row.js';
 
 // Action features
 import lootLogStats from '../features/actions/loot-log-stats.js';
@@ -72,6 +74,8 @@ import alchemyActionProtection from '../features/alchemy/alchemy-action-protecti
 
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
+// Side-effect import: registers the Equipment Watch overlay row
+import '../features/enhancement/enhancement-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 
 // Guild

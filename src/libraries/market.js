@@ -36,6 +36,8 @@ import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 
 // Networth/Economy features
 import networthFeature from '../features/networth/index.js';
+// Side-effect import: registers the coins, listings, inventory and books overlay rows
+import '../features/networth/networth-rows.js';
 
 // Inventory features
 import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';

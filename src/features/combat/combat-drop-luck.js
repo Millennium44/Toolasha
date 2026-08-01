@@ -36,9 +36,10 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { sessionLuck } from '../../utils/drop-luck.js';
-import { buildCombatSession, lootValue } from '../../utils/combat-drop-model.js';
+import { buildCombatSession, lootValue, sessionMean } from '../../utils/combat-drop-model.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { formatLargeNumber } from '../../utils/formatters.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -283,7 +284,14 @@ class CombatDropLuck {
         const income = lootValue(lootMap, priceOf);
         const { percentile } = sessionLuck(session, income);
 
-        this.lastResult = { percentile, income, battles, hasBonuses };
+        // The other half of the same question. The percentile says where the
+        // session sits among the sessions it could have been, which is the
+        // honest answer but a counter-intuitive one on a zone where a rare
+        // carries the value: a perfectly ordinary run sits well below the 50th
+        // and reads as bad luck. Against the mean it reads as par.
+        const expected = sessionMean(session);
+
+        this.lastResult = { percentile, income, expected, battles, hasBonuses };
         return this.lastResult;
     }
 
@@ -356,6 +364,66 @@ registerRow({
         container.style.gap = '10px';
         container.appendChild(label);
         container.appendChild(value);
+    },
+});
+
+/**
+ * How far the run's takings are from what the zone owed.
+ *
+ * The companion to Drop luck, in coins rather than in percentiles. Where the
+ * percentile says how unusual the run was, this says how much better or worse
+ * off it left you — and on a zone whose value rides on one rare, those two say
+ * quite different things about the same session.
+ */
+registerRow({
+    key: 'overExpected',
+    name: 'Over Expected %',
+    defaultSize: { width: 200, height: 40 },
+    render: (container) => {
+        container.replaceChildren();
+        const result = combatDropLuck.lastResult;
+        if (!result || !(result.expected > 0)) return;
+
+        const ratio = result.income / result.expected;
+        const percent = (ratio - 1) * 100;
+
+        Object.assign(container.style, { display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
+
+        const top = document.createElement('div');
+        Object.assign(top.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
+        const label = document.createElement('span');
+        label.textContent = 'Over expected';
+        const value = document.createElement('span');
+        value.textContent = `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
+        value.style.whiteSpace = 'nowrap';
+        // A few percent either way is what every session does; colouring that
+        // would make the row a light that is always on
+        value.style.color =
+            percent > 5
+                ? config.getSetting('color_profit') || '#047857'
+                : percent < -5
+                  ? config.getSetting('color_loss') || '#f87171'
+                  : 'inherit';
+        top.append(label, value);
+
+        const bottom = document.createElement('div');
+        Object.assign(bottom.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '8px',
+            color: 'rgba(232, 236, 245, 0.6)',
+        });
+        const got = document.createElement('span');
+        got.textContent = formatLargeNumber(Math.round(result.income));
+        const owed = document.createElement('span');
+        owed.textContent = `of ${formatLargeNumber(Math.round(result.expected))}`;
+        owed.style.whiteSpace = 'nowrap';
+        bottom.append(got, owed);
+
+        container.append(top, bottom);
+        container.title =
+            `${result.battles} battles were owed ${Math.round(result.expected).toLocaleString()} coins on average.\n` +
+            'Drops with no market price are left out of both sides.';
     },
 });
 

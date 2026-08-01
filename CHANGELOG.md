@@ -6,6 +6,24 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Twelve more overlay rows
+
+Everything OPanel shows that Toolasha had the data for. Nothing here computes anything new on the overlay's timer — each row reads a figure some feature already keeps, or measures one thing cheaply itself.
+
+- **Session Timer / EPH** — the run clock and encounters per hour. EPH is the rate every other figure is divided by, so it is the first thing to check when one has drifted: income falling while EPH holds means prices moved, both falling together means the fights got slower.
+- **Total Profit** — what the run has actually banked, beside the daily projection. The two disagree whenever the run started badly or has just had a rare, and the disagreement is the useful part — a daily rate off twenty minutes is a guess.
+- **Consumables** — which one runs out first, how long it has, and what the lot costs per day. The soonest one is the only one that matters: it is what ends the run whether you are watching or not. Under an hour it turns red.
+- **Combat Status** — fighting, skilling, or idle. Read from the action queue, not from combat data, because combat data keeps saying what the last run did long after it stopped.
+- **DPS** — damage and damage taken per second. **The game sends no damage figure**, so this is inferred from health lost between combat ticks. Two things follow and are stated on the row rather than buried: overkill is not counted, and in a party it is the whole party's damage, since nothing on the wire says who struck. The clock counts ticks received rather than wall time, so an idle night is not divided into the average.
+- **Over Expected %** — takings against what the zone owed, in coins. The companion to Drop Luck rather than a duplicate of it: the percentile says how _unusual_ a run was, and on a zone whose value rides on one rare, a perfectly ordinary session sits well below the 50th and reads as bad luck. Against the mean it reads as par. Computed in closed form, so it costs microseconds where the percentile costs a tenth of a second.
+- **Equipment Watch** — what is on the anvil, what it has cost, time left, and a progress bar. The bar is **attempts against expected attempts**, not level against target: levels are not evenly spaced, so a bar drawn on levels sits at 90% for hours. Past expectation it stays full and turns red, because "this has taken twice what it should" is the thing you want it to be able to say.
+- **Time to Level** — which skill is going up fastest and when it next levels, measured over a rolling ten minutes. A rate measured from the session start answers how fast it has gone on average, when the question is how fast it is going now — and they differ by the whole of any break you took. At the cap it says nothing rather than "never".
+- **Coins**, **Market Listings**, **Inventory Value**, **Skill Books** — four fields of the net worth pass you already run. Net worth as one figure moves too slowly to watch and hides the parts that do move.
+
+**Not ported: Build Score.** It is KOllection's own formula, and Toolasha has no equivalent. Inventing a scoring formula and labelling it with someone else's name would produce a confident number that means nothing and matches nothing.
+
+**Not ported: the Only Numbers / Only Player display toggles.** They control party columns, and every row here shows the current player only, so the switches would do nothing.
+
 ### The overlay is a layout, not a list
 
 - **Rows are placed freely rather than stacked.** A stack forces one ordering decision — what goes above what — when the question you want to answer is what sits _beside_ what: revenue next to profit, luck next to expectation, so a glance reads a comparison instead of a column. Each tile carries its own position, size and text scale, and all of it is remembered.

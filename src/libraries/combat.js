@@ -17,6 +17,7 @@ import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-ch
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
 import combatDropLuck from '../features/combat/combat-drop-luck.js';
+import combatDPS from '../features/combat/combat-dps.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
@@ -60,6 +61,7 @@ toolashaRoot.Combat = {
     combatSummary,
     combatBattleCounter,
     combatDropLuck,
+    combatDPS,
     labyrinthTracker,
     labyrinthBestLevel,
     labyrinthShopPrices,

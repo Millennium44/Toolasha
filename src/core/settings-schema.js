@@ -1764,6 +1764,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Puts the session's drop value in the distribution of everything those battles could have paid, as a percentile. Skips dungeons, which pay from a reward table rather than per monster",
             },
+            combatDps: {
+                id: 'combatDps',
+                label: 'Combat DPS: Measure damage per second during a run',
+                type: 'checkbox',
+                default: true,
+                help: "Infers damage from health lost between combat ticks, since the game sends no damage figure. Overkill is not counted, and in a party it is the whole party's damage — nothing on the wire says who struck",
+            },
             combatSim: {
                 id: 'combatSim',
                 label: 'Combat Simulator',
