@@ -7,6 +7,7 @@ import {
     clampZoom,
     resolveLayout,
     autoGrid,
+    resolveOverlaps,
     contentBounds,
     GRID,
     DEFAULT_TILE,
@@ -185,5 +186,63 @@ describe('contentBounds', () => {
 
     test('nothing placed measures as nothing', () => {
         expect(contentBounds([])).toEqual({ width: 0, height: 0 });
+    });
+});
+
+describe('resolveOverlaps', () => {
+    test('leaves a layout that already fits alone', () => {
+        const tiles = [
+            { key: 'a', x: 0, y: 0, width: 100, height: 30 },
+            { key: 'b', x: 100, y: 0, width: 100, height: 30 },
+        ];
+        expect(resolveOverlaps(tiles, 400)).toEqual([
+            { key: 'a', x: 0, y: 0 },
+            { key: 'b', x: 100, y: 0 },
+        ]);
+    });
+
+    test('pushes a colliding tile down rather than anywhere', () => {
+        // The imported arrangement is worth preserving: reading order survives
+        // and the layout stretches rather than scrambles
+        const tiles = [
+            { key: 'a', x: 0, y: 0, width: 300, height: 40 },
+            { key: 'b', x: 10, y: 10, width: 300, height: 40 },
+        ];
+        const [first, second] = resolveOverlaps(tiles, 320);
+        expect(first).toEqual({ key: 'a', x: 0, y: 0 });
+        expect(second.y).toBeGreaterThanOrEqual(40);
+    });
+
+    test('a tile that grew past its neighbour moves the neighbour, not itself', () => {
+        // Rows arrive from OPanel sized for OPanel's rendering; ours are wider
+        const tiles = [
+            { key: 'top', x: 0, y: 0, width: 200, height: 30 },
+            { key: 'below', x: 0, y: 20, width: 200, height: 30 },
+        ];
+        const resolved = resolveOverlaps(tiles, 400);
+        expect(resolved.find((tile) => tile.key === 'top')).toEqual({ key: 'top', x: 0, y: 0 });
+        expect(resolved.find((tile) => tile.key === 'below').y).toBe(30);
+    });
+
+    test('keeps everything on the canvas', () => {
+        const tiles = [{ key: 'a', x: 900, y: 0, width: 200, height: 30 }];
+        expect(resolveOverlaps(tiles, 400)[0].x).toBe(200);
+    });
+
+    test('resolves a pile of identical tiles into a stack', () => {
+        const tiles = Array.from({ length: 4 }, (_, index) => ({
+            key: `t${index}`,
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 30,
+        }));
+        const resolved = resolveOverlaps(tiles, 100);
+        const ys = resolved.map((tile) => tile.y).sort((a, b) => a - b);
+        expect(new Set(ys).size).toBe(4);
+    });
+
+    test('survives nothing to resolve', () => {
+        expect(resolveOverlaps([], 400)).toEqual([]);
     });
 });

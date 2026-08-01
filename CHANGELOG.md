@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Separators, and an import that arrives usable
+
+- **Separators.** Each tile draws a rule under it when the layout is locked, which is what gives a column of tiles the ruled look rather than a floating jumble. Off while you are editing, since the tile's own outline is showing then, and switchable in the gear.
+
+- **Fixed: an imported OPanel layout arrived unreadable.** Every size in an OPanel file is a measurement of OPanel's rendering, and this overlay's rows are not that rendering — so tiles imported verbatim were too small for what they had to hold, and the result was a wall of clipped half-words. Imported tiles are now grown to at least what the row needs, taking the larger of the two so a tile someone deliberately made roomy stays roomy.
+- Growing them makes them collide, so anything overlapping is **pushed straight down, staying in its column**. An OPanel layout is two columns, and a tile that resolves a collision by sliding into the other one has not been nudged, it has been scrambled. Reading order survives and the layout stretches instead.
+- The panel's own frame is grown to fit as well. Left at the imported size, half the layout arrives below the fold, which reads as tiles that failed to import rather than as a panel that needs dragging.
+
+- **Durations in tiles are short now.** `71 days 9h 55m` is right in a tooltip and wrong in a tile, where it pushed the label beside it down to a single letter. Two units at most, and the small one drops once the large one makes it noise: `45s`, `12m`, `3h 20m`, `4d 16h`, `71d`.
+
 ### Build Score, and rows that fit their tiles
 
 - **Build Score.** Toolasha already computes this — it is the figure on the profile card, the build's cost in millions split into equipment, abilities and house. It was only ever shown for a profile you had opened, so the one build you could not casually check was your own. `calculateCombatScore` reads exactly three things out of a shared profile — house rooms, equipped abilities, worn items — and all three are already known for the current character, so the same shape is assembled locally and the same function gives the same answer as the card. It recomputes on gear and house changes, debounced, never on the overlay's timer, and attaches its listeners on the first render so a row nobody switched on costs nothing.

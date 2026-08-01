@@ -28,8 +28,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { timeReadable } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { experiencePerHour, timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
 
 /** How far back the rate is measured over */
@@ -120,7 +119,7 @@ registerRow({
         row(container, [
             { text: `${training.name} ${training.level}:`, color: ROW_COLORS.gold, ellipsis: true },
             {
-                text: training.seconds === null ? '—' : timeReadable(training.seconds),
+                text: training.seconds === null ? '—' : shortDuration(training.seconds),
                 color: ROW_COLORS.accent,
                 push: true,
             },

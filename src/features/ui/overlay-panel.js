@@ -69,6 +69,7 @@ import { askChoice } from '../../utils/choice-dialog.js';
 import {
     resolveLayout,
     autoGrid,
+    resolveOverlaps,
     contentBounds,
     clampTile,
     clampZoom,
@@ -92,6 +93,7 @@ const COLORS = {
     textDim: 'rgba(232, 236, 245, 0.5)',
     accent: '#9ec4ff',
     tileEdit: 'rgba(158, 196, 255, 0.28)',
+    separator: 'rgba(158, 196, 255, 0.16)',
 };
 
 class OverlayPanel {
@@ -105,6 +107,7 @@ class OverlayPanel {
             zoom: {},
             locked: true,
             snapToGrid: true,
+            separators: true,
             open: false,
         };
         this.panel = null;
@@ -423,6 +426,20 @@ class OverlayPanel {
         snapLabel.append(snapBox, document.createTextNode(`Snap to ${GRID}px grid`));
         controls.appendChild(snapLabel);
 
+        const ruleLabel = document.createElement('label');
+        Object.assign(ruleLabel.style, { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
+        const ruleBox = document.createElement('input');
+        ruleBox.type = 'checkbox';
+        ruleBox.checked = this.settings.separators !== false;
+        ruleBox.style.cursor = 'pointer';
+        ruleBox.addEventListener('change', () => {
+            this.settings.separators = ruleBox.checked;
+            this._save();
+            this._renderBody();
+        });
+        ruleLabel.append(ruleBox, document.createTextNode('Separators'));
+        controls.appendChild(ruleLabel);
+
         const autogrid = this._textButton('Autogrid', 'Repack every tile from the top left, in order', () =>
             this._autoGrid()
         );
@@ -573,12 +590,41 @@ class OverlayPanel {
                 });
                 if (!answer) return;
 
-                this.settings = { ...this.settings, ...read.settings };
+                this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
+
+                // OPanel measured those tiles against OPanel's rendering, and
+                // the same rows drawn here are not the same size — so growing
+                // them to fit puts them on top of each other unless the pile is
+                // pulled apart afterwards
+                const laid = resolveLayout(
+                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                    this.settings,
+                    this._canvasWidth()
+                );
+                const positions = { ...this.settings.positions };
+                for (const { key, x, y } of resolveOverlaps(laid, this._canvasWidth())) positions[key] = { x, y };
+                this.settings.positions = positions;
+
                 this._save();
-                if (read.geometry) {
-                    await saveGeometry(GEOMETRY_KEY, read.geometry);
-                    await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
-                }
+
+                // The frame came sized for OPanel's tiles too, so it is grown to
+                // whatever ours actually need. Left smaller, the imported layout
+                // arrives half below the fold, which reads as tiles that failed
+                // to import rather than as a panel that needs dragging.
+                const geometry = read.geometry || {};
+                const bounds = contentBounds(
+                    resolveLayout(
+                        resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                        this.settings,
+                        this._canvasWidth()
+                    )
+                );
+                await saveGeometry(GEOMETRY_KEY, {
+                    ...geometry,
+                    width: Math.max(geometry.width || 0, bounds.width + 30),
+                    height: Math.max(geometry.height || 0, bounds.height + 80),
+                });
+                await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
 
                 this._refreshLockButton();
                 this._renderPicker();
@@ -589,6 +635,35 @@ class OverlayPanel {
             }
         });
         input.click();
+    }
+
+    /**
+     * An imported layout's tile sizes, never smaller than the row needs.
+     *
+     * A size in an OPanel file is a measurement of OPanel's own rendering. Ours
+     * is not the same rendering — different labels, different spacing — so a
+     * tile imported verbatim clips the row it is supposed to hold, which is what
+     * turned an imported layout into a wall of half-words.
+     *
+     * The larger of the two, rather than ours outright: a tile someone
+     * deliberately made roomy stays roomy.
+     *
+     * @param {Object} imported - `{ [key]: {width, height} }` from the file
+     * @returns {Object} The same, grown where it was too small
+     */
+    _fitSizes(imported) {
+        const sizes = { ...imported };
+        for (const row of registeredRows()) {
+            const wanted = row.defaultSize;
+            const theirs = sizes[row.key];
+            if (!wanted || !theirs) continue;
+
+            sizes[row.key] = {
+                width: Math.max(theirs.width, wanted.width),
+                height: Math.max(theirs.height, wanted.height),
+            };
+        }
+        return sizes;
     }
 
     /** Usable width inside the scroller, less the scrollbar */
@@ -642,7 +717,12 @@ class OverlayPanel {
                 height: `${row.height}px`,
                 fontSize: `${row.zoom}%`,
                 cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
+                // Editing shows the tile's own outline; otherwise a rule under
+                // each one, which is what gives a column of tiles the ruled look
+                // rather than a floating jumble
                 border: this.isEditable ? `1px dashed ${COLORS.tileEdit}` : '1px solid transparent',
+                borderBottom:
+                    this.isEditable || this.settings.separators === false ? undefined : `1px solid ${COLORS.separator}`,
             });
             tile._grip.style.display = this.isEditable ? '' : 'none';
 
@@ -682,7 +762,7 @@ class OverlayPanel {
             boxSizing: 'border-box',
             overflow: 'hidden',
             borderRadius: '3px',
-            padding: '0 1px',
+            padding: '1px 4px',
         });
 
         const content = document.createElement('div');

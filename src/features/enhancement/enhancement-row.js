@@ -24,8 +24,8 @@
  */
 
 import { registerRow } from '../../utils/overlay-rows.js';
-import { formatLargeNumber, timeReadable } from '../../utils/formatters.js';
-import { drawLine, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { formatLargeNumber } from '../../utils/formatters.js';
+import { drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import enhancementTracker from './enhancement-tracker.js';
 
 /** Under this many attempts a rate says nothing about how long the rest will take */
@@ -82,7 +82,7 @@ registerRow({
         drawLine(top, [
             { text: `${run.name} +${run.level}`, color: ROW_COLORS.gold, bold: true, ellipsis: true },
             { text: formatLargeNumber(Math.round(run.cost)), push: true },
-            { text: run.remainingSeconds ? timeReadable(run.remainingSeconds) : '—', color: ROW_COLORS.gold },
+            { text: run.remainingSeconds ? shortDuration(run.remainingSeconds) : '—', color: ROW_COLORS.gold },
         ]);
         container.appendChild(top);
 
