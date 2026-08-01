@@ -277,3 +277,24 @@ describe('buyStrategy', () => {
         expect(buyStrategy({ ...base, count: 0 }).mode).toBe('instant');
     });
 });
+
+describe('buyStrategy and a measured fill time', () => {
+    const base = { count: 100, ask: 110, bid: 100, secondsLeft: 30 * 86400 };
+
+    test('says whether the wait was measured or assumed', () => {
+        // A guess presented as an estimate is worse than a guess labelled as one
+        expect(buyStrategy(base).measured).toBe(false);
+        expect(buyStrategy({ ...base, fillSeconds: 900 }).measured).toBe(true);
+    });
+
+    test('a book saying it fills quickly rescues an order the assumption would refuse', () => {
+        const urgent = { ...base, secondsLeft: 2 * 3600 };
+        expect(buyStrategy(urgent).mode).toBe('instant');
+        expect(buyStrategy({ ...urgent, fillSeconds: 600 }).mode).toBe('order');
+    });
+
+    test('a book saying it fills slowly refuses an order the assumption would allow', () => {
+        expect(buyStrategy({ ...base, secondsLeft: 12 * 3600 }).mode).toBe('order');
+        expect(buyStrategy({ ...base, secondsLeft: 12 * 3600, fillSeconds: 5 * 86400 }).mode).toBe('instant');
+    });
+});

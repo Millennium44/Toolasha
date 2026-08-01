@@ -269,24 +269,47 @@ export function drinkRatePerDay(durationNs, drinkConcentration = 0) {
  * @param {number|null} input.ask - Price to buy now
  * @param {number|null} input.bid - Price an order would sit at
  * @param {number} input.secondsLeft - Until the current stock runs out
- * @param {number} [input.fillSeconds] - How long an order is assumed to take
+ * @param {number|null} [input.fillSeconds] - Measured fill time; null falls back to an assumption
  * @param {number} [input.minSaving] - Spread below which the saving is not worth waiting for
- * @returns {{mode: string, saving: number, reason: string}} `order` or `instant`
+ * @returns {{mode: string, saving: number, measured: boolean, reason: string}} `order` or `instant`
  */
-export function buyStrategy({ count, ask, bid, secondsLeft, fillSeconds = 6 * 3600, minSaving = 0.02 }) {
-    if (!(count > 0) || !(ask > 0)) return { mode: 'instant', saving: 0, reason: 'No price to compare.' };
-    if (!(bid > 0)) return { mode: 'instant', saving: 0, reason: 'Nothing bid, so an order has nothing to sit at.' };
+export function buyStrategy({ count, ask, bid, secondsLeft, fillSeconds = null, minSaving = 0.02 }) {
+    // Only reached when no order book has been seen for this item. Six hours is
+    // a placeholder, not a measurement, and the caller is told which it got so
+    // it can say so rather than presenting a guess as an estimate
+    const measured = Number.isFinite(fillSeconds);
+    const waitSeconds = measured ? fillSeconds : 6 * 3600;
+    if (!(count > 0) || !(ask > 0)) {
+        return { mode: 'instant', saving: 0, measured, reason: 'No price to compare.' };
+    }
+    if (!(bid > 0)) {
+        return { mode: 'instant', saving: 0, measured, reason: 'Nothing bid, so an order has nothing to sit at.' };
+    }
 
     const saving = (ask - bid) * count;
     const spread = (ask - bid) / ask;
 
     // Running out before an order would plausibly fill makes the saving
     // theoretical — you cannot spend a discount you did not receive in time
-    if (secondsLeft < fillSeconds) {
-        return { mode: 'instant', saving, reason: 'Runs out before an order would fill.' };
+    if (secondsLeft < waitSeconds) {
+        const how = measured ? 'the book says it would fill in' : 'an order is assumed to take';
+        return { mode: 'instant', saving, measured, reason: `Runs out before ${how} ${formatWait(waitSeconds)}.` };
     }
     if (spread < minSaving) {
-        return { mode: 'instant', saving, reason: 'The spread is too thin to be worth waiting for.' };
+        return { mode: 'instant', saving, measured, reason: 'The spread is too thin to be worth waiting for.' };
     }
-    return { mode: 'order', saving, reason: `An order at bid saves about ${Math.round(saving).toLocaleString()}.` };
+
+    const fills = measured ? `Fills in about ${formatWait(waitSeconds)}. ` : 'No order book seen for this item yet. ';
+    return { mode: 'order', saving, measured, reason: `${fills}Saves about ${Math.round(saving).toLocaleString()}.` };
+}
+
+/**
+ * A wait, in the words you would use for one.
+ * @param {number} seconds - How long
+ * @returns {string} e.g. `40 minutes`, `3 hours`, `2 days`
+ */
+function formatWait(seconds) {
+    if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} minutes`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} hours`;
+    return `${Math.round(seconds / 86400)} days`;
 }

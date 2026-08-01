@@ -51,6 +51,7 @@ import {
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { estimateFillSeconds } from '../../utils/order-book.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 
@@ -174,6 +175,32 @@ class ConsumablesPanel {
 
             return { ...entry, consumptionRate: perDay / 86400, consumedPerDay: Math.ceil(perDay) };
         });
+    }
+
+    /**
+     * How long a buy order for this item would sit, from the real book.
+     *
+     * The queue length estimator caches every order book the game has sent, so
+     * the depth and the listing timestamps are already in hand for anything you
+     * have opened. Reached through the global rather than imported, because it
+     * lives in the market bundle and this panel does not — and because an item
+     * whose book has never been seen must degrade to "no measurement" rather
+     * than to an error.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} count - How many the order would be for
+     * @returns {number|null} Seconds, or null when no book has been seen
+     */
+    _fillSeconds(itemHrid, count) {
+        try {
+            const cached = window.Toolasha?.Market?.queueLengthEstimator?.orderBooksCache?.[itemHrid];
+            // A buy order joins the bid side, so that is the queue it waits in
+            const bids = (cached?.data || cached)?.orderBooks?.[0]?.bids;
+            return estimateFillSeconds(bids, count);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Reading the order book failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -461,6 +488,7 @@ class ConsumablesPanel {
                 ask: entry.price,
                 bid: entry.costPerDaySides.bid && entry.perDay ? entry.costPerDaySides.bid / entry.perDay : null,
                 secondsLeft: entry.secondsLeft,
+                fillSeconds: this._fillSeconds(entry.itemHrid, need.count),
             });
 
             // The recommendation is on the face of it, because it is the whole
@@ -471,7 +499,8 @@ class ConsumablesPanel {
             buy.title =
                 `Buy ${need.count.toLocaleString()}` +
                 (need.cost === null ? '' : ` for about ${Math.round(need.cost).toLocaleString()} coins`) +
-                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}`;
+                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
+                (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this._buy(entry, need.count);
