@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: Buy all showed the heading and no tabs
+
+- The tab helper reads `itemName`, and the shopping list passed `name`. It threw on the very first item, so the green **Restock: N items** heading went in and nothing after it did. Each tab is now built inside its own try/catch too, so one item that cannot be drawn costs its own tab rather than the whole list.
+
+### Fixed: the overlay sat above the game's own interface
+
+- It used the floating-panel layer, which is meant for panels you open on purpose and dismiss. The overlay is never dismissed — it is always up — so on that layer it covered the game's tabs and buttons wherever it happened to overlap them.
+- It now sits on the HUD layer, below the game's interactive UI, which is what that layer exists for. The settings popover stays above, since that one _is_ summoned on purpose and has to be usable while it is open.
+
 ### Fixed: Buy all opened the marketplace with no tabs on it
 
 - The tabs went in immediately after navigating, and the marketplace tab bar is usually **already there** from a previous visit — so they were added, and then wiped a moment later when React rebuilt the panel for the item being navigated to. Waiting longer would not have helped; the bar was never missing.

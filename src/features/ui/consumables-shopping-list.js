@@ -131,20 +131,27 @@ function addTabs(container, reference, items) {
     tabs.push(heading);
 
     for (const item of items) {
-        const tab = createMaterialTab(
-            {
-                itemHrid: item.itemHrid,
-                name: item.name,
-                missing: item.count,
-                needed: item.count,
-                available: 0,
-                isTradeable: true,
-            },
-            reference,
-            handlerFor(item)
-        );
-        container.appendChild(tab);
-        tabs.push(tab);
+        // `itemName` rather than `name`: the tab helper reads that field, and
+        // passing the wrong one threw on the first item, leaving the heading
+        // standing alone above no tabs at all
+        try {
+            const tab = createMaterialTab(
+                {
+                    itemHrid: item.itemHrid,
+                    itemName: item.name,
+                    missing: item.count,
+                    required: item.count,
+                    isTradeable: true,
+                },
+                reference,
+                handlerFor(item)
+            );
+            container.appendChild(tab);
+            tabs.push(tab);
+        } catch (error) {
+            // One unbuildable tab must not cost the rest of the list
+            console.error(`[Consumables] Could not build a tab for ${item.itemHrid}:`, error);
+        }
     }
 
     cleanupObserver?.();
