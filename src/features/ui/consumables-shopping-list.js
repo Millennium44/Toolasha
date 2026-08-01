@@ -94,8 +94,11 @@ function watchForTabBar(items) {
         const reference =
             container && Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
 
-        // Still ours and still on screen: nothing to do
-        const present = tabs.length && tabs.every((tab) => document.body.contains(tab));
+        // Judged on the item tabs rather than on having run: the heading alone
+        // is what a failed build leaves behind, and counting that as success is
+        // what let one bad attempt stand until something else rebuilt the bar
+        const built = tabs.filter((tab) => tab.hasAttribute('data-item-hrid'));
+        const present = built.length === items.length && built.every((tab) => document.body.contains(tab));
         if (reference && !present) addTabs(container, reference, items);
 
         if (Date.now() > until) {
@@ -119,6 +122,9 @@ function addTabs(container, reference, items) {
     container.style.flexWrap = 'wrap';
 
     const heading = document.createElement('div');
+    // Marked as one of ours, or `removeMaterialTabs` leaves it behind and every
+    // re-add stacks another heading beside the last
+    heading.setAttribute('data-mwi-custom-tab', 'true');
     heading.textContent = `Restock: ${items.length} item${items.length === 1 ? '' : 's'}`;
     Object.assign(heading.style, {
         alignSelf: 'center',
@@ -149,7 +155,9 @@ function addTabs(container, reference, items) {
             container.appendChild(tab);
             tabs.push(tab);
         } catch (error) {
-            // One unbuildable tab must not cost the rest of the list
+            // One unbuildable tab must not cost the rest of the list. Logged
+            // rather than swallowed, because a list that silently arrives short
+            // is indistinguishable from one that had nothing to add.
             console.error(`[Consumables] Could not build a tab for ${item.itemHrid}:`, error);
         }
     }

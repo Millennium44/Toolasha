@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the restock heading duplicated, and a failed build stood until something else rebuilt the tabs
+
+- The green **Restock: N items** heading was not marked as one of ours, so the tidy-up that removes the tabs left it behind — and every re-add stacked another heading beside the last.
+- Worse, the watcher judged itself on _having run_ rather than on the tabs being there. A heading with nothing after it counted as success, so a failed attempt stood until some other feature happened to rebuild the tab bar — which is why running a normal missing-materials lookup first appeared to "fix" it. It now checks that every item tab it expected is actually on screen, and rebuilds until they are.
+- A tab that cannot be built logs why, rather than leaving a list that has silently arrived short looking like one that had nothing to add.
+
 ### Fixed: Buy all showed the heading and no tabs
 
 - The tab helper reads `itemName`, and the shopping list passed `name`. It threw on the very first item, so the green **Restock: N items** heading went in and nothing after it did. Each tab is now built inside its own try/catch too, so one item that cannot be drawn costs its own tab rather than the whole list.
