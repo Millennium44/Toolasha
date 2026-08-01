@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: Buy all opened the marketplace with no tabs on it
+
+- The tabs went in immediately after navigating, and the marketplace tab bar is usually **already there** from a previous visit — so they were added, and then wiped a moment later when React rebuilt the panel for the item being navigated to. Waiting longer would not have helped; the bar was never missing.
+- The tabs are now put back whenever they have gone, for a few seconds after the navigation, which outlasts however many times the panel rebuilds itself.
+
+### Fixed: the Consumables panel sat on top of the marketplace it sent you to
+
+- It is a floating panel and the marketplace opens underneath it, so pressing Buy or Buy all covered the thing you had just asked for — including the tabs. It now closes itself on the way.
+
 ### Buy the whole restock at once, as marketplace tabs
 
 - The footer's total is now a **Buy all** button. It opens the marketplace with **a tab per short item, each reading "Missing: N"** — the same tabs the missing-materials features already put there — and each one opens its item with the quantity filled in. The row of tabs is the shopping list: what is left to buy is what is still red.

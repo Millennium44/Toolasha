@@ -30,13 +30,22 @@ import {
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 
-/** How long to keep looking for the marketplace tab bar after navigating to it */
-const TAB_TRIES = 20;
-const TAB_RETRY_MS = 100;
+/**
+ * How long to keep putting the tabs back.
+ *
+ * Not just how long to wait for the tab bar — the bar is frequently already
+ * there from a previous visit, so the tabs go in immediately and are then wiped
+ * when React re-renders the marketplace for the item being navigated to. So the
+ * check keeps running for a few seconds and re-adds them whenever they have
+ * gone, which survives however many times the panel rebuilds itself.
+ */
+const WATCH_MS = 6000;
+const WATCH_INTERVAL_MS = 150;
 
 const autofill = createAutofillManager('Consumables-Shopping');
 let tabs = [];
 let cleanupObserver = null;
+let watchTimer = null;
 
 /**
  * Put a shopping list on the marketplace and go there.
@@ -49,15 +58,16 @@ export function openShoppingList(items) {
 
     autofill.initialize?.();
 
-    // The first item opens the marketplace; the tabs are added once its tab bar
-    // has rendered, which is a frame or two after the navigation
+    // The first item opens the marketplace, and the tabs are put in behind it
     navigateToMarketplace(wanted[0].itemHrid, 0);
     autofill.setQuantity(wanted[0].count);
-    waitForTabBar(wanted, 0);
+    watchForTabBar(wanted);
 }
 
 /** Take the tabs away, and stop watching for the marketplace to close */
 export function clearShoppingList() {
+    clearInterval(watchTimer);
+    watchTimer = null;
     removeMaterialTabs();
     tabs = [];
     cleanupObserver?.();
@@ -66,21 +76,33 @@ export function clearShoppingList() {
 }
 
 /**
+ * Keep the tabs on the marketplace while it settles.
+ *
+ * React rebuilds the marketplace panel when it navigates to an item, and a tab
+ * added a moment before that rebuild is gone a moment after it — which is why
+ * adding them once, immediately, put them nowhere. This re-adds them whenever
+ * they are missing, for long enough to outlast the rebuilds.
+ *
  * @param {Array<Object>} items - What to buy
- * @param {number} tries - Attempts so far
  */
-function waitForTabBar(items, tries) {
-    const container = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
-    const reference =
-        container && Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
+function watchForTabBar(items) {
+    clearInterval(watchTimer);
+    const until = Date.now() + WATCH_MS;
 
-    if (!reference) {
-        // The marketplace is a React panel that mounts after the navigation, so
-        // the first look reliably finds nothing
-        if (tries < TAB_TRIES) setTimeout(() => waitForTabBar(items, tries + 1), TAB_RETRY_MS);
-        return;
-    }
-    addTabs(container, reference, items);
+    watchTimer = setInterval(() => {
+        const container = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const reference =
+            container && Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
+
+        // Still ours and still on screen: nothing to do
+        const present = tabs.length && tabs.every((tab) => document.body.contains(tab));
+        if (reference && !present) addTabs(container, reference, items);
+
+        if (Date.now() > until) {
+            clearInterval(watchTimer);
+            watchTimer = null;
+        }
+    }, WATCH_INTERVAL_MS);
 }
 
 /**
