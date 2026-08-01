@@ -40,6 +40,7 @@ import { buildCombatSession, lootValue, sessionMean } from '../../utils/combat-d
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { row, rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -343,27 +344,29 @@ registerRow({
     name: 'Drop Luck',
     defaultSize: { width: 200, height: 40 },
     render: (container) => {
-        container.replaceChildren();
         const result = combatDropLuck.lastResult;
-        if (!result) return;
+        if (!result) return blank(container);
 
-        const { text, tone } = describeLuck(result.percentile);
-        const label = document.createElement('span');
-        label.textContent = 'Drop luck ';
+        // The percentile as a figure, not as a sentence. "93 runs in 100 beat
+        // it" is the right explanation and the wrong tile — it wrapped to three
+        // lines and pushed the number out of sight. It is the tooltip now.
+        const percent = result.percentile * 100;
+        const { tone, text } = describeLuck(result.percentile);
 
-        const value = document.createElement('span');
-        value.style.color = {
-            lucky: config.getSetting('color_profit') || '#047857',
-            unlucky: config.getSetting('color_loss') || '#f87171',
-            normal: 'inherit',
-        }[tone];
-        value.textContent = text;
-
-        container.style.display = 'flex';
-        container.style.justifyContent = 'space-between';
-        container.style.gap = '10px';
-        container.appendChild(label);
-        container.appendChild(value);
+        row(container, [
+            { text: 'Luck', color: ROW_COLORS.dim },
+            {
+                text: `${percent.toFixed(1)}%`,
+                bold: true,
+                push: true,
+                color: {
+                    lucky: ROW_COLORS.good,
+                    unlucky: ROW_COLORS.bad,
+                    normal: ROW_COLORS.neutral,
+                }[tone],
+            },
+        ]);
+        container.title = `${formatOrdinal(result.percentile)} percentile — ${text}`;
     },
 });
 
@@ -380,47 +383,21 @@ registerRow({
     name: 'Over Expected %',
     defaultSize: { width: 200, height: 40 },
     render: (container) => {
-        container.replaceChildren();
         const result = combatDropLuck.lastResult;
-        if (!result || !(result.expected > 0)) return;
+        if (!result || !(result.expected > 0)) return blank(container);
 
-        const ratio = result.income / result.expected;
-        const percent = (ratio - 1) * 100;
+        const verdict = signedPercent((result.income / result.expected - 1) * 100);
 
-        Object.assign(container.style, { display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
-
-        const top = document.createElement('div');
-        Object.assign(top.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
-        const label = document.createElement('span');
-        label.textContent = 'Over expected';
-        const value = document.createElement('span');
-        value.textContent = `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
-        value.style.whiteSpace = 'nowrap';
-        // A few percent either way is what every session does; colouring that
-        // would make the row a light that is always on
-        value.style.color =
-            percent > 5
-                ? config.getSetting('color_profit') || '#047857'
-                : percent < -5
-                  ? config.getSetting('color_loss') || '#f87171'
-                  : 'inherit';
-        top.append(label, value);
-
-        const bottom = document.createElement('div');
-        Object.assign(bottom.style, {
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: '8px',
-            color: 'rgba(232, 236, 245, 0.6)',
-        });
-        const got = document.createElement('span');
-        got.textContent = formatLargeNumber(Math.round(result.income));
-        const owed = document.createElement('span');
-        owed.textContent = `of ${formatLargeNumber(Math.round(result.expected))}`;
-        owed.style.whiteSpace = 'nowrap';
-        bottom.append(got, owed);
-
-        container.append(top, bottom);
+        rows(container, [
+            [
+                { text: 'Over expected', color: ROW_COLORS.dim },
+                { text: verdict.text, color: verdict.color, bold: true, push: true },
+            ],
+            [
+                { text: formatLargeNumber(Math.round(result.income)) },
+                { text: `of ${formatLargeNumber(Math.round(result.expected))}`, color: ROW_COLORS.dim, push: true },
+            ],
+        ]);
         container.title =
             `${result.battles} battles were owed ${Math.round(result.expected).toLocaleString()} coins on average.\n` +
             'Drops with no market price are left out of both sides.';

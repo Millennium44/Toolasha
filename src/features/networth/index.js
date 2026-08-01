@@ -13,6 +13,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPauseRegistry } from '../../utils/pause-registry.js';
 import networthCache from './networth-cache.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import networthHistory from './networth-history.js';
 import networthHistoryChart from './networth-history-chart.js';
@@ -245,18 +246,13 @@ registerRow({
     name: 'Net Worth',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
-        container.replaceChildren();
         const total = networthFeature.currentData?.totalNetworth;
-        if (!(total > 0)) return;
+        if (!(total > 0)) return blank(container);
 
-        Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
-        const label = document.createElement('span');
-        label.textContent = 'Net worth';
-        const value = document.createElement('span');
-        value.textContent = formatLargeNumber(Math.round(total));
-        value.style.whiteSpace = 'nowrap';
-        container.appendChild(label);
-        container.appendChild(value);
+        row(container, [
+            { text: 'Net Worth', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
+        ]);
     },
 });
 

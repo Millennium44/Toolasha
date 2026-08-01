@@ -25,6 +25,7 @@
 
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber, timeReadable } from '../../utils/formatters.js';
+import { drawLine, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import enhancementTracker from './enhancement-tracker.js';
 
 /** Under this many attempts a rate says nothing about how long the rest will take */
@@ -65,53 +66,40 @@ registerRow({
     defaultSize: { width: 280, height: 50 },
     render: (container) => {
         const run = enhancementProgress();
-        if (!run) {
-            container.replaceChildren();
-            return;
-        }
+        if (!run) return blank(container);
 
         container.replaceChildren();
-        Object.assign(container.style, { display: 'flex', flexDirection: 'column', lineHeight: '1.3', gap: '2px' });
+        Object.assign(container.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            gap: '3px',
+            lineHeight: '1.3',
+            overflow: 'hidden',
+        });
 
         const top = document.createElement('div');
-        Object.assign(top.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
+        drawLine(top, [
+            { text: `${run.name} +${run.level}`, color: ROW_COLORS.gold, bold: true, ellipsis: true },
+            { text: formatLargeNumber(Math.round(run.cost)), push: true },
+            { text: run.remainingSeconds ? timeReadable(run.remainingSeconds) : '—', color: ROW_COLORS.gold },
+        ]);
+        container.appendChild(top);
 
-        const name = document.createElement('span');
-        name.textContent = `${run.name} +${run.level}`;
-        Object.assign(name.style, {
-            color: '#ffcf5c',
-            fontWeight: 'bold',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-        });
+        if (run.progress !== null) {
+            const line = document.createElement('div');
+            Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+            line.appendChild(progressBar(run.progress));
 
-        const cost = document.createElement('span');
-        cost.textContent = formatLargeNumber(Math.round(run.cost));
-        cost.style.whiteSpace = 'nowrap';
-        top.append(name, cost);
-
-        const bottom = document.createElement('div');
-        Object.assign(bottom.style, {
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: '8px',
-            color: 'rgba(232, 236, 245, 0.6)',
-        });
-
-        const target = document.createElement('span');
-        target.textContent = `→ +${run.target}`;
-        const remaining = document.createElement('span');
-        remaining.textContent = run.remainingSeconds ? timeReadable(run.remainingSeconds) : '—';
-        remaining.style.whiteSpace = 'nowrap';
-        bottom.append(target, remaining);
-
-        container.append(top, bottom);
-
-        if (run.progress !== null) container.appendChild(progressBar(run.progress));
+            const percent = document.createElement('span');
+            percent.textContent = `${(run.progress * 100).toFixed(1)}%`;
+            Object.assign(percent.style, { color: ROW_COLORS.dim, flex: '0 0 auto', fontSize: '90%' });
+            line.appendChild(percent);
+            container.appendChild(line);
+        }
 
         container.title =
-            `${run.attempts} attempts of about ${Math.round(run.expected)} expected.\n` +
+            `${run.attempts} attempts of about ${Math.round(run.expected)} expected, aiming for +${run.target}.\n` +
             'Progress is attempts against expectation, not levels — levels are not evenly spaced.';
     },
 });
@@ -124,6 +112,7 @@ registerRow({
 function progressBar(fraction) {
     const track = document.createElement('div');
     Object.assign(track.style, {
+        flex: '1',
         height: '4px',
         background: 'rgba(255, 255, 255, 0.12)',
         borderRadius: '2px',

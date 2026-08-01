@@ -6,6 +6,24 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Build Score, and rows that fit their tiles
+
+- **Build Score.** Toolasha already computes this — it is the figure on the profile card, the build's cost in millions split into equipment, abilities and house. It was only ever shown for a profile you had opened, so the one build you could not casually check was your own. `calculateCombatScore` reads exactly three things out of a shared profile — house rooms, equipped abilities, worn items — and all three are already known for the current character, so the same shape is assembled locally and the same function gives the same answer as the card. It recomputes on gear and house changes, debounced, never on the overlay's timer, and attaches its listeners on the first render so a row nobody switched on costs nothing.
+
+- **Import and export the overlay layout, in OPanel's own format.** A layout is worth an hour of fiddling and is then worth keeping, and someone arriving from MCS has already spent that hour. Positions, sizes, text scales, order, visibility, the lock and the grid all carry across; the panel's frame comes too. Rows the file names that have no equivalent here are **listed in the confirmation** rather than dropped quietly, because a layout that silently arrives missing three tiles reads as an import that half-worked. Export writes the same shape, leaving out rows OPanel has no key for — writing ours into their file gives MCS something it reads as corrupt rather than as extended.
+
+- **Every row now reads like OPanel's.** Tiles are small and fixed, so anything that wraps does not get taller, it gets cut off — which is how the overlay ended up with "Drop luck" broken across two lines beside a figure that had run off the edge. One shared formatter now draws every row: nothing wraps, exactly one piece per line may be shortened (a name, never a number, since a truncated number is not a smaller number but a wrong one), and one palette means two rows cannot disagree about what green stands for.
+
+- **The unit moved onto the value.** `260,572 exp/hr`, not `Experience` on the left and `260,572/hr` on the right — half the label was repeating what the number's own unit already said, in the space the number needed. Drop Luck is a figure with the sentence in its tooltip, the session clock reads `2:44:51 | 180.16 EPH`, and revenue reads `61.6M − 13.2M = 48.3M/day`.
+
+### Fixed: Total Profit read NaN
+
+- Session income had the two cost figures subtracted from it, but both are `{ask, bid}` objects rather than numbers, so the arithmetic produced NaN — the daily rate beside it was right, which is what made it look like a display bug rather than a subtraction one.
+
+### Fixed: numbers above a trillion printed as thousands of billions
+
+- `formatKMB` stopped at B, so a net worth of 985 trillion rendered `985663.62B`. It now carries on into T and Q.
+
 ### Twelve more overlay rows
 
 Everything OPanel shows that Toolasha had the data for. Nothing here computes anything new on the overlay's timer — each row reads a figure some feature already keeps, or measures one thing cheaply itself.
