@@ -13,6 +13,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -64,7 +65,7 @@ async function openMarketplacePage() {
  */
 async function waitForMarketplace() {
     for (let i = 0; i < 50; i++) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         if (tabsContainer) {
             const hasMarket = Array.from(tabsContainer.children).some((btn) =>
                 btn.textContent.includes('Market Listings')
@@ -82,7 +83,7 @@ async function waitForMarketplace() {
  * Inject tabs for all queued items into the marketplace tab strip.
  */
 function injectTabs() {
-    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+    const tabsContainer = visibleTabsContainer();
     if (!tabsContainer) return;
 
     removeMaterialTabs();
@@ -224,7 +225,7 @@ async function addToQueue(itemHrid, itemName) {
     queue.push({ itemHrid, itemName });
 
     if (isFirstItem) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         const alreadyInMarket =
             tabsContainer &&
             Array.from(tabsContainer.children).some((btn) => btn.textContent.includes('Market Listings'));
