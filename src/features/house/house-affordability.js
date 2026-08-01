@@ -84,6 +84,55 @@ function coinBalance() {
     return coin?.count || 0;
 }
 
+/**
+ * Report why the Houses row is or is not showing anything.
+ *
+ * The row draws nothing when it cannot price a single upgrade, and "nothing" is
+ * indistinguishable from the feature being off. This says which step came back
+ * empty: the room list, the level, the game's cost table, or the market prices
+ * those costs are valued at.
+ *
+ * Console: `Toolasha.Debug.houses()`
+ * @returns {Object} What was found
+ */
+export function describeHouses() {
+    const combined = dataManager.getCombinedData();
+    const initData = dataManager.getInitClientData();
+    const rooms = combined?.characterHouseRoomMap || {};
+    const roomDetails = initData?.houseRoomDetailMap || {};
+
+    const rows = Object.entries(rooms).map(([hrid, room]) => {
+        const level = room?.level || 0;
+        const detail = roomDetails[hrid];
+        const costsMap = detail?.upgradeCostsMap;
+        const nextCosts = costsMap?.[level + 1];
+        return {
+            room: hrid.replace('/house_rooms/', ''),
+            level,
+            hasDetail: !!detail,
+            hasCostsMap: !!costsMap,
+            costsMapKeys: costsMap ? Object.keys(costsMap).join(',') : '(none)',
+            nextLevelHasCosts: Array.isArray(nextCosts) ? nextCosts.length : '(missing)',
+            cumulativeToHere: calculateHouseBuildCost(hrid, level),
+            cumulativeToNext: calculateHouseBuildCost(hrid, level + 1),
+            upgradeCost: nextLevelCost(hrid, level),
+        };
+    });
+
+    const coins = coinBalance();
+    const summary = affordableUpgrades(rooms, coins);
+
+    console.log(
+        `[Toolasha] ${Object.keys(rooms).length} house room(s) known; coins = ${coins}. ` +
+            `houseRoomDetailMap present = ${!!initData?.houseRoomDetailMap}. ` +
+            `Row shows: ${summary.total ? `${summary.affordable} of ${summary.total}` : 'nothing (no upgrade could be priced)'}.\n` +
+            'upgradeCost of 0 on every row means the cost table was read wrong or its materials have no market price.'
+    );
+    if (rows.length) console.table(rows);
+
+    return { coins, rooms: rows, summary };
+}
+
 registerRow({
     key: 'houses',
     name: 'Houses',
