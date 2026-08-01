@@ -216,6 +216,16 @@ const isProduction = process.env.BUILD_MODE === 'production';
 const buildTarget = process.env.BUILD_TARGET || 'dev';
 const devOutputFile = buildTarget === 'dev-standalone' ? 'dist/Toolasha-dev.user.js' : 'dist/Toolasha.user.js';
 
+/**
+ * When this build was made.
+ *
+ * The dev script and the published one carry the same @name and the same
+ * @version, so Tampermonkey cannot tell them apart and neither can you — a stale
+ * install looks exactly like a fresh one that is missing a feature. This stamp
+ * is the difference: whatever the console prints is what is actually running.
+ */
+const buildStamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+
 // Development build configuration (single bundle for local testing)
 const devConfig = {
     input: 'src/dev-entrypoint.js',
@@ -224,6 +234,7 @@ const devConfig = {
         format: 'iife',
         name: 'Toolasha',
         banner: userscriptHeader,
+        outro: `console.log('[Toolasha] dev build ${buildStamp}');`,
     },
     plugins: [
         cssRawPlugin(),

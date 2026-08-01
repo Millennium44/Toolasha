@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Double-clicking a tile closes the panel it opened
+
+- Treasure, Houses and Consumables all toggle now. The same gesture that summoned a panel is the one you reach for to dismiss it, and a double-click that only ever opens leaves you hunting for the close button.
+
+### The dev build says which build it is
+
+- The dev script and the published one carry the same `@name` and the same `@version`, so neither Tampermonkey nor you can tell them apart — a stale install looks exactly like a fresh one that is missing a feature. Every dev build now prints `[Toolasha] dev build <timestamp>` to the console on load. Whatever the console says is what is actually running.
+
 ### A Consumables panel: what runs out, when, and what to buy
 
 - The overlay row answers "what runs out first, and when". That is the figure worth watching, but not the one worth acting on — when the answer is "six hours", the next question is immediately "so what do I buy, and how much". **Double-click the Consumables row** to open the panel that holds it.

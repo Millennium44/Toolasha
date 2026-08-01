@@ -305,6 +305,12 @@ class TreasureTracker {
         this._createPanel();
     }
 
+    /** Open if closed, close if open */
+    toggle() {
+        if (this.panel && document.body.contains(this.panel)) this._removePanel();
+        else this.show();
+    }
+
     /**
      * The rows to draw, and their totals.
      * @returns {{rows: Array<Object>, totals: Object}}
@@ -1454,7 +1460,7 @@ registerRow({
         ]);
         container.title = `${formatLargeNumber(Math.round(totals.difference))} against expectation over every chest opened.`;
     },
-    onOpen: () => treasureTracker.show(),
+    onOpen: () => treasureTracker.toggle(),
 });
 
 export default treasureTracker;
