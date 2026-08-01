@@ -18,6 +18,7 @@ import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
 import treasureTracker from '../inventory/treasure-tracker.js';
+import overlayPanel from '../ui/overlay-panel.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -971,6 +972,12 @@ class SettingsUI {
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
+
+        const overlayBtn = document.createElement('button');
+        overlayBtn.textContent = 'Overlay';
+        overlayBtn.className = 'toolasha-utility-button';
+        overlayBtn.addEventListener('click', () => overlayPanel.toggle());
+        buttonsDiv.appendChild(overlayBtn);
 
         const treasureBtn = document.createElement('button');
         treasureBtn.textContent = 'Treasure';

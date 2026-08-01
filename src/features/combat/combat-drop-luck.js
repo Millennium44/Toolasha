@@ -32,6 +32,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { sessionLuck } from '../../utils/drop-luck.js';
 import { buildCombatSession, lootValue } from '../../utils/combat-drop-model.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { registerRow } from '../ui/overlay-panel.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -80,6 +81,9 @@ class CombatDropLuck {
         this.battleUnitFetchedHandler = null;
         this.timerRegistry = createTimerRegistry();
         this.context = null;
+        // Kept so the overlay row has something to show between fights; the
+        // battle panel that normally carries this is gone the moment you leave
+        this.lastResult = null;
     }
 
     initialize() {
@@ -109,6 +113,7 @@ class CombatDropLuck {
         this.timerRegistry.clearAll();
         document.getElementById(DISPLAY_ID)?.remove();
         this.context = null;
+        this.lastResult = null;
         this.isInitialized = false;
     }
 
@@ -231,7 +236,8 @@ class CombatDropLuck {
         const income = lootValue(lootMap, priceOf);
         const { percentile } = sessionLuck(session, income);
 
-        return { percentile, income, battles, hasBonuses };
+        this.lastResult = { percentile, income, battles, hasBonuses };
+        return this.lastResult;
     }
 
     /**
@@ -274,4 +280,35 @@ class CombatDropLuck {
 }
 
 const combatDropLuck = new CombatDropLuck();
+
+// Registered at module scope so the overlay has the row regardless of start-up
+// order. Shows the last session analysed, and nothing before there is one.
+registerRow({
+    key: 'luck',
+    name: 'Drop Luck',
+    render: (container) => {
+        container.replaceChildren();
+        const result = combatDropLuck.lastResult;
+        if (!result) return;
+
+        const { text, tone } = describeLuck(result.percentile);
+        const label = document.createElement('span');
+        label.textContent = 'Drop luck ';
+
+        const value = document.createElement('span');
+        value.style.color = {
+            lucky: config.getSetting('color_profit') || '#047857',
+            unlucky: config.getSetting('color_loss') || '#f87171',
+            normal: 'inherit',
+        }[tone];
+        value.textContent = text;
+
+        container.style.display = 'flex';
+        container.style.justifyContent = 'space-between';
+        container.style.gap = '10px';
+        container.appendChild(label);
+        container.appendChild(value);
+    },
+});
+
 export default combatDropLuck;

@@ -606,6 +606,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            overlayPanel: {
+                id: 'overlayPanel',
+                label: 'Overlay Panel: One floating panel other features add a row to',
+                type: 'checkbox',
+                default: true,
+                help: 'A configurable overlay. Open it from the Overlay button on the settings page, then use the gear to choose which rows show and in what order. Rows appear as features gain them',
+            },
             treasureTracker: {
                 id: 'treasureTracker',
                 label: 'Treasure Tracker: Record chest openings and compare against expected value',

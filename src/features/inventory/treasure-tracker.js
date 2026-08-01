@@ -28,6 +28,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { recordOpening, resetTally, summariseTally, tallyTotals } from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { registerRow } from '../ui/overlay-panel.js';
 
 const STORAGE_KEY = 'treasureTally';
 const PANEL_ID = 'toolasha-treasure-panel';
@@ -415,4 +416,36 @@ class TreasureTracker {
 }
 
 const treasureTracker = new TreasureTracker();
+
+// Registered at module scope so the overlay has the row whether or not this
+// feature has started yet. It draws nothing until a chest has been opened.
+registerRow({
+    key: 'treasure',
+    name: 'Treasure',
+    render: (container) => {
+        if (!treasureTracker.isInitialized) {
+            container.replaceChildren();
+            return;
+        }
+
+        const { totals } = treasureTracker._summary();
+        container.replaceChildren();
+        if (!totals.opened) return;
+
+        const label = document.createElement('span');
+        label.textContent = `${totals.opened} chests `;
+
+        const verdict = formatReturn(totals.ratio);
+        const value = document.createElement('span');
+        value.style.color = verdict.color;
+        value.textContent = `${formatLargeNumber(Math.round(totals.difference))} · ${verdict.text}`;
+
+        container.style.display = 'flex';
+        container.style.justifyContent = 'space-between';
+        container.style.gap = '10px';
+        container.appendChild(label);
+        container.appendChild(value);
+    },
+});
+
 export default treasureTracker;

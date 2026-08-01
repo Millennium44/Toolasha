@@ -53,6 +53,10 @@ Ported so far, all of it the analysis rather than the panels around it:
   idea and the ledger's shape are Frotty's; the code is written against Toolasha's own storage
   and pricing.
 
+`src/features/ui/overlay-panel.js` takes its shape from OPanel — one overlay with a toggleable,
+reorderable row per feature — but none of its code. OPanel is a switch statement with a branch
+per row inside a 42,000-line file; this is a registry a feature adds itself to.
+
 `src/features/combat/combat-drop-luck.js` and `src/features/inventory/treasure-tracker.js`
 display the results. The panels, their wording and their placement are Toolasha's own — LYuck and
 TReasure are floating windows in a suite of twenty-one, while these are a line in the game's own

@@ -575,6 +575,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'overlayPanel',
+            name: 'Overlay Panel',
+            category: 'Interface',
+            module: UI.overlayPanel,
+            async: true,
+        },
+        {
             key: 'draggableModals',
             name: 'Draggable Modals',
             category: 'UI',

@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Overlay Panel: one floating panel features add a row to
+
+New setting, on by default, with an **Overlay** button on the settings page. The gear inside chooses which rows show and in what order; the panel remembers where you dragged it and whether it was open, so it comes back after a refresh.
+
+- The shell knows nothing about what it shows. A feature calls `registerRow` with a key, a name and a function that draws into a container; the shell owns position, visibility, order and redrawing. Adding the twentieth row is then the same work as the second, which is the only way a panel of this shape stays maintainable.
+- **Two rows to start**, both from features that already had the data: **Drop Luck** (the last combat session's percentile, which otherwise vanishes with the battle panel) and **Treasure** (the running chest total). More arrive as features gain them.
+- Rows are redrawn on a timer rather than each feature pushing updates. Most rows show rates and counters that move on their own, so a push model would need nearly every row to own a timer — and a row that forgot would show a stale number with no sign anything was wrong.
+- **A row that throws does not take the panel with it.** It renders as "unavailable" and everything around it keeps working, which matters when a game update breaks one row out of twenty.
+- Two cases that would otherwise bite on every update are handled: a row added by a new version appears at the end rather than being silently dropped, and a saved key for a row that no longer exists leaves no hole in the order.
+- A panel dragged off-screen and then reopened in a smaller window is pulled back to where you can grab it, rather than being stranded past the edge and looking broken.
+
 ### Treasure: a ledger of what your chests actually paid out
 
 New setting, on by default, and a **Treasure** button on the settings page that opens a draggable panel.

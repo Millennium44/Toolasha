@@ -15,6 +15,7 @@ import hideGuildBadge from '../features/ui/hide-guild-badge.js';
 import panelSizeMemory from '../features/ui/panel-size-memory.js';
 import tabReorder from '../features/ui/tab-reorder.js';
 import draggableModals from '../features/ui/draggable-modals.js';
+import overlayPanel from '../features/ui/overlay-panel.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
 
 // Navigation features
@@ -109,6 +110,7 @@ toolashaRoot.UI = {
     panelSizeMemory,
     tabReorder,
     draggableModals,
+    overlayPanel,
     combatPanelScale,
     altClickNavigation,
     collectionNavigation,
