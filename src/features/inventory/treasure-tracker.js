@@ -22,6 +22,7 @@
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import settingsStorage from '../../core/settings-storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
@@ -37,8 +38,18 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
+import {
+    toExport,
+    fromToolashaExport,
+    fromTreasureExport,
+    fromEdibleTools,
+    findEdibleToolsData,
+    mergeTally,
+} from '../../utils/chest-import.js';
+import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
 
 const STORAGE_KEY = 'treasureTally';
+const SETTINGS_KEY = 'treasureSettings';
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
 /** The game's own dialog, which the popup wants to sit beside */
@@ -67,6 +78,27 @@ const COLORS = {
 
 /** Beyond this far from expectation, a chest is worth remarking on */
 const NOTABLE_RATIO = 0.05;
+
+/**
+ * How to value an item the market will not price.
+ *
+ * Capes, quivers and cloaks are untradable, so there is no market answer and any
+ * figure is a judgement. `token` prices one at what its tokens would otherwise
+ * have bought, `mirror` at a Mirror of Protection, `zero` says it is worth
+ * nothing to you. The choice moves a chest's verdict a long way, which is why it
+ * is a setting rather than a constant.
+ */
+const CAPE_VALUE_CYCLE = { token: 'mirror', mirror: 'zero', zero: 'token' };
+const CAPE_VALUE_LABEL = { token: 'Token value', mirror: 'Mirror value', zero: 'No value' };
+
+const MIRROR_HRID = '/items/mirror_of_protection';
+const COWBELL_HRID = '/items/cowbell';
+const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
+const COWBELLS_PER_BAG = 10;
+/** The bag's own market tax, which you pay to turn cowbells into coins */
+const COWBELL_BAG_TAX = 0.18;
+
+const DEFAULT_SETTINGS = { capeValue: 'token', valueCowbells: true, hiddenChests: [] };
 
 /**
  * How a chest's return reads against expectation.
@@ -125,6 +157,8 @@ class TreasureTracker {
         this.isDragging = false;
         this.popup = null;
         this._dialogRetry = null;
+        this.settings = { ...DEFAULT_SETTINGS };
+        this.configMode = false;
     }
 
     async initialize() {
@@ -133,6 +167,8 @@ class TreasureTracker {
         this.isInitialized = true;
 
         this.tally = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+        const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
+        if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
         this.lootOpenedHandler = (data) => this._onLootOpened(data);
         webSocketHook.on('loot_opened', this.lootOpenedHandler);
@@ -265,9 +301,64 @@ class TreasureTracker {
      * @returns {Function} `(itemHrid) => number|null`
      */
     _priceOf() {
-        // Coins are the base currency and never appear on the market
-        return (itemHrid) =>
-            itemHrid === '/items/coin' ? 1 : getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+        return (itemHrid) => {
+            // Coins are the base currency and never appear on the market
+            if (itemHrid === '/items/coin') return 1;
+            if (itemHrid === COWBELL_HRID) return this._cowbellValue();
+
+            const market = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+            if (market > 0) return market;
+
+            // No market answer: an untradable reward, which is a judgement call
+            return this._untradableValue(itemHrid);
+        };
+    }
+
+    /**
+     * What a cowbell is worth, if anything.
+     *
+     * Cowbells are not tradable; bags of ten are. So the value of one is a bag's
+     * price less the tax you pay selling it, split ten ways — the same route
+     * `expected-value-calculator.js` takes.
+     *
+     * @returns {number|null} Coins per cowbell, or null when they are not counted
+     */
+    _cowbellValue() {
+        if (!this.settings.valueCowbells) return null;
+
+        const bag = getItemPrice(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
+        if (!(bag > 0)) return null;
+        return (bag * (1 - COWBELL_BAG_TAX)) / COWBELLS_PER_BAG;
+    }
+
+    /**
+     * What an untradable reward is worth, under the current setting.
+     *
+     * Read from the game's own shop data rather than a hardcoded price list, so
+     * a shop change does not quietly leave the figure a version behind.
+     *
+     * @param {string} itemHrid - The item
+     * @returns {number|null} A value, or null to leave it out of the comparison
+     */
+    _untradableValue(itemHrid) {
+        const mode = this.settings.capeValue;
+        if (mode === 'zero') return null;
+        if (mode === 'mirror') return getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
+
+        // Token value: what the tokens it costs would otherwise have bought
+        const shop = dataManager.getInitClientData()?.shopItemDetailMap || {};
+        const entry = Object.values(shop).find((item) => item.itemHrid === itemHrid);
+        const cost = entry?.costs?.[0];
+        if (!cost?.count) return null;
+
+        const perToken = calculateDungeonTokenValue(cost.itemHrid);
+        return perToken > 0 ? perToken * cost.count : null;
+    }
+
+    _saveSettings() {
+        storage.setJSON(SETTINGS_KEY, this.settings, 'settings').catch((error) => {
+            console.error('[TreasureTracker] Saving treasure settings failed:', error);
+        });
     }
 
     /**
@@ -533,10 +624,10 @@ class TreasureTracker {
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
-            justifyContent: 'space-between',
             alignItems: 'center',
+            gap: '6px',
             cursor: 'move',
-            padding: '8px 12px',
+            padding: '7px 8px 7px 11px',
             background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
@@ -547,28 +638,276 @@ class TreasureTracker {
         title.textContent = 'Treasure';
         title.style.fontWeight = 'bold';
         title.style.color = COLORS.accent;
+        title.style.marginRight = '4px';
 
-        const buttons = document.createElement('div');
-        buttons.style.display = 'flex';
-        buttons.style.gap = '4px';
+        // Both toggles change what every figure in the panel means, so they sit
+        // in the header showing their current state rather than hidden behind
+        // the gear
+        this.capeBtn = this._toggleButton(
+            () => CAPE_VALUE_LABEL[this.settings.capeValue],
+            'Untradable rewards — capes, quivers, cloaks — have no market price. ' +
+                'Value them at what their tokens would have bought, at a Mirror of Protection, or at nothing.',
+            () => {
+                this.settings.capeValue = CAPE_VALUE_CYCLE[this.settings.capeValue] || 'token';
+                this._saveSettings();
+                this._refreshToggles();
+                this._render();
+            }
+        );
 
-        const resetBtn = this._headerButton('Reset', () => {
-            if (!window.confirm('Forget every chest opening recorded so far? This cannot be undone.')) return;
-            this.tally = resetTally(this.tally);
-            this._save();
+        this.cowbellBtn = this._toggleButton(
+            () => (this.settings.valueCowbells ? 'Cowbells counted' : 'Cowbells at zero'),
+            'Cowbells are not tradable; bags of ten are. Counted, one is worth a bag less tax, split ten ways.',
+            () => {
+                this.settings.valueCowbells = !this.settings.valueCowbells;
+                this._saveSettings();
+                this._refreshToggles();
+                this._render();
+            }
+        );
+
+        const gear = this._headerButton('⚙', () => {
+            this.configMode = !this.configMode;
+            gear.style.background = this.configMode ? 'rgba(255, 207, 92, 0.25)' : 'none';
             this._render();
         });
-        resetBtn.title = 'Forget the whole ledger';
-        resetBtn.style.fontSize = '11px';
+        gear.title = 'Show or hide chests, and import or export your history';
+
+        const spacer = document.createElement('div');
+        spacer.style.flex = '1';
 
         const closeBtn = this._headerButton('✕', () => this._removePanel());
         closeBtn.title = 'Close';
 
-        buttons.appendChild(resetBtn);
-        buttons.appendChild(closeBtn);
-        header.appendChild(title);
-        header.appendChild(buttons);
+        header.append(title, this.capeBtn, this.cowbellBtn, gear, spacer, closeBtn);
+        this._refreshToggles();
         return header;
+    }
+
+    /**
+     * A header control that shows what it is currently set to.
+     *
+     * The label is a function rather than a string because these are cycled
+     * rather than pressed, and a button that does not say where it landed leaves
+     * you clicking through to find out.
+     *
+     * @param {Function} label - Returns the current label
+     * @param {string} title - Hover explanation
+     * @param {Function} onClick - Handler
+     * @returns {HTMLButtonElement}
+     */
+    _toggleButton(label, title, onClick) {
+        const button = document.createElement('button');
+        button.title = title;
+        Object.assign(button.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.textDim,
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '2px 7px',
+            whiteSpace: 'nowrap',
+        });
+        button._label = label;
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onClick();
+        });
+        return button;
+    }
+
+    /** Put the current setting back on the face of each toggle */
+    _refreshToggles() {
+        for (const button of [this.capeBtn, this.cowbellBtn]) {
+            if (!button?._label) continue;
+            button.textContent = button._label();
+            // Dimmed when the setting means "count this as nothing", so the
+            // panel says at a glance that something is being left out
+            const counting = !/zero|No value/.test(button.textContent);
+            button.style.color = counting ? COLORS.accent : COLORS.textDim;
+            button.style.opacity = counting ? '1' : '0.7';
+        }
+    }
+
+    /**
+     * The gear panel: which chests to show, and moving history in or out.
+     * @returns {HTMLElement}
+     */
+    _configSection() {
+        const section = document.createElement('div');
+        Object.assign(section.style, {
+            padding: '7px 8px',
+            marginBottom: '6px',
+            background: 'rgba(255, 207, 92, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '4px',
+        });
+
+        const hint = document.createElement('div');
+        hint.textContent = 'Click 👁 to show or hide a chest. Hidden chests are still tracked.';
+        hint.style.color = COLORS.accent;
+        hint.style.marginBottom = '6px';
+        hint.style.fontSize = '11px';
+        section.appendChild(hint);
+
+        const buttons = document.createElement('div');
+        Object.assign(buttons.style, { display: 'flex', gap: '6px', flexWrap: 'wrap' });
+
+        buttons.appendChild(this._actionButton('Export', () => this._exportHistory()));
+        buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
+        buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
+
+        const wipe = this._actionButton('Delete all history', () => {
+            if (!window.confirm('Delete every chest opening recorded so far? This cannot be undone.')) return;
+            this.tally = resetTally(this.tally);
+            this._save();
+            this._render();
+        });
+        wipe.style.color = COLORS.bad;
+        wipe.style.marginLeft = 'auto';
+        buttons.appendChild(wipe);
+
+        section.appendChild(buttons);
+        return section;
+    }
+
+    /**
+     * @param {string} text - Label
+     * @param {Function} onClick - Handler
+     * @returns {HTMLButtonElement}
+     */
+    _actionButton(text, onClick) {
+        const button = document.createElement('button');
+        button.textContent = text;
+        Object.assign(button.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '3px 8px',
+        });
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onClick();
+        });
+        return button;
+    }
+
+    /** Write the ledger to a file */
+    _exportHistory() {
+        try {
+            const file = toExport(this.tally, this.settings, settingsStorage.currentCharacterName || '');
+            const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `toolasha-treasure-${new Date().toISOString().slice(0, 10)}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('[TreasureTracker] Export failed:', error);
+            window.alert('Could not write the export file.');
+        }
+    }
+
+    /** Read a ledger from a file, ours or TReasure's */
+    _importHistory() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+
+            try {
+                const json = JSON.parse(await file.text());
+                // Ours first, since a TReasure file is anything with chests and
+                // ours would otherwise be read by the looser reader
+                const read = fromToolashaExport(json) || fromTreasureExport(json);
+                if (!read) {
+                    window.alert('That file is not a Toolasha or TReasure chest export.');
+                    return;
+                }
+
+                const chests = Object.keys(read.tally).length;
+                const append = window.confirm(
+                    `Import ${chests} chest${chests === 1 ? '' : 's'}.\n\n` +
+                        'OK to ADD these to what you already have.\n' +
+                        'Cancel to REPLACE your history with the file.'
+                );
+
+                this.tally = mergeTally(this.tally, read.tally, append ? 'append' : 'replace');
+                if (Object.keys(read.settings || {}).length) {
+                    this.settings = { ...this.settings, ...read.settings };
+                    this._saveSettings();
+                    this._refreshToggles();
+                }
+                this._save();
+                this._render();
+            } catch (error) {
+                console.error('[TreasureTracker] Import failed:', error);
+                window.alert('Could not read that file.');
+            }
+        });
+        input.click();
+    }
+
+    /** Read Edible Tools' chest history out of its own storage */
+    _importEdibleTools() {
+        try {
+            const raw = window.localStorage.getItem('Edible_Tools');
+            if (!raw) {
+                window.alert('No Edible Tools data found in this browser.');
+                return;
+            }
+
+            const found = findEdibleToolsData(
+                JSON.parse(raw),
+                dataManager.getCurrentCharacterId?.(),
+                settingsStorage.currentCharacterName
+            );
+            if (!found) {
+                window.alert('Edible Tools is installed, but has no chest history for this character.');
+                return;
+            }
+
+            // It keys everything by display name, so the translation needs an
+            // index built from the game data as it stands today
+            const itemDetails = dataManager.getInitClientData()?.itemDetailMap || {};
+            const nameToHrid = {};
+            for (const [hrid, detail] of Object.entries(itemDetails)) {
+                if (detail?.name) nameToHrid[detail.name] = hrid;
+            }
+
+            const { tally, unmatched } = fromEdibleTools(found, nameToHrid);
+            const chests = Object.keys(tally).length;
+            if (!chests) {
+                window.alert('None of the Edible Tools entries matched an item this game knows about.');
+                return;
+            }
+
+            const warning = unmatched.length
+                ? `\n\n${unmatched.length} name${unmatched.length === 1 ? '' : 's'} could not be matched and will be left out:\n` +
+                  unmatched.slice(0, 8).join(', ')
+                : '';
+            const append = window.confirm(
+                `Import ${chests} chest${chests === 1 ? '' : 's'} from Edible Tools.${warning}\n\n` +
+                    'OK to ADD these to what you already have.\n' +
+                    'Cancel to REPLACE your history with them.'
+            );
+
+            this.tally = mergeTally(this.tally, tally, append ? 'append' : 'replace');
+            this._save();
+            this._render();
+        } catch (error) {
+            console.error('[TreasureTracker] Edible Tools import failed:', error);
+            window.alert('Could not read the Edible Tools data.');
+        }
     }
 
     /**
@@ -649,8 +988,16 @@ class TreasureTracker {
             return;
         }
 
+        if (this.configMode) this.contentEl.appendChild(this._configSection());
         this.contentEl.appendChild(this._totalsRow(totals));
-        for (const row of rows) this.contentEl.appendChild(this._chestRow(row));
+
+        const hidden = new Set(this.settings.hiddenChests || []);
+        for (const row of rows) {
+            // Hidden chests stay in the ledger and in the totals; they are only
+            // kept off a list that would otherwise be forty rows long
+            if (!this.configMode && hidden.has(row.chestHrid)) continue;
+            this.contentEl.appendChild(this._chestRow(row, hidden.has(row.chestHrid)));
+        }
     }
 
     /**
@@ -688,9 +1035,10 @@ class TreasureTracker {
      * three-column breakdown underneath when expanded.
      *
      * @param {Object} row - From `summariseTally`
+     * @param {boolean} isHidden - Whether it is currently hidden from the list
      * @returns {HTMLElement}
      */
-    _chestRow(row) {
+    _chestRow(row, isHidden = false) {
         const wrapper = document.createElement('div');
         wrapper.style.marginBottom = '2px';
 
@@ -764,15 +1112,60 @@ class TreasureTracker {
         } else {
             header.append(caret, this._icon(row.chestHrid, 16), name, count, diff, reset);
         }
+
+        if (this.configMode) {
+            header.style.opacity = isHidden ? '0.45' : '1';
+            header.appendChild(this._visibilityButton(row.chestHrid, isHidden));
+        }
+
         header.addEventListener('click', () => {
+            // In config mode the row is a thing to show or hide, not to expand
+            if (this.configMode) return;
             if (this.expanded.has(row.chestHrid)) this.expanded.delete(row.chestHrid);
             else this.expanded.add(row.chestHrid);
             this._render();
         });
 
         wrapper.appendChild(header);
-        if (isExpanded) wrapper.appendChild(this._itemBreakdown(row));
+        if (isExpanded && !this.configMode) wrapper.appendChild(this._itemBreakdown(row));
         return wrapper;
+    }
+
+    /**
+     * The eye that shows or hides one chest.
+     *
+     * Hiding only affects the list. The chest is still tracked and still counted
+     * in the totals — a hidden chest that stopped being recorded would make the
+     * ledger quietly wrong rather than merely shorter.
+     *
+     * @param {string} chestHrid - The chest
+     * @param {boolean} isHidden - Its current state
+     * @returns {HTMLButtonElement}
+     */
+    _visibilityButton(chestHrid, isHidden) {
+        const button = document.createElement('button');
+        button.textContent = isHidden ? '🚫' : '👁';
+        button.title = isHidden ? 'Show this chest in the list' : 'Hide this chest from the list';
+        Object.assign(button.style, {
+            background: isHidden ? 'rgba(120, 60, 60, 0.35)' : 'rgba(60, 140, 90, 0.35)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 6px',
+            marginLeft: '6px',
+        });
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const hidden = new Set(this.settings.hiddenChests || []);
+            if (hidden.has(chestHrid)) hidden.delete(chestHrid);
+            else hidden.add(chestHrid);
+
+            this.settings = { ...this.settings, hiddenChests: [...hidden] };
+            this._saveSettings();
+            this._render();
+        });
+        return button;
     }
 
     /**

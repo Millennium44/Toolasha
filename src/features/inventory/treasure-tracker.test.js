@@ -7,6 +7,9 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null) },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
+// Pricing untradables at their token cost reaches the market API, which opens a
+// socket on import; the unit under test here is the formatting, not the pricing
+vi.mock('../../utils/token-valuation.js', () => ({ calculateDungeonTokenValue: () => 0 }));
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: () => {},
     unregisterFloatingPanel: () => {},

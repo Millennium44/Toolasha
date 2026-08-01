@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Treasure: choose what untradables are worth, and move your history in and out
+
+- **Capes, quivers and cloaks can be valued three ways.** They have no market price, so a chest that drops one otherwise reads as a chest that dropped nothing. A header button cycles between the **token cost** of what those tokens would have bought, the price of a **Mirror of Protection**, and **zero**. The token figure is read from the game's own shop table rather than hardcoded, so it follows a price change instead of going stale.
+- **Cowbells can be counted or ignored.** A cowbell is untradable but a bag of ten is not, so counted, one is worth a bag's market price less the 18% tax, split ten ways. The toggle dims itself when it is set to count something as nothing, so the panel says at a glance that a figure is leaving something out.
+- **Export and import your chest history.** Export writes item counts and your valuation settings — deliberately not prices. A price is a fact about the market on the day you exported, and baking it in would make an old file re-import as a ledger priced in last month's money.
+- **Import reads Toolasha and TReasure files.** The format is detected from the file rather than asked for. It then asks whether to **add** the file to what you hold or **replace** it: two copies of the same ledger are not twice the ledger, so replace is the default for a file from this same tool on another machine. Appending adds counts but keeps the last opening you already had — the file's "most recent" belongs to another timeline.
+- **Import from Edible Tools** reads its data straight out of browser storage, finding the current character by id and falling back to name. It keys everything by display name in whatever language the game was running in, so translation needs a name index built from today's game data; anything that will not translate is **named in the confirmation** rather than dropped in silence. A chest renamed since the data was written would otherwise vanish without trace.
+- **Chests can be hidden individually.** The gear turns on an eye beside each row. Hidden chests are still tracked and still counted in the totals — hiding is about what you want to read, not what you want to stop recording.
+
 ### The Treasure panel lists every chest, and its columns line up
 
 - **Every chest in the game is listed, not only the ones you have opened.** The panel is also where you look up what a chest is worth before deciding to open it, and a list of your own history cannot answer that. Unopened chests show their name and value, dimmed, with no verdict and no Reset — there is nothing to reset and no verdict to give.
