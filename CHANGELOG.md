@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Consumables panel reads like CRack's, and items open the marketplace
+
+- **Laid out the way MCS lays it out**: the count you hold, the item's icon, its name, the daily rate, the cost, the shortfall, and the countdown — in that order, so the eye lands on the stock figure first.
+- **Cost is shown at both sides of the book, Ask over Bid.** Buying costs ask and the stock you already hold is worth bid; on a bill of twelve million a day the gap between them is real money, and averaging it away hides it. The footer reads `Total Cost/Day: Ask: … / Bid: …` to match.
+- **The consumable that stops the run is coloured throughout its row**, not only in its time column. It is the row the whole panel exists to point at, and a single red figure at the far right is easy to miss.
+- **Click an item's icon or name — in the panel or on the overlay tile — to open it in the marketplace.** That is what you point at when you think "what does that cost", and the row is read while deciding whether to go and buy more. The click is stopped from reaching the tile behind, so it cannot accidentally count towards the double-click that closes the panel.
+- The overlay tile gained the icon too, so the row and the panel name the same thing the same way.
+
+**Not reproduced**: CRack's two `↑ / ↓` columns. They show the same pair of figures on every row and I could not work out what they measure without guessing, and a column that is confidently wrong is worse than a column that is absent.
+
 ### Double-clicking a tile closes the panel it opened
 
 - Treasure, Houses and Consumables all toggle now. The same gesture that summoned a panel is the one you reach for to dismiss it, and a double-click that only ever opens leaves you hunting for the close button.

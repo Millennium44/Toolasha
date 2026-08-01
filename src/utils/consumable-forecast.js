@@ -33,6 +33,7 @@
  * @property {number} secondsLeft - Until it runs out; `Infinity` when it is not being used
  * @property {number|null} costPerDay - What a day of it costs, or null with no price
  * @property {number|null} price - Price per item, or null
+ * @property {{ask: number|null, bid: number|null}} costPerDaySides - A day's cost at each side
  */
 
 /**
@@ -41,7 +42,7 @@
  * @param {Object} entry - From `calculatePlayerStats`
  * @returns {Forecast}
  */
-export function forecast(entry) {
+export function forecast(entry, prices = null) {
     const held = Number(entry?.inventoryAmount ?? entry?.currentCount ?? 0) || 0;
     const rate = Number(entry?.consumptionRate) || 0;
     const price = Number(entry?.pricePerItem) > 0 ? Number(entry.pricePerItem) : null;
@@ -52,6 +53,10 @@ export function forecast(entry) {
     const secondsLeft = rate > 0 ? held / rate : Infinity;
     const perDay = rate * 86400;
 
+    // Both sides, because buying costs ask and the stock you already hold is
+    // worth bid — MCS shows the pair and the gap between them is real money
+    const side = (value) => (value > 0 ? perDay * value : null);
+
     return {
         itemHrid: entry?.itemHrid || '',
         name: entry?.itemName || entry?.itemHrid || 'Unknown',
@@ -60,6 +65,7 @@ export function forecast(entry) {
         secondsLeft,
         price,
         costPerDay: price === null ? null : perDay * price,
+        costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
     };
 }
 
@@ -70,10 +76,13 @@ export function forecast(entry) {
  * still want to see that a slot is filled with something it is not drinking.
  *
  * @param {Array<Object>} breakdown - From `calculatePlayerStats`
+ * @param {Function} [pricesFor] - `(itemHrid) => {ask, bid}`, for the two-sided cost
  * @returns {Forecast[]}
  */
-export function forecastAll(breakdown) {
-    return (breakdown || []).map(forecast).sort((a, b) => a.secondsLeft - b.secondsLeft);
+export function forecastAll(breakdown, pricesFor = null) {
+    return (breakdown || [])
+        .map((entry) => forecast(entry, pricesFor?.(entry?.itemHrid)))
+        .sort((a, b) => a.secondsLeft - b.secondsLeft);
 }
 
 /**
@@ -156,4 +165,24 @@ export function refillAll(forecasts, seconds) {
         else cost += need.cost;
     }
     return { items, cost, unpriced };
+}
+
+/**
+ * A day of everything, at each side of the book.
+ *
+ * Buying costs ask and selling returns bid, and on a consumable bill of twelve
+ * million a day the gap between them is worth seeing rather than averaging away.
+ *
+ * @param {Forecast[]} forecasts - Normalised consumables
+ * @returns {{ask: number, bid: number}}
+ */
+export function costPerDaySides(forecasts) {
+    let ask = 0;
+    let bid = 0;
+
+    for (const entry of forecasts || []) {
+        ask += entry.costPerDaySides?.ask || 0;
+        bid += entry.costPerDaySides?.bid || 0;
+    }
+    return { ask, bid };
 }

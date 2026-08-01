@@ -1,5 +1,13 @@
 import { describe, test, expect } from 'vitest';
-import { forecast, forecastAll, firstToRunOut, costPerDay, refillFor, refillAll } from './consumable-forecast.js';
+import {
+    forecast,
+    forecastAll,
+    firstToRunOut,
+    costPerDay,
+    costPerDaySides,
+    refillFor,
+    refillAll,
+} from './consumable-forecast.js';
 
 /** One drink an hour, 100 in the bag, worth 50 each */
 const drink = {
@@ -149,5 +157,28 @@ describe('refillAll', () => {
 
     test('nothing needed costs nothing', () => {
         expect(refillAll(forecastAll([drink]), 3600)).toEqual({ items: 0, cost: 0, unpriced: 0 });
+    });
+});
+
+describe('two-sided pricing', () => {
+    const prices = { '/items/drink': { ask: 60, bid: 40 } };
+    const pricesFor = (hrid) => prices[hrid];
+
+    test('a day costs ask to buy and returns bid to sell', () => {
+        const [entry] = forecastAll([drink], pricesFor);
+        expect(entry.costPerDaySides.ask).toBeCloseTo(24 * 60, 6);
+        expect(entry.costPerDaySides.bid).toBeCloseTo(24 * 40, 6);
+    });
+
+    test('no book gives no sides rather than zero ones', () => {
+        // Zero would read as free; null says the market had no answer
+        const [entry] = forecastAll([drink]);
+        expect(entry.costPerDaySides).toEqual({ ask: null, bid: null });
+    });
+
+    test('the total carries both sides', () => {
+        const totals = costPerDaySides(forecastAll([drink, drink], pricesFor));
+        expect(totals.ask).toBeCloseTo(2880, 6);
+        expect(totals.bid).toBeCloseTo(1920, 6);
     });
 });
