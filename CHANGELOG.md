@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Houses row counted only rooms you had already bought
+
+- `characterHouseRoomMap` holds the rooms you own, not every room in the game. A character with one maxed observatory and everything else unbuilt therefore looked like a character with nothing left to buy, and the row drew a blank. The unbuilt rooms are the whole point of the figure.
+- It now walks the game's full room list and treats anything missing from your map as level 0, so the first upgrade of an unbought room is counted like any other.
+
+### Fixed: the treasure popup ignored the loot dialog and stayed in the corner
+
+- The dialog is rendered by React from the same message that tells us about the loot, so it is reliably not on screen yet when we look for it. The first attempt found nothing and gave up, leaving the popup where it started.
+- It now retries briefly until the dialog appears, then places against it. Falling back to the corner only once the retries run out, which is what should happen when a chest is opened by a route that raises no dialog.
+
 ### The treasure popup now sits beside the game's loot dialog
 
 - It was pinned to the top-right corner while the game's Opened Loot dialog opens near the middle, so reading the two together meant looking back and forth across the whole window. The popup is now measured after it mounts and placed against the dialog — to its right, or to its left when the right would run off screen, top-aligned and nudged up only if it is the taller of the two.
