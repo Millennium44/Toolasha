@@ -41,7 +41,16 @@ import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { forecastAll, firstToRunOut, costPerDaySides, refillFor, refillAll } from '../../utils/consumable-forecast.js';
+import {
+    forecastAll,
+    firstToRunOut,
+    costPerDaySides,
+    refillFor,
+    refillAll,
+    drinkRatePerDay,
+    buyStrategy,
+} from '../../utils/consumable-forecast.js';
+import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 
@@ -76,6 +85,10 @@ class ConsumablesPanel {
         this.bodyEl = null;
         this.targetIndex = 1;
         this.refreshId = null;
+        // The same mechanism the missing-materials features use: park a quantity,
+        // and the buy modal fills itself in when it appears
+        this.autofill = createAutofillManager('Consumables');
+        this.autofill.initialize?.();
     }
 
     /** Open the panel, or raise it if it is already up */
@@ -121,11 +134,67 @@ class ConsumablesPanel {
                 return {
                     name: player.name || 'Unknown',
                     isCurrent: !!player.isCurrentPlayer,
-                    forecasts: forecastAll(stats?.consumableBreakdown, (hrid) => getItemPrices(hrid)),
+                    forecasts: forecastAll(
+                        this._exactRates(stats?.consumableBreakdown, player),
+                        (hrid) => getItemPrices(hrid),
+                        {
+                            keepOrder: true,
+                        }
+                    ),
                 };
             })
             .filter((entry) => entry.forecasts.length)
             .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent));
+    }
+
+    /**
+     * Replace measured drink rates with the arithmetic ones.
+     *
+     * A drink is re-drunk the moment its buff expires, so its rate follows from
+     * the buff's duration and the player's drink concentration and needs no
+     * observing. Food is eaten on a health or mana trigger, which depends on
+     * what is hitting you, so it is left measured — there is nothing to compute.
+     *
+     * The measured figure was also capped at a hardcoded 345.6 a day, the rate
+     * at the maximum 20% concentration, so anyone below that was told their
+     * drinks would run out sooner than they will.
+     *
+     * @param {Array<Object>} breakdown - From `calculatePlayerStats`
+     * @param {Object} player - The collector's player entry, for its concentration
+     * @returns {Array<Object>} The same entries, drinks re-rated
+     */
+    _exactRates(breakdown, player) {
+        const concentration = player?.combatStats?.drinkConcentration || 0;
+
+        return (breakdown || []).map((entry) => {
+            const detail = dataManager.getItemDetails?.(entry?.itemHrid);
+            const duration = detail?.consumableDetail?.buffs?.[0]?.duration;
+            const perDay = drinkRatePerDay(duration, concentration);
+            if (perDay === null) return entry;
+
+            return { ...entry, consumptionRate: perDay / 86400, consumedPerDay: Math.ceil(perDay) };
+        });
+    }
+
+    /**
+     * Send the shortfall to the marketplace, quantity already filled in.
+     *
+     * Opening the buy modal rather than buying: this is a decision about
+     * spending coins, and a panel that spends them for you is a panel you have
+     * to watch. The recommendation of order-against-instant rides along in the
+     * tooltip, where it informs the decision without making it.
+     *
+     * @param {Object} entry - The forecast being topped up
+     * @param {number} count - How many are missing
+     */
+    _buy(entry, count) {
+        if (!count) return;
+        try {
+            this.autofill.setQuantity(count);
+            navigateToMarketplace(entry.itemHrid);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Opening the marketplace failed:', error);
+        }
     }
 
     _create() {
@@ -385,7 +454,29 @@ class ConsumablesPanel {
         const need = refillFor(entry, this.target.seconds);
         const buy = this._cell(need.count ? formatLargeNumber(need.count) : '✓');
         buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
-        if (need.count && need.cost !== null) buy.title = `About ${Math.round(need.cost).toLocaleString()} coins.`;
+
+        if (need.count) {
+            const strategy = buyStrategy({
+                count: need.count,
+                ask: entry.price,
+                bid: entry.costPerDaySides.bid && entry.perDay ? entry.costPerDaySides.bid / entry.perDay : null,
+                secondsLeft: entry.secondsLeft,
+            });
+
+            // The recommendation is on the face of it, because it is the whole
+            // reason to press one of these rather than open the marketplace
+            buy.textContent = `${formatLargeNumber(need.count)} ${strategy.mode === 'order' ? '⏳' : '⚡'}`;
+            buy.style.cursor = 'pointer';
+            buy.style.textDecoration = 'underline dotted';
+            buy.title =
+                `Buy ${need.count.toLocaleString()}` +
+                (need.cost === null ? '' : ` for about ${Math.round(need.cost).toLocaleString()} coins`) +
+                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}`;
+            buy.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this._buy(entry, need.count);
+            });
+        }
 
         const lasts = this._cell(Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞');
         if (!Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;

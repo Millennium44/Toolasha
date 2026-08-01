@@ -77,12 +77,16 @@ export function forecast(entry, prices = null) {
  *
  * @param {Array<Object>} breakdown - From `calculatePlayerStats`
  * @param {Function} [pricesFor] - `(itemHrid) => {ask, bid}`, for the two-sided cost
+ * @param {Object} [options] - `keepOrder` leaves them in the order given, which is slot order
  * @returns {Forecast[]}
  */
-export function forecastAll(breakdown, pricesFor = null) {
-    return (breakdown || [])
-        .map((entry) => forecast(entry, pricesFor?.(entry?.itemHrid)))
-        .sort((a, b) => a.secondsLeft - b.secondsLeft);
+export function forecastAll(breakdown, pricesFor = null, { keepOrder = false } = {}) {
+    const list = (breakdown || []).map((entry) => forecast(entry, pricesFor?.(entry?.itemHrid)));
+
+    // The order the game gave them is slot order, which is how they are equipped
+    // and therefore how you think about them — the soonest is already marked, so
+    // sorting by it as well trades a familiar list for a shuffling one
+    return keepOrder ? list : list.sort((a, b) => a.secondsLeft - b.secondsLeft);
 }
 
 /**
@@ -220,4 +224,69 @@ export function partyOutlook(players) {
         }
     }
     return { you, party, partyName };
+}
+
+/** The game keeps every duration in nanoseconds */
+const NS_PER_SECOND = 1e9;
+
+/**
+ * How often a drink is drunk, from the game's own numbers.
+ *
+ * Drinks do not need measuring. A drink is re-drunk the moment its buff expires,
+ * and the combat simulator divides that duration by `1 + drinkConcentration` —
+ * so the rate is arithmetic, not observation. Food is the opposite: it is eaten
+ * when health or mana crosses a threshold, which depends on what is hitting you,
+ * so there is nothing to compute and measurement is the only honest answer.
+ *
+ * This matters beyond tidiness. The measured rate is capped at a hardcoded
+ * 345.6 a day — 300 seconds at the maximum 20% concentration — so anyone with
+ * less concentration than the cap assumes was being told they drink faster than
+ * they do, and that their stock would last less long than it will.
+ *
+ * @param {number} durationNs - The buff's base duration, in nanoseconds
+ * @param {number} [drinkConcentration] - The player's concentration, as a fraction
+ * @returns {number|null} Drinks per day, or null when the duration is unknown
+ */
+export function drinkRatePerDay(durationNs, drinkConcentration = 0) {
+    const seconds = Number(durationNs) / NS_PER_SECOND;
+    if (!(seconds > 0)) return null;
+
+    const concentration = Number(drinkConcentration) || 0;
+    return 86400 / (seconds / (1 + concentration));
+}
+
+/**
+ * Whether to place a buy order or simply take the ask.
+ *
+ * The same judgement the bulk sell assistant makes in the other direction. A
+ * buy order at bid saves the spread but only pays out if it fills, and a fill
+ * that arrives after you have already run out has saved you nothing — so
+ * urgency beats price. Above the threshold the saving is worth the wait; below
+ * it, the spread is rounding and waiting is a worse deal than paying it.
+ *
+ * @param {Object} input - What is being bought
+ * @param {number} input.count - How many are needed
+ * @param {number|null} input.ask - Price to buy now
+ * @param {number|null} input.bid - Price an order would sit at
+ * @param {number} input.secondsLeft - Until the current stock runs out
+ * @param {number} [input.fillSeconds] - How long an order is assumed to take
+ * @param {number} [input.minSaving] - Spread below which the saving is not worth waiting for
+ * @returns {{mode: string, saving: number, reason: string}} `order` or `instant`
+ */
+export function buyStrategy({ count, ask, bid, secondsLeft, fillSeconds = 6 * 3600, minSaving = 0.02 }) {
+    if (!(count > 0) || !(ask > 0)) return { mode: 'instant', saving: 0, reason: 'No price to compare.' };
+    if (!(bid > 0)) return { mode: 'instant', saving: 0, reason: 'Nothing bid, so an order has nothing to sit at.' };
+
+    const saving = (ask - bid) * count;
+    const spread = (ask - bid) / ask;
+
+    // Running out before an order would plausibly fill makes the saving
+    // theoretical — you cannot spend a discount you did not receive in time
+    if (secondsLeft < fillSeconds) {
+        return { mode: 'instant', saving, reason: 'Runs out before an order would fill.' };
+    }
+    if (spread < minSaving) {
+        return { mode: 'instant', saving, reason: 'The spread is too thin to be worth waiting for.' };
+    }
+    return { mode: 'order', saving, reason: `An order at bid saves about ${Math.round(saving).toLocaleString()}.` };
 }

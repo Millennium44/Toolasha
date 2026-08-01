@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Buy the shortfall, in equipped order, with exact drink rates
+
+- **Click the Buy figure to open the marketplace with the quantity already filled in**, through the same autofill the missing-materials features use. It opens the buy modal rather than buying: this is a decision about spending coins, and a panel that spends them for you is a panel you have to watch.
+- **It recommends an order or an instant buy**, the same judgement the bulk sell assistant makes in the other direction. ⏳ means a buy order at bid is worth the wait, ⚡ means take the ask. Two things force ⚡: **running out before an order would plausibly fill** — a discount that arrives after you have stopped has saved you nothing, so urgency beats price — and a spread too thin to be worth waiting for. The reasoning is in the hover text.
+- **Rows are in equipped order now, not soonest-first.** Slot order is how you think about them, the one that runs out first is already marked in red, and sorting by it as well traded a familiar list for one that reshuffles itself.
+
+### Fixed: drinks were assumed to be drunk at maximum concentration
+
+- Drink consumption was measured from observed use and then **capped at a hardcoded 345.6 a day** — 300 seconds at the maximum 20% drink concentration. Anyone below that cap was told they drink faster than they do, and that their stock would run out sooner than it will.
+- Drinks do not need measuring at all: one is re-drunk the moment its buff expires, so the rate is the buff's duration divided by `1 + drinkConcentration`, which is exactly what the combat simulator does to it. It is now computed from the game's own numbers and the player's actual concentration.
+- **Food is deliberately still measured.** It is eaten when health or mana crosses a threshold, which depends on what is hitting you — there is nothing to compute, and observation is the only honest answer.
+
 ### The Consumables tile answers for you and for the party
 
 - Reads `You: 1.2d   Party: --` the way MCS's does. **Two answers, because they are two different things to act on**: your own countdown is what you can do something about right now, and the party's is what ends the run regardless of how well stocked you are. Rolling them into one figure loses whichever of the two you needed.

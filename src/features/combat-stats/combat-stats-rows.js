@@ -31,7 +31,7 @@ import {
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { forecastAll, costPerDaySides, partyOutlook } from '../../utils/consumable-forecast.js';
+import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../../utils/consumable-forecast.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -352,8 +352,10 @@ function consumablePlayers() {
     return data.players.map((player) => ({
         name: player.name || 'Unknown',
         isCurrent: !!player.isCurrentPlayer,
-        forecasts: forecastAll(calculatePlayerStats(player, duration)?.consumableBreakdown, (hrid) =>
-            getItemPrices(hrid)
+        forecasts: forecastAll(
+            exactDrinkRates(calculatePlayerStats(player, duration)?.consumableBreakdown, player),
+            (hrid) => getItemPrices(hrid),
+            { keepOrder: true }
         ),
     }));
 }
@@ -367,4 +369,28 @@ function runOutColor(entry) {
     if (!entry) return ROW_COLORS.dim;
     // An hour is the point at which it is worth stopping what you are doing
     return entry.secondsLeft < 3600 ? ROW_COLORS.bad : ROW_COLORS.good;
+}
+
+/**
+ * Replace measured drink rates with the arithmetic ones.
+ *
+ * A drink is re-drunk the moment its buff expires, so its rate follows from the
+ * duration and the player's concentration. Food is eaten on a health or mana
+ * trigger and has nothing to compute, so it stays measured. The same pass the
+ * Consumables panel makes, so the two agree about how long anything lasts.
+ *
+ * @param {Array<Object>} breakdown - From `calculatePlayerStats`
+ * @param {Object} player - The collector's player entry, for its concentration
+ * @returns {Array<Object>} The same entries, drinks re-rated
+ */
+function exactDrinkRates(breakdown, player) {
+    const concentration = player?.combatStats?.drinkConcentration || 0;
+
+    return (breakdown || []).map((entry) => {
+        const duration = dataManager.getItemDetails?.(entry?.itemHrid)?.consumableDetail?.buffs?.[0]?.duration;
+        const perDay = drinkRatePerDay(duration, concentration);
+        if (perDay === null) return entry;
+
+        return { ...entry, consumptionRate: perDay / 86400, consumedPerDay: Math.ceil(perDay) };
+    });
 }
