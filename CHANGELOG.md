@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The settings popover moved out of the panel, and Autogrid can be undone
+
+- **Settings open above the panel, not inside it.** The gear section took its height out of the tiles, so opening it squashed the very layout you opened it to arrange. It is now its own floating popover, placed above the panel — below it only when there is no room above — and it follows the panel when you drag or resize it.
+- **Undo.** Autogrid, Reset and Import each throw away an arrangement that may have taken a while to get right, and none of them can be judged until after they have happened — you press Autogrid to find out what Autogrid does. Each now keeps the layout it replaced, and an **Undo Autogrid** / **Undo Reset** / **Undo Import** button appears beside it. It is only there when there is something to take back, so it never reads as a button that does nothing.
+
+### Fixed: the panel was see-through
+
+- At 90% opacity the game's inventory grid read straight through the tiles, and a figure you have to pick out of a background is not a glance. Near-opaque now.
+
+### Fixed: an imported layout arrived as a scatter with holes in it
+
+- Growing imported tiles to fit made them collide, and pushing the collisions down left the gaps the old smaller tiles used to sit in — so the layout stretched into something sparse and wrong rather than something snug.
+- Tiles now **settle upwards in their own column** instead. Overlaps resolve because two tiles cannot settle in the same place, and the gaps close because a tile no longer stops at the space it used to sit below. Columns are still never crossed: sliding into the other column is not a nudge, it is a scramble.
+
 ### Separators, and an import that arrives usable
 
 - **Separators.** Each tile draws a rule under it when the layout is locked, which is what gives a column of tiles the ruled look rather than a floating jumble. Off while you are editing, since the tile's own outline is showing then, and switchable in the gear.

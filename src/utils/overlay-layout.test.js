@@ -7,7 +7,7 @@ import {
     clampZoom,
     resolveLayout,
     autoGrid,
-    resolveOverlaps,
+    compactColumns,
     contentBounds,
     GRID,
     DEFAULT_TILE,
@@ -189,44 +189,63 @@ describe('contentBounds', () => {
     });
 });
 
-describe('resolveOverlaps', () => {
-    test('leaves a layout that already fits alone', () => {
+describe('compactColumns', () => {
+    test('leaves a layout that is already snug alone', () => {
         const tiles = [
             { key: 'a', x: 0, y: 0, width: 100, height: 30 },
             { key: 'b', x: 100, y: 0, width: 100, height: 30 },
         ];
-        expect(resolveOverlaps(tiles, 400)).toEqual([
+        expect(compactColumns(tiles, 400)).toEqual([
             { key: 'a', x: 0, y: 0 },
             { key: 'b', x: 100, y: 0 },
         ]);
     });
 
-    test('pushes a colliding tile down rather than anywhere', () => {
-        // The imported arrangement is worth preserving: reading order survives
-        // and the layout stretches rather than scrambles
-        const tiles = [
-            { key: 'a', x: 0, y: 0, width: 300, height: 40 },
-            { key: 'b', x: 10, y: 10, width: 300, height: 40 },
-        ];
-        const [first, second] = resolveOverlaps(tiles, 320);
-        expect(first).toEqual({ key: 'a', x: 0, y: 0 });
-        expect(second.y).toBeGreaterThanOrEqual(40);
-    });
-
-    test('a tile that grew past its neighbour moves the neighbour, not itself', () => {
-        // Rows arrive from OPanel sized for OPanel's rendering; ours are wider
+    test('a tile that grew past its neighbour pushes the neighbour down', () => {
+        // Rows arrive from OPanel sized for OPanel's rendering; ours are taller
         const tiles = [
             { key: 'top', x: 0, y: 0, width: 200, height: 30 },
             { key: 'below', x: 0, y: 20, width: 200, height: 30 },
         ];
-        const resolved = resolveOverlaps(tiles, 400);
+        const resolved = compactColumns(tiles, 400);
         expect(resolved.find((tile) => tile.key === 'top')).toEqual({ key: 'top', x: 0, y: 0 });
         expect(resolved.find((tile) => tile.key === 'below').y).toBe(30);
     });
 
+    test('closes the gaps resizing left behind', () => {
+        // Pushing collisions down without also pulling the rest up turns an
+        // imported layout into a scatter with holes in it
+        const tiles = [
+            { key: 'a', x: 0, y: 0, width: 200, height: 30 },
+            { key: 'b', x: 0, y: 400, width: 200, height: 30 },
+        ];
+        expect(compactColumns(tiles, 400)[1]).toEqual({ key: 'b', x: 0, y: 30 });
+    });
+
+    test('a tile never changes column', () => {
+        // Sliding into the other column is not a nudge, it is a scramble
+        const tiles = [
+            { key: 'left', x: 0, y: 0, width: 100, height: 30 },
+            { key: 'right', x: 200, y: 0, width: 100, height: 30 },
+        ];
+        expect(compactColumns(tiles, 400).find((tile) => tile.key === 'right').x).toBe(200);
+    });
+
+    test('columns settle independently', () => {
+        const tiles = [
+            { key: 'l1', x: 0, y: 0, width: 100, height: 60 },
+            { key: 'l2', x: 0, y: 200, width: 100, height: 30 },
+            { key: 'r1', x: 200, y: 300, width: 100, height: 30 },
+        ];
+        const resolved = compactColumns(tiles, 400);
+        expect(resolved.find((tile) => tile.key === 'l2').y).toBe(60);
+        // The right column owes nothing to the left one's height
+        expect(resolved.find((tile) => tile.key === 'r1').y).toBe(0);
+    });
+
     test('keeps everything on the canvas', () => {
         const tiles = [{ key: 'a', x: 900, y: 0, width: 200, height: 30 }];
-        expect(resolveOverlaps(tiles, 400)[0].x).toBe(200);
+        expect(compactColumns(tiles, 400)[0].x).toBe(200);
     });
 
     test('resolves a pile of identical tiles into a stack', () => {
@@ -237,12 +256,10 @@ describe('resolveOverlaps', () => {
             width: 100,
             height: 30,
         }));
-        const resolved = resolveOverlaps(tiles, 100);
-        const ys = resolved.map((tile) => tile.y).sort((a, b) => a - b);
-        expect(new Set(ys).size).toBe(4);
+        expect(compactColumns(tiles, 100).map((tile) => tile.y)).toEqual([0, 30, 60, 90]);
     });
 
-    test('survives nothing to resolve', () => {
-        expect(resolveOverlaps([], 400)).toEqual([]);
+    test('survives nothing to settle', () => {
+        expect(compactColumns([], 400)).toEqual([]);
     });
 });
