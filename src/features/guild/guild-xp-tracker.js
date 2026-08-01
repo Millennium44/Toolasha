@@ -16,6 +16,8 @@ import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 
 const STORE_NAME = 'guildHistory';
+/** The guild leaderboard's own refresh cadence, as the panel states */
+const LEADERBOARD_REFRESH_MS = 20 * 60 * 1000;
 const WINDOW_10M = 10 * 60 * 1000;
 const WINDOW_1H = 60 * 60 * 1000;
 const WINDOW_1D = 24 * 60 * 60 * 1000;
@@ -66,12 +68,23 @@ export function parseInactiveTime(value) {
  * @param {Array} arr - Existing history array (mutated in place)
  * @param {{t: number, xp: number}} d - New data point
  */
-function pushXP(arr, d) {
-    if (arr.length === 0 || d.xp >= arr[arr.length - 1].xp) {
-        arr.push(d);
-    } else {
-        return; // XP should never decrease
+export function pushXP(arr, d) {
+    const last = arr[arr.length - 1];
+    if (last) {
+        if (d.xp < last.xp) return; // XP should never decrease
+        // The leaderboard refreshes on its own 20-minute cycle, so opening the
+        // panel again inside that window serves the very same snapshot. Storing
+        // it puts two identical readings at the end of the history, and a rate
+        // measured across those is zero — which is why every XP/h column went
+        // blank after a few clicks around the leaderboard, while the own guild
+        // (fed by guild_updated, whose XP really does move) kept working.
+        //
+        // A flat reading is only recorded once the window has passed, where it
+        // means the guild genuinely earned nothing rather than that nothing was
+        // asked.
+        if (d.xp === last.xp && d.t - last.t < LEADERBOARD_REFRESH_MS) return;
     }
+    arr.push(d);
 
     if (arr.length <= 2) return;
 
@@ -155,6 +168,23 @@ function keepOneInInterval(arr, interval) {
 }
 
 /**
+ * Drop readings that only repeat the one before them, healing a history
+ * recorded before duplicates were rejected.
+ * @param {Array} arr - [{t, xp}, ...]
+ * @returns {Array} The same samples with uninformative repeats removed
+ */
+export function dropFlatRepeats(arr) {
+    if (!Array.isArray(arr) || arr.length < 2) return arr || [];
+    const out = [arr[0]];
+    for (let i = 1; i < arr.length; i++) {
+        const last = out[out.length - 1];
+        if (arr[i].xp === last.xp && arr[i].t - last.t < LEADERBOARD_REFRESH_MS) continue;
+        out.push(arr[i]);
+    }
+    return out;
+}
+
+/**
  * Calculate XP/hr between two data points.
  * @param {{t: number, xp: number}} prev
  * @param {{t: number, xp: number}} cur
@@ -173,7 +203,7 @@ function calcXPH(prev, cur) {
  * @param {Array} arr - [{t, xp}, ...]
  * @returns {{lastXPH: number, lastHourXPH: number, lastDayXPH: number, chart: Array}}
  */
-function calcStats(arr) {
+export function calcStats(arr) {
     const empty = { lastXPH: 0, lastHourXPH: 0, lastDayXPH: 0, chart: [] };
     if (!arr || arr.length < 2) return empty;
 
@@ -321,6 +351,11 @@ class GuildXPTracker {
 
         // Load persisted histories
         this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME, {});
+        // Histories recorded before repeats were rejected end in two identical
+        // readings, which reads as a rate of zero. Heal them on the way in.
+        for (const [name, arr] of Object.entries(this.guildXPHistory)) {
+            this.guildXPHistory[name] = dropFlatRepeats(arr);
+        }
         if (this.ownGuildID) {
             this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME, {});
         }
@@ -469,6 +504,34 @@ class GuildXPTracker {
     }
 
     // ─── Public API (for display module) ─────────────────────────────────────
+
+    /**
+     * What the tracker actually holds, for telling "no samples yet" apart from
+     * "the samples never arrived". A rate needs two readings: the leaderboard
+     * refreshes every 20 minutes and only while the panel is open, so a column
+     * can be legitimately blank for a long time on a fresh install.
+     *
+     * Console: Toolasha.Debug.guildXp()
+     * @returns {Object} Sample counts and spans per guild
+     */
+    debugState() {
+        const summary = (history) =>
+            Object.entries(history)
+                .map(([name, arr]) => ({
+                    name,
+                    samples: arr.length,
+                    spanHours: arr.length > 1 ? +((arr[arr.length - 1].t - arr[0].t) / 3600000).toFixed(2) : 0,
+                    newest: arr.length ? new Date(arr[arr.length - 1].t).toISOString() : null,
+                }))
+                .sort((a, b) => b.samples - a.samples);
+
+        const guilds = summary(this.guildXPHistory || {});
+        const members = summary(this.memberXPHistory || {});
+        console.log(`[Toolasha] Guild XP history — ${guilds.length} guilds, ${members.length} members tracked`);
+        console.log('Guilds with at least 2 samples can show a rate:');
+        console.table(guilds.slice(0, 25));
+        return { ownGuildName: this.ownGuildName, ownGuildID: this.ownGuildID, guilds, members };
+    }
 
     /**
      * Get XP/hr stats for a guild.
@@ -643,6 +706,7 @@ export default {
     cleanup: () => guildXPTracker.disable(),
     resetMemberData: () => guildXPTracker.resetMemberData(),
     getRawMemberSample: (name) => guildXPTracker.getRawMemberSample(name),
+    debugState: () => guildXPTracker.debugState(),
 };
 
 export { guildXPTracker };

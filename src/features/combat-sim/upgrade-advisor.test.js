@@ -41,6 +41,11 @@ const {
     resolveCandidateModes,
     candidateAssignmentKey,
     explainUpgradeCost,
+    computeEconomics,
+    assignRankScores,
+    RANK_PLACES,
+    SCORE_METRICS,
+    DEFAULT_SCORE_KEYS,
 } = await import('./upgrade-advisor.js');
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
@@ -1175,5 +1180,186 @@ describe('explainUpgradeCost', () => {
         expect(detail.credits).toEqual([]);
         expect(detail.credit).toBe(0);
         expect(detail.net).toBe(detail.gross);
+    });
+});
+
+describe('computeEconomics', () => {
+    const base = { profitPerHour: 1000 };
+
+    test('payback is cost over current profit, repay is cost over the gain', () => {
+        const e = computeEconomics(10_000, base, { profitPerHour: 1500 });
+        expect(e.profitGainPerHour).toBe(500);
+        expect(e.paybackHours).toBe(10); // 10,000 / 1,000
+        expect(e.repayHours).toBe(20); // 10,000 / 500
+    });
+
+    test('an upgrade that does not raise profit never repays', () => {
+        const e = computeEconomics(10_000, base, { profitPerHour: 1000 });
+        expect(e.repayHours).toBe(Infinity);
+        // Still affordable, though — payback is about the wallet, not the upgrade
+        expect(e.paybackHours).toBe(10);
+    });
+
+    test('a profit loss never repays rather than reporting a negative period', () => {
+        const e = computeEconomics(10_000, base, { profitPerHour: 400 });
+        expect(e.profitGainPerHour).toBe(-600);
+        expect(e.repayHours).toBe(Infinity);
+    });
+
+    test('unknown cost is unknown, never free', () => {
+        const e = computeEconomics(null, base, { profitPerHour: 1500 });
+        expect(e.paybackHours).toBe(Infinity);
+        expect(e.repayHours).toBe(Infinity);
+    });
+
+    test('a free upgrade costs no time on either measure', () => {
+        const e = computeEconomics(0, base, { profitPerHour: 1500 });
+        expect(e.paybackHours).toBe(0);
+        expect(e.repayHours).toBe(0);
+    });
+
+    test('payback preserves the cost ordering, which is why it is not scored', () => {
+        // Every row divides by the same baseline rate, so payback cannot reorder
+        // candidates relative to Cost — the claim the column tooltip makes
+        const costs = [500, 10_000, 2_500, 40_000];
+        const paybacks = costs.map((c) => computeEconomics(c, base, { profitPerHour: 1500 }).paybackHours);
+
+        const byCost = [...costs].sort((a, b) => a - b);
+        const byPayback = costs
+            .map((c, i) => [c, paybacks[i]])
+            .sort((a, b) => a[1] - b[1])
+            .map(([c]) => c);
+        expect(byPayback).toEqual(byCost);
+    });
+
+    test('nothing is affordable on zero profit', () => {
+        const e = computeEconomics(10_000, { profitPerHour: 0 }, { profitPerHour: 500 });
+        expect(e.paybackHours).toBe(Infinity);
+        expect(e.repayHours).toBe(20); // the gain still repays it
+    });
+});
+
+describe('assignRankScores', () => {
+    const row = (name, dps, xp, profit, repayHours) => ({
+        candidate: { description: name },
+        goldPer: { dps, xp, profit },
+        economics: { repayHours },
+    });
+
+    test('awards descending points and sums them into a score', () => {
+        const rows = [row('best', 1, 1, 1, 1), row('second', 2, 2, 2, 2)];
+        assignRankScores(rows);
+
+        // Four metrics, first place in each
+        expect(rows[0].score).toBe(RANK_PLACES * 4);
+        expect(rows[1].score).toBe((RANK_PLACES - 1) * 4);
+        expect(rows[0].rankPoints.dps).toMatchObject({ place: 1, points: RANK_PLACES });
+    });
+
+    test('an all-rounder can outscore a single-column winner', () => {
+        const rows = [
+            row('spiky', 1, 900, 900, 900), // wins DPS outright, last everywhere else
+            row('rounded', 2, 2, 2, 2), // second in all four
+        ];
+        assignRankScores(rows);
+
+        expect(rows[1].score).toBeGreaterThan(rows[0].score);
+    });
+
+    test('ties share a placing rather than being split by list order', () => {
+        const rows = [row('a', 5, 5, 5, 5), row('b', 5, 5, 5, 5)];
+        assignRankScores(rows);
+
+        expect(rows[0].score).toBe(rows[1].score);
+        expect(rows[0].rankPoints.dps.place).toBe(1);
+        expect(rows[1].rankPoints.dps.place).toBe(1);
+    });
+
+    test('unmeasurable metrics score nothing instead of ranking last', () => {
+        const rows = [row('known', 1, 1, 1, 1), row('unknown', Infinity, Infinity, Infinity, Infinity)];
+        assignRankScores(rows);
+
+        expect(rows[1].score).toBe(0);
+        expect(rows[1].rankPoints).toEqual({});
+    });
+
+    test('only the top placings earn points', () => {
+        const rows = Array.from({ length: RANK_PLACES + 3 }, (_, i) => row(`r${i}`, i + 1, i + 1, i + 1, i + 1));
+        assignRankScores(rows);
+
+        expect(rows[RANK_PLACES - 1].score).toBe(4); // last scoring place, 1 point per metric
+        expect(rows[RANK_PLACES].score).toBe(0);
+    });
+});
+
+describe('ROI and configurable scoring', () => {
+    const base = { profitPerHour: 1000 };
+
+    test('ROI annualises the profit gain against the outlay', () => {
+        // 500/hr extra on a 10,000 outlay = 4,380,000 a year = 43,800%
+        const e = computeEconomics(10_000, base, { profitPerHour: 1500 });
+        expect(e.roiAnnualPct).toBeCloseTo(43_800, 5);
+    });
+
+    test('ROI is unknown rather than zero when the cost is unknown', () => {
+        expect(computeEconomics(null, base, { profitPerHour: 1500 }).roiAnnualPct).toBeNull();
+    });
+
+    test('ROI ranks identically to repay time, which is why scoring both double-counts', () => {
+        const rows = [10_000, 50_000, 25_000].map((cost) => computeEconomics(cost, base, { profitPerHour: 1500 }));
+
+        const byRepay = [...rows].sort((a, b) => a.repayHours - b.repayHours);
+        const byRoi = [...rows].sort((a, b) => b.roiAnnualPct - a.roiAnnualPct);
+        expect(byRoi).toEqual(byRepay);
+    });
+
+    test('only the selected metrics contribute to the score', () => {
+        const row = (dps, xp) => ({
+            candidate: {},
+            goldPer: { dps, xp, profit: Infinity, encounters: Infinity, deaths: Infinity },
+            economics: { repayHours: Infinity, roiAnnualPct: null },
+        });
+        const rows = [row(1, 900), row(900, 1)];
+
+        assignRankScores(rows, { keys: ['dps'] });
+        expect(rows[0].score).toBe(RANK_PLACES);
+        expect(rows[1].score).toBe(RANK_PLACES - 1);
+        expect(rows[0].rankPoints.xp).toBeUndefined();
+
+        // Scoring the other metric alone flips the order
+        assignRankScores(rows, { keys: ['xp'] });
+        expect(rows[1].score).toBe(RANK_PLACES);
+    });
+
+    test('higher-is-better metrics rank downward', () => {
+        const row = (roi) => ({ candidate: {}, goldPer: {}, economics: { roiAnnualPct: roi } });
+        const rows = [row(100), row(900)];
+
+        assignRankScores(rows, { keys: ['roi'] });
+        expect(rows[1].score).toBe(RANK_PLACES); // the bigger return places first
+        expect(rows[0].score).toBe(RANK_PLACES - 1);
+    });
+
+    test('an empty selection scores nothing rather than throwing', () => {
+        const rows = [{ candidate: {}, goldPer: { dps: 1 }, economics: { repayHours: 1 } }];
+        assignRankScores(rows, { keys: [] });
+        expect(rows[0].score).toBe(0);
+    });
+
+    test('every default score key is a real metric, and ROI is not among them', () => {
+        const known = SCORE_METRICS.map((m) => m.key);
+        for (const key of DEFAULT_SCORE_KEYS) expect(known).toContain(key);
+        expect(DEFAULT_SCORE_KEYS).not.toContain('roi');
+    });
+});
+
+describe('default score selection', () => {
+    test('counts every gold-per metric plus repay, and not ROI', () => {
+        expect([...DEFAULT_SCORE_KEYS].sort()).toEqual(['deaths', 'dps', 'encounters', 'profit', 'repay', 'xp'].sort());
+    });
+
+    test('the Time column is not among the scored metrics', () => {
+        // It is cost divided by a constant, so it duplicates Cost exactly
+        expect(SCORE_METRICS.map((m) => m.key)).not.toContain('payback');
     });
 });

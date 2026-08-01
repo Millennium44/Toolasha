@@ -1,4 +1,8 @@
 import { random, syncEncounterRng } from './rng.js';
+import { hasConverged, isStoppingRule } from './wilson.js';
+
+/** How far apart the decision checkpoints sit — each is 1.5x the last */
+const STOP_CHECK_GROWTH = 1.5;
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -48,6 +52,8 @@ class CombatSimulator {
         this.simResult = new SimResult(zone, players.length);
         this.allPlayersDead = false;
         this.encounterIndex = 0;
+        this.stopRule = null;
+        this.converged = false;
 
         this.wipeLogs = {
             buffer: new Array(200),
@@ -164,18 +170,34 @@ class CombatSimulator {
 
     /**
      * Run the combat simulation synchronously.
+     *
+     * A labyrinth run can also stop once its win rate is pinned down closely
+     * enough (see stopRule), which is usually long before the time limit and
+     * occasionally much later. Time remains the outer bound either way.
+     *
      * @param {number} simulationTimeLimit - Simulation time limit in nanoseconds
+     * @param {Object} [stopRule] - Labyrinth stopping rule: a hard trial count
+     *   (maxTrials), a decision against a bar (decideAgainst), or an interval
+     *   width (targetHalfWidth). Ignored outside labyrinth runs.
      * @returns {SimResult}
      */
-    simulate(simulationTimeLimit) {
+    simulate(simulationTimeLimit, stopRule = null) {
         this.reset();
+        this.stopRule = this.labyrinth && isStoppingRule(stopRule) ? stopRule : null;
+        this.converged = false;
+        // A decision is tested on a growing schedule rather than after every
+        // fight. Re-testing a boundary on every new observation crosses it far
+        // more often than its nominal confidence implies — the same rate one
+        // point under a 70% bar was called "above" 39% of the time when checked
+        // each fight, and 19% on this schedule at the same confidence.
+        this.nextStopCheck = Number(this.stopRule?.minTrials) || 1;
 
         let ticks = 0;
 
         const combatStartEvent = new CombatStartEvent(0);
         this.eventQueue.addEvent(combatStartEvent);
 
-        while (this.simulationTime < simulationTimeLimit) {
+        while (this.simulationTime < simulationTimeLimit && !this.converged) {
             const nextEvent = this.eventQueue.getNextEvent();
             this.processEvent(nextEvent);
 
@@ -214,7 +236,11 @@ class CombatSimulator {
         // Labyrinth result tracking
         if (this.labyrinth) {
             this.simResult.isLabyrinth = true;
-            this.simResult.labyAttemptCount = this.labyrinth.attemptCount;
+            // The attempt in progress when the run stopped never resolved, and
+            // counting it would score it a loss: attemptCount rises when a
+            // monster spawns, while a win is only recorded when one dies.
+            this.simResult.labyAttemptCount = Math.max(0, this.labyrinth.attemptCount - 1);
+            this.simResult.labyStoppedOnPrecision = this.converged;
             this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;
             this.simResult.roomLevel = this.labyrinth.roomLevel;
         }
@@ -353,6 +379,37 @@ class CombatSimulator {
         this.startNewEncounter();
     }
 
+    /**
+     * Rewind both sides to the fight in progress: health where it stands now,
+     * and a clock already part-spent.
+     *
+     * Fractions rather than absolute hitpoints, because the simulated player is
+     * built from a loadout that may not be what is equipped — matching the
+     * proportion carries over, matching the number would not.
+     */
+    applyLiveState() {
+        const live = this.labyrinth.liveState;
+
+        for (const player of this.players) {
+            const details = player.combatDetails;
+            details.currentHitpoints = Math.max(1, Math.round(details.maxHitpoints * live.playerHpFraction));
+            if (Number.isFinite(live.playerMpFraction)) {
+                details.currentManapoints = Math.max(0, Math.round(details.maxManapoints * live.playerMpFraction));
+            }
+        }
+
+        for (const enemy of this.enemies) {
+            const details = enemy.combatDetails;
+            details.currentHitpoints = Math.max(1, Math.round(details.maxHitpoints * live.monsterHpFraction));
+        }
+
+        // Backdate the encounter's start so the room timer expires after the
+        // time this fight has left, not a further two minutes
+        if (Number.isFinite(live.elapsedNs)) {
+            this.labyrinth.updateEncounterStartTime(this.simulationTime - live.elapsedNs);
+        }
+    }
+
     startNewEncounter() {
         // Restart the combat/setup streams so this encounter begins from the same
         // random state in every run sharing the seed (no-op when unseeded)
@@ -366,6 +423,22 @@ class CombatSimulator {
         }
 
         if (this.labyrinth) {
+            // Decided here rather than in the loop: a monster spawning is the
+            // one moment when every attempt so far has resolved, so stopping on
+            // it leaves no half-fought trial to distort the rate. The attempt
+            // just spawned is discarded by the count.
+            if (this.stopRule) {
+                const attempts = this.labyrinth.attemptCount;
+                const decides = Number(this.stopRule.decideAgainst) > 0;
+                if (!decides || attempts >= this.nextStopCheck) {
+                    if (decides) {
+                        this.nextStopCheck = Math.max(attempts + 1, Math.ceil(attempts * STOP_CHECK_GROWTH));
+                    }
+                    if (hasConverged(this.simResult.encounters, attempts, this.stopRule)) {
+                        this.converged = true;
+                    }
+                }
+            }
             this.enemies = this.labyrinth.getMonster();
             this.labyrinth.updateEncounterStartTime(this.simulationTime);
         } else if (!this.zone.isDungeon) {
@@ -391,6 +464,14 @@ class CombatSimulator {
             enemy.reset(this.simulationTime);
             this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);
         });
+
+        // Conditional mode: every encounter restarts from the state of a fight
+        // already in progress, rather than from full health with a fresh clock.
+        // Applied after the resets above, which would otherwise undo it. Running
+        // many encounters this way makes each one an independent replay of the
+        // same moment, so the win rate over them is the chance of clearing from
+        // there — which is a different question from how the room usually goes.
+        if (this.labyrinth?.liveState) this.applyLiveState();
 
         this.eventQueue.clearEventsOfType(EnrageTickEvent.type);
         const enrageTickEvent = new EnrageTickEvent(this.simulationTime + ENRAGE_TICK_INTERVAL, ENRAGE_TICK_INTERVAL);

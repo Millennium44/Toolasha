@@ -142,9 +142,10 @@ describe('attachSkillingWhatIfs', () => {
         expect(result.nextLevelClearChance).toBeLessThanOrEqual(1);
         expect(result.speedTierClearChance).toBeGreaterThanOrEqual(result.clearChance - 1e-9);
         expect(result.speedDelta).toBeGreaterThanOrEqual(0);
-        // Reference formula: divisor includes the 1s room entry amortized over
-        // expected runs per clear (1 / clearChance)
-        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / (90 + 1 / 0.6), 6);
+        // Time in the room, plus one second of travel to reach it. Retries
+        // happen where you stand, so a room failed four times is still only
+        // walked to once. Combat rooms are charged the same way.
+        expect(result.xpPerHour).toBeCloseTo((5000 * 3600) / 91, 6);
     });
 
     test('efficiency tier reflects one fewer required progress unit', () => {
@@ -281,26 +282,74 @@ describe('computeBeaconPlan', () => {
         expect(plan.beacons).toHaveLength(0);
     });
 
-    test('reports infeasible when the configured count is below the minimum', () => {
+    test('a count below the corridor minimum still gets a plan', () => {
         const cols = 5;
         const revealed = new Array(25).fill(false);
         revealed[0] = true;
         const plan = computeBeaconPlan(revealed, cols, 1);
 
-        expect(plan.feasible).toBe(false);
+        // One beacon cannot chain a covered path, but "where do I put the one
+        // beacon I have" is still a question with an answer
+        expect(plan.feasible).toBe(true);
+        expect(plan.beacons).toHaveLength(1);
+        expect(plan.revealedNew).toBeGreaterThan(0);
+        expect(plan.corridorOpen).toBe(false);
         expect(plan.minNeeded).toBe(2);
     });
 
-    test('spends extra beacons on additional coverage', () => {
+    test('a set count is planned for coverage even when the way out is already open', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(false);
+        for (const idx of [0, 1, 2, 3, 4, 9, 14, 19, 24]) revealed[idx] = true;
+        const plan = computeBeaconPlan(revealed, cols, 2);
+
+        // The corridor being open is no reason to plan nothing — the rest of
+        // the floor is still dark, and the beacons were already bought
+        expect(plan.beacons).toHaveLength(2);
+        expect(plan.revealedNew).toBeGreaterThan(0);
+        expect(plan.corridorOpen).toBe(true);
+        expect(plan.minNeeded).toBe(0);
+    });
+
+    test('more beacons reveal more rooms', () => {
         const cols = 5;
         const revealed = new Array(25).fill(false);
         revealed[0] = true;
-        const minimal = computeBeaconPlan(revealed, cols, 0);
-        const extra = computeBeaconPlan(revealed, cols, 3);
+        const two = computeBeaconPlan(revealed, cols, 2);
+        const three = computeBeaconPlan(revealed, cols, 3);
 
-        expect(extra.feasible).toBe(true);
-        expect(extra.beacons).toHaveLength(3);
-        expect(extra.revealedNew).toBeGreaterThan(minimal.revealedNew);
+        expect(three.feasible).toBe(true);
+        expect(three.beacons).toHaveLength(3);
+        expect(three.revealedNew).toBeGreaterThan(two.revealedNew);
+    });
+
+    test('places no more beacons than there are rooms left to reveal', () => {
+        const cols = 5;
+        const revealed = new Array(25).fill(true);
+        revealed[12] = false; // one dark room in the middle
+        const plan = computeBeaconPlan(revealed, cols, 6);
+
+        expect(plan.beacons).toHaveLength(1);
+        expect(plan.revealedNew).toBe(1);
+    });
+
+    test('two equally dark pockets, and the beacon lights the one on the way out', () => {
+        const cols = 9;
+        const idx = (x, y) => y * cols + x;
+        const revealed = new Array(81).fill(true);
+        const darken = (cx, cy) => {
+            for (let y = 0; y < 9; y++) {
+                for (let x = 0; x < 9; x++) {
+                    if (Math.abs(x - cx) + Math.abs(y - cy) <= 2) revealed[idx(x, y)] = false;
+                }
+            }
+        };
+        darken(5, 6); // between the revealed floor and the exit at (8,8)
+        darken(6, 2); // the same 13 rooms, but nothing out there is on the way
+
+        const plan = computeBeaconPlan(revealed, cols, 1);
+        expect(plan.revealedNew).toBe(13); // both pockets are worth the same
+        expect(plan.beacons).toEqual([idx(5, 6)]);
     });
 });
 
@@ -324,7 +373,7 @@ describe('countDisjointRoutes', () => {
 });
 
 describe('computeBeaconPlan route redundancy', () => {
-    test('reports the route count and prefers redundant coverage with extras', () => {
+    test('reports the route count without paying rooms for it', () => {
         const cols = 5;
         const revealed = new Array(25).fill(false);
         revealed[0] = true;
@@ -333,7 +382,6 @@ describe('computeBeaconPlan route redundancy', () => {
 
         const extra = computeBeaconPlan(revealed, cols, 4);
         expect(extra.feasible).toBe(true);
-        expect(extra.routes).toBeGreaterThanOrEqual(minimal.routes);
         expect(extra.revealedNew).toBeGreaterThanOrEqual(minimal.revealedNew);
     });
 });

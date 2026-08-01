@@ -30,9 +30,11 @@ import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
+const PANEL_POSITION_KEY = 'bulkSellPanelPosition';
 const MS_PER_DAY = 86400000;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -54,6 +56,15 @@ class BulkSellAssistant {
         this.advanceTimeout = null;
         this.modalPoll = null;
         this.selectedTabId = 'all';
+        this.panelPosition = null;
+        /**
+         * Other scripts' claims on inventory: name -> () => iterable of hold
+         * keys. Kept deliberately ignorant of why anything is held — a flip
+         * waiting to be relisted, a crafting reserve, a gift — so nothing about
+         * the reason has to live in here.
+         */
+        this.holdProviders = new Map();
+        this.heldCount = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
         this.toggleBtn = null;
@@ -66,10 +77,53 @@ class BulkSellAssistant {
         return charId ? `${charId}_bulkSell_lastTab` : null;
     }
 
-    initialize() {
+    /**
+     * Register a claim on inventory, so those items are skipped by the sell
+     * queue. The assistant never learns why — a caller supplies keys and takes
+     * them away again when the claim ends.
+     *
+     *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
+     *         'flip-finder',
+     *         () => ['/items/cheese', '/items/cheese_sword+3']
+     *     );
+     *
+     * @param {string} name - Identifies the caller, and reports its errors
+     * @param {Function} provide - Returns an iterable of hold keys, called
+     *   afresh each time a queue is built so it can change between runs
+     * @returns {Function} Removes the provider
+     */
+    addHoldProvider(name, provide) {
+        if (typeof provide !== 'function') {
+            throw new TypeError('addHoldProvider needs a function returning the keys to hold');
+        }
+        const id = String(name || 'anonymous');
+        this.holdProviders.set(id, provide);
+        return () => this.holdProviders.delete(id);
+    }
+
+    /**
+     * @param {string} name - The name it was registered under
+     * @returns {boolean} Whether anything was removed
+     */
+    removeHoldProvider(name) {
+        return this.holdProviders.delete(String(name));
+    }
+
+    /** The keys currently claimed, for a caller checking its own work */
+    heldKeys() {
+        return [...collectHeldKeys(this.holdProviders)];
+    }
+
+    async initialize() {
         if (this.isInitialized) return;
         if (!config.getSetting('market_bulkSellAssistant')) return;
         this.isInitialized = true;
+
+        try {
+            this.panelPosition = await storage.get(PANEL_POSITION_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[BulkSellAssistant] Loading panel position failed:', error);
+        }
 
         this.bookHandler = (data) => this._onOrderBook(data);
         dataManager.on('market_item_order_books_updated', this.bookHandler);
@@ -137,12 +191,24 @@ class BulkSellAssistant {
 
         const button = referenceTab.cloneNode(true);
         button.id = BUTTON_ID;
-        button.title = 'Show / hide the Bulk Sell panel';
+        button.title =
+            'Bulk Sell \u2014 clears the inventory through the market one item at a time.\n\n' +
+            'Start builds a queue of everything tradable, then for each item opens its order book, ' +
+            'decides between insta-selling and posting a listing, and opens the matching modal with the ' +
+            'quantity already filled in. After that every sale is one click on the game\u2019s own confirm ' +
+            'button, always in the same place. It never confirms a sale for you.\n\n' +
+            'Works best pointed at a Toolasha inventory tab rather than the whole inventory: put the things ' +
+            'you actually want gone in one tab and pick it in the panel, and nothing outside it can be sold ' +
+            'by a mis-click. Items you also filed in a tab above the selected one are kept, not sold.\n\n' +
+            'Click to show or hide the panel. Hiding it never stops a run.';
         const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        // The ⧉ marks it as opening a panel rather than switching the view.
+        // Borrowing the game's tab styling made it read as a fifth place to
+        // navigate to, and clicking it twice looked broken.
         if (badge) {
-            badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
+            badge.innerHTML = '<div style="text-align: center;"><div>\u29c9 Bulk Sell</div></div>';
         } else {
-            button.textContent = 'Bulk Sell';
+            button.textContent = '\u29c9 Bulk Sell';
         }
         button.classList.remove('Mui-selected');
         button.setAttribute('aria-selected', 'false');
@@ -179,10 +245,15 @@ class BulkSellAssistant {
         this._syncButton();
     }
 
-    /** Underline the tab while the panel is open, like an active tab */
+    /**
+     * Show whether the panel is up: dimmed when closed, lit when open. An
+     * underline alone is two pixels at the bottom edge of a tab that looks like
+     * every other tab, which is not a state most people will notice.
+     */
     _syncButton() {
         if (!this.toggleBtn) return;
         this.toggleBtn.style.boxShadow = this.panelVisible ? 'inset 0 -2px 0 0 #4a9eff' : '';
+        this.toggleBtn.style.opacity = this.panelVisible ? '1' : '0.6';
     }
 
     _removeButton() {
@@ -197,6 +268,61 @@ class BulkSellAssistant {
             this.chip.remove();
             this.chip = null;
         }
+    }
+
+    /**
+     * Let the panel be dragged anywhere, and remember where it was left.
+     *
+     * It is fixed over the game and defaults to the top-right, which is where
+     * the game puts its own gold counter and Bulk Sell controls — on a narrow
+     * window it lands on top of them. Rather than guess a position that suits
+     * every layout, it moves.
+     *
+     * Dragging starts only on the panel's own background, so the select and the
+     * buttons keep working: a drag beginning on a control would swallow the
+     * click that was meant for it.
+     *
+     * @param {HTMLElement} chip - The panel
+     */
+    _makeDraggable(chip) {
+        const applyPosition = (left, top) => {
+            // Kept on screen. A panel dragged off the edge cannot be dragged
+            // back, and the only way out would be reinstalling the script.
+            const maxLeft = Math.max(0, window.innerWidth - chip.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - chip.offsetHeight);
+            chip.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
+            chip.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
+            chip.style.right = 'auto';
+        };
+
+        if (this.panelPosition) {
+            // Applied after layout so offsetWidth is real, or the clamp above
+            // would measure a panel that has not been sized yet
+            setTimeout(() => applyPosition(this.panelPosition.left, this.panelPosition.top), 0);
+        }
+
+        chip.style.cursor = 'move';
+        chip.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('button, select, input')) return;
+            e.preventDefault();
+
+            const rect = chip.getBoundingClientRect();
+            const grabX = e.clientX - rect.left;
+            const grabY = e.clientY - rect.top;
+
+            const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                const final = chip.getBoundingClientRect();
+                this.panelPosition = { left: final.left, top: final.top };
+                storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
     }
 
     /**
@@ -239,18 +365,43 @@ class BulkSellAssistant {
 
         const stopBtn = document.createElement('button');
         stopBtn.className = `${CHIP_ID}-stop`;
-        stopBtn.textContent = '✕';
+        // Spelled out rather than an ✕, now that there is a close button beside
+        // it. Two identical glyphs a few pixels apart, one abandoning a run and
+        // one only hiding the panel, is a mis-click waiting to happen.
+        stopBtn.textContent = 'Stop';
         stopBtn.title = 'Stop bulk selling';
         stopBtn.style.cssText =
             'display:none; border:0; border-radius:5px; background:rgba(244,67,54,0.25); color:#ff8a80; ' +
             'font-weight:700; font-size:12px; padding:3px 7px; cursor:pointer; font-family:inherit;';
         stopBtn.addEventListener('click', () => this._stop('Stopped'));
 
+        // Closing ends the run. The panel is the only thing showing what is
+        // being sold and how far through it is, so leaving a run going behind a
+        // closed panel would mean the next confirm click lands on a sale you
+        // can no longer see coming. Hiding it from the tab still leaves it
+        // running, because that is a different gesture with the panel's
+        // progress one click away.
+        const closeBtn = document.createElement('button');
+        closeBtn.className = `${CHIP_ID}-close`;
+        closeBtn.textContent = '\u2715';
+        closeBtn.title = 'Close the panel. This also stops a run in progress.';
+        closeBtn.style.cssText =
+            'border:0; border-radius:5px; background:transparent; color:#7d879c; font-size:12px; ' +
+            'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
+        closeBtn.addEventListener('click', () => {
+            if (this.state !== 'idle' && this.state !== 'done') this._stop('Stopped');
+            this._togglePanel();
+        });
+        closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
+        closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
+
         chip.appendChild(status);
         chip.appendChild(tabSel);
         chip.appendChild(mainBtn);
         chip.appendChild(stopBtn);
+        chip.appendChild(closeBtn);
 
+        this._makeDraggable(chip);
         document.body.appendChild(chip);
         this.chip = chip;
         this._render();
@@ -382,19 +533,30 @@ class BulkSellAssistant {
         }
 
         const clientData = dataManager.getInitClientData();
+        const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+            console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
+        );
+        let held = 0;
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
             if (item.itemHrid === '/items/coin') return false;
             if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
+            const key = holdKey(item.itemHrid, item.enhancementLevel);
+            // Held items are counted, not silently dropped: an item vanishing
+            // from the sell queue with no explanation is indistinguishable from
+            // a bug
+            if (heldKeys.has(key)) {
+                held++;
+                return false;
+            }
             if (tabItems) {
-                const level = item.enhancementLevel || 0;
-                const key = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
                 if (!tabItems.has(key)) return false;
                 if (aboveItems.has(key)) return false;
             }
             return true;
         });
+        this.heldCount = held;
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
@@ -416,13 +578,17 @@ class BulkSellAssistant {
             );
 
         if (!this.queue.length) {
-            this.statusNote = tabItems ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';
+            this.statusNote = tabItems
+                ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
+                : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
             this.state = 'idle';
             this._render();
             return;
         }
         this.index = 0;
-        this.statusNote = '';
+        // Say so rather than letting the count quietly differ from what is in
+        // the inventory
+        this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
         this._prepareCurrent();
     }
 

@@ -107,6 +107,20 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketplaceBadgeFilter',
+            name: 'Marketplace Badge Filter',
+            category: 'Market',
+            module: Market.marketplaceBadgeFilter,
+            async: false,
+        },
+        {
+            key: 'marketHistoryPanel',
+            name: 'Market History Panel',
+            category: 'Market',
+            module: Market.marketHistoryPanel,
+            async: true,
+        },
+        {
             key: 'queueLengthEstimator',
             name: 'Queue Length Estimator',
             category: 'Market',
@@ -139,7 +153,7 @@ function registerFeatures() {
             name: 'Bulk Sell Assistant',
             category: 'Market',
             module: Market.bulkSellAssistant,
-            async: false,
+            async: true,
         },
         {
             key: 'philoCalculator',
@@ -309,6 +323,13 @@ function registerFeatures() {
             module: Actions.alchemyBestItems,
             async: false,
             customCheck: () => config.getSetting('alchemy_bestItems'),
+        },
+        {
+            key: 'alchemyItemPins',
+            name: 'Alchemy Item Pins',
+            category: 'Alchemy',
+            module: Actions.alchemyItemPins,
+            async: true,
         },
         {
             key: 'teaRecommendation',
@@ -516,6 +537,13 @@ function registerFeatures() {
             name: 'Hide Guild Badge',
             category: 'UI',
             module: UI.hideGuildBadge,
+            async: false,
+        },
+        {
+            key: 'combatScale',
+            name: 'Combat Panel Scale',
+            category: 'UI',
+            module: UI.combatPanelScale,
             async: false,
         },
         {

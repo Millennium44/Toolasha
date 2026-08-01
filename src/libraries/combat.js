@@ -21,6 +21,7 @@ import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import labyrinthClearRate from '../features/combat/labyrinth-clear-rate.js';
 import labyrinthRoomLogs from '../features/combat/labyrinth-room-logs.js';
+import labyrinthCapture from '../features/combat/labyrinth-capture.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
@@ -62,6 +63,7 @@ toolashaRoot.Combat = {
     labyrinthShopPrices,
     labyrinthClearRate,
     labyrinthRoomLogs,
+    labyrinthCapture,
     combatSimIntegration,
     combatSimExport: {
         constructExportObject,
@@ -74,6 +76,15 @@ toolashaRoot.Combat = {
     characterCardButton,
     combatSim,
     labSim,
+};
+
+// Console-driven debug tools, kept out of the feature namespaces because
+// nothing registers or schedules them — they only run when typed
+toolashaRoot.Debug = {
+    ...(toolashaRoot.Debug || {}),
+    ...labyrinthCapture,
+    labAccuracy: () => labyrinthClearRate.labAccuracy(),
+    labRooms: () => labyrinthClearRate.labRooms(),
 };
 
 console.log('[Toolasha] Combat library loaded');

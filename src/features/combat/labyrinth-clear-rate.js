@@ -4,16 +4,33 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { buildPlayerDTO, buildGameDataPayload, applyLoadoutSnapshotToDTO } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
+import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
+import {
+    readFloorRooms,
+    foldFloorOutcomes,
+    compareToPrediction,
+    outcomeKey,
+    accuracyRows,
+    accuracySummary,
+    foldRoomResult,
+} from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
+import {
+    estimateLiveClearChance,
+    formatLiveClearChance,
+    FIGHT_TIMEOUT_SECONDS,
+    MIN_ELAPSED_SECONDS,
+} from './labyrinth-live-combat.js';
 
 const ROOM_DURATION = 120;
 const BASE_SKILLING_TIME = 10;
@@ -28,12 +45,51 @@ const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
 const UPGRADE_MAX_LEVEL = 12;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
+const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
+const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
+/** Combat ticks arrive ~3/s, so this only expires once the fight is over */
+const LIVE_COMBAT_STALE_MS = 5000;
+/** Ticks are far faster than anyone reads; the readout is drawn at this rate */
+const LIVE_COMBAT_REDRAW_MS = 1000;
+/** Replays per conditional estimate — each is only the seconds the fight has left */
+const LIVE_SIM_TRIALS = 400;
+/** How often a fight is replayed; between replays the extrapolation shows */
+const LIVE_SIM_REFRESH_MS = 4000;
+/** A replay older than this describes a fight that has moved on */
+const LIVE_SIM_MAX_AGE_MS = 9000;
+/** Clear chances are pinned to this many percentage points either side by default */
+const DEFAULT_SIM_PRECISION_PCT = 1;
+/** No room stops before this many trials, however lopsided the early ones look */
+const MIN_SIM_TRIALS = 100;
+/** Backstop for a rate near a coin toss, which never converges cheaply */
+const MAX_SIM_TRIALS = 20000;
+/** Deciding a side needs far fewer fights than measuring a rate */
+const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
+/** Bumped when the stored shape changes; older documents are read as bare totals */
+const OUTCOME_STORAGE_VERSION = 2;
+const DECISION_MIN_TRIALS = 40;
+/** A room sitting exactly on the bar never decides; this is where it gives up */
+const DECISION_MAX_TRIALS = 4000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
 
+/**
+ * The floor's fixed corners: entrance top-left, exit bottom-right. Position is
+ * the reliable structural signal — unrevealed rooms carry no room type, so a
+ * fresh floor has nothing else to key off.
+ */
+const LABYRINTH_ENTRANCE = 0;
+const labyrinthExit = (n) => n - 1;
+
 /** Beacon reveal radius: Manhattan distance 2 — a 13-room diamond */
 const BEACON_RADIUS = 2;
+
+/** Two beacons chain when their diamonds meet: centers within this far apart */
+const BEACON_CHAIN_DIST = 2 * BEACON_RADIUS + 1;
+
+/** Re-placement sweeps over a greedy coverage plan before settling */
+const BEACON_SWAP_PASSES = 4;
 
 /** Lexicographic weight: one shroud outweighs any number of torches */
 const PATH_SHROUD_WEIGHT = 1e6;
@@ -46,6 +102,32 @@ const PATH_SHROUD_WEIGHT = 1e6;
  */
 function clampSuccessChance(v) {
     return Math.min(1, Math.max(0.05, v));
+}
+
+/** Walking to a room. Retries happen where you stand, so this is paid once. */
+const ROOM_TRAVEL_SECONDS = 1;
+
+/**
+ * A room's experience per hour, once the walk to it is paid for.
+ *
+ * Charged once per room rather than once per attempt: back-to-back retries
+ * happen where you are already standing, so failing a room five times still
+ * only involves walking to it once. `expectedSeconds` covers the attempts
+ * themselves, which is why the two are separate terms.
+ *
+ * Shared by fights and skilling rooms so their figures can be read side by
+ * side. They were computed differently for a while, and two numbers in one
+ * panel measuring different things is worse than either convention.
+ *
+ * @param {number} xpPerRoom - What clearing the room awards
+ * @param {number} expectedSeconds - Expected time in the room to get one clear
+ * @param {number} clearChance - 0..1
+ * @returns {number} Experience per hour, 0 when the room is never cleared
+ */
+function roomXpPerHour(xpPerRoom, expectedSeconds, clearChance) {
+    if (!(xpPerRoom > 0) || !(clearChance > 0)) return 0;
+    if (!Number.isFinite(expectedSeconds) || expectedSeconds <= 0) return 0;
+    return (xpPerRoom * 3600) / (expectedSeconds + ROOM_TRAVEL_SECONDS);
 }
 
 /**
@@ -187,12 +269,13 @@ export function computeLabyrinthPath(tiles, cols) {
  * @param {boolean[]} passable - Flat grid of walkable cells (entrance/exit
  *   are treated as walkable regardless)
  * @param {number} cols - Grid width
+ * @param {number} [exitIdx] - Floor exit; defaults to the top-right corner
  * @returns {number} Disjoint route count (capped at 4)
  */
-export function countDisjointRoutes(passable, cols) {
+export function countDisjointRoutes(passable, cols, exitIdx = labyrinthExit(passable.length)) {
     const n = passable.length;
     if (!n || !cols) return 0;
-    const walkable = (i) => i === 0 || i === n - 1 || !!passable[i];
+    const walkable = (i) => i === LABYRINTH_ENTRANCE || i === exitIdx || !!passable[i];
     const neighbors = (i) => {
         const out = [];
         if (i % cols > 0) out.push(i - 1);
@@ -213,14 +296,14 @@ export function countDisjointRoutes(passable, cols) {
     };
     for (let i = 0; i < n; i++) {
         if (!walkable(i)) continue;
-        addEdge(2 * i, 2 * i + 1, i === 0 || i === n - 1 ? 99 : 1);
+        addEdge(2 * i, 2 * i + 1, i === LABYRINTH_ENTRANCE || i === exitIdx ? 99 : 1);
         for (const nb of neighbors(i)) {
             if (walkable(nb)) addEdge(2 * i + 1, 2 * nb, 99);
         }
     }
 
-    const source = 1; // entrance out-node
-    const sink = 2 * (n - 1); // exit in-node
+    const source = 2 * LABYRINTH_ENTRANCE + 1; // entrance out-node
+    const sink = 2 * exitIdx; // exit in-node
     let flow = 0;
     while (flow < 4) {
         const prev = new Map([[source, null]]);
@@ -253,31 +336,25 @@ export function countDisjointRoutes(passable, cols) {
 }
 
 /**
- * Plan beacon placements that reveal a walkable corridor from the entrance to
- * the floor exit while revealing as many new rooms as possible. Beacons reveal
- * a 13-room diamond (Manhattan radius 2). The corridor requirement: a path
- * from the entrance to the exit where every interior room is revealed (already
- * revealed rooms count, so mid-run the plan builds on what's uncovered).
- *
- * Priorities: use the minimum number of beacons that can cover such a corridor
- * (chained so consecutive reveal areas connect), prefer placements whose
- * revealed region offers two independent routes to the exit (no single blocked
- * room can sever it), maximize newly revealed rooms among those (beam search),
- * then spend any extra requested beacons where they add redundancy first and
- * coverage second.
- *
- * Pure function so the planning logic is testable without DOM.
- * @param {boolean[]} revealed - Flat grid of already-revealed rooms
- * @param {number} cols - Grid width
- * @param {number} [beaconCount=0] - Total beacons to place; 0 = minimum needed
- * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
- *   revealedNew, minNeeded, routes } or null on empty input
+ * Whether the server has told us anything about a room's contents. The same
+ * test the path planner's `isUnknown` uses inverted, so both features agree on
+ * which rooms a beacon would still be revealing.
+ * @param {Object|null} room - roomData entry
+ * @returns {boolean}
  */
-export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
-    const n = revealed.length;
-    if (!n || !cols) return null;
-    const entranceIdx = 0;
-    const exitIdx = n - 1;
+function isRoomRevealed(room) {
+    if (!room) return false;
+    return !!(String(room.roomType || '') !== '' || room.skillHrid || room.monsterHrid || room.isCleared);
+}
+
+/**
+ * Grid helpers shared by the two beacon planners: neighbour walks, reveal
+ * diamonds, and flood fills.
+ * @param {number} n - Cell count
+ * @param {number} cols - Grid width
+ * @returns {Object} { manhattan, neighbors, diamond, regionFrom }
+ */
+function beaconGrid(n, cols) {
     const x = (i) => i % cols;
     const y = (i) => Math.floor(i / cols);
     const manhattan = (a, b) => Math.abs(x(a) - x(b)) + Math.abs(y(a) - y(b));
@@ -304,14 +381,14 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         return cells;
     };
 
-    // Revealed regions walkable from the entrance and from the exit
-    const bfsRegion = (start) => {
+    /** Flood fill from start through cells the predicate accepts; start is always in. */
+    const regionFrom = (start, isOpen) => {
         const seen = new Set([start]);
         const queue = [start];
         while (queue.length) {
             const cur = queue.shift();
             for (const nb of neighbors(cur)) {
-                if (!seen.has(nb) && revealed[nb]) {
+                if (!seen.has(nb) && isOpen(nb)) {
                     seen.add(nb);
                     queue.push(nb);
                 }
@@ -319,27 +396,22 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         }
         return seen;
     };
-    const startRegion = bfsRegion(entranceIdx);
-    const endRegion = bfsRegion(exitIdx);
 
-    // Already connected without any beacons?
-    let connected = false;
-    for (const i of startRegion) {
-        if (endRegion.has(i) || neighbors(i).some((nb) => endRegion.has(nb))) {
-            connected = true;
-            break;
-        }
-    }
-    if (connected) {
-        return {
-            feasible: true,
-            beacons: [],
-            covered: new Set(),
-            revealedNew: 0,
-            minNeeded: 0,
-            routes: countDisjointRoutes(revealed, cols),
-        };
-    }
+    return { manhattan, neighbors, diamond, regionFrom };
+}
+
+/**
+ * Fewest beacons whose reveal diamonds chain the entrance region to the exit
+ * region, and the reachability data the chain search needs.
+ * @param {Object} grid - beaconGrid helpers
+ * @param {number} n - Cell count
+ * @param {Set<number>} startRegion - Revealed region holding the entrance
+ * @param {Set<number>} endRegion - Revealed region holding the exit
+ * @returns {Object} { startOK, distToEnd, minNeeded } — minNeeded is Infinity
+ *   when no chain reaches the exit
+ */
+function beaconChainReach(grid, n, startRegion, endRegion) {
+    const { manhattan, neighbors, diamond } = grid;
 
     // A beacon "touches" a region when its reveal area contains a cell in the
     // region or adjacent to it — a path can step between them
@@ -361,7 +433,6 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
 
     // Two beacons chain when their diamonds intersect or touch (centers within
     // Manhattan distance 5). distToEnd[c] = beacons still needed after c.
-    const CHAIN_DIST = 2 * BEACON_RADIUS + 1;
     const distToEnd = new Array(n).fill(Infinity);
     let frontier = [];
     for (let c = 0; c < n; c++) {
@@ -374,7 +445,7 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         const next = [];
         for (const c of frontier) {
             for (let other = 0; other < n; other++) {
-                if (distToEnd[other] === Infinity && manhattan(c, other) <= CHAIN_DIST) {
+                if (distToEnd[other] === Infinity && manhattan(c, other) <= BEACON_CHAIN_DIST) {
                     distToEnd[other] = distToEnd[c] + 1;
                     next.push(other);
                 }
@@ -389,21 +460,210 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
             minNeeded = Math.min(minNeeded, distToEnd[c] + 1);
         }
     }
-    if (!Number.isFinite(minNeeded)) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded: Infinity, routes: 0 };
-    }
-    if (beaconCount > 0 && beaconCount < minNeeded) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
-    }
-    const targetCount = beaconCount > 0 ? beaconCount : minNeeded;
+    return { startOK, distToEnd, minNeeded };
+}
 
-    // Walkability including a candidate coverage union, for route counting
+/**
+ * How far out of the way each room sits, in rooms: 0 for one directly between
+ * the region you have already opened and the floor exit, rising with the
+ * detour needed to visit it. Straight Manhattan distances, because the
+ * labyrinth has no walls — every cell is a room, so nothing blocks a detour.
+ *
+ * This only breaks ties between placements that reveal the same number of
+ * rooms, never outweighing coverage. Scoring rooms by it directly was tried
+ * and dropped: it bought a tidier line of beacons by leaving whole corners of
+ * the floor dark, and a revealed room is worth having wherever it sits.
+ *
+ * @param {Object} grid - beaconGrid helpers
+ * @param {number} n - Cell count
+ * @param {Set<number>} startRegion - Revealed region holding the entrance
+ * @param {number} exitIdx - Floor exit
+ * @returns {number[]} Detour in rooms, per cell
+ */
+function detourCosts(grid, n, startRegion, exitIdx) {
+    const { manhattan } = grid;
+    const fromStart = new Array(n).fill(Infinity);
+    for (let i = 0; i < n; i++) {
+        for (const s of startRegion) fromStart[i] = Math.min(fromStart[i], manhattan(i, s));
+    }
+    const shortest = fromStart[exitIdx];
+    return fromStart.map((d, i) => d + manhattan(i, exitIdx) - shortest);
+}
+
+/**
+ * Place exactly `count` beacons to reveal as much of the floor as possible,
+ * settling ties toward rooms on the way out. Greedy by marginal gain, then a
+ * re-placement pass per beacon: greedy alone takes the densest spot first even
+ * when two beacons placed together would tile the dark region better.
+ *
+ * @param {Object} grid - beaconGrid helpers
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} count - Beacons to place
+ * @param {number[]} detour - Per-cell detour cost, the tie-break
+ * @returns {number[]} Beacon centers
+ */
+function placeBeaconsForCoverage(grid, revealed, count, detour) {
+    const { diamond } = grid;
+    const n = revealed.length;
+
+    // Rooms revealed first, total detour second — a placement that uncovers
+    // more of the floor always wins, however far off the route it sits
+    const gainOf = (c, union) => {
+        let rooms = 0;
+        let cost = 0;
+        for (const d of diamond(c)) {
+            if (revealed[d] || union.has(d)) continue;
+            rooms++;
+            cost += detour[d];
+        }
+        return { rooms, cost };
+    };
+    const better = (a, b) => a.rooms > b.rooms || (a.rooms === b.rooms && a.cost < b.cost);
+    const coverageOf = (centers) => {
+        const union = new Set();
+        for (const c of centers) {
+            for (const d of diamond(c)) {
+                if (!revealed[d]) union.add(d);
+            }
+        }
+        return union;
+    };
+    const bestCenterAgainst = (union, taken, incumbent) => {
+        let center = incumbent;
+        let best = incumbent >= 0 ? gainOf(incumbent, union) : { rooms: 0, cost: Infinity };
+        for (let c = 0; c < n; c++) {
+            if (c === incumbent || taken.has(c)) continue;
+            const gain = gainOf(c, union);
+            if (better(gain, best)) {
+                best = gain;
+                center = c;
+            }
+        }
+        return best.rooms > 0 ? center : -1;
+    };
+
+    const beacons = [];
+    while (beacons.length < count) {
+        const chosen = bestCenterAgainst(coverageOf(beacons), new Set(beacons), -1);
+        if (chosen < 0) break; // nothing left worth revealing
+        beacons.push(chosen);
+    }
+
+    for (let pass = 0; pass < BEACON_SWAP_PASSES; pass++) {
+        let moved = false;
+        for (let slot = 0; slot < beacons.length; slot++) {
+            const others = beacons.filter((_, i) => i !== slot);
+            const chosen = bestCenterAgainst(coverageOf(others), new Set(others), beacons[slot]);
+            if (chosen >= 0 && chosen !== beacons[slot]) {
+                beacons[slot] = chosen;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+
+    return beacons;
+}
+
+/**
+ * Plan beacon placements on a labyrinth floor. Beacons reveal a 13-room
+ * diamond (Manhattan radius 2), and the two questions worth asking of them get
+ * different answers:
+ *
+ * - **A set count** (`beaconCount > 0`): place that many to reveal as much of
+ *   the floor as possible, biased toward rooms on the way to the exit. The
+ *   answer is always a plan — the count is what you have, not a target to be
+ *   declared infeasible.
+ * - **No count** (`beaconCount === 0`): the fewest beacons whose reveal areas
+ *   chain into a fully revealed corridor from the entrance to the exit,
+ *   maximizing new rooms among the minimal chains (beam search).
+ *
+ * The corridor is a convenience, not a requirement: unrevealed rooms are
+ * walkable, so a floor can always be crossed without beacons. That is why it
+ * only constrains the mode that asks for it — making it a hard constraint on a
+ * set count drags every beacon onto the entrance-to-exit line.
+ *
+ * Pure function so the planning logic is testable without DOM.
+ * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {number} cols - Grid width
+ * @param {number} [beaconCount=0] - Beacons to place; 0 = minimum for a corridor
+ * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
+ *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
+ */
+export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
+    const n = revealed.length;
+    if (!n || !cols) return null;
+    const entranceIdx = LABYRINTH_ENTRANCE;
+    const exitIdx = labyrinthExit(n);
+    const grid = beaconGrid(n, cols);
+    const { manhattan, neighbors, diamond, regionFrom } = grid;
+
+    // Revealed regions walkable from the entrance and from the exit
+    const isRevealed = (i) => revealed[i];
+    const startRegion = regionFrom(entranceIdx, isRevealed);
+    const endRegion = regionFrom(exitIdx, isRevealed);
+
+    const touches = (region, open) => {
+        for (const i of regionFrom(entranceIdx, open)) {
+            if (region.has(i) || neighbors(i).some((nb) => region.has(nb))) return true;
+        }
+        return false;
+    };
+    const connected = touches(endRegion, isRevealed);
+
     const passableWith = (union) => {
         const passable = new Array(n);
         for (let i = 0; i < n; i++) passable[i] = revealed[i] || union.has(i);
         return passable;
     };
-    const routesWith = (union) => Math.min(2, countDisjointRoutes(passableWith(union), cols));
+    const { startOK, distToEnd, minNeeded } = connected
+        ? { startOK: [], distToEnd: [], minNeeded: 0 }
+        : beaconChainReach(grid, n, startRegion, endRegion);
+
+    // A set count answers "where do I put the beacons I have", so it is planned
+    // for coverage whether or not the way out is already open
+    if (beaconCount > 0) {
+        const detour = detourCosts(grid, n, startRegion, exitIdx);
+        const beacons = placeBeaconsForCoverage(grid, revealed, beaconCount, detour);
+        const covered = new Set();
+        for (const c of beacons) {
+            for (const d of diamond(c)) {
+                if (!revealed[d]) covered.add(d);
+            }
+        }
+        return {
+            feasible: true,
+            beacons,
+            covered,
+            revealedNew: covered.size,
+            minNeeded,
+            routes: countDisjointRoutes(passableWith(covered), cols),
+            corridorOpen: connected || touches(endRegion, (i) => revealed[i] || covered.has(i)),
+        };
+    }
+
+    if (connected) {
+        return {
+            feasible: true,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded: 0,
+            routes: countDisjointRoutes(revealed, cols),
+            corridorOpen: true,
+        };
+    }
+    if (!Number.isFinite(minNeeded)) {
+        return {
+            feasible: false,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded: Infinity,
+            routes: 0,
+            corridorOpen: false,
+        };
+    }
 
     // Beam search over minimum-length chains, maximizing newly revealed rooms
     const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
@@ -418,7 +678,7 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         for (const state of states) {
             const last = state.chain[state.chain.length - 1];
             for (let c = 0; c < n; c++) {
-                if (manhattan(c, last) > CHAIN_DIST) continue;
+                if (manhattan(c, last) > BEACON_CHAIN_DIST) continue;
                 if (state.chain.includes(c)) continue;
                 if (distToEnd[c] > minNeeded - depth - 1) continue;
                 const union = new Set(state.union);
@@ -430,49 +690,37 @@ export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
         states = expanded.slice(0, BEAM_WIDTH);
     }
     states = states.filter((s) => distToEnd[s.chain[s.chain.length - 1]] === 0);
-    states.sort((a, b) => b.union.size - a.union.size);
     if (!states.length) {
-        return { feasible: false, beacons: [], covered: new Set(), revealedNew: 0, minNeeded, routes: 0 };
+        return {
+            feasible: false,
+            beacons: [],
+            covered: new Set(),
+            revealedNew: 0,
+            minNeeded,
+            routes: 0,
+            corridorOpen: false,
+        };
     }
 
-    // Among the best chains, prefer ones whose revealed region already offers
-    // two independent routes to the exit, then the most coverage
-    const finalists = states.slice(0, 40).map((s) => ({ ...s, routes: routesWith(s.union) }));
-    finalists.sort((a, b) => b.routes - a.routes || b.union.size - a.union.size);
+    // Coverage decides between equal-length chains; route redundancy only
+    // breaks the ties it leaves. Redundancy counts unrevealed rooms as blocked,
+    // which they are not, so it is worth reporting but not worth paying rooms for.
+    states.sort((a, b) => b.union.size - a.union.size);
+    const finalists = states
+        .slice(0, 40)
+        .map((s) => ({ ...s, routes: Math.min(2, countDisjointRoutes(passableWith(s.union), cols)) }));
+    finalists.sort((a, b) => b.union.size - a.union.size || b.routes - a.routes);
     const best = finalists[0];
 
-    // Extra beacons: add redundancy first (up to two independent routes),
-    // then coverage
-    const beacons = [...best.chain];
-    const covered = new Set(best.union);
-    let routes = best.routes;
-    while (beacons.length < targetCount) {
-        let bestCenter = -1;
-        let bestRoutes = routes;
-        let bestGain = 0;
-        for (let c = 0; c < n; c++) {
-            if (beacons.includes(c)) continue;
-            const gain = newCells(c, covered).length;
-            if (gain === 0 && routes >= 2) continue;
-            let candidateRoutes = routes;
-            if (routes < 2 && gain > 0) {
-                const union = new Set(covered);
-                for (const g of newCells(c, covered)) union.add(g);
-                candidateRoutes = routesWith(union);
-            }
-            if (candidateRoutes > bestRoutes || (candidateRoutes === bestRoutes && gain > bestGain)) {
-                bestRoutes = candidateRoutes;
-                bestGain = gain;
-                bestCenter = c;
-            }
-        }
-        if (bestCenter < 0 || bestGain === 0) break;
-        beacons.push(bestCenter);
-        for (const gained of newCells(bestCenter, covered)) covered.add(gained);
-        routes = routes >= 2 ? routes : routesWith(covered);
-    }
-
-    return { feasible: true, beacons, covered, revealedNew: covered.size, minNeeded, routes };
+    return {
+        feasible: true,
+        beacons: [...best.chain],
+        covered: new Set(best.union),
+        revealedNew: best.union.size,
+        minNeeded,
+        routes: best.routes,
+        corridorOpen: true,
+    };
 }
 
 class LabyrinthClearRate {
@@ -492,6 +740,16 @@ class LabyrinthClearRate {
         this.snapshotUpdateHandler = null;
         this._settingsFingerprint = null;
         this._snapshotFingerprint = null;
+        this._pathData = null;
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._outcomesLoaded = false;
+        this._fight = null;
+        this._liveCombatTimeout = null;
+        this._liveCombatDrawnAt = 0;
+        this._replay = null;
+        this._replayRunning = false;
+        this.battleHandler = null;
     }
 
     initialize() {
@@ -535,6 +793,20 @@ class LabyrinthClearRate {
         this.liveProgressHandler = (data) => this.onLiveProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
 
+        this.battleHandler = (data) => this.onBattleUpdated(data);
+        webSocketHook.on('battle_updated', this.battleHandler);
+
+        // The room log shows fights beside the rate that was predicted for them,
+        // and owns none of that: the sims and the fight record both live here.
+        // Handing it accessors rather than importing this module keeps the
+        // dependency one-way — this module already imports the log.
+        labyrinthRoomLogs.useSimSource({
+            forecast: (hrid, level, kind) => this.roomForecast(hrid, level, kind),
+            record: (result) => this.recordRoomResult(result),
+            accuracy: () => this.accuracySnapshot(),
+            reset: () => this.resetOutcomes(),
+        });
+
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
             this.injectOverlays()
         );
@@ -543,6 +815,7 @@ class LabyrinthClearRate {
         const unregisterTiles = domObserver.onClass('LabyrinthTileCalc', 'LabyrinthPanel_roomCell', () => {
             this.seedFromCharacterData();
             this.injectTileControls();
+            this.refreshAttemptBadges();
             this.pruneClearedTileBadges();
             this.pruneClearedPathOverlays();
             this.pruneUsedBeaconOverlays();
@@ -650,10 +923,18 @@ class LabyrinthClearRate {
             this.snapshotUpdateHandler = null;
         }
 
+        if (this.battleHandler) {
+            webSocketHook.off('battle_updated', this.battleHandler);
+            this.battleHandler = null;
+        }
+
         this.clearLiveProgress();
+        this.clearLiveCombat();
+        this._fight = null;
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
         document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
+        document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
         if (this.autoTileTimer) {
             clearTimeout(this.autoTileTimer);
@@ -697,7 +978,333 @@ class LabyrinthClearRate {
         this.isInitialized = false;
     }
 
+    // -------------------------------------------------------------------------
+    // Predicted against actual
+    //
+    // A simulation can converge on a precise wrong answer, and no number of
+    // extra trials will say so — only the game can. The server counts the
+    // fights for us: a room beaten on the fifth try is one clear in five, and a
+    // room walked away from is nought in however many. Set beside the rate the
+    // sim predicted, that is a test the sim can fail.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Bring the record in from storage.
+     *
+     * Separate from recording because reading it is not the same event as
+     * adding to it. Loading only on the way in meant the record existed but
+     * nothing that merely *reads* it — the console table, a tile's tooltip —
+     * could see it until a labyrinth message happened to arrive, so a session
+     * that had not entered the labyrinth yet reported nothing recorded.
+     */
+    async loadOutcomes() {
+        if (this._outcomesLoaded) return;
+        this._outcomesLoaded = true;
+        try {
+            const stored = (await storage.getJSON(OUTCOME_STORAGE_KEY, 'settings', {})) || {};
+            // Anything written before the stripped-room fix counted defeats and
+            // nothing else — a cleared room stops naming its monster, so the
+            // scan that looked for one never saw a single win. Those totals are
+            // not a small sample of the truth, they are every loss and no
+            // victory, so they are dropped rather than carried forward and
+            // quietly poisoning every verdict from here on.
+            if (stored.version === OUTCOME_STORAGE_VERSION) {
+                this._outcomes = stored.totals || {};
+                this._outcomesSeen = stored.seen || {};
+            } else {
+                this._outcomes = {};
+                this._outcomesSeen = {};
+            }
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
+        }
+    }
+
+    /** Write the record and the per-room state it is counted against */
+    async saveOutcomes() {
+        try {
+            await storage.setJSON(
+                OUTCOME_STORAGE_KEY,
+                { version: OUTCOME_STORAGE_VERSION, totals: this._outcomes, seen: this._outcomesSeen },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
+        }
+    }
+
+    /**
+     * Which floor of which run the grid in hand belongs to.
+     *
+     * Attempts are counted as differences against the last sighting of each
+     * square, so the sighting has to know which floor it was of. Coordinates
+     * repeat on every floor.
+     * @param {Object} labyrinth - The labyrinth payload
+     * @returns {string}
+     */
+    outcomeScope(labyrinth) {
+        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
+    }
+
+    /**
+     * Everything the calculator claims about a room before you enter it.
+     *
+     * A fight's claim comes out of the sim cache and only exists once that tile
+     * has been calculated. A skilling or enhancing room's is closed-form maths
+     * and can be worked out on demand, which is why those rooms can be judged
+     * from the first one you walk into while a fight cannot.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @param {number} roomLevel - Room level
+     * @param {string} [kind] - 'combat' or 'skilling'; inferred from the hrid otherwise
+     * @returns {Object|null} { clearChance, expectedSeconds, successChance, doubleChance, xpPerRoom, xpPerHour }
+     */
+    roomForecast(subjectHrid, roomLevel, kind) {
+        const hrid = String(subjectHrid || '');
+        const level = Math.max(0, Math.floor(Number(roomLevel) || 0));
+        if (!hrid || level <= 0) return null;
+
+        const skilling = kind === 'skilling' || hrid.startsWith('/skills/');
+        if (!skilling) return this.getCachedCombatResult(hrid, level);
+
+        try {
+            return hrid === '/skills/enhancing'
+                ? this.computeEnhancingClear(level)
+                : this.computeSkillingClear(hrid, level);
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Forecasting a skilling room failed:', error);
+            return null;
+        }
+    }
+
+    /** The clear chance the calculator is currently claiming for a room, or null */
+    predictedClearChance(subjectHrid, roomLevel, kind) {
+        const forecast = this.roomForecast(subjectHrid, roomLevel, kind);
+        return forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null;
+    }
+
+    /**
+     * Fold one finished room — its duration, experience and action outcomes —
+     * into the record the accuracy view reads.
+     * @param {Object} result - See foldRoomResult
+     */
+    async recordRoomResult(result) {
+        if (!result?.subjectHrid) return;
+        await this.loadOutcomes();
+        this._outcomes = foldRoomResult(this._outcomes, result);
+        await this.saveOutcomes();
+    }
+
+    /**
+     * Fold the current floor into the running record of how fights went.
+     * @param {Object} labyrinth - The labyrinth payload, for its grid and floor
+     */
+    async recordOutcomes(labyrinth) {
+        const roomData = labyrinth?.roomData;
+        if (!roomData) return;
+        await this.loadOutcomes();
+
+        const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readFloorRooms(roomData), {
+            scope: this.outcomeScope(labyrinth),
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
+        });
+        this._outcomes = folded.totals;
+        this._outcomesSeen = folded.seen;
+
+        if (!folded.changed && !folded.seenChanged) return;
+        await this.saveOutcomes();
+    }
+
+    /** What was actually observed for a monster at a level, if anything */
+    observedOutcome(monsterHrid, roomLevel) {
+        return this._outcomes[outcomeKey(monsterHrid, roomLevel)] || null;
+    }
+
+    /**
+     * Print the current floor exactly as the server describes it, so what a
+     * room looks like before and after it is cleared can be read rather than
+     * inferred.
+     *
+     * Console: `Toolasha.Debug.labRooms()`
+     * @returns {Array<Object>} One row per room cell
+     */
+    labRooms() {
+        const rows = [];
+        const grid = this.roomData;
+        for (let y = 0; Array.isArray(grid) && y < grid.length; y++) {
+            for (let x = 0; Array.isArray(grid[y]) && x < grid[y].length; x++) {
+                const room = grid[y][x];
+                if (!room) continue;
+                rows.push({
+                    coord: `${x},${y}`,
+                    monster:
+                        String(room.monsterHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    skill:
+                        String(room.skillHrid || '')
+                            .split('/')
+                            .pop() || '',
+                    type:
+                        String(room.roomType || '')
+                            .split('/')
+                            .pop() || '',
+                    level: room.recommendedLevel ?? '',
+                    entries: room.entryCount ?? '',
+                    cleared: !!room.isCleared,
+                    keys: Object.keys(room).join(' '),
+                });
+            }
+        }
+        console.log(
+            `[Toolasha] Floor ${this.currentFloor ?? '?'}: ${rows.length} rooms. ` +
+                'Compare a cleared row against an uncleared one — "keys" shows what the server still sends for each.'
+        );
+        console.table(rows);
+        return rows;
+    }
+
+    /**
+     * The whole record, judged, for anything that wants to show it.
+     * @returns {Promise<{rows: Array<Object>, summary: Object}>}
+     */
+    async accuracySnapshot() {
+        await this.loadOutcomes();
+        const rows = accuracyRows(this._outcomes, {
+            predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
+            interval: wilsonInterval,
+        });
+        return { rows, summary: accuracySummary(rows) };
+    }
+
+    /** Throw the fight record away and start counting again */
+    async resetOutcomes() {
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._outcomesLoaded = true;
+        await this.saveOutcomes();
+    }
+
+    /**
+     * Set every predicted rate beside the rate actually observed, and say which
+     * ones the record will not support.
+     *
+     * Console: `await Toolasha.Debug.labAccuracy()`
+     * @returns {Promise<Array<Object>>} One row per monster and level seen
+     */
+    async labAccuracy() {
+        const { rows, summary } = await this.accuracySnapshot();
+        const pct = (v, places = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '');
+
+        console.log(
+            `[Toolasha] ${summary.attempts} labyrinth fights across ${summary.buckets} monster/level buckets.` +
+                (summary.expected === null
+                    ? ''
+                    : ` Over the ${summary.judged} of them the sim had a rate for, it predicted ` +
+                      `${summary.expected.toFixed(1)} clears and you got ${summary.judgedClears}.`) +
+                `\n"likelihood" is how often the sim's own rate would produce a record this lopsided — a small number ` +
+                'means the sim is being contradicted. Rows reading "not simmed" have no prediction on record and none ' +
+                'cached; calculate their tile once and the next fights will be judged.'
+        );
+        console.table(
+            rows.map((row) => ({
+                room: row.monster,
+                kind: row.kind,
+                level: row.level,
+                predicted: row.predicted === null ? 'not simmed' : pct(row.predicted),
+                observed: `${row.clears}/${row.attempts}`,
+                observedPct: pct(row.observed),
+                range: `${pct(row.low, 0)}-${pct(row.high, 0)}`,
+                verdict: row.verdict,
+                likelihood: row.likelihood === null ? '' : pct(row.likelihood, 2),
+                // Skilling rooms only: the server states the rate it is using,
+                // so the formula can be checked against the truth rather than
+                // only against a sample of outcomes
+                calcSuccess: row.rates?.success ? pct(row.rates.success.predicted) : '',
+                serverSuccess: row.rates?.success ? pct(row.rates.success.server) : '',
+                hitSuccess: row.rates?.success ? pct(row.rates.success.observed) : '',
+                formulaOff: row.rates?.success?.formulaOff ? 'YES' : '',
+                seconds: row.timing ? `${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s` : '',
+                xpPerHour: row.measured?.xpPerHour ? Math.round(row.measured.xpPerHour).toLocaleString() : '',
+            }))
+        );
+        return rows;
+    }
+
+    // -------------------------------------------------------------------------
+    // Room attempts
+    //
+    // A room you fail to clear is one you come back to, and the map gives no
+    // sign of it: the tile looks identical on your fourth try and your first.
+    // The server counts them for us — every room carries an entryCount — so
+    // nothing here is inferred, and nothing needs storing between sessions.
+    // -------------------------------------------------------------------------
+
+    /**
+     * The room the path head is standing in.
+     * @returns {Object|null} roomData entry, or null when not in a run
+     */
+    currentRoom() {
+        const rows = this.roomData;
+        if (!Array.isArray(rows)) return null;
+        let path = this._pathData;
+        if (typeof path === 'string' && path) {
+            try {
+                path = JSON.parse(path);
+            } catch {
+                return null;
+            }
+        }
+        if (!Array.isArray(path) || !path.length) return null;
+        // pathData is the queued route, not the trail behind you: [0] is the
+        // room being run and the rest are what you lined up after it
+        const head = path[0];
+        if (!head || !Number.isInteger(head.x) || !Number.isInteger(head.y)) return null;
+        return rows[head.y]?.[head.x] || null;
+    }
+
+    /** Times the room being run now has been entered, 0 when unknown */
+    currentRoomAttempts() {
+        return Math.max(0, Math.floor(Number(this.currentRoom()?.entryCount) || 0));
+    }
+
+    /**
+     * Mark every room entered more than once. A first entry is the normal case
+     * and carries no information, so only repeats are drawn.
+     */
+    refreshAttemptBadges() {
+        document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
+        if (!this.roomData) return;
+        const flat = this.roomData.flat();
+        const cells = this.findRoomGridCells(flat.length);
+        if (cells.length !== flat.length) return;
+
+        for (let i = 0; i < flat.length; i++) {
+            const entries = Math.floor(Number(flat[i]?.entryCount) || 0);
+            const cell = cells[i];
+            if (entries < 2 || !cell) continue;
+
+            const cellStyle = window.getComputedStyle(cell);
+            if (cellStyle.position === 'static') cell.style.position = 'relative';
+
+            const badge = document.createElement('div');
+            badge.className = ATTEMPT_BADGE_CLASS;
+            badge.title = `Entered ${entries} times`;
+            badge.textContent = String(entries);
+            // Middle of the left edge: the tile's own corners are taken — level
+            // top, clear chance and ETA bottom — and the bottom-left slot put
+            // this straight over the ETA
+            badge.style.cssText =
+                'position:absolute; left:1px; top:50%; transform:translateY(-50%); z-index:9; padding:0 3px; ' +
+                'border-radius:3px; background:rgba(0,0,0,0.7); color:#ffc866; font-size:8px; font-weight:700; ' +
+                'line-height:1.4; pointer-events:none;';
+            cell.appendChild(badge);
+        }
+    }
+
     onLabyrinthUpdated(data) {
+        this._pathData = data.labyrinth?.pathData ?? null;
+        this.recordOutcomes(data.labyrinth);
         const previousFloor = this.currentFloor;
         this.currentFloor = Math.max(0, Math.floor(Number(data.labyrinth?.currentFloor) || 0));
         const roomData = data.labyrinth?.roomData;
@@ -714,6 +1321,7 @@ class LabyrinthClearRate {
             }
             this.injectTileControls();
             this.pruneClearedTileBadges();
+            this.refreshAttemptBadges();
             // Re-run after React repaints the cleared tile (the WS message
             // usually arrives before the DOM updates)
             if (this.pruneTileTimer) clearTimeout(this.pruneTileTimer);
@@ -792,6 +1400,23 @@ class LabyrinthClearRate {
             }
         }
         return allBuffs;
+    }
+
+    /**
+     * How much more experience a labyrinth room pays than its base award.
+     *
+     * The labyrinth experience upgrade plus any wisdom the run's crates carry.
+     * The same two sources the skilling rooms read, minus the per-skill buff
+     * maps a fight has no equivalent of.
+     * @returns {number} Ratio, 0 when nothing applies
+     */
+    getCombatExperienceBonus() {
+        let bonus = this.getLabyrinthUpgrades().experience * UPGRADE_STEP;
+        for (const buff of this.getCombatCrateBuffs()) {
+            if (buff?.typeHrid !== '/buff_types/wisdom') continue;
+            bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
+        }
+        return bonus;
     }
 
     /**
@@ -1112,10 +1737,7 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
-        result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
-                : 0;
+        result.xpPerHour = roomXpPerHour(result.xpPerRoom, result.expectedSeconds, result.clearChance);
     }
 
     /**
@@ -1212,10 +1834,7 @@ class LabyrinthClearRate {
                   ).clearChance
                 : null;
 
-        result.xpPerHour =
-            Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0 && result.clearChance > 0
-                ? (result.xpPerRoom * 3600) / (result.expectedSeconds + 1 / result.clearChance)
-                : 0;
+        result.xpPerHour = roomXpPerHour(result.xpPerRoom, result.expectedSeconds, result.clearChance);
     }
 
     buildResult(clearStats, actionSeconds) {
@@ -1551,18 +2170,47 @@ class LabyrinthClearRate {
     /**
      * Build cache key for a combat sim result
      */
-    buildCombatCacheKey(monsterHrid, roomLevel) {
+    buildCombatCacheKey(monsterHrid, roomLevel, decideAgainst = null) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${this.getSimHours()}h:${crateHrids.join(',')}`;
+        // Results from the two stopping rules must not share a slot. A decided
+        // one is deliberately coarse — forty fights can leave ±12 points — and
+        // a tile badge reading it would present that as a measurement.
+        const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}`;
     }
 
     /**
-     * Combat sim hours for labyrinth tile and recommendation calculations
+     * How tightly a room's clear chance has to be pinned down before its sim
+     * stops, in percentage points either side.
+     *
+     * This replaced a fixed span of simulated hours, which bought trials at a
+     * rate set by fight length and so measured a five-second room twenty times
+     * more finely than one running the full timeout — the slow rooms being
+     * exactly the marginal ones where the decision is closest.
+     */
+    getSimPrecisionPct() {
+        const raw = Number(config.getSettingValue('labyrinthSimPrecision', DEFAULT_SIM_PRECISION_PCT));
+        return Math.min(10, Math.max(0.1, raw || DEFAULT_SIM_PRECISION_PCT));
+    }
+
+    /**
+     * Ceiling on a single room's sim, in simulated hours. Precision normally
+     * ends the run long before this; it exists so a room whose rate sits near a
+     * coin toss cannot run forever.
      */
     getSimHours() {
         const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
         return Math.min(100, Math.max(1, Math.floor(raw) || 3));
+    }
+
+    /** The stopping rule handed to the engine */
+    getSimStopRule() {
+        return {
+            targetHalfWidth: this.getSimPrecisionPct() / 100,
+            minTrials: MIN_SIM_TRIALS,
+            maxTrials: MAX_SIM_TRIALS,
+        };
     }
 
     getCachedCombatResult(monsterHrid, roomLevel) {
@@ -1572,9 +2220,26 @@ class LabyrinthClearRate {
     /**
      * Run combat sim for a monster room and return clear stats
      */
-    async computeCombatClear(monsterHrid, roomLevel) {
-        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel);
+    async computeCombatClear(monsterHrid, roomLevel, options = {}) {
+        // A bar means the caller only needs to know which side of it this room
+        // falls on, which is a far cheaper question than what its rate is
+        const rawBar = Number(options.decideAgainst);
+        const bar = Number.isFinite(rawBar) && rawBar > 0 && rawBar < 1 ? rawBar : null;
+
+        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel, bar);
         if (this.combatCache.has(cacheKey)) return this.combatCache.get(cacheKey);
+
+        // A measured result already in hand answers a decision for free, as
+        // long as its interval clears the bar — no reason to simulate again
+        if (bar !== null) {
+            const measured = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null));
+            if (
+                measured?.trials > 0 &&
+                decidedAgainst(Math.round(measured.clearChance * measured.trials), measured.trials, bar)
+            ) {
+                return measured;
+            }
+        }
 
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
@@ -1593,6 +2258,14 @@ class LabyrinthClearRate {
                 roomLevel,
                 crates: crateHrids,
                 hours: this.getSimHours(),
+                precision:
+                    bar === null
+                        ? this.getSimStopRule()
+                        : {
+                              decideAgainst: bar,
+                              minTrials: DECISION_MIN_TRIALS,
+                              maxTrials: DECISION_MAX_TRIALS,
+                          },
                 communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
                 labyrinthCombatBuffs,
             });
@@ -1623,9 +2296,23 @@ class LabyrinthClearRate {
                         : 'Insufficient Damage'
                     : '';
 
+            // How sure the figure is, which is the point of stopping on
+            // precision rather than on a clock: a rate is only as good as the
+            // number of fights behind it, and that number now varies by room
+            const interval = wilsonInterval(wins, attempts);
+
+            // A labyrinth room pays on completion, not per swing, so its
+            // experience is a property of the room rather than of the fight —
+            // the same level-based award a skilling room gives. An earlier
+            // version totalled the experience the simulated fights earned,
+            // which credited losing attempts for damage they dealt and paid out
+            // for rooms that were never cleared.
+            const xpPerClear = roomLevel * 50 * (1 + this.getCombatExperienceBonus());
+            const expectedSeconds = winRate > 0 ? avgTime / winRate : Infinity;
+
             const result = {
                 clearChance: winRate,
-                expectedSeconds: winRate > 0 ? avgTime / winRate : Infinity,
+                expectedSeconds,
                 type: 'combat',
                 winRate,
                 avgFightSeconds: avgTime,
@@ -1634,6 +2321,16 @@ class LabyrinthClearRate {
                 loadoutName,
                 roomLevel,
                 failureReason,
+                trials: attempts,
+                halfWidth: interval.halfWidth,
+                hitTarget: !!simResult.labyStoppedOnPrecision,
+                // What clearing the room is worth, and what that works out to per
+                // hour once the attempts you lose on the way — and the walk to
+                // the room before each of them — are paid for. A room you never
+                // clear earns nothing however long you fight it, which is
+                // exactly what an unreachable room is worth.
+                xpPerRoom: xpPerClear,
+                xpPerHour: roomXpPerHour(xpPerClear, expectedSeconds, winRate),
             };
 
             // Don't cache 0% results: right after page load the loadout
@@ -1716,7 +2413,9 @@ class LabyrinthClearRate {
                 low = mid + 1;
                 continue;
             }
-            const result = await this.computeCombatClear(monsterHrid, roomLevel);
+            // The search only needs this level placed above or below the bar,
+            // not measured against it
+            const result = await this.computeCombatClear(monsterHrid, roomLevel, { decideAgainst: targetRate });
             if (result.cancelled) break;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
@@ -1884,15 +2583,30 @@ class LabyrinthClearRate {
             badge.style.cssText = 'font-size:0.7rem; white-space:nowrap; font-weight:bold;';
             badge.textContent = `Rec: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
 
-            badge.title = `Recommended skip threshold for ≥${this._recommendTargetPct}% clear rate`;
-
-            if (currentThreshold <= rec.threshold) {
+            // Four states, not three. Sitting below the recommendation used to
+            // share the colour of sitting exactly on it, which hid the one case
+            // that is costing you rooms rather than risking them: a threshold
+            // under the recommendation skips fights you would have cleared.
+            // Above it is the opposite error and is graded by how far.
+            const gap = currentThreshold - rec.threshold;
+            const target = `≥${this._recommendTargetPct}% clear rate`;
+            let note;
+            if (gap === 0) {
                 badge.style.color = '#00c896';
-            } else if (currentThreshold <= rec.threshold + 10) {
+                note = `On the recommendation for a ${target}`;
+            } else if (gap < 0) {
+                badge.style.color = '#5aa9e6';
+                note =
+                    `${-gap} below the recommendation — safe, but skipping rooms that would have ` +
+                    `cleared at a ${target}`;
+            } else if (gap <= 10) {
                 badge.style.color = '#f0ad4e';
+                note = `${gap} above the recommendation — fighting rooms below a ${target}`;
             } else {
                 badge.style.color = '#d9534f';
+                note = `${gap} above the recommendation — well below a ${target}`;
             }
+            badge.title = `Recommended skip threshold for a ${target}\nCurrently set to ${currentThreshold}. ${note}.`;
 
             getAnnotationContainer(cell).appendChild(badge);
         }
@@ -1956,6 +2670,266 @@ class LabyrinthClearRate {
     onLiveProgress(data) {
         if (!config.getSetting('labyrinthLiveProgress')) return;
         this.refreshLiveProgress(data);
+    }
+
+    // -------------------------------------------------------------------------
+    // Live clear chance for combat rooms
+    //
+    // Skilling rooms get a live number from labyrinth_room_progress, which
+    // carries everything the closed-form math needs. Combat rooms carry no such
+    // message — the tile badge's win rate comes from simulating the fight
+    // beforehand, and once you are in it, it says nothing about how this one is
+    // going. battle_updated is the missing input: it pushes both sides' current
+    // and maximum hitpoints about three times a second.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Whether the header is showing a labyrinth fight. Read from the title
+     * rather than from run state, following the battle counter: a labyrinth run
+     * stays active while you fight regular zones, so the flags mislabel it.
+     * @returns {boolean}
+     */
+    inLabyrinthFight() {
+        const row = document.querySelector("div[class*='Header_actionName']");
+        return !!row && /labyrinth/i.test(row.textContent || '');
+    }
+
+    /**
+     * Track a labyrinth fight and show the odds of clearing it.
+     * @param {Object} data - battle_updated payload
+     */
+    onBattleUpdated(data) {
+        if (!config.getSetting('labyrinthLiveProgress')) return;
+
+        const player = data?.pMap?.['0'];
+        const monster = data?.mMap?.['0'];
+        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0) || !this.inLabyrinthFight()) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        // battleId stays put across labyrinth attempts and a retry of the same
+        // room brings back a monster with the same maximum, so neither says a
+        // new fight started. Two things do: health that went up, which only a
+        // fresh monster can do, and an attack counter that went down, which
+        // only a fresh battle can do. Without them, retrying a room kept the
+        // previous attempt's record — a start time minutes old, and a rate so
+        // slow it read as no chance at all.
+        const fight = this._fight;
+        const isNewFight =
+            !fight ||
+            fight.battleId !== data.battleId ||
+            fight.monsterMaxHp !== monster.mHP ||
+            monster.cHP > fight.lastMonsterHp ||
+            player.atkCounter < fight.lastAtkCounter;
+
+        if (isNewFight) {
+            this._fight = {
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                startedAt: Date.now(),
+                // Rates are measured from here, wherever "here" is. Only a fight
+                // seen from full health also has a knowable clock: join one in
+                // progress and the time already spent is invisible, so the timer
+                // drops out rather than being guessed at.
+                caughtStart: monster.cHP >= monster.mHP,
+                firstMonsterFraction: monster.cHP / monster.mHP,
+                firstPlayerFraction: player.cHP / player.mHP,
+            };
+        }
+        this._fight.lastMonsterHp = monster.cHP;
+        this._fight.lastAtkCounter = Number(player.atkCounter) || 0;
+
+        const started = this._fight;
+        const observedSeconds = (Date.now() - started.startedAt) / 1000;
+        const monsterHpFraction = monster.cHP / monster.mHP;
+        const playerHpFraction = player.cHP / player.mHP;
+
+        const estimate = estimateLiveClearChance({
+            monsterHpFraction,
+            playerHpFraction,
+            observedSeconds,
+            monsterLostFraction: started.firstMonsterFraction - monsterHpFraction,
+            playerLostFraction: started.firstPlayerFraction - playerHpFraction,
+            remainingSeconds: started.caughtStart ? Math.max(0, FIGHT_TIMEOUT_SECONDS - observedSeconds) : null,
+        });
+        // The replayed figure is the better answer whenever one is in hand;
+        // the extrapolation carries the display between replays and covers the
+        // first seconds, before any replay has finished
+        const replay = this._replay;
+        const fresh =
+            replay && replay.fightStartedAt === started.startedAt && Date.now() - replay.at < LIVE_SIM_MAX_AGE_MS;
+        const text = fresh ? `Clear ${(replay.clearChance * 100).toFixed(0)}%` : formatLiveClearChance(estimate);
+        this.maybeReplayFight(started, {
+            monsterHpFraction,
+            playerHpFraction,
+            playerMpFraction: player.mHP > 0 ? player.cMP / player.mMP : 1,
+            elapsedSeconds: started.caughtStart ? observedSeconds : 0,
+        });
+        if (!text) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        // battle_updated stops arriving the moment the fight ends, and nothing
+        // else would take the readout down — so it expires itself. Refreshed
+        // before the redraw throttle, because a tick we chose not to draw is
+        // still the fight telling us it is alive.
+        if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
+        this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
+
+        // Ticks arrive several times a second and the estimate moves on every
+        // one of them, which reads as flicker rather than as information. Nobody
+        // is deciding anything on the difference between two readings a third of
+        // a second apart, so only one per second is drawn.
+        const now = Date.now();
+        if (this._liveCombatDrawnAt && now - this._liveCombatDrawnAt < LIVE_COMBAT_REDRAW_MS) return;
+        this._liveCombatDrawnAt = now;
+
+        const clock = estimate.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
+        this.renderLiveNode(
+            ` [${text}${clock}]`,
+            [
+                `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
+                Number.isFinite(estimate.killSeconds)
+                    ? `Kill in ~${Math.round(estimate.killSeconds)}s`
+                    : 'Not killing it',
+                Number.isFinite(estimate.deathSeconds)
+                    ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
+                    : 'Taking no damage',
+                fresh
+                    ? `Replayed this fight ${replay.trials} times from here — ±${(replay.halfWidth * 100).toFixed(1)}%`
+                    : `${estimate.reason}${estimate.confident ? '' : ' — early, treat as provisional'}`,
+                fresh ? `Extrapolated from health lost: ${(estimate.clearChance * 100).toFixed(0)}%` : '',
+                estimate.timerKnown
+                    ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
+                    : 'Joined this fight in progress, so the room timer is unknown and left out',
+                fresh ? '' : 'Extrapolated from the health lost so far; abilities and procs are not modelled',
+            ].filter(Boolean)
+        );
+    }
+
+    /**
+     * Replay this fight from where it stands, many times over, and count how
+     * often it ends in a clear.
+     *
+     * The extrapolated figure races two rates of health loss and knows nothing
+     * about abilities, procs, healing or what the monster does at low health.
+     * This runs the actual combat engine instead, with both sides rewound to
+     * their current health and the room timer already part-spent — so every
+     * replay is an independent continuation of the fight on screen, and the win
+     * rate over them is the answer to the question being asked.
+     *
+     * What it still cannot see is anything the socket does not send: buff
+     * timers, ability cooldowns, how many bites of food are left. Each replay
+     * starts those fresh, which flatters a fight whose cooldowns are actually
+     * spent. That error shrinks as a fight goes on and the remaining window
+     * gets shorter.
+     *
+     * @param {Object} state - { monsterHpFraction, playerHpFraction, playerMpFraction, elapsedSeconds }
+     * @returns {Promise<Object|null>} { clearChance, trials, halfWidth } or null
+     */
+    async simulateFromHere(state) {
+        const room = this.currentRoom();
+        const monsterHrid = room?.monsterHrid;
+        const roomLevel = Math.max(0, Math.floor(Number(room?.recommendedLevel) || 0));
+        if (!monsterHrid || roomLevel <= 0) return null;
+
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return null;
+
+        const simResult = await runLabyrinthSimulation({
+            gameData: buildGameDataPayload(),
+            playerDTOs: [dto],
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid,
+            roomLevel,
+            crates: this.getCrateHrids(),
+            // Each replay is only the seconds this fight has left, so even a
+            // few hundred of them cost a fraction of a tile badge's sim
+            hours: 1,
+            precision: { minTrials: LIVE_SIM_TRIALS, maxTrials: LIVE_SIM_TRIALS },
+            liveState: {
+                monsterHpFraction: state.monsterHpFraction,
+                playerHpFraction: state.playerHpFraction,
+                playerMpFraction: state.playerMpFraction,
+                elapsedNs: Math.max(0, state.elapsedSeconds) * 1e9,
+            },
+            communityBuffs: { mooPass: false, comExp: 0, comDrop: 0 },
+            labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+        });
+
+        const trials = simResult.labyAttemptCount || 0;
+        if (trials <= 0) return null;
+        const wins = simResult.encounters || 0;
+        return { clearChance: wins / trials, trials, halfWidth: wilsonInterval(wins, trials).halfWidth };
+    }
+
+    /**
+     * Kick off a replay when the last one is stale, at most one at a time.
+     * @param {Object} fight - The tracked fight record
+     * @param {Object} state - Live fight state
+     */
+    maybeReplayFight(fight, state) {
+        if (!config.getSetting('labyrinthLiveCombatSim')) return;
+        if (this._replayRunning) return;
+        if (state.elapsedSeconds < MIN_ELAPSED_SECONDS) return;
+        if (this._replay?.fightStartedAt === fight.startedAt && Date.now() - this._replay.at < LIVE_SIM_REFRESH_MS) {
+            return;
+        }
+
+        this._replayRunning = true;
+        this.simulateFromHere(state)
+            .then((result) => {
+                // A replay that landed after its fight ended describes a moment
+                // that no longer exists, so it is tagged with the fight it came
+                // from and discarded when that stops matching
+                if (result) this._replay = { ...result, at: Date.now(), fightStartedAt: fight.startedAt };
+            })
+            .catch((error) => {
+                if (error?.message !== 'Cancelled') {
+                    console.error('[LabyrinthClearRate] Live fight replay failed:', error);
+                }
+            })
+            .finally(() => {
+                this._replayRunning = false;
+            });
+    }
+
+    /** Drop the combat readout and forget the fight it described */
+    clearLiveCombat() {
+        if (this._liveCombatTimeout) {
+            clearTimeout(this._liveCombatTimeout);
+            this._liveCombatTimeout = null;
+        }
+        if (this._fight && !this.inLabyrinthFight()) this._fight = null;
+        this._liveCombatDrawnAt = 0;
+        document.querySelectorAll(`.${LIVE_COMBAT_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Write the combat readout into the header, beside the action name — the
+     * same slot the skilling readout uses. Only one can ever be showing: a room
+     * is a fight or it is not.
+     * @param {string} text - Readout
+     * @param {string[]} tooltipLines - Hover detail
+     */
+    renderLiveNode(text, tooltipLines) {
+        const host =
+            document.querySelector("div[class*='Header_actionName'] div[class*='Header_displayName']") ||
+            document.querySelector("div[class*='Header_actionName']");
+        if (!host) return;
+
+        let node = host.querySelector(`.${LIVE_COMBAT_CLASS}`);
+        if (!node) {
+            node = document.createElement('span');
+            node.className = LIVE_COMBAT_CLASS;
+            node.style.cssText = 'color:#fff; font-size:0.875rem;';
+            host.appendChild(node);
+        }
+        node.textContent = text;
+        node.title = tooltipLines.join('\n');
     }
 
     /**
@@ -2070,17 +3044,21 @@ class LabyrinthClearRate {
         }
 
         const chancePct = (estimate.clearChance * 100).toFixed(1);
-        const attemptText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
+        const actionText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
+        // Only past the first, since every room is on its first try until it is not
+        const tries = this.currentRoomAttempts();
+        const tryText = tries > 1 ? ` | Attempt #${tries}` : '';
         if (estimate.isEnhancing) {
-            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${attemptText}]`;
+            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
         } else {
-            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${attemptText}]`;
+            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
         }
 
         const tooltipLines = [
             `Success: ${(estimate.successChance * 100).toFixed(1)}% | Double: ${(estimate.doubleChance * 100).toFixed(1)}%`,
             `Actions: ${estimate.actionCounter}/${estimate.totalAttempts}`,
         ];
+        if (tries > 1) tooltipLines.push(`Attempt ${tries} at this room`);
         if (estimate.isEnhancing) {
             tooltipLines.push(`Enhance: +${estimate.currentLevel}/+${estimate.targetLevel}`);
         } else {
@@ -2269,27 +3247,33 @@ class LabyrinthClearRate {
         button.addEventListener('click', () => this.runTileCalculation());
         container.appendChild(button);
 
-        const hoursLabel = document.createElement('span');
-        hoursLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
-        hoursLabel.textContent = 'Sim Hours';
-        container.appendChild(hoursLabel);
+        const precisionLabel = document.createElement('span');
+        precisionLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        precisionLabel.textContent = 'Precision ±';
+        precisionLabel.title =
+            'How tightly to pin each room down before its sim stops, in percentage points. ' +
+            'A settled room reaches it in a few hundred fights; one near a coin toss needs thousands, ' +
+            'so the work goes where the answer is still in doubt.';
+        container.appendChild(precisionLabel);
 
-        const hoursInput = document.createElement('input');
-        hoursInput.type = 'number';
-        hoursInput.min = '1';
-        hoursInput.max = '100';
-        hoursInput.step = '1';
-        hoursInput.value = String(this.getSimHours());
-        hoursInput.style.cssText =
+        const precisionInput = document.createElement('input');
+        precisionInput.className = `${TILE_CONTROLS_CLASS}-precision`;
+        precisionInput.type = 'number';
+        precisionInput.min = '0.1';
+        precisionInput.max = '10';
+        precisionInput.step = '0.5';
+        precisionInput.value = String(this.getSimPrecisionPct());
+        precisionInput.title = precisionLabel.title;
+        precisionInput.style.cssText =
             'width:52px; height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +
             'background:rgba(20,28,42,0.9); color:#fff; font-size:11px; font-weight:700; text-align:center; outline:none;';
-        hoursInput.addEventListener('change', () => {
-            const n = Math.min(100, Math.max(1, Math.floor(Number(hoursInput.value) || 3)));
-            hoursInput.value = String(n);
-            config.setSettingValue('labyrinthRecommendSimHours', n);
+        precisionInput.addEventListener('change', () => {
+            const n = Math.min(10, Math.max(0.1, Number(precisionInput.value) || DEFAULT_SIM_PRECISION_PCT));
+            precisionInput.value = String(n);
+            config.setSettingValue('labyrinthSimPrecision', n);
             this.combatCache.clear();
         });
-        container.appendChild(hoursInput);
+        container.appendChild(precisionInput);
 
         const pathButton = document.createElement('button');
         pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
@@ -2316,7 +3300,7 @@ class LabyrinthClearRate {
         pathInput.step = '1';
         pathInput.value = String(config.getSettingValue('labyrinthPathClearThreshold', 70));
         pathInput.title = pathLabel.title;
-        pathInput.style.cssText = hoursInput.style.cssText;
+        pathInput.style.cssText = precisionInput.style.cssText;
         pathInput.addEventListener('change', () => {
             const n = Math.min(100, Math.max(1, Math.floor(Number(pathInput.value) || 70)));
             pathInput.value = String(n);
@@ -2350,7 +3334,7 @@ class LabyrinthClearRate {
         beaconButton.className = `${TILE_CONTROLS_CLASS}-beacon-button`;
         beaconButton.textContent = 'Beacons';
         beaconButton.title =
-            'Plan beacon placements: fewest beacons (or the set amount) whose reveal areas cover a walkable path to the exit, revealing as many rooms as possible';
+            'Plan beacon placements: a set count goes wherever it reveals the most rooms on the way out; 0 finds the fewest beacons that cover a revealed path to the exit';
         beaconButton.style.cssText =
             'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#1d9e83; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
@@ -2365,7 +3349,7 @@ class LabyrinthClearRate {
         beaconInput.step = '1';
         beaconInput.value = String(config.getSettingValue('labyrinthBeaconCount', 0));
         beaconInput.title = 'Beacons to place — 0 uses the fewest that cover a path to the exit';
-        beaconInput.style.cssText = hoursInput.style.cssText;
+        beaconInput.style.cssText = precisionInput.style.cssText;
         beaconInput.addEventListener('change', () => {
             const n = Math.min(20, Math.max(0, Math.floor(Number(beaconInput.value) || 0)));
             beaconInput.value = String(n);
@@ -2382,16 +3366,6 @@ class LabyrinthClearRate {
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         clearButton.addEventListener('click', () => this.clearRecommendations());
         container.appendChild(clearButton);
-
-        if (config.getSetting('labyrinthRoomLogs')) {
-            const logsButton = document.createElement('button');
-            logsButton.textContent = 'Logs';
-            logsButton.style.cssText =
-                'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(77,151,255,0.95); ' +
-                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
-            logsButton.addEventListener('click', () => labyrinthRoomLogs.togglePanel());
-            container.appendChild(logsButton);
-        }
 
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
@@ -2805,11 +3779,7 @@ class LabyrinthClearRate {
         if (countInput) countInput.value = String(count);
         config.setSettingValue('labyrinthBeaconCount', count);
 
-        // A room is revealed when its contents are known (typed room or cleared);
-        // the entrance always is
-        const revealed = flat.map(
-            (room, i) => i === 0 || (!!room && (String(room.roomType || '') !== '' || !!room.isCleared))
-        );
+        const revealed = flat.map((room, i) => i === 0 || isRoomRevealed(room));
 
         this.clearBeaconOverlays();
         const plan = computeBeaconPlan(revealed, cols, count);
@@ -2818,16 +3788,16 @@ class LabyrinthClearRate {
             return;
         }
         if (!plan.feasible) {
-            this.setTileStatus(
-                Number.isFinite(plan.minNeeded)
-                    ? `Need at least ${plan.minNeeded} beacons for a covered path`
-                    : 'No beacon chain can reach the exit'
-            );
+            this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
-        if (plan.minNeeded === 0) {
+        if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
-            this.setTileStatus(`Path to the exit is already revealed — no beacons needed${routeNote}`);
+            this.setTileStatus(
+                plan.minNeeded === 0
+                    ? `Path to the exit is already revealed — no beacons needed${routeNote}`
+                    : 'Nothing left for a beacon to reveal'
+            );
             return;
         }
 
@@ -2853,10 +3823,17 @@ class LabyrinthClearRate {
         };
 
         const minNote = count === 0 ? ' (min)' : '';
-        const routeText = plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route';
-        this.setTileStatus(
-            `Beacons: ${plan.beacons.length}${minNote} · reveals ${plan.revealedNew} new rooms · ${routeText}`
-        );
+        const parts = [
+            `Beacons: ${plan.beacons.length}${minNote}`,
+            `reveals ${plan.revealedNew} new rooms`,
+            plan.routes >= 2 ? `${plan.routes} independent routes` : '1 route',
+        ];
+        // With a count you chose, whether the way out ends up covered is an
+        // outcome worth reporting rather than a condition on the plan
+        if (count > 0 && !plan.corridorOpen && Number.isFinite(plan.minNeeded)) {
+            parts.push(`a covered path to the exit needs ${plan.minNeeded}`);
+        }
+        this.setTileStatus(parts.join(' · '));
     }
 
     /**
@@ -2916,10 +3893,7 @@ class LabyrinthClearRate {
         const cells = this.findRoomGridCells(flat.length);
         if (cells.length !== flat.length) return;
 
-        const isRevealed = (i) => {
-            const room = flat[i];
-            return !!room && (String(room.roomType || '') !== '' || !!room.isCleared);
-        };
+        const isRevealed = (i) => isRoomRevealed(flat[i]);
 
         state.fills = state.fills.filter((i) => {
             if (!isRevealed(i)) return true;
@@ -3118,12 +4092,13 @@ class LabyrinthClearRate {
         const floorText = maxFloor >= 1 ? `F${maxFloor} · ` : '';
         badge.textContent = pct >= 100 ? `${floorText}${timeText}` : `${floorText}${pct}% ${timeText}`;
 
-        if (result.type === 'skilling' || result.type === 'enhancing') {
-            badge.removeAttribute('title');
-            this.bindPreview(badge, result);
-        } else {
-            badge.title = this.formatTooltip(result, roomLevel);
-        }
+        // Every room type gets the full card. Combat rows used to fall back to a
+        // three-line title while the skilling rows beside them showed a dozen
+        // figures — and a fight is the row where the detail is hardest to get at
+        // any other way, since its numbers come out of a simulation rather than
+        // off the screen.
+        badge.removeAttribute('title');
+        this.bindPreview(badge, result);
     }
 
     appendPlaceholderBadge(cell) {
@@ -3385,6 +4360,41 @@ class LabyrinthClearRate {
         const gameData = dataManager.getInitClientData();
         const monsterDetail = gameData?.combatMonsterDetailMap?.[result.monsterHrid];
 
+        // What the badge's percentage is worth. Trials vary room to room now
+        // that sims stop on precision, so the sample behind the figure is worth
+        // stating rather than leaving to be assumed.
+        if (Number.isFinite(result.halfWidth) && result.trials > 0) {
+            const band = (result.halfWidth * 100).toFixed(1);
+            addRow(
+                'Clear Chance',
+                `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
+            );
+            addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
+
+        // Per entry rather than per clear. A fight earns experience by landing
+        // hits, so a room you usually lose still pays — and quoting only what a
+        // win is worth would make a room you clear 5% of the time look like it
+        // returns nothing at all.
+        if (result.xpPerRoom > 0) {
+            addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
+        }
+        if (result.xpPerHour > 0) {
+            addRow('EXP / Hour', `${(result.xpPerHour / 1000).toFixed(1)}K`);
+        }
+
+        // How the fight has actually gone, which is the only thing that can
+        // catch the sim being confidently wrong
+        const observed = this.observedOutcome(result.monsterHrid, result.roomLevel);
+        if (observed?.attempts > 0) {
+            const check = compareToPrediction(observed.clears, observed.attempts, result.clearChance, wilsonInterval);
+            const note = check.verdict === 'consistent' ? '' : ` — ${check.verdict}`;
+            addRow(
+                'Actually Cleared',
+                `${observed.clears}/${observed.attempts} (${(check.observed * 100).toFixed(0)}%)${note}`
+            );
+        }
+
         if (monster) {
             const stats = monster.combatDetails.combatStats;
             const styleHrid = stats.combatStyleHrid || stats.combatStyleHrids?.[0] || '';
@@ -3492,41 +4502,6 @@ class LabyrinthClearRate {
             addRow('Token Expected', `${Math.min(floor * 0.05, 0.5).toFixed(2)}`);
             addRow(boxLabel, `${Math.min(floor * 0.01, 0.1).toFixed(2)}`);
         }
-    }
-
-    formatTooltip(result, roomLevel) {
-        const pct = (v) => `${(v * 100).toFixed(1)}%`;
-
-        if (result.type === 'skilling') {
-            return [
-                `Success: ${pct(result.successChance)} | Double: ${pct(result.doubleChance)}`,
-                `Actions: ${result.attempts} @ ${result.actionSeconds.toFixed(2)}s each`,
-                `Work Power: ${Math.floor(result.workPower)} → Progress: ${result.progressPerSuccess}/${result.targetProgress} per success`,
-                `Effective Level: ${Math.floor(result.effectiveLevel)} (base ${result.baseLevel} + ${Math.floor(result.effectiveLevel - result.baseLevel)})`,
-                `Room Level: ${result.roomLevel} | XP/room: ${result.xpPerRoom}`,
-            ].join('\n');
-        }
-
-        if (result.type === 'enhancing') {
-            return [
-                `Success: ${pct(result.successChance)} | Double: ${pct(result.doubleChance)}`,
-                `Actions: ${result.attempts} @ ${result.actionSeconds.toFixed(2)}s each`,
-                `Target: +${result.targetLevel} | Effective Level: ${Math.floor(result.effectiveLevel)}`,
-                `Room Level: ${result.roomLevel}`,
-            ].join('\n');
-        }
-
-        if (result.type === 'combat') {
-            return [
-                `Win Rate: ${pct(result.winRate)} | Avg Fight: ${Math.round(result.avgFightSeconds)}s`,
-                `Monster: ${result.monsterName} | Room Level: ${result.roomLevel}`,
-                `Loadout: "${result.loadoutName}"`,
-            ].join('\n');
-        }
-
-        const clearPct = Math.round(result.clearChance * 100);
-        const timeText = this.formatTime(result.expectedSeconds);
-        return `Clear: ${clearPct}% | Expected: ${timeText} | Room level: ${roomLevel}`;
     }
 
     getBadgeColor(clearChance) {

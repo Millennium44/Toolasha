@@ -27,6 +27,11 @@ const DEFAULT_SIM_HOURS = 2; // 2 hours per level gives ~50-100+ encounters depe
  * @param {Function} [onProgress] - Progress callback ({ level, winRate, step, totalSteps })
  * @returns {Promise<Object>} { maxLevel, winRate, attempts, encounters }
  */
+/** No probe decides on fewer fights than this, however lopsided they look */
+const DECISION_MIN_TRIALS = 40;
+/** A level genuinely on the bar never decides; this is where it gives up */
+const DECISION_MAX_TRIALS = 4000;
+
 export async function findMaxLabyrinthLevel(params, onProgress) {
     const {
         gameData,
@@ -61,6 +66,12 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
             roomLevel: mid,
             crates,
             hours: simHours,
+            // A probe only has to place this level on one side of the bar, not
+            // measure it. A level clearing 90% against a 50% bar is settled in
+            // a few dozen fights; pinning that 90% to a point would take nearly
+            // two thousand. Only a level sitting on the bar runs to the cap,
+            // and there the search is indifferent to which way it falls.
+            precision: { decideAgainst: threshold, minTrials: DECISION_MIN_TRIALS, maxTrials: DECISION_MAX_TRIALS },
             communityBuffs,
             labyrinthCombatBuffs,
         });
