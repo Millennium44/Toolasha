@@ -1,26 +1,26 @@
-# MWI Combat Suite (vendored)
+# MWI Combat Suite (reference notes)
 
-**MWI Combat Suite v0.9.36235** by **Frotty**, MIT licensed. Kept here verbatim as source
-material, not as something Toolasha builds or ships.
+Notes on **MWI Combat Suite v0.9.36235** by **Frotty**, MIT licensed — the script Toolasha's
+drop-luck, expected-spawn and chest-ledger code was ported from.
 
-- `mwi-combat-suite-0.9.36235.user.js` — the script exactly as it was given, unmodified
-- `LICENSE.md` — its terms
+- `LICENSE.md` — its terms, which the ports are used under
 
-Nothing in this directory is imported, bundled, linted, or executed. `rollup.config.js` builds
-from `src/`, `npm run lint` runs on `src/`, and the pre-commit hooks match `src/**/*.js`, so a
-copy here stays inert.
+**The script itself is not in this repository.** It is roughly 2 MB and 42,155 lines, and
+carrying that in the history costs every clone for a file nothing builds against. It was
+vendored here while the ports were being written and has been removed from the branch history
+since.
 
-## Why it is in the repository
+## Identifying what was ported from
 
-It arrived as a chat paste, and a chat paste is not a provenance record. The MIT licence
-permits reuse and requires the notice to travel with it, which means the thing being attributed
-has to be identifiable — "adapted from a version of Frotty's script" is not attribution if
-nobody can say which version. Committing the exact 42,155 lines makes any later claim about what
-was taken checkable against the original, and makes it possible to diff against a future upstream
-release rather than guess at what changed.
+Attribution needs to name something checkable — "adapted from a version of Frotty's script" is
+not attribution if nobody can say which version. Since the script is not kept here, the
+identifiers are:
 
-The alternative — port from the paste and let the paste evaporate — is how a project ends up with
-code it cannot account for.
+- **the version, `0.9.36235`**, from the userscript header
+- **the line numbers below**, which refer to that exact version
+
+To verify a claim or diff against a newer release, fetch that version of the script and compare
+against the sections named below. Line numbers are only valid for `0.9.36235`.
 
 ## What is in it
 
@@ -95,6 +95,3 @@ the game treats it as a weight and divides by the sum when it draws.
 It is one 42,000-line IIFE with no module boundaries; panels are methods on a single
 `lootDropsTrackerInstance` and communicate through `window` globals and custom events. Grep for
 the `createFn` name in the tool list near line 41391 to find any given panel.
-
-This copy came from the author's published script text rather than a download URL, so no upstream
-link is recorded here — the version string in the filename and header is the identifier.

@@ -503,6 +503,20 @@ export const settingsGroups = {
         title: 'Loot Log',
         icon: '📦',
         settings: {
+            treasureTracker_popup: {
+                id: 'treasureTracker_popup',
+                label: "Treasure Tracker: Pop up what an opening paid, beside the game's loot dialog",
+                type: 'checkbox',
+                default: true,
+                help: "The game's Opened Loot dialog says what you got; this says whether it was good, item by item, against what the drop table owed",
+            },
+            treasureTracker: {
+                id: 'treasureTracker',
+                label: 'Treasure Tracker: Record chest openings and compare against expected value',
+                type: 'checkbox',
+                default: true,
+                help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
@@ -605,20 +619,6 @@ export const settingsGroups = {
                 label: 'Currency tooltips: Show shop values for tokens, seals, and cowbells',
                 type: 'checkbox',
                 default: true,
-            },
-            overlayPanel: {
-                id: 'overlayPanel',
-                label: 'Overlay Panel: One floating panel other features add a row to',
-                type: 'checkbox',
-                default: true,
-                help: 'A configurable overlay. Open it from the Overlay button on the settings page, then use the gear to choose which rows show and in what order. Rows appear as features gain them',
-            },
-            treasureTracker: {
-                id: 'treasureTracker',
-                label: 'Treasure Tracker: Record chest openings and compare against expected value',
-                type: 'checkbox',
-                default: true,
-                help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
             },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
@@ -2085,6 +2085,13 @@ export const settingsGroups = {
         title: 'UI & Appearance',
         icon: '🎨',
         settings: {
+            overlayPanel: {
+                id: 'overlayPanel',
+                label: 'Overlay Panel: One floating panel other features add a row to',
+                type: 'checkbox',
+                default: true,
+                help: 'A configurable overlay. Open it from the Overlay button on the settings page, then use the gear to choose which rows show and in what order. Rows appear as features gain them',
+            },
             draggableModals: {
                 id: 'draggableModals',
                 label: 'Draggable modals',

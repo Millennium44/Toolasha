@@ -22,9 +22,11 @@ belongs to Frotty.
 
 ## MWI Combat Suite
 
-`third-party/mwi-combat-suite/` holds **MWI Combat Suite v0.9.36235** by Frotty verbatim, under
-the MIT licence it declares in its own userscript header. Nothing in that directory is imported,
-bundled, linted, or executed — it is the source the ports below were read from.
+The ports below come from **MWI Combat Suite v0.9.36235** by Frotty, under the MIT licence it
+declares in its own userscript header. The script itself is **not kept in this repository** — it
+is ~2 MB and 42,155 lines, which is not worth carrying in the history for a file nothing builds
+against. `third-party/mwi-combat-suite/` keeps its licence and a record of what was taken and
+from which lines of that exact version.
 
 Same author as Scaley Way Idle above, but not the same situation. Scaley Way Idle carries no
 licence, so that feature could take the idea and nothing else. This one is MIT, which permits the

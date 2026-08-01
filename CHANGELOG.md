@@ -4,6 +4,27 @@
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
+## Unreleased — branch `claude/mcs-ingest`
+
+### Treasure pops up what an opening actually paid
+
+New setting, on by default. Open a chest and a panel appears beside the game's own Opened Loot dialog, itemised.
+
+- The game's dialog answers "what did I get" and leaves the only interesting question — was that good — to a feeling. Each item now shows the count and value you got on top, and what the drop table owed for that many chests underneath, with the difference as a percentage.
+- Items that **should** have dropped and did not are listed with a `-100%`. On an unlucky opening that missing row is the whole story, and a list of only what appeared cannot tell you.
+- Expected counts below ten keep two decimals. A rare owed 0.02 of itself rounds to nothing, and a row reading "0 expected" would say the chest owed you nothing when it owed you a 1-in-50 chance.
+- Underneath, the lifetime figure for that chest type, so a good opening off a bad run still reads as a bad run. "View full stats" opens the whole ledger.
+- Priced through the same source as the ledger, so a chest cannot look lucky merely because two views priced it differently.
+
+### Settings moved out of the wrong section
+
+- **Overlay Panel** and **Treasure Tracker** were filed under "Item Tooltip Enhancements", which has nothing to do with either. They now sit under **UI & Appearance** and **Loot Log**.
+
+### The reference script is no longer carried in the repository
+
+- Frotty's MWI Combat Suite was vendored while the ports were written. It is ~2 MB and 42,155 lines, which is not worth carrying in the history for a file nothing builds against, so it has been removed from this branch's history rather than deleted in a later commit — the blob never reaches `main` at all.
+- Attribution still needs to name something checkable, so `third-party/mwi-combat-suite/` keeps the licence, the version string, and the line numbers in that exact version for everything taken.
+
 ## Unreleased — branch `claude/new-session-s8abcv`
 
 ### Fixed: the overlay would have shown nothing in the released build

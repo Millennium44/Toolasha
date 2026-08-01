@@ -25,13 +25,15 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { recordOpening, resetTally, summariseTally, tallyTotals } from '../../utils/chest-tally.js';
+import { recordOpening, resetTally, chestPerformance, summariseTally, tallyTotals } from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
 
 const STORAGE_KEY = 'treasureTally';
 const PANEL_ID = 'toolasha-treasure-panel';
+const POPUP_ID = 'toolasha-treasure-popup';
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.96)',
@@ -86,6 +88,7 @@ class TreasureTracker {
         this.headerEl = null;
         this.expanded = new Set();
         this.isDragging = false;
+        this.popup = null;
     }
 
     async initialize() {
@@ -105,6 +108,7 @@ class TreasureTracker {
             this.lootOpenedHandler = null;
         }
         this._removePanel();
+        this._removePopup();
         this.isInitialized = false;
     }
 
@@ -119,6 +123,31 @@ class TreasureTracker {
         this.tally = recordOpening(this.tally, chestHrid, data.openedItem.count || 1, data.gainedItems);
         this._save();
         if (this.panel) this._render();
+        if (config.getSetting('treasureTracker_popup')) this._showOpening(chestHrid);
+    }
+
+    /**
+     * Show what the opening that just happened paid, against what it owed.
+     *
+     * Beside the game's own "Opened Loot" dialog, because that dialog answers
+     * "what did I get" and leaves the only interesting question — "was that
+     * good?" — to a feeling. The counts are the same ones on screen; the second
+     * line under each is what the drop table said to expect.
+     *
+     * @param {string} chestHrid - What was opened
+     */
+    _showOpening(chestHrid) {
+        const entry = this.tally[chestHrid];
+        if (!entry?.last) return;
+
+        const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[chestHrid];
+        const opening = chestPerformance(entry.last, dropTable, this._priceOf());
+        const lifetime = chestPerformance(entry, dropTable, this._priceOf());
+
+        this._removePopup();
+        this.popup = this._buildPopup(chestHrid, opening, lifetime);
+        document.body.appendChild(this.popup);
+        registerFloatingPanel(this.popup);
     }
 
     _save() {
@@ -142,12 +171,244 @@ class TreasureTracker {
      */
     _summary() {
         const dropTables = dataManager.getInitClientData()?.openableLootDropMap || {};
-        // Coins are the base currency and never appear on the market
-        const priceOf = (itemHrid) =>
-            itemHrid === '/items/coin' ? 1 : getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
-
-        const rows = summariseTally(this.tally, dropTables, priceOf);
+        const rows = summariseTally(this.tally, dropTables, this._priceOf());
         return { rows, totals: tallyTotals(rows) };
+    }
+
+    /**
+     * The one price source both the ledger and the popup read through, so a
+     * chest cannot look lucky merely because two views priced it differently.
+     * @returns {Function} `(itemHrid) => number|null`
+     */
+    _priceOf() {
+        // Coins are the base currency and never appear on the market
+        return (itemHrid) =>
+            itemHrid === '/items/coin' ? 1 : getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+    }
+
+    /**
+     * The item sprite sheet the game is on today.
+     *
+     * Read off any icon already on the page rather than pinned, because the URL
+     * carries a build hash the game regenerates.
+     * @returns {string} Sprite URL, or '' if none is on screen yet
+     */
+    _spriteUrl() {
+        if (this._sprite) return this._sprite;
+        const use = document.querySelector('svg use[href*="items_sprite"]');
+        this._sprite = use?.getAttribute('href')?.split('#')[0] || '';
+        return this._sprite;
+    }
+
+    /**
+     * @param {string} itemHrid - Item to draw
+     * @param {number} size - Pixels
+     * @returns {SVGElement|HTMLElement} An icon, or a spacer if the sheet is unknown
+     */
+    _icon(itemHrid, size = 18) {
+        const sprite = this._spriteUrl();
+        if (!sprite) {
+            const spacer = document.createElement('span');
+            spacer.style.width = `${size}px`;
+            return spacer;
+        }
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', String(size));
+        svg.setAttribute('height', String(size));
+        svg.style.flex = '0 0 auto';
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', `${sprite}#${itemHrid.split('/').pop()}`);
+        svg.appendChild(use);
+        return svg;
+    }
+
+    /**
+     * Build the just-opened popup.
+     * @param {string} chestHrid - What was opened
+     * @param {Object} opening - Performance of this opening
+     * @param {Object} lifetime - Performance of every opening of this chest
+     * @returns {HTMLElement} The popup
+     */
+    _buildPopup(chestHrid, opening, lifetime) {
+        const popup = document.createElement('div');
+        popup.id = POPUP_ID;
+        Object.assign(popup.style, {
+            position: 'fixed',
+            top: '80px',
+            right: '40px',
+            zIndex: String(config.Z_FLOATING_PANEL),
+            width: '340px',
+            background: COLORS.background,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '8px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            color: COLORS.text,
+            fontSize: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+        });
+
+        const header = document.createElement('div');
+        Object.assign(header.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '7px 8px 7px 11px',
+            background: COLORS.headerBg,
+            borderBottom: `1px solid ${COLORS.border}`,
+            cursor: 'move',
+            userSelect: 'none',
+        });
+        const title = document.createElement('span');
+        title.textContent = `Treasure — ${itemName(chestHrid)}`;
+        title.style.fontWeight = 'bold';
+        title.style.color = COLORS.accent;
+        header.appendChild(title);
+        header.appendChild(this._headerButton('✕', () => this._removePopup()));
+        popup.appendChild(header);
+
+        const body = document.createElement('div');
+        body.style.padding = '8px 11px 10px';
+        popup.appendChild(body);
+
+        const subtitle = document.createElement('div');
+        subtitle.textContent = `Last opening (×${opening.opened})`;
+        subtitle.style.color = COLORS.accent;
+        subtitle.style.marginBottom = '3px';
+        body.appendChild(subtitle);
+
+        const verdict = formatReturn(opening.ratio);
+        const summary = document.createElement('div');
+        Object.assign(summary.style, { display: 'flex', justifyContent: 'space-between', marginBottom: '7px' });
+        const paid = document.createElement('span');
+        paid.textContent = formatLargeNumber(Math.round(opening.actualValue));
+        paid.style.color = verdict.color;
+        const pct = document.createElement('span');
+        pct.textContent = verdict.text;
+        pct.style.color = verdict.color;
+        summary.appendChild(paid);
+        summary.appendChild(pct);
+        body.appendChild(summary);
+
+        for (const item of opening.items) body.appendChild(this._openingRow(item));
+
+        const total = document.createElement('div');
+        Object.assign(total.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            borderTop: `1px solid ${COLORS.border}`,
+            marginTop: '7px',
+            paddingTop: '6px',
+        });
+        const lifeVerdict = formatReturn(lifetime.ratio);
+        const totalLabel = document.createElement('span');
+        totalLabel.textContent = `All ${lifetime.opened} opened`;
+        const totalValue = document.createElement('span');
+        totalValue.textContent = `${formatLargeNumber(Math.round(lifetime.actualValue))} · ${lifeVerdict.text}`;
+        totalValue.style.color = lifeVerdict.color;
+        total.appendChild(totalLabel);
+        total.appendChild(totalValue);
+        body.appendChild(total);
+
+        const full = document.createElement('button');
+        full.textContent = 'View full stats';
+        Object.assign(full.style, {
+            marginTop: '8px',
+            width: '100%',
+            padding: '5px',
+            background: 'rgba(255, 207, 92, 0.12)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '4px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '12px',
+        });
+        full.addEventListener('click', () => {
+            this._removePopup();
+            this.show();
+        });
+        body.appendChild(full);
+
+        this._detachPopupDrag = makeDraggable(popup, header);
+        return popup;
+    }
+
+    /**
+     * One item: what came out on top, what was owed underneath.
+     *
+     * Two lines rather than one because the comparison is the point — a count on
+     * its own says nothing, and putting expected beside actual on a single line
+     * makes eight of them unreadable.
+     *
+     * @param {Object} item - From `chestPerformance`
+     * @returns {HTMLElement} The row
+     */
+    _openingRow(item) {
+        const row = document.createElement('div');
+        Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start', padding: '2px 0' });
+        row.appendChild(this._icon(item.itemHrid));
+
+        const columns = document.createElement('div');
+        Object.assign(columns.style, { flex: '1', display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
+
+        const ratio = item.expectedValue > 0 ? item.actualValue / item.expectedValue : null;
+        const verdict = formatReturn(ratio);
+
+        const actual = document.createElement('div');
+        Object.assign(actual.style, { display: 'flex', justifyContent: 'space-between', gap: '6px' });
+        const actualCount = document.createElement('span');
+        actualCount.textContent = formatLargeNumber(item.actualCount);
+        const actualValue = document.createElement('span');
+        actualValue.textContent = formatLargeNumber(Math.round(item.actualValue));
+        actualValue.style.color = COLORS.good;
+        actualValue.style.marginLeft = 'auto';
+        const diff = document.createElement('span');
+        diff.textContent = verdict.text;
+        diff.style.color = verdict.color;
+        diff.style.minWidth = '62px';
+        diff.style.textAlign = 'right';
+        actual.appendChild(actualCount);
+        actual.appendChild(actualValue);
+        actual.appendChild(diff);
+
+        const expected = document.createElement('div');
+        Object.assign(expected.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '6px',
+            color: COLORS.textDim,
+        });
+        const expectedCount = document.createElement('span');
+        // Small expectations are the interesting ones — a rare owed 0.02 of
+        // itself rounds to nothing and would read as owing zero
+        expectedCount.textContent =
+            item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatLargeNumber(Math.round(item.expectedCount));
+        const expectedValue = document.createElement('span');
+        expectedValue.textContent = formatLargeNumber(Math.round(item.expectedValue));
+        expectedValue.style.marginLeft = 'auto';
+        const word = document.createElement('span');
+        word.textContent = 'expected';
+        word.style.minWidth = '62px';
+        word.style.textAlign = 'right';
+        expected.appendChild(expectedCount);
+        expected.appendChild(expectedValue);
+        expected.appendChild(word);
+
+        columns.appendChild(actual);
+        columns.appendChild(expected);
+        row.appendChild(columns);
+        return row;
+    }
+
+    _removePopup() {
+        this._detachPopupDrag?.();
+        this._detachPopupDrag = null;
+        if (!this.popup) return;
+        unregisterFloatingPanel(this.popup);
+        this.popup.remove();
+        this.popup = null;
     }
 
     _createPanel() {

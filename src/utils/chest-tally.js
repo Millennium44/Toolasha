@@ -39,13 +39,20 @@ export function recordOpening(tally, chestHrid, count, gainedItems) {
 
     const previous = (tally || {})[chestHrid] || { opened: 0, loot: {} };
     const loot = { ...previous.loot };
+    const justNow = {};
 
     for (const item of gainedItems || []) {
         if (!item?.itemHrid) continue;
         loot[item.itemHrid] = (loot[item.itemHrid] || 0) + (item.count || 0);
+        justNow[item.itemHrid] = (justNow[item.itemHrid] || 0) + (item.count || 0);
     }
 
-    return { ...tally, [chestHrid]: { opened: previous.opened + count, loot } };
+    // `last` is the same shape as the running total, so anything that can judge
+    // a lifetime can judge a single opening without a second code path
+    return {
+        ...tally,
+        [chestHrid]: { opened: previous.opened + count, loot, last: { opened: count, loot: justNow } },
+    };
 }
 
 /**
