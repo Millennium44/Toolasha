@@ -13,6 +13,13 @@
  * quantity already filled in, and the row of tabs is the list: what is left to
  * buy is what is still red.
  *
+ * ## There is more than one marketplace
+ *
+ * It opens as a popout over whatever you were doing, and the full marketplace
+ * page keeps its own tab bar in the document behind it. Both match the same
+ * selector, so the tabs have to go on the one being displayed rather than the
+ * one that happens to come first.
+ *
  * ## Reusing the missing-materials machinery
  *
  * Nothing here is new. `createMaterialTab` draws them, `createAutofillManager`
@@ -90,9 +97,9 @@ function watchForTabBar(items) {
     const until = Date.now() + WATCH_MS;
 
     watchTimer = setInterval(() => {
-        const container = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
-        const reference =
-            container && Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
+        const found = visibleMarketplaceTabs();
+        const container = found?.container;
+        const reference = found?.reference;
 
         // Judged on the item tabs rather than on having run: the heading alone
         // is what a failed build leaves behind, and counting that as success is
@@ -106,6 +113,36 @@ function watchForTabBar(items) {
             watchTimer = null;
         }
     }, WATCH_INTERVAL_MS);
+}
+
+/**
+ * The marketplace tab bar you can actually see.
+ *
+ * There can be more than one. The marketplace opens as a popout over whatever
+ * you were doing, and the full marketplace page keeps its own tab bar in the
+ * document behind it — so `querySelector` returns whichever comes first, which
+ * is frequently the hidden one. Tabs added there are added correctly and are
+ * invisible, which is exactly the failure: nothing appears, and visiting the
+ * real marketplace first "fixes" it by making the bar that was picked the one
+ * on screen.
+ *
+ * So every candidate is checked, and the one being displayed wins.
+ *
+ * @returns {{container: HTMLElement, reference: HTMLElement}|null}
+ */
+function visibleMarketplaceTabs() {
+    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+        const reference = Array.from(container.children).find((tab) => tab.textContent.includes('My Listings'));
+        if (!reference) continue;
+
+        // `offsetParent` is null for anything with a `display: none` ancestor,
+        // which is how the game keeps the panel you are not looking at
+        if (container.offsetParent === null) continue;
+        if (!container.getBoundingClientRect().width) continue;
+
+        return { container, reference };
+    }
+    return null;
 }
 
 /**

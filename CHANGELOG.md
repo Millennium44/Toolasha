@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the restock tabs went onto the marketplace you could not see
+
+- **There is more than one marketplace.** It opens as a popout over whatever you were doing, and the full marketplace page keeps its own tab bar in the document behind it. Both match the same selector, and the search took whichever came first — frequently the hidden one.
+- So the tabs were being added correctly, to a tab bar nobody could see. That is why visiting the real marketplace first appeared to fix it: it made the bar that was already being picked the one on screen.
+- Every candidate bar is now checked and the one actually being displayed wins.
+
 ### Fixed: the restock heading duplicated, and a failed build stood until something else rebuilt the tabs
 
 - The green **Restock: N items** heading was not marked as one of ours, so the tidy-up that removes the tabs left it behind — and every re-add stacked another heading beside the last.
