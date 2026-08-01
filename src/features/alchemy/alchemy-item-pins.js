@@ -26,6 +26,8 @@ const STORAGE_KEY = 'alchemyItemPins';
 const STYLE_ID = 'mwi-alchemy-pins-style';
 const PIN_CLASS = 'mwi-alchemy-pin';
 const PINNED_CLASS = 'mwi-alchemy-pinned';
+/** Marks the element the pin is mounted on, which is not always the tile */
+const TILE_CLASS = 'mwi-alchemy-tile';
 
 /**
  * Add or remove an item from one action's pins.
@@ -112,10 +114,11 @@ const CSS = `
         opacity: 0;
         transition: opacity 0.1s;
     }
-    div[class*="Item_itemContainer"]:hover .${PIN_CLASS} { opacity: 1; }
+    .${TILE_CLASS}:hover .${PIN_CLASS} { opacity: 1; }
     .${PIN_CLASS}:hover { color: #fff; background: rgba(77, 151, 255, 0.9); }
     .${PINNED_CLASS} .${PIN_CLASS} { opacity: 1; color: #ffcf5c; }
     .${PINNED_CLASS} { outline: 1px solid rgba(255, 207, 92, 0.55); outline-offset: -1px; border-radius: 4px; }
+    .${TILE_CLASS} { position: relative; }
 `;
 
 class AlchemyItemPins {
@@ -155,6 +158,7 @@ class AlchemyItemPins {
         this.styleEl = null;
         document.querySelectorAll(`.${PIN_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${PINNED_CLASS}`).forEach((el) => el.classList.remove(PINNED_CLASS));
+        document.querySelectorAll(`.${TILE_CLASS}`).forEach((el) => el.classList.remove(TILE_CLASS));
         this.isInitialized = false;
     }
 
@@ -230,8 +234,11 @@ class AlchemyItemPins {
         if (!itemHrid) return;
 
         const isPinned = pinned.includes(itemHrid);
+        // The pin hangs off whichever element the grid can actually move, which
+        // is a wrapper around the tile rather than the tile itself — so the
+        // hover rule is keyed to a class of ours rather than the game's
+        tile.classList.add(TILE_CLASS);
         tile.classList.toggle(PINNED_CLASS, isPinned);
-        if (window.getComputedStyle(tile).position === 'static') tile.style.position = 'relative';
 
         let button = tile.querySelector(`.${PIN_CLASS}`);
         if (!button) {

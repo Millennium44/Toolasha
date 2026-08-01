@@ -16,7 +16,7 @@ The picker could not be recognised at all, which also means the existing item di
 
 It now watches **which selector was clicked**. A menu opens because something was clicked, and the thing clicked stays where it belongs in the DOM whatever the menu does afterwards. The structural check is kept for the case where the menu is not portalled, and the catalyst is excluded by its own label.
 
-- **Only one tile was ever being found**, so even a matched menu would have sorted nothing. The grid was taken to be the parent of the first tile, and the first match sits in a wrapper of its own ahead of the actual grid. It is now whichever parent holds the most tiles.
+- **Only one tile was ever being found**, so a matched menu still only got one pin. Two versions assumed the tiles were siblings — first taking the parent of the first tile as the grid, then the parent holding the most — and both came back with exactly one, because **each tile is wrapped in a container of its own** and no two share a parent. The grid is now the deepest element containing every tile, and each tile is represented by whichever of its ancestors that grid can actually move.
 - **Pins would have vanished on the first keystroke in the filter box.** Typing replaces the tiles inside the menu without replacing the menu, so a watcher that only sees the menu appear decorates it once and never again. The menu's contents are watched now, with the decoration made idempotent so it cannot react to its own writes.
 - `Toolasha.Debug.alchemyMenu()` now also dumps each menu's ancestry, its owning label, its tile count and which selector was last clicked — enough to correct a wrong answer rather than guess at it.
 
