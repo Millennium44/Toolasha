@@ -38,6 +38,23 @@ import * as cleanupRegistry from '../utils/cleanup-registry.js';
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as overlayRows from '../utils/overlay-rows.js';
+import * as dropLuck from '../utils/drop-luck.js';
+import * as complexFft from '../utils/complex-fft.js';
+import * as combatDropModel from '../utils/combat-drop-model.js';
+import * as spawnExpectation from '../utils/spawn-expectation.js';
+import * as chestTally from '../utils/chest-tally.js';
+import * as floatingPanel from '../utils/floating-panel.js';
+import * as workerPool from '../utils/worker-pool.js';
+import * as evWorkerManager from '../utils/ev-worker-manager.js';
+import * as enhancementWorkerManager from '../utils/enhancement-worker-manager.js';
+import * as networthWorkerManager from '../utils/networth-worker-manager.js';
+import * as panelZIndex from '../utils/panel-z-index.js';
+import * as performanceMonitor from '../utils/performance-monitor.js';
+import * as gameLookups from '../utils/game-lookups.js';
+import * as itemNavigation from '../utils/item-navigation.js';
+import * as marketplaceTabs from '../utils/marketplace-tabs.js';
+import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
+import * as scrollBuffValues from '../utils/scroll-buff-values.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -80,6 +97,23 @@ toolashaRoot.Utils = {
     houseCostCalculator,
     enhancementCalculator,
     overlayRows,
+    dropLuck,
+    complexFft,
+    combatDropModel,
+    spawnExpectation,
+    chestTally,
+    floatingPanel,
+    workerPool,
+    evWorkerManager,
+    enhancementWorkerManager,
+    networthWorkerManager,
+    panelZIndex,
+    performanceMonitor,
+    gameLookups,
+    itemNavigation,
+    marketplaceTabs,
+    marketplaceAutofill,
+    scrollBuffValues,
 };
 
 console.log('[Toolasha] Utils library loaded');

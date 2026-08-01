@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Drop luck updates during a run, not only after it
+
+- It was computed once, on leaving combat, because that is when the battle panel it writes into appears. The overlay row therefore sat empty for a whole grind and then filled in at the end — the least useful moment. Everything it needs is already on the `new_battle` message, so it is now recomputed from the running loot total as you fight.
+- Throttled to once every thirty seconds, and deferred off the WebSocket handler. The transform costs around a tenth of a second, battles can be seconds apart, and a message handler is the worst place to spend that — it delays every other feature listening to the same message.
+- The other rows were already live. Revenue, Experience/hr and Deaths/hr are rebuilt on every `new_battle`, and Treasure on every chest; the earlier note saying they needed a finished run was wrong.
+
+### Fixed: bundles were carrying private copies of shared utilities
+
+The combat bundle was 2,648 bytes under its 2 MB ceiling and about to break the build.
+
+- The released script is six bundles, and any `src/utils` module not declared shared in `rollup.config.js` is **copied into every bundle that imports it**. Seventeen were undeclared, including all the drop-luck maths — 85 KB of source duplicated across bundles for no reason.
+- All seventeen are now shared. Verified against the built files: the combat bundle references `Toolasha.Utils.*` and contains no copy of `sessionLuck`, `fftInPlace` or `buildCombatSession`, each of which now exists exactly once, in the utils bundle.
+- **Combat headroom went from 2,648 bytes to 67,403.** Every other bundle shrank too — actions by 18 KB, market by 51 KB, ui by 36 KB.
+- This was the same class of mistake as the overlay registry bug: a module that looks shared because it sits in `src/utils/` is not shared unless the build is told. The rule is now written down in `rollup.config.js` beside the list.
+
 ### Five more overlay rows, from calculators Toolasha already had
 
 The overlay had two rows and both needed something to have happened first, so a fresh install showed an empty box. These read figures the codebase already computes.
