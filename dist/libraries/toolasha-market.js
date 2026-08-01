@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.87.0
+ * Version: 2.88.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -8365,6 +8365,158 @@ self.onmessage = function (e) {
     const estimatedListingAge = new EstimatedListingAge();
 
     /**
+     * Listing markers
+     *
+     * A registry letting other scripts put their own toggle against each row of
+     * Market History and of the live My Listings table.
+     *
+     * Deliberately ignorant of what a mark means. A listing might be part of a
+     * flip, a purchase to record against a guild ledger, something to come back to
+     * — the viewer needs a glyph, a state and a handler, and nothing else. That is
+     * what lets a marker whose meaning lives in a private script appear in a public
+     * one without the meaning coming with it.
+     *
+     * Pure registry: no DOM, so the decisions here are testable and the rendering
+     * stays where the rest of the table is built.
+     */
+
+    /**
+     * A marker's presentation for one listing.
+     * @typedef {Object} MarkerState
+     * @property {string} glyph - What to show
+     * @property {boolean} active - Whether this listing carries the mark
+     * @property {string} title - Hover text explaining what toggling would do
+     */
+
+    /**
+     * Validate a marker before it reaches the table, so a malformed one is refused
+     * at registration rather than throwing once per row.
+     * @param {Object} marker - { stateFor, onToggle }
+     * @returns {string|null} What is wrong, or null when it is usable
+     */
+    function markerProblem(marker) {
+        if (!marker || typeof marker !== 'object') return 'marker must be an object';
+        if (typeof marker.stateFor !== 'function') return 'marker needs a stateFor(listing) function';
+        if (typeof marker.onToggle !== 'function') return 'marker needs an onToggle(listing) function';
+        return null;
+    }
+
+    /**
+     * Ask a marker how a listing should look.
+     *
+     * A marker that throws is treated as having nothing to say about that row: one
+     * script's broken marker must not empty the market history table, which is the
+     * user's own trading record and far more valuable than any annotation on it.
+     *
+     * @param {Object} marker - Registered marker
+     * @param {Object} listing - The listing row
+     * @param {Function} [onError] - Called with (name, error)
+     * @param {Object} [context] - Where the row is being drawn, e.g.
+     *   { surface: 'history' } or { surface: 'myListings' }. A finished trade and a
+     *   working order are different things to mark, and a marker that cannot tell
+     *   them apart has to treat them the same
+     * @returns {MarkerState|null} null when the marker declines this row
+     */
+    function markerStateFor(marker, listing, onError, context) {
+        try {
+            const state = marker.stateFor(listing, context);
+            if (!state) return null;
+            return {
+                glyph: String(state.glyph ?? '★'),
+                active: !!state.active,
+                title: String(state.title ?? ''),
+                color: state.color ? String(state.color) : null,
+            };
+        } catch (error) {
+            onError?.(marker.name, error);
+            return null;
+        }
+    }
+
+    /**
+     * The markers registered against Market History rows.
+     */
+    class ListingMarkers {
+        constructor() {
+            this.markers = new Map();
+            this.listeners = new Set();
+        }
+
+        /**
+         * Add a column of toggles to Market History.
+         *
+         *     const remove = Toolasha.Market.listingMarkers.register('flip-finder', {
+         *         stateFor: (listing) => ({
+         *             glyph: '★',
+         *             active: isFlip(listing),
+         *             title: 'Count this listing as a flip',
+         *         }),
+         *         onToggle: (listing) => toggleFlip(listing),
+         *     });
+         *
+         * Both functions are also handed a context object naming the surface the
+         * row is on — `history` for Market History, `myListings` for the live
+         * listings table — so a marker can offer different things in each.
+         *
+         * @param {string} name - Identifies the caller, and reports its errors
+         * @param {Object} marker - { stateFor(listing, context), onToggle(listing, context) }
+         * @returns {Function} Removes the marker
+         */
+        register(name, marker) {
+            const problem = markerProblem(marker);
+            if (problem) throw new TypeError(`listingMarkers.register("${name}"): ${problem}`);
+
+            const id = String(name || 'anonymous');
+            this.markers.set(id, { ...marker, name: id });
+            this.notify();
+            return () => {
+                this.markers.delete(id);
+                this.notify();
+            };
+        }
+
+        /**
+         * @param {string} name - The name it was registered under
+         * @returns {boolean} Whether anything was removed
+         */
+        unregister(name) {
+            const removed = this.markers.delete(String(name));
+            if (removed) this.notify();
+            return removed;
+        }
+
+        /** @returns {Array<Object>} Registered markers, in registration order */
+        all() {
+            return [...this.markers.values()];
+        }
+
+        /**
+         * Be told when markers change, so an open table can redraw. A marker
+         * registered after the table was built would otherwise not appear until it
+         * was next opened.
+         * @param {Function} listener - Called with no arguments
+         * @returns {Function} Stops listening
+         */
+        onChange(listener) {
+            this.listeners.add(listener);
+            return () => this.listeners.delete(listener);
+        }
+
+        /** @private */
+        notify() {
+            for (const listener of this.listeners) {
+                try {
+                    listener();
+                } catch (error) {
+                    console.error('[ListingMarkers] Change listener failed:', error);
+                }
+            }
+        }
+    }
+
+    const listingMarkers = new ListingMarkers();
+
+    /**
      * Market Listing Price Display Module
      *
      * Shows pricing information on individual market listings
@@ -8373,6 +8525,9 @@ self.onmessage = function (e) {
      * Ported from Ranged Way Idle's showListingInfo feature
      */
 
+
+    /** Rows here are live orders, most of them still working. Markers are told so. */
+    const MY_LISTINGS_SURFACE = { surface: 'myListings' };
 
     /**
      * Create a styled table cell for the listings table.
@@ -8444,6 +8599,20 @@ self.onmessage = function (e) {
 
             this.setupWebSocketListeners();
             this.setupObserver();
+
+            // A companion script that registers its marker after this table was
+            // built would otherwise not appear in it until the table happened to be
+            // rebuilt, which looks like the marker simply not working
+            this.unsubscribeMarkers = listingMarkers.onChange(() => {
+                this.clearDisplays();
+                document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach((table) => {
+                    this.scheduleTableRefresh(table);
+                });
+            });
+            this.cleanupRegistry.registerCleanup(() => {
+                this.unsubscribeMarkers?.();
+                this.unsubscribeMarkers = null;
+            });
         }
 
         /**
@@ -8671,6 +8840,8 @@ self.onmessage = function (e) {
             // Clear any existing price displays from this table before re-rendering
             tableNode.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
             tableNode.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
+            tableNode.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
+            tableNode.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
 
             // Wait until row count matches listing count
             const tbody = tableNode.querySelector('tbody');
@@ -8715,6 +8886,10 @@ self.onmessage = function (e) {
 
             // Add price displays to each row
             this.addPriceDisplays(tbody, priceCache, ownListingIds);
+
+            // Markers go last, appended past the final column, so the index
+            // arithmetic the price cells depend on is untouched by them
+            this.addListingMarkers(tableNode, tbody);
 
             // Check if we should mark as fully processed
             let fullyProcessed = true;
@@ -9557,6 +9732,108 @@ self.onmessage = function (e) {
         }
 
         /**
+         * Put other scripts' markers against each of your live listings.
+         *
+         * Market History can only offer a mark on a listing that has finished,
+         * because adopting one still working would take the fills so far and stop
+         * watching. This is the other half: an order that is still running is
+         * exactly the one worth marking ahead of time, so whatever it fills is
+         * counted as it happens rather than reconstructed afterwards.
+         *
+         * Appended past the last column rather than inserted among them — the price
+         * cells are placed by index arithmetic, and a column inserted into the
+         * middle of that would silently misalign them.
+         *
+         * No setting guards this. Nothing appears unless a script has registered a
+         * marker, so a switch would only ever be turned on by someone who had
+         * already installed the thing that draws it.
+         *
+         * @param {HTMLElement} tableNode - The listings table
+         * @param {HTMLElement} tbody - Its body
+         */
+        addListingMarkers(tableNode, tbody) {
+            const markers = listingMarkers.all();
+            if (!markers.length) return;
+
+            const thead = tableNode.querySelector('thead tr');
+            if (thead && !thead.querySelector('.mwi-listing-marker-header')) {
+                for (const _marker of markers) {
+                    const th = document.createElement('th');
+                    th.classList.add('mwi-listing-marker-header');
+                    // Unlabelled on purpose: the meaning belongs to whichever script
+                    // registered it, and this table has no business naming it
+                    th.textContent = '';
+                    thead.appendChild(th);
+                }
+            }
+
+            for (const row of tbody.querySelectorAll('tr')) {
+                if (row.querySelector('.mwi-listing-marker-cell')) continue;
+                const listing = this.allListings[row.dataset.listingId];
+                for (const marker of markers) {
+                    const cell = document.createElement('td');
+                    cell.classList.add('mwi-listing-marker-cell');
+                    cell.dataset.markerName = marker.name;
+                    cell.style.cssText = 'padding: 4px 4px; text-align: center;';
+                    // A row that could not be matched to a listing gets an empty
+                    // cell rather than none, so the columns still line up
+                    if (listing) this.fillMarkerCell(cell, marker, listing, tableNode);
+                    row.appendChild(cell);
+                }
+            }
+        }
+
+        /**
+         * Draw one marker's toggle for one listing.
+         * @param {HTMLElement} cell - The cell to fill
+         * @param {Object} marker - Registered marker
+         * @param {Object} listing - The listing this row shows
+         * @param {HTMLElement} tableNode - The table, for redrawing after a toggle
+         */
+        fillMarkerCell(cell, marker, listing, tableNode) {
+            cell.textContent = '';
+            const state = markerStateFor(
+                marker,
+                listing,
+                (name, error) => console.error(`[ListingPriceDisplay] Listing marker "${name}" failed:`, error),
+                MY_LISTINGS_SURFACE
+            );
+            if (!state) return;
+
+            const button = document.createElement('button');
+            button.textContent = state.glyph;
+            button.title = state.title;
+            button.style.cssText =
+                'background:none; border:none; cursor:pointer; font-size:14px; line-height:1; ' +
+                `padding:2px 4px; color:${state.active ? state.color || '#ffc866' : '#555'};`;
+            button.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                try {
+                    await marker.onToggle(listing, MY_LISTINGS_SURFACE);
+                } catch (error) {
+                    console.error(`[ListingPriceDisplay] Listing marker "${marker.name}" toggle failed:`, error);
+                }
+                // Marking one listing can change how others read — a decision is
+                // about the item, not the row — so every marker cell is redrawn
+                this.refreshMarkerCells(tableNode);
+            });
+            cell.appendChild(button);
+        }
+
+        /**
+         * Redraw every marker toggle in the table from current state.
+         * @param {HTMLElement} tableNode - The listings table
+         */
+        refreshMarkerCells(tableNode) {
+            const byName = new Map(listingMarkers.all().map((marker) => [marker.name, marker]));
+            for (const cell of tableNode.querySelectorAll('.mwi-listing-marker-cell')) {
+                const marker = byName.get(cell.dataset.markerName);
+                const listing = this.allListings[cell.parentElement?.dataset.listingId];
+                if (marker && listing) this.fillMarkerCell(cell, marker, listing, tableNode);
+            }
+        }
+
+        /**
          * Clear all injected displays
          */
         clearDisplays() {
@@ -9565,6 +9842,8 @@ self.onmessage = function (e) {
             });
             document.querySelectorAll('.mwi-listing-price-header').forEach((el) => el.remove());
             document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
+            document.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
+            document.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
             for (const colKey of this.sortHeaders.keys()) {
                 this._updateHeaderIndicator(colKey, null);
             }
@@ -10186,6 +10465,166 @@ self.onmessage = function (e) {
     const marketOrderTotals = new MarketOrderTotals();
 
     /**
+     * Marketplace Custom Tabs Utility
+     * Provides shared functionality for creating and managing custom marketplace tabs
+     * Used by missing materials features (actions, houses, etc.)
+     */
+
+
+    /**
+     * Create a custom material tab for the marketplace
+     * @param {Object} material - Material data object
+     * @param {string} material.itemHrid - Item HRID
+     * @param {string} material.itemName - Display name for the item
+     * @param {number} material.missing - Amount missing (0 if sufficient)
+     * @param {number} [material.queued=0] - Amount reserved by queue
+     * @param {boolean} material.isTradeable - Whether item can be traded
+     * @param {HTMLElement} referenceTab - Tab element to clone structure from
+     * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
+     * @returns {HTMLElement} Created tab element
+     */
+    function createMaterialTab(material, referenceTab, onClickCallback) {
+        // Clone reference tab structure
+        const tab = referenceTab.cloneNode(true);
+
+        // Mark as custom tab for later identification
+        tab.setAttribute('data-mwi-custom-tab', 'true');
+        tab.setAttribute('data-item-hrid', material.itemHrid);
+        tab.setAttribute('data-missing-quantity', material.missing.toString());
+
+        // Color coding:
+        // - Red: Missing materials (missing > 0)
+        // - Green: Sufficient materials (missing = 0)
+        // - Gray: Not tradeable
+        let statusColor;
+        let statusText;
+
+        if (material.missing > 0) {
+            statusColor = '#ef4444'; // Red - missing materials
+            // Show queued amount if any materials are reserved by queue
+            const queuedText = material.queued > 0 ? ` (${formatters_js.formatWithSeparator(material.queued)} Q'd)` : '';
+            statusText = `Missing: ${formatters_js.formatWithSeparator(material.missing)}${queuedText}`;
+        } else {
+            statusColor = '#4ade80'; // Green - sufficient materials
+            statusText = `Sufficient (${formatters_js.formatWithSeparator(material.required)})`;
+        }
+
+        // Update text content
+        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
+        if (badgeSpan) {
+            // Title case: capitalize first letter of each word
+            const titleCaseName = material.itemName
+                .split(' ')
+                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+
+            badgeSpan.innerHTML = `
+            <div style="text-align: center;">
+                <div>${titleCaseName}</div>
+                <div style="font-size: 0.75em; color: ${statusColor};">
+                    ${statusText}
+                </div>
+            </div>
+        `;
+        }
+
+        // Remove selected state
+        tab.classList.remove('Mui-selected');
+        tab.setAttribute('aria-selected', 'false');
+        tab.setAttribute('tabindex', '-1');
+
+        // Add click handler
+        tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Call the provided callback
+            if (onClickCallback) {
+                onClickCallback(e, material);
+            }
+        });
+
+        return tab;
+    }
+
+    /**
+     * Remove all custom material tabs from the marketplace
+     */
+    function removeMaterialTabs() {
+        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
+        customTabs.forEach((tab) => tab.remove());
+    }
+
+    /**
+     * Setup marketplace cleanup observer
+     * Watches for marketplace panel removal and calls cleanup callback
+     * @param {Function} onCleanup - Callback when marketplace closes, receives no args
+     * @param {Array} tabsArray - Array reference to track tabs (will be checked for length)
+     * @returns {Function} Unregister function to stop observing
+     */
+    function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
+        let pollInterval = null;
+
+        function poll() {
+            if (!tabsArray || tabsArray.length === 0) return;
+
+            // If custom tabs were removed from DOM, clean up
+            const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
+            if (!hasCustomTabsInDOM) {
+                if (onCleanup) onCleanup();
+                return;
+            }
+
+            // If marketplace panel is hidden (navigated away), clean up
+            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
+            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
+            if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
+                if (onCleanup) onCleanup();
+            }
+        }
+
+        pollInterval = setInterval(poll, 1000);
+
+        return () => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        };
+    }
+
+    /**
+     * Get game object via React fiber
+     * @returns {Object|null} Game component instance
+     */
+    function getGameObject() {
+        const rootEl = document.getElementById('root');
+        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+        if (!rootFiber) return null;
+
+        function find(fiber) {
+            if (!fiber) return null;
+            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
+            return find(fiber.child) || find(fiber.sibling);
+        }
+
+        return find(rootFiber);
+    }
+
+    /**
+     * Navigate to marketplace for a specific item
+     * @param {string} itemHrid - Item HRID to navigate to
+     * @param {number} enhancementLevel - Enhancement level (default 0)
+     */
+    function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
+        const game = getGameObject();
+        if (game?.handleGoToMarketplace) {
+            game.handleGoToMarketplace(itemHrid, enhancementLevel);
+        }
+        // Silently fail if game API unavailable - feature still provides value without auto-navigation
+    }
+
+    /**
      * Market History Viewer Module
      *
      * Displays a comprehensive table of all market listings with:
@@ -10197,10 +10636,14 @@ self.onmessage = function (e) {
      */
 
 
+    /** Rows here are finished trades, not working orders. Markers are told so. */
+    const HISTORY_SURFACE = { surface: 'history' };
+
     class MarketHistoryViewer {
         constructor() {
             this.isInitialized = false;
             this.modal = null;
+            this.unsubscribeMarkers = null;
             this.listings = [];
             this.filteredListings = [];
             this.currentPage = 1;
@@ -10266,6 +10709,14 @@ self.onmessage = function (e) {
 
             // Load saved filters
             await this.loadFilters();
+
+            // A marker registered after this table was built would otherwise not
+            // appear until it was next opened — and the scripts that register them
+            // load after this one does, so that is the ordinary case rather than
+            // the exception
+            this.unsubscribeMarkers = listingMarkers.onChange(() => {
+                if (this.modal && this.modal.style.display !== 'none') this.renderTable();
+            });
 
             // Add marketplace tab
             this.addMarketplaceTab();
@@ -11368,6 +11819,7 @@ self.onmessage = function (e) {
                 { key: 'orderQuantity', label: 'Quantity' },
                 { key: 'filledQuantity', label: 'Filled' },
                 { key: 'total', label: 'Total' },
+                ...listingMarkers.all().map((marker) => ({ key: `_marker_${marker.name}`, label: '' })),
                 { key: '_delete', label: '' },
             ];
 
@@ -11518,6 +11970,18 @@ self.onmessage = function (e) {
                     textSpan.textContent = this.getItemName(listing.itemHrid);
                     itemCell.appendChild(textSpan);
 
+                    // Clicking the item opens its marketplace page. The row already
+                    // names an item and an enhancement level, which is everything
+                    // the marketplace needs, so retyping it into the search box was
+                    // only ever busywork. The modal closes first — navigating behind
+                    // an overlay would look like nothing happened.
+                    itemCell.style.cursor = 'pointer';
+                    itemCell.title = 'Open this item in the marketplace';
+                    itemCell.addEventListener('click', () => {
+                        this.closeModal();
+                        navigateToMarketplace(listing.itemHrid, listing.enhancementLevel || 0);
+                    });
+
                     row.appendChild(itemCell);
 
                     // Enhancement
@@ -11577,6 +12041,38 @@ self.onmessage = function (e) {
                     totalCell.textContent = this.formatNumber(totalValue);
                     totalCell.style.padding = '4px 10px';
                     row.appendChild(totalCell);
+
+                    // Whatever other scripts want to mark this listing with. The
+                    // viewer supplies a cell and a click; the meaning is theirs.
+                    for (const marker of listingMarkers.all()) {
+                        const cell = document.createElement('td');
+                        cell.style.cssText = 'padding: 4px 4px; text-align: center;';
+                        const state = markerStateFor(
+                            marker,
+                            listing,
+                            (name, error) => console.error(`[MarketHistory] Listing marker "${name}" failed:`, error),
+                            HISTORY_SURFACE
+                        );
+                        if (state) {
+                            const button = document.createElement('button');
+                            button.textContent = state.glyph;
+                            button.title = state.title;
+                            button.style.cssText =
+                                'background:none; border:none; cursor:pointer; font-size:14px; line-height:1; ' +
+                                `padding:2px 4px; color:${state.active ? state.color || '#ffc866' : '#555'};`;
+                            button.addEventListener('click', async (e) => {
+                                e.stopPropagation();
+                                try {
+                                    await marker.onToggle(listing, HISTORY_SURFACE);
+                                } catch (error) {
+                                    console.error(`[MarketHistory] Listing marker "${marker.name}" toggle failed:`, error);
+                                }
+                                this.renderTable();
+                            });
+                            cell.appendChild(button);
+                        }
+                        row.appendChild(cell);
+                    }
 
                     // Delete button
                     const deleteCell = document.createElement('td');
@@ -12990,6 +13486,11 @@ self.onmessage = function (e) {
          * Disable the feature
          */
         disable() {
+            if (this.unsubscribeMarkers) {
+                this.unsubscribeMarkers();
+                this.unsubscribeMarkers = null;
+            }
+
             // Disconnect the marketplace-tab watcher and remove the injected tab
             // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
             if (this.tabCleanupObserver) {
@@ -13036,166 +13537,6 @@ self.onmessage = function (e) {
     }
 
     const marketHistoryViewer = new MarketHistoryViewer();
-
-    /**
-     * Marketplace Custom Tabs Utility
-     * Provides shared functionality for creating and managing custom marketplace tabs
-     * Used by missing materials features (actions, houses, etc.)
-     */
-
-
-    /**
-     * Create a custom material tab for the marketplace
-     * @param {Object} material - Material data object
-     * @param {string} material.itemHrid - Item HRID
-     * @param {string} material.itemName - Display name for the item
-     * @param {number} material.missing - Amount missing (0 if sufficient)
-     * @param {number} [material.queued=0] - Amount reserved by queue
-     * @param {boolean} material.isTradeable - Whether item can be traded
-     * @param {HTMLElement} referenceTab - Tab element to clone structure from
-     * @param {Function} onClickCallback - Callback when tab is clicked, receives (e, material)
-     * @returns {HTMLElement} Created tab element
-     */
-    function createMaterialTab(material, referenceTab, onClickCallback) {
-        // Clone reference tab structure
-        const tab = referenceTab.cloneNode(true);
-
-        // Mark as custom tab for later identification
-        tab.setAttribute('data-mwi-custom-tab', 'true');
-        tab.setAttribute('data-item-hrid', material.itemHrid);
-        tab.setAttribute('data-missing-quantity', material.missing.toString());
-
-        // Color coding:
-        // - Red: Missing materials (missing > 0)
-        // - Green: Sufficient materials (missing = 0)
-        // - Gray: Not tradeable
-        let statusColor;
-        let statusText;
-
-        if (material.missing > 0) {
-            statusColor = '#ef4444'; // Red - missing materials
-            // Show queued amount if any materials are reserved by queue
-            const queuedText = material.queued > 0 ? ` (${formatters_js.formatWithSeparator(material.queued)} Q'd)` : '';
-            statusText = `Missing: ${formatters_js.formatWithSeparator(material.missing)}${queuedText}`;
-        } else {
-            statusColor = '#4ade80'; // Green - sufficient materials
-            statusText = `Sufficient (${formatters_js.formatWithSeparator(material.required)})`;
-        }
-
-        // Update text content
-        const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
-        if (badgeSpan) {
-            // Title case: capitalize first letter of each word
-            const titleCaseName = material.itemName
-                .split(' ')
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                .join(' ');
-
-            badgeSpan.innerHTML = `
-            <div style="text-align: center;">
-                <div>${titleCaseName}</div>
-                <div style="font-size: 0.75em; color: ${statusColor};">
-                    ${statusText}
-                </div>
-            </div>
-        `;
-        }
-
-        // Remove selected state
-        tab.classList.remove('Mui-selected');
-        tab.setAttribute('aria-selected', 'false');
-        tab.setAttribute('tabindex', '-1');
-
-        // Add click handler
-        tab.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Call the provided callback
-            if (onClickCallback) {
-                onClickCallback(e, material);
-            }
-        });
-
-        return tab;
-    }
-
-    /**
-     * Remove all custom material tabs from the marketplace
-     */
-    function removeMaterialTabs() {
-        const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
-        customTabs.forEach((tab) => tab.remove());
-    }
-
-    /**
-     * Setup marketplace cleanup observer
-     * Watches for marketplace panel removal and calls cleanup callback
-     * @param {Function} onCleanup - Callback when marketplace closes, receives no args
-     * @param {Array} tabsArray - Array reference to track tabs (will be checked for length)
-     * @returns {Function} Unregister function to stop observing
-     */
-    function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
-        let pollInterval = null;
-
-        function poll() {
-            if (!tabsArray || tabsArray.length === 0) return;
-
-            // If custom tabs were removed from DOM, clean up
-            const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
-            if (!hasCustomTabsInDOM) {
-                if (onCleanup) onCleanup();
-                return;
-            }
-
-            // If marketplace panel is hidden (navigated away), clean up
-            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
-            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
-            if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
-                if (onCleanup) onCleanup();
-            }
-        }
-
-        pollInterval = setInterval(poll, 1000);
-
-        return () => {
-            if (pollInterval) {
-                clearInterval(pollInterval);
-                pollInterval = null;
-            }
-        };
-    }
-
-    /**
-     * Get game object via React fiber
-     * @returns {Object|null} Game component instance
-     */
-    function getGameObject() {
-        const rootEl = document.getElementById('root');
-        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-        if (!rootFiber) return null;
-
-        function find(fiber) {
-            if (!fiber) return null;
-            if (fiber.stateNode?.handleGoToMarketplace) return fiber.stateNode;
-            return find(fiber.child) || find(fiber.sibling);
-        }
-
-        return find(rootFiber);
-    }
-
-    /**
-     * Navigate to marketplace for a specific item
-     * @param {string} itemHrid - Item HRID to navigate to
-     * @param {number} enhancementLevel - Enhancement level (default 0)
-     */
-    function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
-        const game = getGameObject();
-        if (game?.handleGoToMarketplace) {
-            game.handleGoToMarketplace(itemHrid, enhancementLevel);
-        }
-        // Silently fail if game API unavailable - feature still provides value without auto-navigation
-    }
 
     /**
      * Listing Refresh Navigator
@@ -13326,7 +13667,7 @@ self.onmessage = function (e) {
      */
 
 
-    const STORAGE_KEY = 'inventoryTabs_config';
+    const STORAGE_KEY$1 = 'inventoryTabs_config';
     const STORE = 'settings';
     const CONFIG_VERSION = 1;
 
@@ -13353,7 +13694,7 @@ self.onmessage = function (e) {
      * @returns {string}
      */
     function getStorageKey$2(characterId) {
-        return `${characterId}_${STORAGE_KEY}`;
+        return `${characterId}_${STORAGE_KEY$1}`;
     }
 
     /**
@@ -14742,6 +15083,60 @@ self.onmessage = function (e) {
     marketplaceShortcuts.initialize();
 
     /**
+     * Bulk Sell holds
+     *
+     * A claim on inventory that keeps items out of the bulk sell queue.
+     *
+     * Deliberately ignorant of why anything is held. A flip waiting to be relisted,
+     * a crafting reserve, something promised to a guildmate — the assistant only
+     * needs the keys, so no reason has to be modelled here, and a caller with a
+     * reason of its own need not live in this repository to use it.
+     *
+     * Kept apart from the assistant itself because that module reaches for the DOM
+     * as it loads, which puts it out of reach of a test.
+     */
+
+    /**
+     * The key an inventory stack is held by: bare hrid for an unenhanced item,
+     * `hrid+level` once it carries an enhancement. The same convention the custom
+     * inventory tabs use, so a hold list and a tab list can be written alike.
+     * @param {string} itemHrid - Item
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {string}
+     */
+    function holdKey(itemHrid, enhancementLevel = 0) {
+        const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
+        return level > 0 ? `${itemHrid}+${level}` : String(itemHrid);
+    }
+
+    /**
+     * Gather every key the registered providers want held back.
+     *
+     * A provider that throws is skipped rather than allowed to take the sell queue
+     * with it. Failing to hold something back is bad; being unable to sell at all
+     * because someone else's hold list is broken is worse — so the error is
+     * reported and those items are offered for sale as they were before the
+     * provider existed.
+     *
+     * @param {Map<string, Function>} providers - name -> () => iterable of keys
+     * @param {Function} [onError] - Called with (name, error)
+     * @returns {Set<string>} Keys to keep out of the sell queue
+     */
+    function collectHeldKeys(providers, onError) {
+        const held = new Set();
+        for (const [name, provide] of providers) {
+            try {
+                for (const key of provide() || []) {
+                    if (typeof key === 'string' && key) held.add(key);
+                }
+            } catch (error) {
+                onError?.(name, error);
+            }
+        }
+        return held;
+    }
+
+    /**
      * Bulk Sell Assistant
      *
      * Sells the whole inventory through the market one item at a time with one
@@ -14761,6 +15156,7 @@ self.onmessage = function (e) {
 
     const BUTTON_ID = 'mwi-bulk-sell-btn';
     const CHIP_ID = 'mwi-bulk-sell-chip';
+    const PANEL_POSITION_KEY = 'bulkSellPanelPosition';
     const MS_PER_DAY = 86400000;
 
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -14782,6 +15178,15 @@ self.onmessage = function (e) {
             this.advanceTimeout = null;
             this.modalPoll = null;
             this.selectedTabId = 'all';
+            this.panelPosition = null;
+            /**
+             * Other scripts' claims on inventory: name -> () => iterable of hold
+             * keys. Kept deliberately ignorant of why anything is held — a flip
+             * waiting to be relisted, a crafting reserve, a gift — so nothing about
+             * the reason has to live in here.
+             */
+            this.holdProviders = new Map();
+            this.heldCount = 0;
             this._hasTabs = false;
             this._tabPrefLoaded = false;
             this.toggleBtn = null;
@@ -14794,10 +15199,53 @@ self.onmessage = function (e) {
             return charId ? `${charId}_bulkSell_lastTab` : null;
         }
 
-        initialize() {
+        /**
+         * Register a claim on inventory, so those items are skipped by the sell
+         * queue. The assistant never learns why — a caller supplies keys and takes
+         * them away again when the claim ends.
+         *
+         *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
+         *         'flip-finder',
+         *         () => ['/items/cheese', '/items/cheese_sword+3']
+         *     );
+         *
+         * @param {string} name - Identifies the caller, and reports its errors
+         * @param {Function} provide - Returns an iterable of hold keys, called
+         *   afresh each time a queue is built so it can change between runs
+         * @returns {Function} Removes the provider
+         */
+        addHoldProvider(name, provide) {
+            if (typeof provide !== 'function') {
+                throw new TypeError('addHoldProvider needs a function returning the keys to hold');
+            }
+            const id = String(name || 'anonymous');
+            this.holdProviders.set(id, provide);
+            return () => this.holdProviders.delete(id);
+        }
+
+        /**
+         * @param {string} name - The name it was registered under
+         * @returns {boolean} Whether anything was removed
+         */
+        removeHoldProvider(name) {
+            return this.holdProviders.delete(String(name));
+        }
+
+        /** The keys currently claimed, for a caller checking its own work */
+        heldKeys() {
+            return [...collectHeldKeys(this.holdProviders)];
+        }
+
+        async initialize() {
             if (this.isInitialized) return;
             if (!config.getSetting('market_bulkSellAssistant')) return;
             this.isInitialized = true;
+
+            try {
+                this.panelPosition = await storage.get(PANEL_POSITION_KEY, 'settings', null);
+            } catch (error) {
+                console.error('[BulkSellAssistant] Loading panel position failed:', error);
+            }
 
             this.bookHandler = (data) => this._onOrderBook(data);
             dataManager.on('market_item_order_books_updated', this.bookHandler);
@@ -14865,12 +15313,24 @@ self.onmessage = function (e) {
 
             const button = referenceTab.cloneNode(true);
             button.id = BUTTON_ID;
-            button.title = 'Show / hide the Bulk Sell panel';
+            button.title =
+                'Bulk Sell \u2014 clears the inventory through the market one item at a time.\n\n' +
+                'Start builds a queue of everything tradable, then for each item opens its order book, ' +
+                'decides between insta-selling and posting a listing, and opens the matching modal with the ' +
+                'quantity already filled in. After that every sale is one click on the game\u2019s own confirm ' +
+                'button, always in the same place. It never confirms a sale for you.\n\n' +
+                'Works best pointed at a Toolasha inventory tab rather than the whole inventory: put the things ' +
+                'you actually want gone in one tab and pick it in the panel, and nothing outside it can be sold ' +
+                'by a mis-click. Items you also filed in a tab above the selected one are kept, not sold.\n\n' +
+                'Click to show or hide the panel. Hiding it never stops a run.';
             const badge = button.querySelector('[class*="TabsComponent_badge"]');
+            // The ⧉ marks it as opening a panel rather than switching the view.
+            // Borrowing the game's tab styling made it read as a fifth place to
+            // navigate to, and clicking it twice looked broken.
             if (badge) {
-                badge.innerHTML = '<div style="text-align: center;"><div>Bulk Sell</div></div>';
+                badge.innerHTML = '<div style="text-align: center;"><div>\u29c9 Bulk Sell</div></div>';
             } else {
-                button.textContent = 'Bulk Sell';
+                button.textContent = '\u29c9 Bulk Sell';
             }
             button.classList.remove('Mui-selected');
             button.setAttribute('aria-selected', 'false');
@@ -14907,10 +15367,15 @@ self.onmessage = function (e) {
             this._syncButton();
         }
 
-        /** Underline the tab while the panel is open, like an active tab */
+        /**
+         * Show whether the panel is up: dimmed when closed, lit when open. An
+         * underline alone is two pixels at the bottom edge of a tab that looks like
+         * every other tab, which is not a state most people will notice.
+         */
         _syncButton() {
             if (!this.toggleBtn) return;
             this.toggleBtn.style.boxShadow = this.panelVisible ? 'inset 0 -2px 0 0 #4a9eff' : '';
+            this.toggleBtn.style.opacity = this.panelVisible ? '1' : '0.6';
         }
 
         _removeButton() {
@@ -14925,6 +15390,61 @@ self.onmessage = function (e) {
                 this.chip.remove();
                 this.chip = null;
             }
+        }
+
+        /**
+         * Let the panel be dragged anywhere, and remember where it was left.
+         *
+         * It is fixed over the game and defaults to the top-right, which is where
+         * the game puts its own gold counter and Bulk Sell controls — on a narrow
+         * window it lands on top of them. Rather than guess a position that suits
+         * every layout, it moves.
+         *
+         * Dragging starts only on the panel's own background, so the select and the
+         * buttons keep working: a drag beginning on a control would swallow the
+         * click that was meant for it.
+         *
+         * @param {HTMLElement} chip - The panel
+         */
+        _makeDraggable(chip) {
+            const applyPosition = (left, top) => {
+                // Kept on screen. A panel dragged off the edge cannot be dragged
+                // back, and the only way out would be reinstalling the script.
+                const maxLeft = Math.max(0, window.innerWidth - chip.offsetWidth);
+                const maxTop = Math.max(0, window.innerHeight - chip.offsetHeight);
+                chip.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
+                chip.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
+                chip.style.right = 'auto';
+            };
+
+            if (this.panelPosition) {
+                // Applied after layout so offsetWidth is real, or the clamp above
+                // would measure a panel that has not been sized yet
+                setTimeout(() => applyPosition(this.panelPosition.left, this.panelPosition.top), 0);
+            }
+
+            chip.style.cursor = 'move';
+            chip.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                if (e.target.closest('button, select, input')) return;
+                e.preventDefault();
+
+                const rect = chip.getBoundingClientRect();
+                const grabX = e.clientX - rect.left;
+                const grabY = e.clientY - rect.top;
+
+                const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    const final = chip.getBoundingClientRect();
+                    this.panelPosition = { left: final.left, top: final.top };
+                    storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
+                };
+
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
         }
 
         /**
@@ -14967,18 +15487,43 @@ self.onmessage = function (e) {
 
             const stopBtn = document.createElement('button');
             stopBtn.className = `${CHIP_ID}-stop`;
-            stopBtn.textContent = '✕';
+            // Spelled out rather than an ✕, now that there is a close button beside
+            // it. Two identical glyphs a few pixels apart, one abandoning a run and
+            // one only hiding the panel, is a mis-click waiting to happen.
+            stopBtn.textContent = 'Stop';
             stopBtn.title = 'Stop bulk selling';
             stopBtn.style.cssText =
                 'display:none; border:0; border-radius:5px; background:rgba(244,67,54,0.25); color:#ff8a80; ' +
                 'font-weight:700; font-size:12px; padding:3px 7px; cursor:pointer; font-family:inherit;';
             stopBtn.addEventListener('click', () => this._stop('Stopped'));
 
+            // Closing ends the run. The panel is the only thing showing what is
+            // being sold and how far through it is, so leaving a run going behind a
+            // closed panel would mean the next confirm click lands on a sale you
+            // can no longer see coming. Hiding it from the tab still leaves it
+            // running, because that is a different gesture with the panel's
+            // progress one click away.
+            const closeBtn = document.createElement('button');
+            closeBtn.className = `${CHIP_ID}-close`;
+            closeBtn.textContent = '\u2715';
+            closeBtn.title = 'Close the panel. This also stops a run in progress.';
+            closeBtn.style.cssText =
+                'border:0; border-radius:5px; background:transparent; color:#7d879c; font-size:12px; ' +
+                'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
+            closeBtn.addEventListener('click', () => {
+                if (this.state !== 'idle' && this.state !== 'done') this._stop('Stopped');
+                this._togglePanel();
+            });
+            closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
+            closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
+
             chip.appendChild(status);
             chip.appendChild(tabSel);
             chip.appendChild(mainBtn);
             chip.appendChild(stopBtn);
+            chip.appendChild(closeBtn);
 
+            this._makeDraggable(chip);
             document.body.appendChild(chip);
             this.chip = chip;
             this._render();
@@ -15110,19 +15655,30 @@ self.onmessage = function (e) {
             }
 
             const clientData = dataManager.getInitClientData();
+            const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+                console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
+            );
+            let held = 0;
             const items = (dataManager.characterItems || []).filter((item) => {
                 if (item.itemLocationHrid !== '/item_locations/inventory') return false;
                 if ((item.count || 0) <= 0) return false;
                 if (item.itemHrid === '/items/coin') return false;
                 if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
+                const key = holdKey(item.itemHrid, item.enhancementLevel);
+                // Held items are counted, not silently dropped: an item vanishing
+                // from the sell queue with no explanation is indistinguishable from
+                // a bug
+                if (heldKeys.has(key)) {
+                    held++;
+                    return false;
+                }
                 if (tabItems) {
-                    const level = item.enhancementLevel || 0;
-                    const key = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
                     if (!tabItems.has(key)) return false;
                     if (aboveItems.has(key)) return false;
                 }
                 return true;
             });
+            this.heldCount = held;
             // Most expensive stack first: cached market unit price (ask, else bid) × count
             this.queue = items
                 .map((item) => {
@@ -15144,13 +15700,17 @@ self.onmessage = function (e) {
                 );
 
             if (!this.queue.length) {
-                this.statusNote = tabItems ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';
+                this.statusNote = tabItems
+                    ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
+                    : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
                 this.state = 'idle';
                 this._render();
                 return;
             }
             this.index = 0;
-            this.statusNote = '';
+            // Say so rather than letting the count quietly differ from what is in
+            // the inventory
+            this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
             this._prepareCurrent();
         }
 
@@ -15470,6 +16030,1528 @@ self.onmessage = function (e) {
     }
 
     const bulkSellAssistant = new BulkSellAssistant();
+
+    /**
+     * Marketplace Badge Filter
+     *
+     * Quietens the Marketplace badge in the left sidebar so it only appears when a
+     * listing has actually finished.
+     *
+     * The game badges the sidebar the moment anything is collectable, which
+     * includes a buy order that has taken 30 of 200 units and is still working.
+     * That order is not waiting on you — collecting the 30 does nothing except stop
+     * the badge, and it will be back within the hour. A notification that fires on
+     * something you cannot act on teaches you to ignore the notification.
+     *
+     * "Finished" means nothing more will fill: the order filled completely, or it
+     * was cancelled and is holding a refund. Both are things you can close out. An
+     * order still working is not, and is what this hides.
+     *
+     * The badge inside the Marketplace panel — on the My Listings tab — is left
+     * alone deliberately. Once you are in the marketplace, knowing there is
+     * something to collect is useful; it is only the sidebar nag that isn't.
+     *
+     * Implemented as a stylesheet toggled by listing data rather than by clearing
+     * the badge's text. React owns that node and rewrites it on every update, so
+     * anything written into it would be overwritten within the second; a rule the
+     * game does not know about survives every re-render.
+     */
+
+
+    const STYLE_ID = 'mwi-marketplace-badge-filter';
+
+    /**
+     * Hides only the sidebar's Marketplace badge. Scoped through the nav item's own
+     * icon label rather than a position, so a reordered sidebar still matches, and
+     * excluding the ocean variant the way the other badge features do.
+     */
+    const CSS$1 = `
+    [class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) [class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"]) {
+        display: none !important;
+    }
+`;
+
+    /**
+     * Whether a listing is done and holding something for you.
+     *
+     * Exported for tests: the DOM half of this feature cannot be tested here, but
+     * the rule deciding when the badge is legitimate is the part worth pinning
+     * down.
+     *
+     * @param {Object} listing - A market listing from the server
+     * @returns {boolean} True when it has finished and has something unclaimed
+     */
+    function isFinishedWithSpoils(listing) {
+        if (!listing) return false;
+
+        const unclaimed =
+            Math.max(0, Number(listing.unclaimedItemCount) || 0) + Math.max(0, Number(listing.unclaimedCoinCount) || 0);
+        if (unclaimed <= 0) return false;
+
+        // A cancelled order is holding a refund and will never fill again, so it is
+        // as finished as a filled one
+        if (listing.status === '/market_listing_status/cancelled') return true;
+
+        const filled = Math.max(0, Number(listing.filledQuantity) || 0);
+        const ordered = Math.max(0, Number(listing.orderQuantity) || 0);
+        return ordered > 0 && filled >= ordered;
+    }
+
+    /**
+     * Whether any listing in the book warrants badging the sidebar.
+     * @param {Object} listings - Keyed by listing id
+     * @returns {boolean}
+     */
+    function anyFinished(listings) {
+        return Object.values(listings || {}).some(isFinishedWithSpoils);
+    }
+
+    class MarketplaceBadgeFilter {
+        constructor() {
+            this.listings = {};
+            this.hidden = false;
+            this.unregister = null;
+        }
+
+        initialize() {
+            if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
+
+            const initHandler = (data) => this.ingest(data?.myMarketListings);
+            const updateHandler = (data) => this.ingest(data?.endMarketListings);
+
+            dataManager.on('character_initialized', initHandler);
+            dataManager.on('market_listings_updated', updateHandler);
+            this.unregister = () => {
+                dataManager.off('character_initialized', initHandler);
+                dataManager.off('market_listings_updated', updateHandler);
+            };
+
+            // Nothing is known until the first payload arrives. Hiding straight away
+            // rather than waiting means a stale badge from before the script loaded
+            // does not sit there unexplained; the first update corrects it either way.
+            this.apply(false);
+        }
+
+        /**
+         * @param {Array<Object>} listings - Listings from the server
+         */
+        ingest(listings) {
+            if (!Array.isArray(listings)) return;
+            for (const listing of listings) {
+                if (!listing || listing.id == null) continue;
+                this.listings[listing.id] = listing;
+            }
+            this.apply(anyFinished(this.listings));
+        }
+
+        /**
+         * @param {boolean} show - Whether the badge is warranted
+         */
+        apply(show) {
+            if (show === !this.hidden) return;
+            this.hidden = !show;
+            if (this.hidden) dom.addStyles(CSS$1, STYLE_ID);
+            else dom.removeStyles(STYLE_ID);
+        }
+
+        disable() {
+            this.unregister?.();
+            this.unregister = null;
+            dom.removeStyles(STYLE_ID);
+            this.hidden = false;
+            this.listings = {};
+        }
+    }
+
+    const marketplaceBadgeFilter = new MarketplaceBadgeFilter();
+
+    /**
+     * Market Prices
+     *
+     * A price cache that remembers how much was resting at the top of each book,
+     * not just what it cost.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * The game's marketplace.json publishes a best ask and a best bid and nothing
+     * else — no size. That is enough to say what an item is worth and useless for
+     * saying whether you can trade it: a 40k spread with one unit at the ask is a
+     * curiosity, the same spread with eight hundred is a trade. The order books the
+     * game pushes when you open an item do carry size, so anything seen that way is
+     * kept with its quantities and outranks the snapshot.
+     *
+     * Pure: entries in, entries out. Storage and sockets live in the feature module.
+     */
+
+    /** Entries untouched for this long are dropped rather than kept forever */
+    const PRICE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+    /**
+     * The key one price is held under. An enhanced item is a different market from
+     * its plain form and never shares a price with it.
+     * @param {string} itemHrid - Item
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {string}
+     */
+    function priceKey(itemHrid, enhancementLevel = 0) {
+        return `${itemHrid}:${Math.max(0, Math.floor(Number(enhancementLevel) || 0))}`;
+    }
+
+    /**
+     * Read one side of an order book into a price and the size resting at it.
+     * @param {Array<Object>} orders - Orders, best first
+     * @returns {{price: number, quantity: number}} price is -1 when the side is empty
+     */
+    function topOfSide(orders) {
+        const list = (Array.isArray(orders) ? orders : []).filter(Boolean);
+        if (!list.length) return { price: -1, quantity: 0 };
+
+        const price = list[0].price;
+        const quantity = list
+            .filter((order) => order.price === price)
+            .reduce((sum, order) => sum + Math.max(0, Number(order.quantity) || 0), 0);
+        return { price, quantity };
+    }
+
+    /**
+     * Fold one order book into an entry.
+     * @param {Object|null} book - { asks, bids }
+     * @param {number} at - Timestamp (ms)
+     * @returns {Object} { ask, bid, askQty, bidQty, at }
+     */
+    function entryFromBook(book, at) {
+        const ask = topOfSide(book?.asks);
+        const bid = topOfSide(book?.bids);
+        return { ask: ask.price, bid: bid.price, askQty: ask.quantity, bidQty: bid.quantity, at };
+    }
+
+    /**
+     * Take a newer reading of one item, if it is in fact newer.
+     *
+     * The percentage move is kept against the reading it replaced, which is what a
+     * watchlist chip shows. Measured on ask plus bid rather than either alone: a
+     * book whose ask vanishes and returns would otherwise report a move of hundreds
+     * of percent with nothing having happened.
+     *
+     * @param {Object|undefined} existing - What is held now
+     * @param {Object} next - The new reading
+     * @returns {Object|null} The entry to store, or null when the reading is not newer
+     */
+    function foldPrice(existing, next) {
+        // A clock that has run backwards is more likely wrong than the data, so a
+        // stored reading from the future is replaced rather than trusted
+        if (existing && existing.at >= next.at && existing.at <= Date.now()) return null;
+
+        let rise = 0;
+        if (existing) {
+            const before = existing.ask + existing.bid;
+            const after = next.ask + next.bid;
+            if (before !== 0) rise = after / before - 1;
+        }
+
+        return { ...next, rise };
+    }
+
+    /**
+     * Prices the game does not quote but that are known anyway.
+     *
+     * Coins are worth a coin. A single cowbell is not traded — only bags of ten
+     * are — so its price is the bag's, divided, which is the figure any calculation
+     * about cowbells actually needs.
+     *
+     * @param {string} itemHrid - Item
+     * @param {Function} lookup - (key) => entry, for prices derived from another item
+     * @param {number} at - Timestamp
+     * @returns {Object|null}
+     */
+    function specialPrice(itemHrid, lookup, at) {
+        if (itemHrid === '/items/coin') return { ask: 1, bid: 1, askQty: 0, bidQty: 0, rise: 0, at };
+
+        if (itemHrid === '/items/cowbell') {
+            const bag = lookup(priceKey('/items/bag_of_10_cowbells'));
+            if (!bag) return null;
+            return { ...bag, ask: bag.ask / 10, bid: bag.bid / 10 };
+        }
+
+        return null;
+    }
+
+    /**
+     * Drop entries older than the cutoff.
+     * @param {Object} entries - Keyed entries
+     * @param {number} cutoff - Timestamp (ms); anything older goes
+     * @returns {Object} A new object
+     */
+    function pruneStale(entries, cutoff) {
+        return Object.fromEntries(Object.entries(entries || {}).filter(([, entry]) => entry?.at >= cutoff));
+    }
+
+    /**
+     * Market Price Store
+     *
+     * Holds the bid/ask/size cache and keeps it fed from the order books the game
+     * pushes as you browse.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * Two differences from the original worth naming. It listens through Toolasha's
+     * existing WebSocket hook rather than installing a second one — two scripts
+     * patching `MessageEvent.data` is how a page ends up with a message handler that
+     * silently drops half the traffic. And it stores through Toolasha's IndexedDB
+     * layer rather than localStorage, which is a few megabytes shared with the game
+     * itself and the thing the original had to keep defensively pruning.
+     */
+
+
+    const STORAGE_KEY = 'mooketPrices';
+    const SAVE_INTERVAL_MS = 60 * 1000;
+
+    class MarketPriceStore {
+        constructor() {
+            this.entries = {};
+            this.listeners = new Set();
+            this.bookHandler = null;
+            this.saveTimer = null;
+            this.dirty = false;
+            this.loaded = false;
+        }
+
+        async initialize() {
+            if (this.bookHandler) return;
+
+            try {
+                const stored = (await storage.getJSON(STORAGE_KEY, 'marketListings', {})) || {};
+                this.entries = pruneStale(stored, Date.now() - PRICE_MAX_AGE_MS);
+            } catch (error) {
+                console.error('[MooketPrices] Loading prices failed:', error);
+                this.entries = {};
+            }
+            this.loaded = true;
+
+            this.bookHandler = (data) => this.onOrderBooks(data);
+            dataManager.on('market_item_order_books_updated', this.bookHandler);
+
+            // Batched rather than written per book: opening an item pushes twenty
+            // enhancement levels at once, and a write each would be twenty writes
+            this.saveTimer = setInterval(() => this.flush(), SAVE_INTERVAL_MS);
+        }
+
+        cleanup() {
+            if (this.bookHandler) {
+                dataManager.off('market_item_order_books_updated', this.bookHandler);
+                this.bookHandler = null;
+            }
+            if (this.saveTimer) {
+                clearInterval(this.saveTimer);
+                this.saveTimer = null;
+            }
+            this.flush();
+            this.listeners.clear();
+        }
+
+        /**
+         * @param {Object} data - market_item_order_books_updated payload
+         */
+        onOrderBooks(data) {
+            const books = data?.marketItemOrderBooks;
+            const itemHrid = books?.itemHrid;
+            if (!itemHrid || !books.orderBooks) return;
+
+            const at = Date.now();
+            const levels = Array.isArray(books.orderBooks) ? books.orderBooks : Object.values(books.orderBooks);
+            const changed = [];
+
+            levels.forEach((book, enhancementLevel) => {
+                // A null level is an item that cannot be enhanced that far. The
+                // original crashed on these until it learned to skip them.
+                if (!book) return;
+
+                const key = priceKey(itemHrid, enhancementLevel);
+                const next = foldPrice(this.entries[key], entryFromBook(book, at));
+                if (!next) return;
+
+                this.entries[key] = next;
+                changed.push(key);
+            });
+
+            if (!changed.length) return;
+            this.dirty = true;
+            this.notify(changed);
+        }
+
+        /**
+         * Take prices from the periodic marketplace.json snapshot.
+         *
+         * It carries no sizes, so anything already seen in an order book is left
+         * alone — a price with depth behind it is worth more than a fresher one
+         * without, and overwriting would throw the depth away.
+         *
+         * @param {Object} marketData - itemHrid -> { level: { a, b } }
+         * @param {number} timestamp - When the snapshot was taken (ms)
+         */
+        ingestSnapshot(marketData, timestamp) {
+            if (!marketData) return;
+            const changed = [];
+
+            for (const [itemHrid, levels] of Object.entries(marketData)) {
+                if (!levels || typeof levels !== 'object') continue;
+                for (const [level, price] of Object.entries(levels)) {
+                    const key = priceKey(itemHrid, level);
+                    const next = foldPrice(this.entries[key], {
+                        ask: typeof price?.a === 'number' ? price.a : -1,
+                        bid: typeof price?.b === 'number' ? price.b : -1,
+                        askQty: 0,
+                        bidQty: 0,
+                        at: timestamp,
+                    });
+                    if (!next) continue;
+                    this.entries[key] = next;
+                    changed.push(key);
+                }
+            }
+
+            if (!changed.length) return;
+            this.dirty = true;
+            this.notify(changed);
+        }
+
+        /**
+         * The price of one item, including the sizes when they are known.
+         * @param {string} itemHrid - Item
+         * @param {number} [enhancementLevel=0] - Enhancement level
+         * @returns {Object|null} { ask, bid, askQty, bidQty, rise, at }
+         */
+        get(itemHrid, enhancementLevel = 0) {
+            const special = specialPrice(itemHrid, (key) => this.entries[key], Date.now());
+            if (special) return special;
+            return this.entries[priceKey(itemHrid, enhancementLevel)] || null;
+        }
+
+        /** @param {Function} listener - Called with the keys that changed */
+        onChange(listener) {
+            this.listeners.add(listener);
+            return () => this.listeners.delete(listener);
+        }
+
+        /** @private */
+        notify(keys) {
+            for (const listener of this.listeners) {
+                try {
+                    listener(keys);
+                } catch (error) {
+                    console.error('[MooketPrices] Change listener failed:', error);
+                }
+            }
+        }
+
+        async flush() {
+            if (!this.dirty || !this.loaded) return;
+            this.dirty = false;
+            try {
+                this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
+                await storage.setJSON(STORAGE_KEY, this.entries, 'marketListings');
+            } catch (error) {
+                console.error('[MooketPrices] Saving prices failed:', error);
+            }
+        }
+    }
+
+    const marketPriceStore = new MarketPriceStore();
+
+    /**
+     * Market History API
+     *
+     * Fetches an item's price history from the pooled server the mooket project
+     * runs, and — when you let it — contributes what your own client sees back.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * The dataset exists because clients report the order books they open, so
+     * reading and contributing are one switch rather than two. A version that let
+     * you read without ever giving anything back would work perfectly and quietly
+     * drain a shared resource — the history is only as good as what people send,
+     * and a reader who contributes nothing is someone else's missing data point.
+     *
+     * Both directions talk to a third party, which is why the switch starts off and
+     * why the setting says plainly what each does: reading tells the server which
+     * items you look up, contributing tells it the books you opened and when.
+     */
+
+
+    /** The mooket project's server */
+    const HISTORY_HOST = 'https://q7.nainai.eu.org';
+
+    /** How long a fetched range is reused before asking again */
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+
+    /** A request that has not answered by now is not going to */
+    const REQUEST_TIMEOUT_MS = 10_000;
+
+    /** How long to wait before reconnecting the reporting socket */
+    const RECONNECT_DELAY_MS = 30_000;
+
+    class MarketHistoryAPI {
+        constructor() {
+            this.cache = new Map();
+            this.socket = null;
+            this.reconnectTimer = null;
+            this.closing = false;
+        }
+
+        /** @returns {boolean} Whether history may be fetched at all */
+        get enabled() {
+            return config.getSetting('market_pooledHistory') === true;
+        }
+
+        /**
+         * @returns {boolean} Whether observed books may be sent back. The same
+         *   switch as reading: taking from a pooled dataset without feeding it is
+         *   what empties it.
+         */
+        get contributing() {
+            return this.enabled;
+        }
+
+        /**
+         * One item's history over a range of days.
+         *
+         * @param {string} itemHrid - Item
+         * @param {number} enhancementLevel - Enhancement level
+         * @param {number} days - How far back
+         * @returns {Promise<Array<Object>|null>} Rows, or null when unavailable
+         */
+        async fetchHistory(itemHrid, enhancementLevel, days) {
+            if (!this.enabled || !itemHrid) return null;
+
+            const key = `${itemHrid}:${enhancementLevel}:${days}`;
+            const cached = this.cache.get(key);
+            if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
+
+            const url =
+                `${HISTORY_HOST}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
+                `&variant=${enhancementLevel}&days=${days}`;
+
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+            try {
+                const response = await fetch(url, { signal: controller.signal });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const rows = await response.json();
+                this.cache.set(key, { rows, at: Date.now() });
+                return rows;
+            } catch (error) {
+                console.error('[MooketHistory] Fetching history failed:', error);
+                return null;
+            } finally {
+                clearTimeout(timeout);
+            }
+        }
+
+        /**
+         * Open the reporting socket, if contributing is on.
+         *
+         * It reconnects on its own because the alternative is a session that stops
+         * contributing after the first blip and never says so.
+         */
+        connect() {
+            if (!this.contributing || this.socket) return;
+
+            this.closing = false;
+            const url = `${HISTORY_HOST.replace(/^http/, 'ws')}/market/ws`;
+
+            try {
+                this.socket = new WebSocket(url);
+            } catch (error) {
+                console.error('[MooketHistory] Opening the reporting socket failed:', error);
+                this.socket = null;
+                return;
+            }
+
+            this.socket.addEventListener('close', () => {
+                this.socket = null;
+                if (this.closing || !this.contributing) return;
+                this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
+            });
+            this.socket.addEventListener('error', () => {
+                // 'close' follows and handles the reconnect; logging both would
+                // just double the noise on a server that is simply down
+            });
+        }
+
+        disconnect() {
+            this.closing = true;
+            if (this.reconnectTimer) {
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = null;
+            }
+            this.socket?.close();
+            this.socket = null;
+        }
+
+        /**
+         * Send an order-book payload back to the pool.
+         * @param {Object} payload - The market_item_order_books_updated message
+         */
+        report(payload) {
+            if (!this.contributing) return;
+            if (!this.socket) {
+                this.connect();
+                return;
+            }
+            if (this.socket.readyState !== WebSocket.OPEN) return;
+
+            try {
+                this.socket.send(JSON.stringify({ ...payload, time: Math.floor(Date.now() / 1000) }));
+            } catch (error) {
+                console.error('[MooketHistory] Reporting an order book failed:', error);
+            }
+        }
+    }
+
+    const marketHistoryAPI = new MarketHistoryAPI();
+
+    /**
+     * Market History Data
+     *
+     * Turns the pooled history server's rows into the series a chart can draw.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * A row is one sighting of an item's market: the best ask (`a`), the best bid
+     * (`b`), an average transacted price (`p`) and the volume traded (`v`). Two
+     * things have to happen before that is drawable.
+     *
+     * **Long ranges are grouped by day.** Three months of raw sightings is tens of
+     * thousands of points, and the shape is lost in the noise long before the
+     * browser struggles. Grouping uses the median rather than the mean: a single
+     * absurd ask — someone listing a 300-coin item at 40 million to see if anyone
+     * bites — moves a mean for the whole day and moves a median not at all.
+     *
+     * **Volume is split between the two sides.** The server reports how much traded
+     * and at what average price, not who crossed. Where in the spread that average
+     * price landed says which side was doing the trading: at the ask, buyers were
+     * lifting offers; at the bid, sellers were hitting bids; in between, both. It is
+     * an estimate and labelled as one, but it is the difference between "this item
+     * moved 4,000 units" and "buyers took 4,000 units off the shelf".
+     *
+     * Pure: rows in, series out. No DOM, no fetching.
+     */
+
+    /** Ranges the chart offers, in days */
+    const HISTORY_RANGES = [1, 3, 7, 14, 30, 90, 180];
+
+    /** Past this many days the rows are grouped into one point per day */
+    const DAILY_GROUPING_THRESHOLD = 7;
+
+    /**
+     * Middle value of the positive numbers in a list.
+     *
+     * Zero and negative mean "nothing was listed on that side", not "it was worth
+     * nothing", so they are dropped rather than counted as low prices — averaging
+     * them in would drag a day's ask toward zero every time the book emptied.
+     *
+     * @param {Array<number>} values - Values, in any order
+     * @returns {number} Median of the positive values, or 0 when there are none
+     */
+    function median(values) {
+        const positive = (values || []).filter((value) => value > 0).sort((a, b) => a - b);
+        if (!positive.length) return 0;
+
+        const middle = Math.floor(positive.length / 2);
+        return positive.length % 2 ? positive[middle] : (positive[middle - 1] + positive[middle]) / 2;
+    }
+
+    /**
+     * Split one row's volume between buyers lifting the ask and sellers hitting the
+     * bid.
+     *
+     * Where the average transacted price sits in the spread is the only evidence
+     * available. At or above the ask, everything traded was a buyer taking an offer;
+     * at or below the bid, a seller taking a bid; in between, the split is linear in
+     * how far up the spread the average landed.
+     *
+     * With only one side quoted there is nothing to interpolate against, so the
+     * whole volume goes to the side that could have traded. With neither, it is
+     * halved — an admission of ignorance rather than a measurement.
+     *
+     * @param {Object} row - { a, b, p, v }
+     * @returns {{atAsk: number, atBid: number}}
+     */
+    function splitVolume(row) {
+        const ask = row?.a > 0 ? row.a : 0;
+        const bid = row?.b > 0 ? row.b : 0;
+        const price = row?.p > 0 ? row.p : 0;
+        const volume = Math.max(0, Number(row?.v) || 0);
+
+        if (volume <= 0) return { atAsk: 0, atBid: 0 };
+
+        if (ask > 0 && bid > 0 && ask > bid) {
+            if (price >= ask) return { atAsk: volume, atBid: 0 };
+            if (price <= bid) return { atAsk: 0, atBid: volume };
+            const atAsk = (volume * (price - bid)) / (ask - bid);
+            return { atAsk, atBid: volume - atAsk };
+        }
+
+        // Only a bid quoted means anything that traded was sold into it, and vice
+        // versa. The naming is from the taker's side throughout.
+        if (bid > 0) return { atAsk: volume, atBid: 0 };
+        if (ask > 0) return { atAsk: 0, atBid: volume };
+        return { atAsk: volume / 2, atBid: volume / 2 };
+    }
+
+    /**
+     * Seconds since the epoch for a row, whichever way the server wrote its time.
+     * @param {Object} row - History row
+     * @returns {number}
+     */
+    function rowTime(row) {
+        if (typeof row?.time === 'number') return row.time;
+        const parsed = new Date(row?.time).getTime();
+        return Number.isFinite(parsed) ? parsed / 1000 : 0;
+    }
+
+    /**
+     * Reduce history rows to the points a chart draws.
+     *
+     * @param {Array<Object>} rows - Rows from the history API
+     * @param {number} days - The range being shown
+     * @returns {Array<Object>} { time, ask, bid, avg, volume, atAsk, atBid }, oldest first
+     */
+    function buildHistorySeries(rows, days) {
+        if (!Array.isArray(rows)) return [];
+
+        if (Number(days) <= DAILY_GROUPING_THRESHOLD) {
+            return rows
+                .map((row) => {
+                    const { atAsk, atBid } = splitVolume(row);
+                    return {
+                        time: rowTime(row),
+                        ask: row.a > 0 ? row.a : 0,
+                        bid: row.b > 0 ? row.b : 0,
+                        avg: row.p > 0 ? row.p : 0,
+                        volume: Math.max(0, Number(row.v) || 0),
+                        atAsk: Math.round(atAsk),
+                        atBid: Math.round(atBid),
+                    };
+                })
+                .sort((a, b) => a.time - b.time);
+        }
+
+        const byDay = new Map();
+        for (const row of rows) {
+            const time = rowTime(row);
+            const date = new Date(time * 1000);
+            const key = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+
+            let day = byDay.get(key);
+            if (!day) {
+                day = { time, asks: [], bids: [], avgs: [], volume: 0, atAsk: 0, atBid: 0 };
+                byDay.set(key, day);
+            }
+
+            const { atAsk, atBid } = splitVolume(row);
+            day.atAsk += atAsk;
+            day.atBid += atBid;
+            day.volume += Math.max(0, Number(row.v) || 0);
+            day.asks.push(row.a);
+            day.bids.push(row.b);
+            day.avgs.push(row.p);
+            // The day is stamped with its latest sighting, so a partial day sits
+            // where it belongs on the axis rather than at midnight
+            if (time > day.time) day.time = time;
+        }
+
+        return [...byDay.values()]
+            .map((day) => ({
+                time: day.time,
+                ask: median(day.asks),
+                bid: median(day.bids),
+                avg: median(day.avgs),
+                volume: day.volume,
+                atAsk: Math.round(day.atAsk),
+                atBid: Math.round(day.atBid),
+            }))
+            .sort((a, b) => a.time - b.time);
+    }
+
+    /**
+     * Axis labels for a series.
+     *
+     * Time is drawn as a category axis rather than a real time scale: Chart.js needs
+     * a date adapter for the latter, and pulling one in for evenly spaced sightings
+     * would be a dependency for nothing.
+     *
+     * @param {Array<Object>} series - Result of buildHistorySeries
+     * @param {number} days - The range being shown
+     * @returns {Array<string>}
+     */
+    function historyLabels(series, days) {
+        const daily = Number(days) > DAILY_GROUPING_THRESHOLD;
+        return (series || []).map((point) => {
+            const date = new Date(point.time * 1000);
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            if (daily) return `${month}/${day}`;
+            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        });
+    }
+
+    /**
+     * Market Watchlist
+     *
+     * Which items are pinned, in what order, and how much of each one to show.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * Order is the whole point of the data structure. A watchlist you cannot arrange
+     * is a list you have to read all of every time, so the entries are kept as an
+     * array rather than the keyed object the rest of this feature uses — an object's
+     * key order is technically preserved for string keys but relying on that to hold
+     * a user's arrangement is relying on an implementation detail to store intent.
+     *
+     * Pure: state in, state out.
+     */
+
+    /**
+     * How much of each pinned item to show. Cycling through these is one button
+     * rather than a settings page, because the right amount of detail depends on how
+     * many items are pinned and that changes constantly.
+     */
+    const DISPLAY_MODES = ['icon', 'iconChange', 'iconPrice', 'iconBoth', 'namePrice', 'full', 'hidden'];
+
+    /** More than this and the row of chips stops being readable at any size */
+    const MAX_WATCHED = 99;
+
+    /**
+     * Add an item, remembering the price it was pinned at so the chip can show a
+     * move from a point you chose rather than from whenever the cache happened to
+     * last update.
+     *
+     * @param {Array<Object>} watchlist - Current entries
+     * @param {string} key - itemHrid:enhancementLevel
+     * @param {Object|null} price - The price now, if known
+     * @returns {Array<Object>} A new list, unchanged when full or already present
+     */
+    function addWatched(watchlist, key, price) {
+        const list = watchlist || [];
+        if (list.some((entry) => entry.key === key)) return list;
+        if (list.length >= MAX_WATCHED) return list;
+
+        return [...list, { key, ask: price?.ask ?? -1, bid: price?.bid ?? -1, at: price?.at ?? 0 }];
+    }
+
+    /**
+     * @param {Array<Object>} watchlist - Current entries
+     * @param {string} key - itemHrid:enhancementLevel
+     * @returns {Array<Object>} A new list
+     */
+    function removeWatched(watchlist, key) {
+        return (watchlist || []).filter((entry) => entry.key !== key);
+    }
+
+    /**
+     * Move one entry a step along.
+     * @param {Array<Object>} watchlist - Current entries
+     * @param {string} key - Entry to move
+     * @param {number} direction - -1 earlier, 1 later
+     * @returns {Array<Object>} A new list, unchanged at either end
+     */
+    function moveWatched(watchlist, key, direction) {
+        const list = [...(watchlist || [])];
+        const from = list.findIndex((entry) => entry.key === key);
+        if (from < 0) return watchlist || [];
+
+        const to = from + (direction < 0 ? -1 : 1);
+        if (to < 0 || to >= list.length) return watchlist || [];
+
+        [list[from], list[to]] = [list[to], list[from]];
+        return list;
+    }
+
+    /**
+     * The next display mode in the cycle.
+     * @param {string} mode - Current mode
+     * @returns {string}
+     */
+    function nextDisplayMode(mode) {
+        const index = DISPLAY_MODES.indexOf(mode);
+        return DISPLAY_MODES[(index + 1) % DISPLAY_MODES.length];
+    }
+
+    /**
+     * How far one pinned item has moved since it was pinned.
+     *
+     * Reported per side, and only where both readings exist. A side that was empty
+     * when the item was pinned has no baseline, and inventing one — treating "nobody
+     * was selling" as a price of zero — would report an infinite rise the moment
+     * somebody listed.
+     *
+     * @param {Object} entry - Watchlist entry, carrying the price it was pinned at
+     * @param {Object|null} price - The price now
+     * @returns {{ask: number|null, bid: number|null, askChange: number|null, bidChange: number|null}}
+     */
+    function watchedChange(entry, price) {
+        const percent = (before, after) => {
+            if (!(before > 0) || !(after > 0)) return null;
+            return ((after - before) / before) * 100;
+        };
+
+        return {
+            ask: price?.ask > 0 ? price.ask : null,
+            bid: price?.bid > 0 ? price.bid : null,
+            askChange: percent(entry?.ask, price?.ask),
+            bidChange: percent(entry?.bid, price?.bid),
+        };
+    }
+
+    /**
+     * Bring a watchlist read from storage back to a usable shape.
+     *
+     * Earlier versions kept it as a keyed object. Reading one of those back as an
+     * array would silently drop everything pinned, so the older shape is converted
+     * rather than rejected.
+     *
+     * @param {*} stored - Whatever was in storage
+     * @returns {Array<Object>}
+     */
+    function normaliseWatchlist(stored) {
+        if (Array.isArray(stored)) return stored.filter((entry) => entry?.key);
+        if (stored && typeof stored === 'object') {
+            return Object.entries(stored).map(([key, value]) => ({ key, ...value }));
+        }
+        return [];
+    }
+
+    /**
+     * Market History Panel
+     *
+     * A floating price-history chart and a row of pinned items, over the
+     * marketplace.
+     *
+     * Adapted from mooket II by Q7 (MIT). See docs/THIRD-PARTY-LICENSES.md.
+     *
+     * The game shows you what an item costs now and nothing about what it cost
+     * before, which makes every price impossible to judge: 840,000 is cheap or dear
+     * only against what it has been. This draws the ask, the bid, the average
+     * transacted price and the volume over a range you pick, from the pooled dataset
+     * the mooket project maintains.
+     *
+     * Reading that dataset means telling a third-party server which items you look
+     * up, so the whole feature is off until turned on.
+     *
+     * What was left behind from the original, deliberately: the second WebSocket
+     * hook (Toolasha already has one, and two scripts patching `MessageEvent.data`
+     * is how a page ends up silently dropping messages), the bundled item-name
+     * dictionaries (Toolasha has the game's own), the `localStorage` cache with its
+     * defensive pruning (this uses IndexedDB), and the crosshair plugin (Chart.js's
+     * index-mode tooltip covers it without another dependency).
+     */
+
+
+    const PANEL_ID = 'mwi-market-history-panel';
+    const TAB_ID = 'mwi-market-history-tab';
+    const PREFS_KEY = 'mooketPanelPrefs';
+    const POLL_MS = 500;
+
+    /** Series colours, in the order the datasets are built */
+    const SERIES = [
+        { key: 'ask', label: 'Ask', color: '#f56c6c', dash: [] },
+        { key: 'bid', label: 'Bid', color: '#67c23a', dash: [5, 5] },
+        { key: 'avg', label: 'Avg', color: '#e6a23c', dash: [2, 3] },
+    ];
+
+    class MarketHistoryPanel {
+        constructor() {
+            this.isInitialized = false;
+            this.cleanupRegistry = cleanupRegistry_js.createCleanupRegistry();
+            this.panel = null;
+            this.chart = null;
+            this.canvas = null;
+            this.chipRow = null;
+            this.overlay = null;
+            this.pinButton = null;
+            // Starts hidden. A panel that appears over the marketplace the moment
+            // you open it is in the way of the thing you opened.
+            this.prefs = { x: 20, y: 120, w: 520, h: 300, days: 7, open: false, locked: false, mode: 'iconPrice' };
+            this.tabButton = null;
+            this.tabWatcher = null;
+            this.watchlist = [];
+            this.current = null; // { itemHrid, enhancementLevel }
+            this.shown = null; // what the chart is currently drawing
+        }
+
+        async initialize() {
+            if (this.isInitialized) return;
+            if (!config.getSetting('market_pooledHistory')) return;
+            this.isInitialized = true;
+
+            try {
+                const saved = await storage.getJSON(PREFS_KEY, 'settings', null);
+                if (saved) {
+                    this.prefs = { ...this.prefs, ...saved };
+                    this.watchlist = normaliseWatchlist(saved.watchlist);
+                }
+            } catch (error) {
+                console.error('[MarketHistory] Loading panel preferences failed:', error);
+            }
+
+            await marketPriceStore.initialize();
+            marketHistoryAPI.connect();
+
+            // The snapshot has no sizes but covers every item, so it fills in
+            // everything never opened
+            const priceListener = () => marketPriceStore.ingestSnapshot(marketAPI.marketData, Date.now());
+            marketAPI.on(priceListener);
+            this.cleanupRegistry.registerCleanup(() => marketAPI.off(priceListener));
+            priceListener();
+
+            // Contributing is what keeps the pooled dataset alive, and is separately
+            // opted into because it sends more than it asks for
+            const bookListener = (data) => marketHistoryAPI.report(data);
+            dataManager.on('market_item_order_books_updated', bookListener);
+            this.cleanupRegistry.registerCleanup(() => dataManager.off('market_item_order_books_updated', bookListener));
+
+            this.cleanupRegistry.registerCleanup(marketPriceStore.onChange(() => this.renderChips()));
+
+            this.buildPanel();
+            this.buildOverlay();
+
+            // The tab bar is rebuilt whenever the marketplace re-renders, so the
+            // button has to be put back rather than added once
+            this.tabWatcher = domObserverHelpers_js.createMutationWatcher(document.body, () => this.ensureTabButton(), {
+                childList: true,
+                subtree: true,
+            });
+            this.cleanupRegistry.registerCleanup(() => this.tabWatcher?.());
+            this.ensureTabButton();
+
+            const poll = setInterval(() => this.followMarketplace(), POLL_MS);
+            this.cleanupRegistry.registerInterval(poll);
+        }
+
+        disable() {
+            this.chart?.destroy();
+            this.chart = null;
+            this.panel?.remove();
+            this.panel = null;
+            this.overlay?.remove();
+            this.overlay = null;
+            marketHistoryAPI.disconnect();
+            marketPriceStore.cleanup();
+            this.cleanupRegistry.cleanup();
+            this.isInitialized = false;
+        }
+
+        async savePrefs() {
+            try {
+                await storage.setJSON(PREFS_KEY, { ...this.prefs, watchlist: this.watchlist }, 'settings');
+            } catch (error) {
+                console.error('[MarketHistory] Saving panel preferences failed:', error);
+            }
+        }
+
+        /**
+         * The item name the game itself uses, so nothing here carries its own
+         * dictionary of them.
+         * @param {string} itemHrid - Item
+         * @returns {string}
+         */
+        itemName(itemHrid) {
+            return dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+        }
+
+        // ---------------------------------------------------------------- panel
+
+        buildPanel() {
+            const panel = document.createElement('div');
+            panel.id = PANEL_ID;
+            panel.style.cssText = `
+            position: fixed; left: ${this.prefs.x}px; top: ${this.prefs.y}px;
+            width: ${this.prefs.w}px; z-index: 9000; display: none;
+            flex-direction: column; background: #282844; border: 1px solid #90a6eb;
+            border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+            font-size: 12px; color: #e7e7e7; user-select: none; resize: both; overflow: hidden;
+            min-width: 260px; min-height: 60px;
+        `;
+
+            panel.appendChild(this.buildToolbar());
+
+            this.chipRow = document.createElement('div');
+            this.chipRow.style.cssText =
+                'display:flex; flex-wrap:wrap; gap:2px; padding:2px 4px; max-height:96px; overflow:auto;';
+            panel.appendChild(this.chipRow);
+
+            this.canvas = document.createElement('canvas');
+            this.canvas.style.cssText = 'flex:1; min-height:0; display:block; padding:2px;';
+            panel.appendChild(this.canvas);
+
+            this.makeDraggable(panel);
+            document.body.appendChild(panel);
+            this.panel = panel;
+
+            this.applyOpenState();
+            this.renderChips();
+        }
+
+        /**
+         * A tab beside Market Listings that shows and hides the panel.
+         *
+         * Cloned from one of the game's own tabs so it looks like part of the bar
+         * rather than something bolted on, the same way Bulk Sell does it. The
+         * marketplace rebuilds the bar on every re-render, so this runs again and
+         * puts the tab back rather than assuming it survived.
+         */
+        ensureTabButton() {
+            const tabBar = this.findMarketTabBar();
+            if (!tabBar) {
+                this.tabButton = null;
+                return;
+            }
+            if (this.tabButton && tabBar.contains(this.tabButton)) {
+                // Kept at the end. Every other script inserts its tab relative to an
+                // anchor, so one added after this one lands in front of it; moving
+                // back only when it is not already last leaves nothing to fight over.
+                if (tabBar.lastElementChild !== this.tabButton) tabBar.appendChild(this.tabButton);
+                return;
+            }
+
+            const reference = [...tabBar.children].find((tab) => tab.textContent.includes('Market Listings'));
+            if (!reference) return;
+
+            const tab = reference.cloneNode(true);
+            tab.id = TAB_ID;
+            tab.title =
+                'Show or hide the price history panel. This opens a panel over the page rather than switching to a view.';
+            const badge = tab.querySelector('[class*="TabsComponent_badge"]');
+            // The ⧉ marks it as opening a panel rather than switching the view.
+            // Without it a toggle that borrows the game's tab styling reads as a
+            // fifth place to navigate to, and clicking it twice looks broken.
+            if (badge) badge.innerHTML = '<div style="text-align:center;"><div>\u29c9 History</div></div>';
+            else tab.textContent = '\u29c9 History';
+
+            tab.classList.remove('Mui-selected');
+            tab.setAttribute('aria-selected', 'false');
+            tab.setAttribute('tabindex', '-1');
+            tab.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.prefs.open = !this.prefs.open;
+                this.applyOpenState();
+                this.savePrefs();
+            });
+
+            tabBar.appendChild(tab);
+            this.tabButton = tab;
+            this.syncTabButton();
+        }
+
+        /** @returns {HTMLElement|null} The marketplace's own tab bar */
+        findMarketTabBar() {
+            for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+                if ([...tabBar.children].some((tab) => tab.textContent.includes('Market Listings'))) return tabBar;
+            }
+            return null;
+        }
+
+        /**
+         * Show whether the panel is up.
+         *
+         * A dimmed tab when closed and a lit one when open, rather than only an
+         * underline: the tab borrows the game's own styling, and a state shown by
+         * two pixels at the bottom edge is not a state most people will notice.
+         */
+        syncTabButton() {
+            if (!this.tabButton) return;
+            this.tabButton.style.boxShadow = this.prefs.open ? 'inset 0 -2px 0 0 #90a6eb' : '';
+            this.tabButton.style.opacity = this.prefs.open ? '1' : '0.6';
+        }
+
+        buildToolbar() {
+            const bar = document.createElement('div');
+            bar.style.cssText = 'display:flex; align-items:center; gap:4px; padding:3px 4px; background:rgba(0,0,0,0.25);';
+
+            const button = (text, title, onClick) => {
+                const element = document.createElement('button');
+                element.textContent = text;
+                element.title = title;
+                element.style.cssText =
+                    'background:rgba(255,255,255,0.08); border:1px solid #4a5a8a; color:#e7e7e7; ' +
+                    'border-radius:3px; cursor:pointer; font-size:12px; line-height:1; padding:3px 6px;';
+                element.addEventListener('click', onClick);
+                bar.appendChild(element);
+                return element;
+            };
+
+            button('\u2715', 'Close the panel. Reopen it from the History tab.', () => {
+                this.prefs.open = false;
+                this.applyOpenState();
+                this.savePrefs();
+            });
+
+            button('👁', 'How much to show for each pinned item', () => {
+                this.prefs.mode = nextDisplayMode(this.prefs.mode);
+                this.renderChips();
+                this.savePrefs();
+            });
+
+            this.lockButton = button(this.prefs.locked ? '🔒' : '🔓', 'Lock the panel where it is', () => {
+                this.prefs.locked = !this.prefs.locked;
+                this.lockButton.textContent = this.prefs.locked ? '🔒' : '🔓';
+                this.savePrefs();
+            });
+
+            const range = document.createElement('select');
+            range.title = 'How far back to chart';
+            range.style.cssText =
+                'background:#1a1a2e; color:#e7e7e7; border:1px solid #4a5a8a; border-radius:3px; ' +
+                'font-size:12px; padding:2px 4px; cursor:pointer;';
+            for (const days of HISTORY_RANGES) {
+                const option = document.createElement('option');
+                option.value = String(days);
+                option.textContent = `${days}d`;
+                option.selected = days === this.prefs.days;
+                range.appendChild(option);
+            }
+            range.addEventListener('change', () => {
+                this.prefs.days = Number(range.value);
+                this.savePrefs();
+                // Force a redraw of the same item at the new range
+                this.shown = null;
+                if (this.current) this.showItem(this.current.itemHrid, this.current.enhancementLevel);
+            });
+            bar.appendChild(range);
+
+            this.title = document.createElement('span');
+            this.title.style.cssText = 'flex:1; text-align:right; padding-right:4px; font-weight:600; opacity:0.9;';
+            bar.appendChild(this.title);
+
+            return bar;
+        }
+
+        applyOpenState() {
+            const open = this.prefs.open;
+            this.panel.style.display = open ? 'flex' : 'none';
+            this.panel.style.height = `${this.prefs.h}px`;
+            this.syncTabButton();
+            if (open && this.current) this.showItem(this.current.itemHrid, this.current.enhancementLevel);
+        }
+
+        /**
+         * Drag by the panel's own background, clamped on screen.
+         *
+         * A panel dragged off the edge cannot be dragged back, and the only way out
+         * would be clearing its stored position by hand.
+         *
+         * @param {HTMLElement} panel - The panel
+         */
+        makeDraggable(panel) {
+            panel.addEventListener('mousedown', (e) => {
+                if (this.prefs.locked) return;
+                if (e.button !== 0 || e.target.closest('button, select, canvas, input')) return;
+                // The browser's own resize handle lives in the bottom-right corner
+                const rect = panel.getBoundingClientRect();
+                if (e.clientX > rect.right - 16 && e.clientY > rect.bottom - 16) return;
+                e.preventDefault();
+
+                const grabX = e.clientX - rect.left;
+                const grabY = e.clientY - rect.top;
+
+                const onMove = (move) => {
+                    const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
+                    const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
+                    panel.style.left = `${Math.min(Math.max(0, move.clientX - grabX), maxLeft)}px`;
+                    panel.style.top = `${Math.min(Math.max(0, move.clientY - grabY), maxTop)}px`;
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    const final = panel.getBoundingClientRect();
+                    this.prefs.x = final.left;
+                    this.prefs.y = final.top;
+                    this.prefs.w = panel.offsetWidth;
+                    this.prefs.h = this.prefs.open ? panel.offsetHeight : this.prefs.h;
+                    this.savePrefs();
+                };
+
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        }
+
+        // ----------------------------------------------------------------- chips
+
+        renderChips() {
+            if (!this.chipRow) return;
+            this.chipRow.innerHTML = '';
+            if (this.prefs.mode === 'hidden') return;
+
+            for (const entry of this.watchlist) {
+                const [itemHrid, level] = entry.key.split(':');
+                const price = marketPriceStore.get(itemHrid, Number(level));
+                const change = watchedChange(entry, price);
+
+                const chip = document.createElement('div');
+                chip.style.cssText =
+                    'display:inline-flex; align-items:center; gap:3px; padding:1px 3px; cursor:pointer; ' +
+                    'border:1px solid #4a5a8a; border-radius:3px; background:rgba(0,0,0,0.2); white-space:nowrap;';
+                chip.title =
+                    `${this.itemName(itemHrid)}${Number(level) > 0 ? ` +${level}` : ''}\n` +
+                    `Ask ${change.ask === null ? '—' : formatters_js.formatWithSeparator(change.ask)} · ` +
+                    `Bid ${change.bid === null ? '—' : formatters_js.formatWithSeparator(change.bid)}\n` +
+                    'Click to chart it, right-click to unpin';
+
+                const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                icon.setAttribute('width', '15');
+                icon.setAttribute('height', '15');
+                const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                use.setAttribute('href', `${this.spriteUrl()}#${itemHrid.split('/').pop()}`);
+                icon.appendChild(use);
+                chip.appendChild(icon);
+
+                const mode = this.prefs.mode;
+                if (mode === 'namePrice' || mode === 'full') {
+                    const name = document.createElement('span');
+                    name.textContent = this.itemName(itemHrid) + (Number(level) > 0 ? ` +${level}` : '');
+                    chip.appendChild(name);
+                }
+                if (mode !== 'icon' && mode !== 'iconChange') {
+                    const value = document.createElement('span');
+                    value.textContent = change.ask === null ? '—' : formatters_js.formatKMB(change.ask);
+                    value.style.color = this.changeColour(change.askChange);
+                    chip.appendChild(value);
+                }
+                if (mode === 'iconChange' || mode === 'iconBoth' || mode === 'full') {
+                    const delta = document.createElement('span');
+                    delta.textContent =
+                        change.askChange === null
+                            ? ''
+                            : `${change.askChange >= 0 ? '+' : ''}${change.askChange.toFixed(1)}%`;
+                    delta.style.color = this.changeColour(change.askChange);
+                    chip.appendChild(delta);
+                }
+
+                chip.addEventListener('click', () => {
+                    navigateToMarketplace(itemHrid, Number(level));
+                    this.showItem(itemHrid, Number(level));
+                });
+                chip.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    this.watchlist = removeWatched(this.watchlist, entry.key);
+                    this.renderChips();
+                    this.savePrefs();
+                });
+
+                const arrows = document.createElement('span');
+                arrows.style.cssText =
+                    'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
+                for (const [glyph, direction] of [
+                    ['▲', -1],
+                    ['▼', 1],
+                ]) {
+                    const step = document.createElement('span');
+                    step.textContent = glyph;
+                    step.style.cursor = 'pointer';
+                    step.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.watchlist = moveWatched(this.watchlist, entry.key, direction);
+                        this.renderChips();
+                        this.savePrefs();
+                    });
+                    arrows.appendChild(step);
+                }
+                chip.appendChild(arrows);
+
+                this.chipRow.appendChild(chip);
+            }
+        }
+
+        /** @param {number|null} change - Percentage move */
+        changeColour(change) {
+            if (change === null || change === 0) return '#e7e7e7';
+            return change > 0 ? '#f56c6c' : '#67c23a';
+        }
+
+        /** The game's item sprite sheet, whichever build hash it is on today */
+        spriteUrl() {
+            if (this.sprite) return this.sprite;
+            const use = document.querySelector('svg use[href*="items_sprite"]');
+            this.sprite = use?.getAttribute('href')?.split('#')[0] || '';
+            return this.sprite;
+        }
+
+        // ---------------------------------------------------------------- chart
+
+        async showItem(itemHrid, enhancementLevel) {
+            this.current = { itemHrid, enhancementLevel };
+            const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}`;
+            if (!this.prefs.open || this.shown === key) return;
+            this.shown = key;
+
+            const level = Number(enhancementLevel) || 0;
+            this.title.textContent = `${this.itemName(itemHrid)}${level > 0 ? ` +${level}` : ''}`;
+
+            const rows = await marketHistoryAPI.fetchHistory(itemHrid, level, this.prefs.days);
+            // The item may have changed while the request was in flight
+            if (this.shown !== key) return;
+            this.drawChart(buildHistorySeries(rows, this.prefs.days));
+        }
+
+        /** @param {Array<Object>} series - Result of buildHistorySeries */
+        drawChart(series) {
+            if (!this.canvas || typeof Chart === 'undefined') return;
+
+            const labels = historyLabels(series, this.prefs.days);
+            const datasets = SERIES.map((spec) => ({
+                label: spec.label,
+                data: series.map((point) => point[spec.key] || null),
+                borderColor: spec.color,
+                borderDash: spec.dash,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHitRadius: 6,
+                spanGaps: true,
+                tension: 0,
+            }));
+            datasets.push({
+                label: 'Volume',
+                data: series.map((point) => point.volume),
+                borderColor: '#409eff',
+                backgroundColor: 'rgba(64, 158, 255, 0.18)',
+                borderWidth: 1,
+                fill: true,
+                yAxisID: 'volume',
+                pointRadius: 0,
+                pointHitRadius: 6,
+                tension: 0,
+            });
+
+            if (this.chart) {
+                this.chart.data.labels = labels;
+                this.chart.data.datasets = datasets;
+                this.chart.$series = series;
+                this.chart.update('none');
+                return;
+            }
+
+            const axis = { color: '#9aa4c0', font: { size: 10 } };
+            this.chart = new Chart(this.canvas, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { ...axis, maxTicksLimit: 8 } },
+                        y: {
+                            position: 'left',
+                            grid: { color: 'rgba(255,255,255,0.06)' },
+                            ticks: { ...axis, callback: (value) => formatters_js.formatKMB(value) },
+                        },
+                        volume: {
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            ticks: { ...axis, color: '#409eff', callback: (value) => formatters_js.formatKMB(value) },
+                        },
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#c8cee0', boxWidth: 10, font: { size: 10 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: (item) => `${item.dataset.label}: ${formatters_js.formatWithSeparator(Math.round(item.parsed.y))}`,
+                                // The split is an estimate from where the traded
+                                // price sat in the spread, and says so
+                                footer: (items) => {
+                                    const point = this.chart?.$series?.[items[0].dataIndex];
+                                    if (!point) return '';
+                                    return (
+                                        `Est. bought at the ask: ${formatters_js.formatWithSeparator(point.atAsk)}\n` +
+                                        `Est. sold into the bid: ${formatters_js.formatWithSeparator(point.atBid)}`
+                                    );
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+            this.chart.$series = series;
+        }
+
+        // -------------------------------------------------------------- overlay
+
+        buildOverlay() {
+            // Parked on the body rather than inside the game's own tree: React owns
+            // that tree and discards anything it did not put there
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:absolute; top:0; left:0; pointer-events:none; z-index:820;';
+
+            this.pinButton = document.createElement('button');
+            this.pinButton.textContent = '📌';
+            this.pinButton.title = 'Pin this item to the price panel';
+            this.pinButton.style.cssText =
+                'position:absolute; display:none; pointer-events:auto; background:none; border:none; ' +
+                'font-size:16px; line-height:1; padding:0; cursor:pointer;';
+            this.pinButton.addEventListener('click', () => {
+                if (!this.current) return;
+                const key = priceKey(this.current.itemHrid, this.current.enhancementLevel);
+                const price = marketPriceStore.get(this.current.itemHrid, this.current.enhancementLevel);
+                this.watchlist = addWatched(this.watchlist, key, price);
+                this.renderChips();
+                this.savePrefs();
+            });
+            overlay.appendChild(this.pinButton);
+
+            document.body.appendChild(overlay);
+            this.overlay = overlay;
+        }
+
+        /**
+         * Follow whichever item the marketplace is showing.
+         *
+         * Polled rather than observed: the panel only has to keep up with a person
+         * clicking, and a MutationObserver over the marketplace fires on every price
+         * tick for the sake of the handful that change the item.
+         */
+        followMarketplace() {
+            if (document.hidden || !this.panel) return;
+
+            const marketplace = document.querySelector('[class*="MarketplacePanel_marketplacePanel"]');
+            const visible = !!(marketplace && marketplace.getClientRects().length);
+
+            // Off the marketplace there is no item to chart and nowhere to put the
+            // pin, so the panel goes with it — but coming back does not reopen a
+            // panel that was closed on purpose
+            this.panel.style.display = visible && this.prefs.open ? 'flex' : 'none';
+            if (!visible) {
+                this.pinButton.style.display = 'none';
+                return;
+            }
+
+            const currentItem = document.querySelector('[class*="MarketplacePanel_currentItem"]');
+            const use = currentItem?.querySelector('svg use');
+            const iconName = use?.href?.baseVal?.split('#')[1];
+            if (!currentItem || !iconName) {
+                this.pinButton.style.display = 'none';
+                return;
+            }
+
+            const badge = currentItem.querySelector('[class*="Item_enhancementLevel"]');
+            const level = Number(badge?.textContent?.replace('+', '')) || 0;
+            const itemHrid = `/items/${iconName}`;
+
+            const iconRect = currentItem.querySelector('svg').getBoundingClientRect();
+            this.pinButton.style.left = `${iconRect.right + window.scrollX + 6}px`;
+            this.pinButton.style.top = `${iconRect.top + window.scrollY - 2}px`;
+            this.pinButton.style.display = 'block';
+
+            if (this.current?.itemHrid !== itemHrid || this.current?.enhancementLevel !== level) {
+                this.showItem(itemHrid, level);
+            }
+        }
+    }
+
+    const marketHistoryPanel = new MarketHistoryPanel();
 
     /**
      * Philosopher's Stone Transmutation Calculator
@@ -20099,6 +22181,10 @@ self.onmessage = function (e) {
         { key: 'abilities', label: 'Abilities', color: '#06b6d4' },
     ];
 
+    /** The chart modal's element id, and the control that opens and closes it */
+    const MODAL_ID = 'mwi-nw-chart-modal';
+    const CHART_BUTTON_ID = 'mwi-networth-chart-btn';
+
     class NetworthHistoryChart {
         constructor() {
             this.chartInstance = null;
@@ -20175,6 +22261,22 @@ self.onmessage = function (e) {
         }
 
         /**
+         * Open the chart, or close it if it is already open.
+         *
+         * What the button press means: the control is a switch, not a re-open. Any
+         * other reading leaves no way to dismiss the chart from where you opened it.
+         *
+         * @returns {Promise<void>}
+         */
+        async toggleModal() {
+            if (document.getElementById(MODAL_ID)) {
+                this.closeModal();
+                return;
+            }
+            await this.openModal();
+        }
+
+        /**
          * Open the chart modal
          */
         async openModal() {
@@ -20182,14 +22284,14 @@ self.onmessage = function (e) {
             await this._loadChartPrefs();
 
             // Remove existing modal if any
-            const existing = document.getElementById('mwi-nw-chart-modal');
+            const existing = document.getElementById(MODAL_ID);
             if (existing) {
                 existing.remove();
             }
 
             // Create modal container
             const modal = document.createElement('div');
-            modal.id = 'mwi-nw-chart-modal';
+            modal.id = MODAL_ID;
             modal.style.cssText = `
             position: fixed;
             top: 50%;
@@ -20609,13 +22711,17 @@ self.onmessage = function (e) {
             };
             document.addEventListener('keydown', this.escHandler);
 
-            // Click outside to close (but not if clicking in the delete popup)
+            // Click outside to close (but not if clicking in the delete popup, and
+            // not on the button that opens this — that press is a toggle, and
+            // closing here would let the click reopen it a moment later, so the
+            // chart could never be dismissed by the control that summoned it)
             this.outsideClickHandler = (e) => {
                 const breakdownPopout = document.getElementById('mwi-nw-24h-breakdown');
                 if (
                     !modal.contains(e.target) &&
                     !this._deletePopup?.contains(e.target) &&
-                    !breakdownPopout?.contains(e.target)
+                    !breakdownPopout?.contains(e.target) &&
+                    !e.target?.closest?.(`#${CHART_BUTTON_ID}`)
                 ) {
                     this.closeModal();
                 }
@@ -21705,7 +23811,7 @@ self.onmessage = function (e) {
                 breakdown.remove();
             }
 
-            const modal = document.getElementById('mwi-nw-chart-modal');
+            const modal = document.getElementById(MODAL_ID);
             if (modal) {
                 modal.remove();
             }
@@ -22867,7 +24973,7 @@ self.onmessage = function (e) {
                 </div>
                 ${
                     showChartBtn
-                        ? `<span id="mwi-networth-chart-btn" title="Net Worth History Chart" style="
+                        ? `<span id="${CHART_BUTTON_ID}" title="Net Worth History Chart (click again to close)" style="
                     cursor: pointer;
                     font-size: 14px;
                     opacity: 0.7;
@@ -23218,11 +25324,11 @@ self.onmessage = function (e) {
             );
 
             // Chart button
-            const chartBtn = this.container.querySelector('#mwi-networth-chart-btn');
+            const chartBtn = this.container.querySelector(`#${CHART_BUTTON_ID}`);
             if (chartBtn) {
                 chartBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    networthHistoryChart.openModal();
+                    networthHistoryChart.toggleModal();
                 });
                 chartBtn.addEventListener('mouseenter', () => {
                     chartBtn.style.opacity = '1';
@@ -29436,6 +31542,9 @@ self.onmessage = function (e) {
         marketHistoryViewer,
         listingRefreshNavigator,
         bulkSellAssistant,
+        listingMarkers,
+        marketplaceBadgeFilter,
+        marketHistoryPanel,
         philoCalculator,
         tradeHistory,
         tradeHistoryDisplay,

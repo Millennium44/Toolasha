@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      2.87.0
+// @version      2.88.0
 // @description  Toolasha - Enhanced tools for Milky Way Idle.
 // @author       Celasha and Claude, thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk, for providing the basis for a lot of this. Thank you to Miku, Orvel, Jigglymoose, Incinarator, Knerd, and others for their time and help. Thank you to Steez for testing and helping me figure out where I'm wrong! Thank you to Tib for his generous contribution of the Character Cards. Thank you to Sapnas for -deeply- testing and singlehandedly help me improve performance. Special thanks to Zaeter for the name.
 // @license      CC-BY-NC-SA-4.0
@@ -19,12 +19,12 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@656e5408133a15c60d20db6fa252bffced036395/dist/libraries/toolasha-ui.js
+// @require      https://UPDATE-THIS-URL/toolasha-core.js
+// @require      https://UPDATE-THIS-URL/toolasha-utils.js
+// @require      https://UPDATE-THIS-URL/toolasha-market.js
+// @require      https://UPDATE-THIS-URL/toolasha-actions.js
+// @require      https://UPDATE-THIS-URL/toolasha-combat.js
+// @require      https://UPDATE-THIS-URL/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -140,6 +140,20 @@
                 async: false,
             },
             {
+                key: 'marketplaceBadgeFilter',
+                name: 'Marketplace Badge Filter',
+                category: 'Market',
+                module: Market.marketplaceBadgeFilter,
+                async: false,
+            },
+            {
+                key: 'marketHistoryPanel',
+                name: 'Market History Panel',
+                category: 'Market',
+                module: Market.marketHistoryPanel,
+                async: true,
+            },
+            {
                 key: 'queueLengthEstimator',
                 name: 'Queue Length Estimator',
                 category: 'Market',
@@ -172,7 +186,7 @@
                 name: 'Bulk Sell Assistant',
                 category: 'Market',
                 module: Market.bulkSellAssistant,
-                async: false,
+                async: true,
             },
             {
                 key: 'philoCalculator',
@@ -342,6 +356,13 @@
                 module: Actions.alchemyBestItems,
                 async: false,
                 customCheck: () => config.getSetting('alchemy_bestItems'),
+            },
+            {
+                key: 'alchemyItemPins',
+                name: 'Alchemy Item Pins',
+                category: 'Alchemy',
+                module: Actions.alchemyItemPins,
+                async: true,
             },
             {
                 key: 'teaRecommendation',
@@ -549,6 +570,13 @@
                 name: 'Hide Guild Badge',
                 category: 'UI',
                 module: UI.hideGuildBadge,
+                async: false,
+            },
+            {
+                key: 'combatScale',
+                name: 'Combat Panel Scale',
+                category: 'UI',
+                module: UI.combatPanelScale,
                 async: false,
             },
             {
@@ -963,7 +991,7 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '2.87.0';
+        targetWindow.Toolasha.version = '2.88.0';
 
         // Feature toggle API (for users to manage settings via console)
         targetWindow.Toolasha.features = {

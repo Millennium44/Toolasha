@@ -1,7 +1,7 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.87.0
+ * Version: 2.88.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -7261,6 +7261,20 @@
     /**
      * ActionTimeDisplay class manages the time display panel and queue tooltips
      */
+
+    /**
+     * Whether an element in the action-name row was put there by a script rather
+     * than by the game — Toolasha's own annotations all carry an `mwi-` class or
+     * id, and anything else following that convention is equally not part of the
+     * action's name.
+     * @param {Element} node - A child of the action name element
+     * @returns {boolean}
+     */
+    function isScriptAnnotation(node) {
+        const className = typeof node.className === 'string' ? node.className : '';
+        return className.includes('mwi-') || String(node.id || '').startsWith('mwi-');
+    }
+
     class ActionTimeDisplay {
         constructor() {
             this.displayElement = null;
@@ -7993,6 +8007,13 @@
             if (!action) {
                 this.displayElement.innerHTML = '';
                 this.clearAppendedStats(actionNameElement);
+                // The name matched nothing queued, which the labyrinth does every
+                // time — its header reads "Labyrinth - Mimic Lv.252" and no action
+                // is called that. The width policy only needs the action's type,
+                // and the queue gives that without going through the header text.
+                const frontHrid = cachedActions.length > 0 ? cachedActions[0].actionHrid : null;
+                const frontType = frontHrid ? dataManager.getActionDetails(frontHrid)?.type : null;
+                if (frontType) this.applyActionBarWidth(actionNameElement, frontType === '/action_types/combat');
                 // Only retry if no cached actions (data not loaded yet).
                 // If cached actions exist but none match, data updated before DOM —
                 // the mutation observer will trigger updateDisplay when DOM catches up.
@@ -8018,53 +8039,7 @@
                 if (this.profitElement) this.profitElement.innerHTML = '';
                 this.clearAppendedStats(actionNameElement);
 
-                const combatCompact = config.getSetting('actionBar_compactWidth');
-
-                if (!combatCompact) {
-                    // FULL MODE: Expand parent containers so HP/MP bars match skilling progress bar width
-                    actionNameElement.style.removeProperty('overflow');
-                    actionNameElement.style.removeProperty('text-overflow');
-                    actionNameElement.style.removeProperty('white-space');
-                    actionNameElement.style.removeProperty('max-width');
-                    actionNameElement.style.removeProperty('width');
-                    actionNameElement.style.removeProperty('min-width');
-
-                    const parent1 = actionNameElement.parentElement;
-                    const parent2 = parent1?.parentElement;
-
-                    if (parent1) {
-                        parent1.style.setProperty('max-width', 'none', 'important');
-                        parent1.style.setProperty('width', 'auto', 'important');
-                        parent1.style.setProperty('overflow', 'visible', 'important');
-                    }
-
-                    if (parent2) {
-                        parent2.style.setProperty('max-width', 'none', 'important');
-                        parent2.style.setProperty('width', 'auto', 'important');
-                        parent2.style.setProperty('overflow', 'visible', 'important');
-                    }
-                } else {
-                    // COMPACT/MINIMAL: Remove all CSS overrides to restore game defaults
-                    actionNameElement.style.removeProperty('overflow');
-                    actionNameElement.style.removeProperty('text-overflow');
-                    actionNameElement.style.removeProperty('white-space');
-                    actionNameElement.style.removeProperty('max-width');
-                    actionNameElement.style.removeProperty('width');
-                    actionNameElement.style.removeProperty('min-width');
-
-                    let parent = actionNameElement.parentElement;
-                    let levels = 0;
-                    while (parent && levels < 5) {
-                        parent.style.removeProperty('overflow');
-                        parent.style.removeProperty('text-overflow');
-                        parent.style.removeProperty('white-space');
-                        parent.style.removeProperty('max-width');
-                        parent.style.removeProperty('width');
-                        parent.style.removeProperty('min-width');
-                        parent = parent.parentElement;
-                        levels++;
-                    }
-                }
+                this.applyActionBarWidth(actionNameElement, true);
 
                 this.reconnectActionNameObserver(actionNameElement);
                 return;
@@ -8082,54 +8057,7 @@
             // ONLY for non-combat actions (combat needs normal width for HP/MP bars)
             // Use setProperty with 'important' to ensure we override game's styles
 
-            // Check compact width setting
-            const compactWidth = config.getSetting('actionBar_compactWidth');
-
-            if (compactWidth) {
-                // COMPACT MODE: Limit to 800px and reset parents
-                actionNameElement.style.setProperty('max-width', '800px', 'important');
-                actionNameElement.style.setProperty('overflow', 'hidden', 'important');
-                actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-                actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-                actionNameElement.style.setProperty('width', '', 'important');
-
-                const parent1 = actionNameElement.parentElement;
-                const parent2 = parent1?.parentElement;
-
-                if (parent1) {
-                    parent1.style.removeProperty('max-width');
-                    parent1.style.removeProperty('width');
-                    parent1.style.removeProperty('overflow');
-                }
-
-                if (parent2) {
-                    parent2.style.removeProperty('max-width');
-                    parent2.style.removeProperty('width');
-                    parent2.style.removeProperty('overflow');
-                }
-            } else {
-                // FULL WIDTH: Expand containers to show all text
-                actionNameElement.style.setProperty('overflow', 'visible', 'important');
-                actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-                actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-                actionNameElement.style.setProperty('max-width', 'none', 'important');
-                actionNameElement.style.setProperty('width', 'auto', 'important');
-
-                const parent1 = actionNameElement.parentElement;
-                const parent2 = parent1?.parentElement;
-
-                if (parent1) {
-                    parent1.style.setProperty('max-width', 'none', 'important');
-                    parent1.style.setProperty('width', 'auto', 'important');
-                    parent1.style.setProperty('overflow', 'visible', 'important');
-                }
-
-                if (parent2) {
-                    parent2.style.setProperty('max-width', 'none', 'important');
-                    parent2.style.setProperty('width', 'auto', 'important');
-                    parent2.style.setProperty('overflow', 'visible', 'important');
-                }
-            }
+            this.applyActionBarWidth(actionNameElement, false);
 
             // Get character data
             const equipment = dataManager.getEquipment();
@@ -8760,6 +8688,72 @@
             }
         }
 
+        /**
+         * Apply the action bar's width policy.
+         *
+         * Kept apart from the time display because the two need different things:
+         * the display must know exactly which action is running, while the width
+         * only needs to know whether it is a fight. A labyrinth room's header reads
+         * "Labyrinth - Mimic Lv.252", which never equals any action's name, so the
+         * lookup driving the display finds nothing there — and while the width rode
+         * on that lookup, entering the labyrinth left the bar at whatever width the
+         * previous action had set, until a redraw dropped it to the game's narrow
+         * default with nothing left to put it back.
+         *
+         * @param {HTMLElement} actionNameElement - The header's action name element
+         * @param {boolean} isCombat - Combat leaves the name element alone so the
+         *   game's own HP/MP bars size themselves; only the parents are opened up
+         */
+        applyActionBarWidth(actionNameElement, isCombat) {
+            if (!actionNameElement) return;
+            const compact = config.getSetting('actionBar_compactWidth');
+            const parent1 = actionNameElement.parentElement;
+            const parent2 = parent1?.parentElement;
+            const SIZING = ['overflow', 'text-overflow', 'white-space', 'max-width', 'width', 'min-width'];
+
+            if (compact && isCombat) {
+                // Hand the whole column back to the game
+                for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+                let parent = parent1;
+                for (let levels = 0; parent && levels < 5; levels++) {
+                    for (const prop of SIZING) parent.style.removeProperty(prop);
+                    parent = parent.parentElement;
+                }
+                return;
+            }
+
+            if (compact) {
+                actionNameElement.style.setProperty('max-width', '800px', 'important');
+                actionNameElement.style.setProperty('overflow', 'hidden', 'important');
+                actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
+                actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+                actionNameElement.style.setProperty('width', '', 'important');
+                for (const parent of [parent1, parent2]) {
+                    if (!parent) continue;
+                    parent.style.removeProperty('max-width');
+                    parent.style.removeProperty('width');
+                    parent.style.removeProperty('overflow');
+                }
+                return;
+            }
+
+            if (isCombat) {
+                for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+            } else {
+                actionNameElement.style.setProperty('overflow', 'visible', 'important');
+                actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
+                actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+                actionNameElement.style.setProperty('max-width', 'none', 'important');
+                actionNameElement.style.setProperty('width', 'auto', 'important');
+            }
+            for (const parent of [parent1, parent2]) {
+                if (!parent) continue;
+                parent.style.setProperty('max-width', 'none', 'important');
+                parent.style.setProperty('width', 'auto', 'important');
+                parent.style.setProperty('overflow', 'visible', 'important');
+            }
+        }
+
         matchCurrentActionFromText(currentActions, actionNameText) {
             const { actionNameFromDom, itemNameFromDom } = this.parseActionNameFromDom(actionNameText);
             const itemHridFromDom = this.buildItemHridFromName(itemNameFromDom || actionNameFromDom);
@@ -8832,10 +8826,16 @@
         getCleanActionName(actionNameElement) {
             // Walk direct children to join their text with spaces, preserving word boundaries
             // that textContent would collapse (e.g. <span>Dragon</span><span>Fruit</span> → "Dragon Fruit")
-            const markerSpan = actionNameElement.querySelector('.mwi-appended-stats');
+            //
+            // Every annotation is skipped, not just this feature's own. The row is
+            // shared: the battle counter appends "· Attempt #3", the labyrinth
+            // readouts append "[Clear ~85%]". Folding those into the name stops it
+            // matching any action in the queue, and the failed match takes the
+            // width override down with it — the action bar reverts to the game's
+            // narrow default for as long as an annotation happens to be showing.
             const parts = [];
             for (const node of actionNameElement.childNodes) {
-                if (node === markerSpan) continue;
+                if (node.nodeType === 1 && isScriptAnnotation(node)) continue;
                 const text = node.textContent.trim();
                 if (text) parts.push(text);
             }
@@ -24766,6 +24766,537 @@
     const alchemyBestItems = new AlchemyBestItems();
 
     /**
+     * Alchemy Item Selector
+     *
+     * Finding the "Alchemize Item" picker, and reading what is in it.
+     *
+     * Harder than it sounds, and worth having one definition of. The page carries
+     * more than one item selector — the alchemized item has one, the catalyst has
+     * another — and they are the same component with the same class names. Worse,
+     * the menu is **portalled**: it is rendered outside the selector that owns it,
+     * so it cannot be identified by what it sits inside.
+     *
+     * Two earlier attempts failed here and are worth recording, because both looked
+     * right:
+     *
+     * - Matching a label reading "Alchemize Item". There is no such label — the
+     *   alchemized-item slot is unlabelled, and only the catalyst names itself
+     *   ("Consumed Item").
+     * - Walking up from the menu for the nearest `ItemSelector_label`. The menu's
+     *   own "Remove" tile carries that class, so the search found the menu's own
+     *   contents and concluded the selector was called "Remove".
+     *
+     * What does work is watching which selector was clicked. A menu opens because
+     * something was clicked, and the thing clicked is in the DOM where it belongs
+     * whatever the menu does afterwards.
+     */
+
+    const MENU_SELECTOR = 'div[class*="ItemSelector_menu"]';
+    const LABEL_SELECTOR = 'div[class*="ItemSelector_label"]';
+    const TILE_SELECTOR = 'div[class*="Item_itemContainer"]';
+    /** The action panel's own name for the slot the alchemized item goes in */
+    const PRIMARY_SELECTOR = '[class*="SkillActionDetail_primaryItemSelectorContainer"]';
+    /** The one selector on the panel that does name itself */
+    const CATALYST_LABEL = 'Consumed Item';
+
+    /** The alchemy tabs, in the order the game lists them */
+    const ALCHEMY_ACTIONS = ['coinify', 'decompose', 'transmute', 'unrefine'];
+
+    /** Which selector was opened last, since the menu itself will not say */
+    let lastOpened = { primary: false, at: 0 };
+    let tracking = false;
+
+    /**
+     * Start remembering which item selector gets clicked.
+     *
+     * Installed on first use rather than by a caller, so that every reader of this
+     * module gets it without having to know it exists. Capture phase, because the
+     * game stops the event on its way back up.
+     */
+    function trackSelectorClicks() {
+        if (tracking || typeof document === 'undefined') return;
+        tracking = true;
+
+        document.addEventListener(
+            'click',
+            (event) => {
+                const target = event.target;
+                if (!(target instanceof Element)) return;
+                // A click inside an open menu is picking an item, not opening a
+                // selector, and must not overwrite which selector we are in
+                if (target.closest(MENU_SELECTOR)) return;
+
+                const primary = !!target.closest(PRIMARY_SELECTOR);
+                if (primary || target.closest('[class*="ItemSelector"]')) {
+                    lastOpened = { primary, at: Date.now() };
+                }
+            },
+            true
+        );
+    }
+
+    /**
+     * The label of the selector that owns a menu, ignoring the menu's own contents.
+     *
+     * The "Remove" tile inside every menu carries the label class, so a plain
+     * subtree search finds it and reports the menu as being called "Remove".
+     *
+     * @param {HTMLElement} menu - An item selector menu
+     * @returns {string} Label text, or '' when the menu is portalled away from one
+     */
+    function ownerLabel(menu) {
+        let ancestor = menu.parentElement;
+        while (ancestor && ancestor !== document.body) {
+            for (const label of ancestor.querySelectorAll(LABEL_SELECTOR)) {
+                if (!menu.contains(label)) return label.textContent.trim();
+            }
+            ancestor = ancestor.parentElement;
+        }
+        return '';
+    }
+
+    /**
+     * The open "Alchemize Item" menu, if one is open.
+     * @returns {HTMLElement|null}
+     */
+    function findAlchemizeMenu() {
+        trackSelectorClicks();
+
+        // Nothing to identify unless the alchemy panel is up
+        if (!document.querySelector(PRIMARY_SELECTOR) || !activeAlchemyAction()) return null;
+
+        for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
+            // Not portalled after all: the structure answers it outright
+            if (menu.closest(PRIMARY_SELECTOR)) return menu;
+            // The catalyst is the one selector that names itself
+            if (ownerLabel(menu) === CATALYST_LABEL) continue;
+            if (lastOpened.primary) return menu;
+        }
+        return null;
+    }
+
+    /**
+     * Which alchemy action the page is showing.
+     *
+     * Read off the selected tab rather than tracked, because the tab bar is the
+     * only thing that knows — the item menu looks identical whichever action is
+     * open, and the same item means different things in each.
+     *
+     * @returns {string} One of ALCHEMY_ACTIONS, or '' on a tab that is none of them
+     */
+    function activeAlchemyAction() {
+        for (const tablist of document.querySelectorAll('[role="tablist"]')) {
+            const tabs = Array.from(tablist.children);
+            if (!tabs.some((tab) => tab.textContent.includes('Coinify'))) continue;
+
+            const selected = tabs.find(
+                (tab) => tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected')
+            );
+            const text = (selected?.textContent || '').toLowerCase();
+            return ALCHEMY_ACTIONS.find((action) => text.includes(action)) || '';
+        }
+        return '';
+    }
+
+    /**
+     * The item tiles in a menu, and the element they all sit in.
+     *
+     * Returns the elements that can actually be **moved**, which are not always the
+     * tiles themselves. Two earlier versions assumed the tiles were siblings —
+     * first taking the parent of the first tile as the grid, then the parent
+     * holding the most — and both came back with exactly one tile, because each
+     * tile is wrapped in a container of its own and no two share a parent.
+     *
+     * So the grid is found as the deepest element containing every tile, and each
+     * tile is represented by whichever of its ancestors is a direct child of that
+     * grid. Reordering has to move those, not the tiles inside them.
+     *
+     * @param {HTMLElement} menu - An item selector menu
+     * @returns {{grid: HTMLElement|null, tiles: HTMLElement[]}}
+     */
+    function menuTiles(menu) {
+        const all = Array.from(menu?.querySelectorAll(TILE_SELECTOR) || []);
+        if (!all.length) return { grid: null, tiles: [] };
+
+        const holdsEveryTile = (node) => all.every((tile) => node.contains(tile));
+        let grid = all[0].parentElement;
+        while (grid && !holdsEveryTile(grid)) grid = grid.parentElement;
+        if (!grid) return { grid: null, tiles: [] };
+
+        const seen = new Set();
+        const tiles = [];
+        for (const tile of all) {
+            let node = tile;
+            while (node.parentElement && node.parentElement !== grid) node = node.parentElement;
+            // A wrapper holding two tiles would otherwise be listed twice
+            if (node.parentElement === grid && !seen.has(node)) {
+                seen.add(node);
+                tiles.push(node);
+            }
+        }
+        return { grid, tiles };
+    }
+
+    /**
+     * The item a tile stands for, from the sprite it draws.
+     * @param {HTMLElement} tile - An item tile
+     * @returns {string} Item hrid, or '' for a tile that is not an item
+     */
+    function tileItemHrid(tile) {
+        const href = tile?.querySelector('use')?.getAttribute('href') || '';
+        const name = href.split('#')[1];
+        return name ? `/items/${name}` : '';
+    }
+
+    /**
+     * Report what is on the page and which of it this module can see.
+     *
+     * Everything here hangs off recognising one menu among several identical ones,
+     * and when that recognition fails the feature does not break loudly — it simply
+     * does nothing, which is indistinguishable from not being installed. This says
+     * which step failed, and dumps the menu's ancestry so a wrong answer can be
+     * corrected rather than guessed at again.
+     *
+     * Console: open the alchemy item picker, then `Toolasha.Debug.alchemyMenu()`
+     * @returns {Object} What was found
+     */
+    function describeAlchemyMenus() {
+        const menus = Array.from(document.querySelectorAll(MENU_SELECTOR));
+        const found = findAlchemizeMenu();
+
+        const rows = menus.map((menu, index) => {
+            const chain = [];
+            let ancestor = menu.parentElement;
+            while (ancestor && ancestor !== document.body && chain.length < 8) {
+                const cls = typeof ancestor.className === 'string' ? ancestor.className : '';
+                chain.push(`${ancestor.tagName.toLowerCase()}.${cls.split(' ')[0] || '(no class)'}`);
+                ancestor = ancestor.parentElement;
+            }
+            const { grid, tiles } = menuTiles(menu);
+            const raw = menu.querySelectorAll(TILE_SELECTOR).length;
+            const parents = new Set(Array.from(menu.querySelectorAll(TILE_SELECTOR)).map((el) => el.parentElement)).size;
+            return {
+                menu: index,
+                matched: menu === found,
+                insidePrimarySlot: !!menu.closest(PRIMARY_SELECTOR),
+                ownerLabel: ownerLabel(menu) || '(none)',
+                // rawTiles well above movable means each tile is wrapped; the two
+                // being equal means they are siblings in one grid
+                rawTiles: raw,
+                distinctTileParents: parents,
+                movable: tiles.length,
+                grid: grid ? `${grid.tagName.toLowerCase()}.${(grid.className || '').split(' ')[0]}` : '(none)',
+                ancestors: chain.join(' < ') || '(portalled to body)',
+            };
+        });
+
+        const labels = Array.from(document.querySelectorAll(LABEL_SELECTOR)).map((el) => el.textContent.trim());
+        console.log(
+            `[Toolasha] ${menus.length} item selector menu(s) open. ` +
+                `findAlchemizeMenu() ${found ? `matched menu ${menus.indexOf(found)}` : 'matched nothing'}; ` +
+                `activeAlchemyAction() = ${activeAlchemyAction() || '(none)'}; ` +
+                `primary slot on page = ${!!document.querySelector(PRIMARY_SELECTOR)}; ` +
+                `last selector clicked was the primary one = ${lastOpened.primary}.\n` +
+                `Every ItemSelector label on the page: ${labels.length ? labels.join(' | ') : '(none)'}\n` +
+                'Open the Alchemize Item picker before running this — with no menu open there is nothing to find.'
+        );
+        if (rows.length) console.table(rows);
+
+        return { menus: rows, matched: menus.indexOf(found), action: activeAlchemyAction(), labels, lastOpened };
+    }
+
+    /**
+     * Alchemy Item Pins
+     *
+     * Pin the items you alchemize to the front of the picker, per action.
+     *
+     * The picker lists everything you own in whatever order the game keeps it, and
+     * the handful of items anyone actually feeds it are scattered through that. The
+     * alternative to pinning is typing the same filter every time — which works,
+     * and is exactly the sort of thing worth not having to do twice a day.
+     *
+     * Per action, because the same item means different things in each: what is
+     * worth coinifying is rarely what is worth decomposing, and a single shared
+     * list would be the union of four unrelated shortlists.
+     *
+     * Pins reorder, they do not exempt. A pinned item that does not match what you
+     * typed in the filter stays hidden — the filter has to keep meaning what it
+     * says, or it stops being usable for finding anything else.
+     */
+
+
+    const STORAGE_KEY = 'alchemyItemPins';
+    const STYLE_ID = 'mwi-alchemy-pins-style';
+    const PIN_CLASS = 'mwi-alchemy-pin';
+    const PINNED_CLASS = 'mwi-alchemy-pinned';
+    /** Marks the element the pin is mounted on, which is not always the tile */
+    const TILE_CLASS = 'mwi-alchemy-tile';
+
+    /**
+     * Add or remove an item from one action's pins.
+     *
+     * Newly pinned items go to the end rather than the front: the order is the one
+     * you built, and having each new pin displace the one you use most would make
+     * the list rearrange itself every time you added to it.
+     *
+     * @param {Object} pins - { [action]: itemHrid[] }
+     * @param {string} action - Alchemy action
+     * @param {string} itemHrid - Item
+     * @returns {Object} New pins
+     */
+    function togglePin(pins, action, itemHrid) {
+        if (!action || !itemHrid) return pins || {};
+
+        const current = (pins || {})[action] || [];
+        const next = current.includes(itemHrid) ? current.filter((hrid) => hrid !== itemHrid) : [...current, itemHrid];
+
+        return { ...pins, [action]: next };
+    }
+
+    /**
+     * The order tiles should appear in: pinned first, in pin order, then everything
+     * else exactly as it was.
+     *
+     * Tiles the filter has hidden are ordered along with the rest rather than
+     * skipped. A hidden tile takes up no room, so putting it at the front changes
+     * nothing about what you see — and checking each tile's computed style to find
+     * out would cost a layout pass on every keystroke to achieve the same result.
+     *
+     * @param {HTMLElement[]} tiles - Tiles in their current order
+     * @param {string[]} pinned - Pinned item hrids, in pin order
+     * @param {Function} hridOf - Reads a tile's item hrid
+     * @returns {HTMLElement[]} The tiles, reordered
+     */
+    function orderTiles(tiles, pinned, hridOf) {
+        const list = tiles || [];
+        const rank = new Map((pinned || []).map((hrid, index) => [hrid, index]));
+
+        // The "Remove" cell shares the grid and stands for no item. It keeps the
+        // first slot rather than being swept along with the unpinned items, so
+        // pinning something does not push the way to clear the selection down
+        // behind it.
+        const fixed = [];
+        const front = [];
+        const rest = [];
+        for (const tile of list) {
+            const hrid = hridOf(tile);
+            if (!hrid) fixed.push(tile);
+            else if (rank.has(hrid)) front.push(tile);
+            else rest.push(tile);
+        }
+        front.sort((a, b) => rank.get(hridOf(a)) - rank.get(hridOf(b)));
+
+        return [...fixed, ...front, ...rest];
+    }
+
+    /**
+     * Whether two tile orders are the same, so an unchanged menu can be left alone.
+     * Reordering the DOM is itself a mutation, and a watcher that reacted to its own
+     * writes would never stop.
+     * @param {HTMLElement[]} a - One order
+     * @param {HTMLElement[]} b - Another
+     * @returns {boolean}
+     */
+    function sameOrder(a, b) {
+        return a.length === b.length && a.every((tile, index) => tile === b[index]);
+    }
+
+    const CSS = `
+    .${PIN_CLASS} {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 5;
+        width: 15px;
+        height: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 0 4px 0 4px;
+        background: rgba(10, 14, 22, 0.75);
+        color: #9ec4ff;
+        font-size: 9px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0;
+        opacity: 0;
+        transition: opacity 0.1s;
+    }
+    .${TILE_CLASS}:hover .${PIN_CLASS} { opacity: 1; }
+    .${PIN_CLASS}:hover { color: #fff; background: rgba(77, 151, 255, 0.9); }
+    .${PINNED_CLASS} .${PIN_CLASS} { opacity: 1; color: #ffcf5c; }
+    .${PINNED_CLASS} { outline: 1px solid rgba(255, 207, 92, 0.55); outline-offset: -1px; border-radius: 4px; }
+    .${TILE_CLASS} { position: relative; }
+`;
+
+    class AlchemyItemPins {
+        constructor() {
+            this.isInitialized = false;
+            this.pins = {};
+            this.unregister = null;
+            this.applying = false;
+            this.styleEl = null;
+            this.menuObserver = null;
+            this.watchedMenu = null;
+        }
+
+        async initialize() {
+            if (this.isInitialized) return;
+            if (!config.getSetting('alchemyItemPins')) return;
+            this.isInitialized = true;
+
+            this.pins = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+
+            this.styleEl = document.createElement('style');
+            this.styleEl.id = STYLE_ID;
+            this.styleEl.textContent = CSS;
+            document.head.appendChild(this.styleEl);
+
+            this.unregister = domObserver.onClass('AlchemyItemPins', 'ItemSelector_menu', () => this.apply());
+            this.apply();
+        }
+
+        disable() {
+            this.unregister?.();
+            this.unregister = null;
+            this.menuObserver?.disconnect();
+            this.menuObserver = null;
+            this.watchedMenu = null;
+            this.styleEl?.remove();
+            this.styleEl = null;
+            document.querySelectorAll(`.${PIN_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${PINNED_CLASS}`).forEach((el) => el.classList.remove(PINNED_CLASS));
+            document.querySelectorAll(`.${TILE_CLASS}`).forEach((el) => el.classList.remove(TILE_CLASS));
+            this.isInitialized = false;
+        }
+
+        /**
+         * Watch the open menu's contents.
+         *
+         * Typing in the filter box replaces the tiles inside the menu without
+         * replacing the menu itself, so a watcher that only sees the menu appear
+         * decorates it once and then never again — the pins vanish on the first
+         * keystroke and never come back.
+         *
+         * @param {HTMLElement} menu - The open menu
+         */
+        watchMenu(menu) {
+            if (this.watchedMenu === menu && this.menuObserver) return;
+
+            this.menuObserver?.disconnect();
+            this.watchedMenu = menu;
+            // Children only. Decoration writes classes and titles, and reacting to
+            // those would be reacting to itself.
+            this.menuObserver = new MutationObserver(() => this.apply());
+            this.menuObserver.observe(menu, { childList: true, subtree: true });
+        }
+
+        /** Put the pins for the open action at the front of the open menu */
+        apply() {
+            if (this.applying) return;
+
+            const menu = findAlchemizeMenu();
+            if (!menu) {
+                this.menuObserver?.disconnect();
+                this.menuObserver = null;
+                this.watchedMenu = null;
+                return;
+            }
+            this.watchMenu(menu);
+
+            const action = activeAlchemyAction();
+            if (!action) return;
+
+            const { grid, tiles } = menuTiles(menu);
+            if (!grid || !tiles.length) return;
+
+            const pinned = this.pins[action] || [];
+            const desired = orderTiles(tiles, pinned, tileItemHrid);
+
+            this.applying = true;
+            try {
+                for (const tile of tiles) this.decorateTile(tile, action, pinned);
+                if (sameOrder(tiles, desired)) return;
+
+                // Anchored on the first tile so anything else sharing the grid —
+                // the Remove button sits ahead of them — keeps its place
+                const marker = document.createComment('mwi-pins');
+                grid.insertBefore(marker, tiles[0]);
+                const fragment = document.createDocumentFragment();
+                for (const tile of desired) fragment.appendChild(tile);
+                grid.insertBefore(fragment, marker);
+                marker.remove();
+            } finally {
+                this.applying = false;
+            }
+        }
+
+        /**
+         * Give a tile its pin button and mark it if pinned.
+         * @param {HTMLElement} tile - Item tile
+         * @param {string} action - Alchemy action the menu is open for
+         * @param {string[]} pinned - Pinned hrids for that action
+         */
+        decorateTile(tile, action, pinned) {
+            const itemHrid = tileItemHrid(tile);
+            if (!itemHrid) return;
+
+            const isPinned = pinned.includes(itemHrid);
+            // The pin hangs off whichever element the grid can actually move, which
+            // is a wrapper around the tile rather than the tile itself — so the
+            // hover rule is keyed to a class of ours rather than the game's
+            tile.classList.add(TILE_CLASS);
+            tile.classList.toggle(PINNED_CLASS, isPinned);
+
+            let button = tile.querySelector(`.${PIN_CLASS}`);
+            if (!button) {
+                button = document.createElement('button');
+                button.className = PIN_CLASS;
+                button.type = 'button';
+                // Capture phase and both handlers: the tile itself selects the item
+                // on click, and a pin that also picked the item would be unusable
+                button.addEventListener('mousedown', (event) => event.stopPropagation());
+                button.addEventListener(
+                    'click',
+                    (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        this.toggle(tile);
+                    },
+                    true
+                );
+                tile.appendChild(button);
+            }
+            // Written only when it would actually change. Assigning the same text
+            // still replaces the node, which the menu watcher would see as the menu
+            // changing, which would decorate again — forever.
+            if (button.textContent !== '📌') button.textContent = '📌';
+            const title = isPinned ? `Unpin from ${action}` : `Pin to the front of ${action}`;
+            if (button.title !== title) button.title = title;
+            if (button.dataset.mwiPinAction !== action) button.dataset.mwiPinAction = action;
+        }
+
+        /**
+         * Pin or unpin the item a tile stands for.
+         * @param {HTMLElement} tile - Item tile
+         */
+        toggle(tile) {
+            const itemHrid = tileItemHrid(tile);
+            const action = tile.querySelector(`.${PIN_CLASS}`)?.dataset.mwiPinAction || activeAlchemyAction();
+            if (!itemHrid || !action) return;
+
+            this.pins = togglePin(this.pins, action, itemHrid);
+            this.apply();
+            storage.setJSON(STORAGE_KEY, this.pins, 'settings').catch((error) => {
+                console.error('[AlchemyItemPins] Saving pins failed:', error);
+            });
+        }
+    }
+
+    const alchemyItemPins = new AlchemyItemPins();
+
+    /**
      * Skilling Optimizer Engine
      * Per-slot independent optimization: for each equipment slot, finds the best item
      * at each enhancement breakpoint. Uses the same breakpoint tables as the combat
@@ -26683,11 +27214,19 @@
         craftingPlan,
         alchemyProfitDisplay,
         alchemyBestItems,
+        alchemyItemPins,
         teaRecommendation,
         inventoryCountDisplay: inventoryCountDisplay$1,
         pinnedActionsPage,
         drinkTimer: drinkTimer$1,
         skillingOptimizer,
+    };
+
+    // Console-driven debug tools, kept out of the feature namespaces because
+    // nothing registers or schedules them — they only run when typed
+    toolashaRoot.Debug = {
+        ...(toolashaRoot.Debug || {}),
+        alchemyMenu: () => describeAlchemyMenus(),
     };
 
     console.log('[Toolasha] Actions library loaded');
