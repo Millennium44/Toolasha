@@ -505,7 +505,7 @@ class TreasureTracker {
             top: '80px',
             right: '80px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '460px',
+            width: '720px',
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
@@ -642,7 +642,9 @@ class TreasureTracker {
             const empty = document.createElement('div');
             empty.style.color = COLORS.textDim;
             empty.style.padding = '8px 2px';
-            empty.textContent = 'Nothing opened yet. Open a chest and it will show up here.';
+            // Reached only before the game's data has loaded — the list is
+            // every chest in the game, not only the ones you have opened
+            empty.textContent = 'Waiting for the game to send its chest data…';
             this.contentEl.appendChild(empty);
             return;
         }
@@ -667,7 +669,7 @@ class TreasureTracker {
         });
 
         const left = document.createElement('span');
-        left.textContent = `${totals.opened} chests`;
+        left.textContent = totals.opened ? `${totals.opened} chests opened` : 'Nothing opened yet';
 
         const right = document.createElement('span');
         const verdict = formatReturn(totals.ratio);
@@ -682,7 +684,9 @@ class TreasureTracker {
     }
 
     /**
-     * One chest, expandable into the items behind its verdict.
+     * One chest: a header that reads like the game's own item lines, and the
+     * three-column breakdown underneath when expanded.
+     *
      * @param {Object} row - From `summariseTally`
      * @returns {HTMLElement}
      */
@@ -690,31 +694,76 @@ class TreasureTracker {
         const wrapper = document.createElement('div');
         wrapper.style.marginBottom = '2px';
 
+        const untouched = !row.opened;
+
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
-            justifyContent: 'space-between',
             alignItems: 'center',
-            gap: '8px',
-            padding: '3px 4px',
+            gap: '7px',
+            padding: '4px 5px',
             cursor: 'pointer',
             borderRadius: '3px',
+            background: 'rgba(255, 255, 255, 0.03)',
         });
-        header.addEventListener('mouseover', () => (header.style.background = 'rgba(255, 255, 255, 0.05)'));
-        header.addEventListener('mouseout', () => (header.style.background = 'none'));
+        header.addEventListener('mouseover', () => (header.style.background = 'rgba(255, 255, 255, 0.08)'));
+        header.addEventListener('mouseout', () => (header.style.background = 'rgba(255, 255, 255, 0.03)'));
 
         const isExpanded = this.expanded.has(row.chestHrid);
-        const left = document.createElement('span');
-        left.textContent = `${isExpanded ? '−' : '+'} ${itemName(row.chestHrid)} ×${row.opened}`;
+        const caret = this._span(isExpanded ? '−' : '+');
+        caret.style.color = COLORS.accent;
+        caret.style.width = '9px';
 
-        const right = document.createElement('span');
+        const name = document.createElement('span');
+        name.style.fontWeight = 'bold';
+        name.append(itemName(row.chestHrid) + ' ');
+        // What one chest is worth on average, beside its name — the figure the
+        // rest of the row is measured against
+        const ev = this._span(`(${formatLargeNumber(Math.round(row.perChestValue))})`);
+        ev.style.color = COLORS.textDim;
+        ev.style.fontWeight = 'normal';
+        name.appendChild(ev);
+
+        const count = this._span(row.opened ? `×${row.opened}` : '');
+        count.style.color = COLORS.textDim;
+        count.style.marginLeft = 'auto';
+
         const verdict = formatReturn(row.ratio);
-        right.style.color = verdict.color;
-        right.style.whiteSpace = 'nowrap';
-        right.textContent = `${formatLargeNumber(Math.round(row.difference))} · ${verdict.text}`;
+        const diff = this._span(verdict.text);
+        diff.style.color = verdict.color;
+        diff.style.minWidth = '58px';
+        diff.style.textAlign = 'right';
 
-        header.appendChild(left);
-        header.appendChild(right);
+        const reset = document.createElement('button');
+        reset.textContent = 'Reset';
+        Object.assign(reset.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.textDim,
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '1px 6px',
+        });
+        reset.title = `Forget every ${itemName(row.chestHrid)} opening`;
+        reset.addEventListener('click', (event) => {
+            // Without this the click also toggles the row it sits in
+            event.stopPropagation();
+            if (!window.confirm(`Forget all ${row.opened} ${itemName(row.chestHrid)} openings?`)) return;
+            this.tally = resetTally(this.tally, row.chestHrid);
+            this._save();
+            this._render();
+        });
+
+        // A chest you have never opened has no verdict to show and nothing to
+        // reset; it is here to be looked up, so it is dimmed rather than
+        // decorated with empty controls
+        if (untouched) {
+            header.style.opacity = '0.65';
+            header.append(caret, this._icon(row.chestHrid, 16), name, count);
+        } else {
+            header.append(caret, this._icon(row.chestHrid, 16), name, count, diff, reset);
+        }
         header.addEventListener('click', () => {
             if (this.expanded.has(row.chestHrid)) this.expanded.delete(row.chestHrid);
             else this.expanded.add(row.chestHrid);
@@ -742,44 +791,42 @@ class TreasureTracker {
         const { last, total, items } = chestBreakdown(this.tally[row.chestHrid], dropTable, this._priceOf());
 
         const wrap = document.createElement('div');
-        wrap.style.padding = '4px 2px 8px';
+        Object.assign(wrap.style, {
+            padding: '5px 5px 8px',
+            background: 'rgba(0, 0, 0, 0.25)',
+            borderRadius: '0 0 3px 3px',
+            // Every figure is a number in a column; proportional digits make
+            // columns of them jitter as the values change
+            fontVariantNumeric: 'tabular-nums',
+        });
 
         wrap.appendChild(
-            this._columnRow(
-                [`LAST (×${last.opened || 0})`, `TOTAL (×${total.opened})`, `EXPECTED (×1 / ×${total.opened})`],
-                { bold: true, color: '#7fb3ff', align: 'center' }
-            )
+            this._headerBand([
+                `LAST (×${last.opened || 0})`,
+                `TOTAL (×${total.opened})`,
+                `EXPECTED (×1 / ×${total.opened})`,
+            ])
         );
-        wrap.appendChild(this._columnSummary(last, total));
+        wrap.appendChild(this._summaryBand(last, total));
 
         for (const item of items) wrap.appendChild(this._breakdownRow(item));
         return wrap;
     }
 
     /**
-     * A three-column line of plain text.
-     * @param {string[]} cells - Three strings
-     * @param {Object} style - `{ bold, color, align }`
+     * @param {string[]} titles - Three column titles
      * @returns {HTMLElement}
      */
-    _columnRow(cells, style = {}) {
-        const rowEl = document.createElement('div');
-        Object.assign(rowEl.style, {
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1.2fr',
-            gap: '8px',
-            fontSize: '11px',
-            padding: '2px 0',
-            fontWeight: style.bold ? 'bold' : 'normal',
-            color: style.color || 'inherit',
-            textAlign: style.align || 'left',
-        });
-        for (const text of cells) {
+    _headerBand(titles) {
+        const band = this._threeColumns();
+        Object.assign(band.style, { fontSize: '10px', fontWeight: 'bold', color: '#7fb3ff', padding: '1px 0' });
+        for (const title of titles) {
             const cell = document.createElement('div');
-            cell.textContent = text;
-            rowEl.appendChild(cell);
+            cell.textContent = title;
+            cell.style.textAlign = 'center';
+            band.appendChild(cell);
         }
-        return rowEl;
+        return band;
     }
 
     /**
@@ -788,27 +835,48 @@ class TreasureTracker {
      * @param {Object} total - Performance of every opening
      * @returns {HTMLElement}
      */
-    _columnSummary(last, total) {
-        const lastVerdict = formatReturn(last.ratio);
-        const totalVerdict = formatReturn(total.ratio);
-
-        const summary = this._columnRow(
-            [
-                `${formatLargeNumber(Math.round(last.actualValue))} (${lastVerdict.text})`,
-                `${formatLargeNumber(Math.round(total.actualValue))} (${totalVerdict.text})`,
-                formatLargeNumber(Math.round(total.expectedValue)),
-            ],
-            { align: 'center' }
-        );
-        summary.children[0].style.color = lastVerdict.color;
-        summary.children[1].style.color = totalVerdict.color;
-        summary.children[2].style.color = COLORS.textDim;
-        Object.assign(summary.style, {
+    _summaryBand(last, total) {
+        const band = this._threeColumns();
+        Object.assign(band.style, {
+            fontSize: '11px',
             borderBottom: `1px solid ${COLORS.border}`,
-            paddingBottom: '5px',
-            marginBottom: '4px',
+            paddingBottom: '4px',
+            marginBottom: '3px',
         });
-        return summary;
+
+        const cells = [
+            { value: last.actualValue, ratio: last.ratio },
+            { value: total.actualValue, ratio: total.ratio },
+            { value: total.expectedValue, ratio: null },
+        ];
+        for (const { value, ratio } of cells) {
+            const verdict = formatReturn(ratio);
+            const cell = document.createElement('div');
+            cell.style.textAlign = 'center';
+            cell.style.color = ratio === null ? COLORS.textDim : verdict.color;
+            cell.textContent =
+                ratio === null
+                    ? formatLargeNumber(Math.round(value))
+                    : `${formatLargeNumber(Math.round(value))} (${verdict.text})`;
+            band.appendChild(cell);
+        }
+        return band;
+    }
+
+    /**
+     * The outer three-column frame every band shares, so the titles, the summary
+     * and every item line stack in the same places.
+     * @returns {HTMLElement}
+     */
+    _threeColumns() {
+        const el = document.createElement('div');
+        Object.assign(el.style, {
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1.35fr',
+            gap: '10px',
+            alignItems: 'center',
+        });
+        return el;
     }
 
     /**
@@ -817,58 +885,75 @@ class TreasureTracker {
      * @returns {HTMLElement}
      */
     _breakdownRow(item) {
-        const rowEl = document.createElement('div');
-        Object.assign(rowEl.style, {
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1.2fr',
-            gap: '8px',
-            fontSize: '11px',
-            padding: '1px 0',
-            alignItems: 'center',
-        });
+        const rowEl = this._threeColumns();
+        Object.assign(rowEl.style, { fontSize: '11px', padding: '1px 0' });
 
-        rowEl.appendChild(this._breakdownCell(item, item.lastCount, item.lastValue, item.lastRatio, true));
-        rowEl.appendChild(this._breakdownCell(item, item.totalCount, item.totalValue, item.totalRatio, false));
-
-        // The expected column carries both scales: one chest, and the run so far
-        const expected = document.createElement('div');
-        Object.assign(expected.style, {
-            display: 'flex',
-            gap: '5px',
-            justifyContent: 'flex-end',
-            color: COLORS.textDim,
-        });
-        expected.append(
-            this._span(smallCount(item.expectedPerChest)),
-            this._span(formatLargeNumber(Math.round(item.expectedPerChestValue))),
-            this._span(`| ${smallCount(item.expectedTotal)}`),
-            this._span(formatLargeNumber(Math.round(item.expectedTotalValue)))
-        );
-        rowEl.appendChild(expected);
+        rowEl.appendChild(this._actualCell(item, item.lastCount, item.lastValue, item.lastRatio));
+        rowEl.appendChild(this._actualCell(item, item.totalCount, item.totalValue, item.totalRatio));
+        rowEl.appendChild(this._expectedCell(item));
         return rowEl;
     }
 
     /**
+     * What dropped, what it was worth, and how that compares.
+     *
+     * A fixed sub-grid rather than flex, so counts, values and percentages line
+     * up down the column instead of drifting with the width of the number above.
+     *
      * @param {Object} item - The item, for its icon
      * @param {number} count - What dropped
      * @param {number} value - What it was worth
      * @param {number|null} ratio - Against expectation
-     * @param {boolean} withIcon - Only the first column carries the icon
      * @returns {HTMLElement}
      */
-    _breakdownCell(item, count, value, ratio, withIcon) {
+    _actualCell(item, count, value, ratio) {
         const cell = document.createElement('div');
-        Object.assign(cell.style, { display: 'flex', gap: '4px', alignItems: 'center' });
-        if (withIcon) cell.appendChild(this._icon(item.itemHrid, 13));
+        Object.assign(cell.style, {
+            display: 'grid',
+            gridTemplateColumns: '15px 1fr 1fr 54px',
+            gap: '4px',
+            alignItems: 'center',
+        });
 
         const verdict = formatReturn(ratio);
+        const countEl = this._span(formatLargeNumber(count));
         const valueEl = this._span(value > 0 ? formatLargeNumber(Math.round(value)) : '');
         valueEl.style.color = COLORS.good;
-        valueEl.style.marginLeft = 'auto';
-        const diffEl = this._span(ratio === null ? '' : `(${verdict.text})`);
+        valueEl.style.textAlign = 'right';
+        const diffEl = this._span(ratio === null ? '' : verdict.text);
         diffEl.style.color = verdict.color;
+        diffEl.style.textAlign = 'right';
 
-        cell.append(this._span(formatLargeNumber(count)), valueEl, diffEl);
+        cell.append(this._icon(item.itemHrid, 13), countEl, valueEl, diffEl);
+        return cell;
+    }
+
+    /**
+     * What one chest owed, and what the whole run owed.
+     * @param {Object} item - From `chestBreakdown`
+     * @returns {HTMLElement}
+     */
+    _expectedCell(item) {
+        const cell = document.createElement('div');
+        Object.assign(cell.style, {
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 8px 1fr 1fr',
+            gap: '4px',
+            alignItems: 'center',
+            color: COLORS.textDim,
+        });
+
+        const perChest = this._span(smallCount(item.expectedPerChest));
+        const perChestValue = this._span(formatLargeNumber(Math.round(item.expectedPerChestValue)));
+        perChestValue.style.textAlign = 'right';
+        const divider = this._span('|');
+        divider.style.textAlign = 'center';
+        const overall = this._span(smallCount(item.expectedTotal));
+        overall.style.textAlign = 'right';
+        const overallValue = this._span(formatLargeNumber(Math.round(item.expectedTotalValue)));
+        overallValue.style.textAlign = 'right';
+
+        cell.append(perChest, perChestValue, divider, overall, overallValue);
         return cell;
     }
 
@@ -880,6 +965,8 @@ class TreasureTracker {
         const span = document.createElement('span');
         span.textContent = text;
         span.style.whiteSpace = 'nowrap';
+        span.style.overflow = 'hidden';
+        span.style.textOverflow = 'ellipsis';
         return span;
     }
 }

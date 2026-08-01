@@ -206,26 +206,45 @@ export function chestBreakdown(entry, dropTable, priceOf) {
 }
 
 /**
- * Every chest with a history, worst first.
+ * Every chest in the game, with whatever history you have for it.
  *
- * Ordered by how far from expectation each sits rather than alphabetically —
- * the reason to open the panel is to find out which chest let you down.
+ * Unopened chests are listed too, priced but with no verdict, because the panel
+ * is also the place to look up what a chest is worth before deciding to open it
+ * — a list of only what you have already opened cannot answer that.
+ *
+ * Ordered by how far from expectation each sits, worst first, since the reason
+ * to open the panel is usually to find out which chest let you down. Chests with
+ * no history sort after those, by what one is worth, so the list stays useful
+ * rather than alphabetical.
  *
  * @param {Object} tally - The tally
  * @param {Object} dropTables - `openableLootDropMap`
  * @param {Function} priceOf - `(itemHrid) => number|null`
- * @returns {Array<Object>} Performances, each with `chestHrid`
+ * @returns {Array<Object>} Performances, each with `chestHrid` and `perChestValue`
  */
 export function summariseTally(tally, dropTables, priceOf) {
-    const rows = [];
+    // Every chest the game knows about, plus anything in the tally that the game
+    // has since stopped listing — history should not vanish on a game update
+    const chestHrids = new Set([...Object.keys(dropTables || {}), ...Object.keys(tally || {})]);
 
-    for (const [chestHrid, entry] of Object.entries(tally || {})) {
-        if (!entry?.opened) continue;
-        const performance = chestPerformance(entry, dropTables?.[chestHrid], priceOf);
-        rows.push({ chestHrid, ...performance });
-    }
+    const rows = [...chestHrids].map((chestHrid) => {
+        const dropTable = dropTables?.[chestHrid];
+        const performance = chestPerformance((tally || {})[chestHrid], dropTable, priceOf);
+        const perChest = expectedLootPerChest(dropTable);
+        const perChestValue = Object.entries(perChest).reduce(
+            (sum, [itemHrid, count]) => sum + count * (priceOf(itemHrid) || 0),
+            0
+        );
+        return { chestHrid, perChestValue, ...performance };
+    });
 
-    rows.sort((a, b) => (a.ratio ?? Infinity) - (b.ratio ?? Infinity));
+    rows.sort((a, b) => {
+        // A chest you have never opened has no verdict to rank, so it waits
+        // behind the ones that do
+        if (!a.opened !== !b.opened) return a.opened ? -1 : 1;
+        if (a.opened) return (a.ratio ?? Infinity) - (b.ratio ?? Infinity);
+        return b.perChestValue - a.perChestValue;
+    });
     return rows;
 }
 

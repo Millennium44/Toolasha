@@ -141,7 +141,7 @@ describe('chestPerformance', () => {
 describe('summariseTally', () => {
     const dropTables = { [CHEST]: dropTable, '/items/big_chest': dropTable };
 
-    test('puts the worst chest first', () => {
+    test('puts the worst opened chest first', () => {
         const tally = {
             [CHEST]: { opened: 100, loot: { '/items/coin': 20000, '/items/rare': 2 } },
             '/items/big_chest': { opened: 100, loot: { '/items/coin': 20000 } },
@@ -149,13 +149,29 @@ describe('summariseTally', () => {
         expect(summariseTally(tally, dropTables, priceOf)[0].chestHrid).toBe('/items/big_chest');
     });
 
-    test('skips chests with no history', () => {
-        const tally = { [CHEST]: { opened: 0, loot: {} } };
-        expect(summariseTally(tally, dropTables, priceOf)).toEqual([]);
+    test('lists chests you have never opened, priced', () => {
+        // The panel is also where you look up what a chest is worth before
+        // deciding to open it, which a list of your own history cannot answer
+        const rows = summariseTally({}, dropTables, priceOf);
+        expect(rows).toHaveLength(2);
+        expect(rows[0].perChestValue).toBeCloseTo(1200, 6);
+        expect(rows[0].opened).toBe(0);
+    });
+
+    test('unopened chests wait behind the ones with a verdict', () => {
+        const tally = { '/items/big_chest': { opened: 10, loot: { '/items/coin': 2000 } } };
+        expect(summariseTally(tally, dropTables, priceOf).map((r) => r.chestHrid)).toEqual(['/items/big_chest', CHEST]);
+    });
+
+    test('keeps history for a chest the game has stopped listing', () => {
+        const tally = { '/items/removed_chest': { opened: 5, loot: { '/items/coin': 900 } } };
+        const rows = summariseTally(tally, dropTables, priceOf);
+        expect(rows.some((r) => r.chestHrid === '/items/removed_chest')).toBe(true);
     });
 
     test('survives an empty tally', () => {
-        expect(summariseTally(null, dropTables, priceOf)).toEqual([]);
+        expect(summariseTally(null, dropTables, priceOf)).toHaveLength(2);
+        expect(summariseTally(null, null, priceOf)).toEqual([]);
     });
 });
 
