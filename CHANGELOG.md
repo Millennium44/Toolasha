@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The treasure popup now sits beside the game's loot dialog
+
+- It was pinned to the top-right corner while the game's Opened Loot dialog opens near the middle, so reading the two together meant looking back and forth across the whole window. The popup is now measured after it mounts and placed against the dialog — to its right, or to its left when the right would run off screen, top-aligned and nudged up only if it is the taller of the two.
+- Falls back to the corner when no dialog is up, which happens if a chest is opened by a route that does not raise one.
+
+### Toolasha.Debug.houses()
+
+- The Houses row draws nothing when it cannot price a single upgrade, and nothing is indistinguishable from the feature being off. `Toolasha.Debug.houses()` in the console now reports which step came back empty: the room list, the level, the game's `upgradeCostsMap`, or the market prices those costs are valued at — per room, with the cumulative figures either side of the subtraction so a wrong reading of the cost table is visible rather than inferred.
+
 ### Drop luck updates during a run, not only after it
 
 - It was computed once, on leaving combat, because that is when the battle panel it writes into appears. The overlay row therefore sat empty for a whole grind and then filled in at the end — the least useful moment. Everything it needs is already on the `new_battle` message, so it is now recomputed from the running loot total as you fight.

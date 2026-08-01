@@ -34,6 +34,11 @@ import { makeDraggable } from '../../utils/floating-panel.js';
 const STORAGE_KEY = 'treasureTally';
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
+/** The game's own dialog, which the popup wants to sit beside */
+const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalContainer"])';
+/** Gap between the two, and how far off a screen edge the popup may not go */
+const DIALOG_GAP = 12;
+const EDGE_MARGIN = 8;
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.96)',
@@ -148,6 +153,42 @@ class TreasureTracker {
         this.popup = this._buildPopup(chestHrid, opening, lifetime);
         document.body.appendChild(this.popup);
         registerFloatingPanel(this.popup);
+        this._placeBesideDialog();
+    }
+
+    /**
+     * Put the popup beside the game's Opened Loot dialog.
+     *
+     * The two are read together — the game's counts on the left, whether they
+     * were good on the right — so a popup pinned to a screen corner makes you
+     * look back and forth across the whole window.
+     *
+     * Measured after mounting, because the height depends on how many items the
+     * chest paid out. Falls back to the top-right corner when the dialog is not
+     * up, which happens when a chest is opened by some route that does not raise
+     * one.
+     */
+    _placeBesideDialog() {
+        const dialog = document.querySelector(LOOT_DIALOG_SELECTOR);
+        if (!dialog) return;
+
+        const anchor = dialog.getBoundingClientRect();
+        const self = this.popup.getBoundingClientRect();
+        if (!anchor.width || !self.width) return;
+
+        // To the right of the dialog, unless that would run off screen, in which
+        // case the left side has the room
+        const rightOf = anchor.right + DIALOG_GAP;
+        const leftOf = anchor.left - self.width - DIALOG_GAP;
+        const fitsRight = rightOf + self.width <= window.innerWidth - EDGE_MARGIN;
+        const left = fitsRight ? rightOf : Math.max(leftOf, EDGE_MARGIN);
+
+        // Top-aligned with the dialog, nudged up only if the popup is the taller
+        // of the two and would otherwise hang off the bottom
+        const maxTop = window.innerHeight - self.height - EDGE_MARGIN;
+        const top = Math.max(EDGE_MARGIN, Math.min(anchor.top, maxTop));
+
+        Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto' });
     }
 
     _save() {
