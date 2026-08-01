@@ -15,6 +15,12 @@
  * `utils/combat-drop-model.js`; this module only decides when to ask and where to
  * put the answer.
  *
+ * It is asked twice. The battle panel gets it on `battle_unit_fetched`, which is
+ * the moment you leave combat and see the revenue it sits beside. The overlay
+ * row wants it during the run, so the figure is also recomputed from the running
+ * loot total on `new_battle` — throttled, because the transform costs about a
+ * tenth of a second and battles can be seconds apart.
+ *
  * Two limits worth knowing, both shown rather than hidden:
  *
  * - **Dungeons are skipped.** They pay from a reward table on completion, not per
@@ -38,6 +44,14 @@ const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
 const MAX_PANEL_TRIES = 10;
 const PANEL_RETRY_MS = 200;
+/**
+ * How often the percentile is recomputed mid-run.
+ *
+ * The transform is around a tenth of a second on a busy zone, and battles can be
+ * seconds apart, so recomputing per battle would spend a noticeable slice of the
+ * run on a figure that barely moves between kills.
+ */
+const LIVE_INTERVAL_MS = 30000;
 
 /** Above this is a good session, below the mirror of it a bad one */
 const LUCKY_PERCENTILE = 0.75;
@@ -84,6 +98,7 @@ class CombatDropLuck {
         // Kept so the overlay row has something to show between fights; the
         // battle panel that normally carries this is gone the moment you leave
         this.lastResult = null;
+        this.liveAt = 0;
     }
 
     initialize() {
@@ -114,6 +129,7 @@ class CombatDropLuck {
         document.getElementById(DISPLAY_ID)?.remove();
         this.context = null;
         this.lastResult = null;
+        this.liveAt = 0;
         this.isInitialized = false;
     }
 
@@ -148,9 +164,40 @@ class CombatDropLuck {
                 // and call anyone wearing drop gear lucky, so say so instead
                 hasBonuses: !!stats,
             };
+
+            // The running loot total rides along on the same message, so the
+            // percentile can be kept current during a run rather than waiting
+            // for the battle panel that only appears once you leave
+            this._refreshLive(self?.totalLootMap);
         } catch (error) {
             console.error('[CombatDropLuck] Reading battle context failed:', error);
         }
+    }
+
+    /**
+     * Recompute mid-run, at most every `LIVE_INTERVAL_MS`.
+     *
+     * Deferred off the WebSocket handler because the transform is long enough to
+     * be felt, and a message handler is the worst place to spend that — it
+     * delays every other feature listening to the same message.
+     *
+     * @param {Object} lootMap - The run's loot so far
+     */
+    _refreshLive(lootMap) {
+        if (!lootMap || !this.context?.battles) return;
+
+        const now = Date.now();
+        if (now - this.liveAt < LIVE_INTERVAL_MS) return;
+        this.liveAt = now;
+
+        const deferred = setTimeout(() => {
+            try {
+                this._analyse(lootMap);
+            } catch (error) {
+                console.error('[CombatDropLuck] Live luck calculation failed:', error);
+            }
+        }, 0);
+        this.timerRegistry.registerTimeout(deferred);
     }
 
     /**

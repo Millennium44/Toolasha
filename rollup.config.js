@@ -66,6 +66,26 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/house-cost-calculator.js')), 'Toolasha.Utils.houseCostCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
     // Shared or the overlay's row list is duplicated per bundle and the panel renders nothing
+    // Every src/utils module used by more than one bundle is declared here.
+    // Anything omitted is silently copied into each bundle that imports it,
+    // which is how the combat bundle grew to within 3 KB of its 2 MB ceiling.
+    [normalize(join(__dirname, 'src/utils/drop-luck.js')), 'Toolasha.Utils.dropLuck'],
+    [normalize(join(__dirname, 'src/utils/complex-fft.js')), 'Toolasha.Utils.complexFft'],
+    [normalize(join(__dirname, 'src/utils/combat-drop-model.js')), 'Toolasha.Utils.combatDropModel'],
+    [normalize(join(__dirname, 'src/utils/spawn-expectation.js')), 'Toolasha.Utils.spawnExpectation'],
+    [normalize(join(__dirname, 'src/utils/chest-tally.js')), 'Toolasha.Utils.chestTally'],
+    [normalize(join(__dirname, 'src/utils/floating-panel.js')), 'Toolasha.Utils.floatingPanel'],
+    [normalize(join(__dirname, 'src/utils/worker-pool.js')), 'Toolasha.Utils.workerPool'],
+    [normalize(join(__dirname, 'src/utils/ev-worker-manager.js')), 'Toolasha.Utils.evWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/enhancement-worker-manager.js')), 'Toolasha.Utils.enhancementWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/networth-worker-manager.js')), 'Toolasha.Utils.networthWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/panel-z-index.js')), 'Toolasha.Utils.panelZIndex'],
+    [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Utils.performanceMonitor'],
+    [normalize(join(__dirname, 'src/utils/game-lookups.js')), 'Toolasha.Utils.gameLookups'],
+    [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
+    [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
+    [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
+    [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
     [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
 ]);
 
