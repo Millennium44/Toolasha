@@ -45,14 +45,26 @@ const rows = [];
  * @param {Function} [row.onOpen] - Called when the row is double-clicked. A row is
  *   a summary; this is where the panel behind it opens. Rows without one are
  *   simply not interactive.
+ * @param {{width: number, height: number}} [row.defaultSize] - How large a tile the row
+ *   needs before anyone has resized it. A row knows how much it draws; the panel
+ *   does not, and guessing one size for all of them leaves half of them clipped.
+ * @param {number} [row.defaultZoom] - Starting text size, as a percentage
  */
-export function registerRow({ key, name, render, defaultVisible = true, onOpen = null }) {
+export function registerRow({
+    key,
+    name,
+    render,
+    defaultVisible = true,
+    onOpen = null,
+    defaultSize = null,
+    defaultZoom = null,
+}) {
     if (!key || typeof render !== 'function') {
         console.error('[OverlayPanel] A row needs a key and a render function:', key);
         return;
     }
 
-    const definition = { key, name: name || key, render, defaultVisible, onOpen };
+    const definition = { key, name: name || key, render, defaultVisible, onOpen, defaultSize, defaultZoom };
     const existing = rows.findIndex((row) => row.key === key);
     if (existing >= 0) rows[existing] = definition;
     else rows.push(definition);

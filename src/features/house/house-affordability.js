@@ -20,11 +20,16 @@ import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { makeDraggable } from '../../utils/floating-panel.js';
+import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
+import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
 const PANEL_ID = 'toolasha-houses-panel';
+/** Where this panel's size and position are remembered */
+const GEOMETRY_KEY = 'housesPanel';
+/** What it opens at before anyone has resized it */
+const DEFAULT_PANEL = { width: 560, height: 420 };
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.96)',
@@ -238,7 +243,8 @@ class HousesPanel {
             top: '100px',
             left: '60px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '560px',
+            width: `${DEFAULT_PANEL.width}px`,
+            height: `${DEFAULT_PANEL.height}px`,
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
@@ -254,7 +260,7 @@ class HousesPanel {
         this.panel.appendChild(header);
 
         const body = document.createElement('div');
-        Object.assign(body.style, { display: 'flex', gap: '10px', padding: '10px', maxHeight: '60vh' });
+        Object.assign(body.style, { display: 'flex', gap: '10px', padding: '10px', flex: '1', minHeight: '0' });
 
         this.gridEl = document.createElement('div');
         Object.assign(this.gridEl.style, {
@@ -272,9 +278,18 @@ class HousesPanel {
         body.appendChild(this.detailEl);
         this.panel.appendChild(body);
 
-        this.detachDrag = makeDraggable(this.panel, header);
+        this.detachDrag = makeDraggable(this.panel, header, (position) => {
+            saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+        });
+        this.detachResize = makeResizable(this.panel, {
+            minWidth: 380,
+            minHeight: 200,
+            onResize: (size) => saveGeometry(GEOMETRY_KEY, size),
+        });
+
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+        restoreGeometry(this.panel, GEOMETRY_KEY, { width: 380, height: 200 });
 
         this._render();
         // Costs move with the market, and coins move as you play
@@ -453,6 +468,8 @@ class HousesPanel {
         this.refreshId = null;
         this.detachDrag?.();
         this.detachDrag = null;
+        this.detachResize?.();
+        this.detachResize = null;
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
         this.panel.remove();
@@ -467,6 +484,7 @@ export const housesPanel = new HousesPanel();
 registerRow({
     key: 'houses',
     name: 'Houses',
+    defaultSize: { width: 200, height: 50 },
     render: (container) => {
         container.replaceChildren();
 

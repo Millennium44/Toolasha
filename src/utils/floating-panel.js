@@ -71,6 +71,85 @@ export function makeDraggable(panel, handle, onDrop) {
 }
 
 /**
+ * Give a panel a corner you can drag to resize it.
+ *
+ * A grip rather than CSS `resize: both`, because the native handle needs the
+ * element to scroll its own overflow — these panels hide theirs so the rounded
+ * corners stay rounded — and it cannot be styled to be visible against a dark
+ * panel. It also gives us the minimums, which the native handle does not
+ * enforce below the content size.
+ *
+ * @param {HTMLElement} panel - The thing that resizes
+ * @param {Object} [options] - Options
+ * @param {number} [options.minWidth] - Smallest width
+ * @param {number} [options.minHeight] - Smallest height
+ * @param {Function} [options.onResize] - Called with `{width, height}` once the drag ends
+ * @returns {Function} Removes the grip
+ */
+export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize } = {}) {
+    const grip = document.createElement('div');
+    grip.title = 'Drag to resize';
+    Object.assign(grip.style, {
+        position: 'absolute',
+        right: '0',
+        bottom: '0',
+        width: '14px',
+        height: '14px',
+        cursor: 'nwse-resize',
+        // Two hairlines reading as a corner, rather than an icon that would need
+        // to be legible against whatever the panel's last row happens to be
+        background:
+            'linear-gradient(135deg, transparent 0 45%, rgba(158, 196, 255, 0.55) 45% 55%, transparent 55% 72%, ' +
+            'rgba(158, 196, 255, 0.55) 72% 82%, transparent 82%)',
+        zIndex: '2',
+    });
+
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startHeight = 0;
+    let resizing = false;
+
+    const onMouseMove = (event) => {
+        if (!resizing) return;
+        panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
+        panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
+    };
+
+    const onMouseUp = () => {
+        if (!resizing) return;
+        resizing = false;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        const rect = panel.getBoundingClientRect();
+        onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
+    };
+
+    const onMouseDown = (event) => {
+        if (event.button !== 0) return;
+        resizing = true;
+        const rect = panel.getBoundingClientRect();
+        startX = event.clientX;
+        startY = event.clientY;
+        startWidth = rect.width;
+        startHeight = rect.height;
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        event.preventDefault();
+        event.stopPropagation();
+    };
+
+    grip.addEventListener('mousedown', onMouseDown);
+    panel.appendChild(grip);
+
+    return () => {
+        grip.removeEventListener('mousedown', onMouseDown);
+        onMouseUp();
+        grip.remove();
+    };
+}
+
+/**
  * Nudge a panel back into view.
  *
  * A panel remembers where it was left, and the window it was left in may have

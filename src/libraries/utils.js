@@ -38,6 +38,9 @@ import * as cleanupRegistry from '../utils/cleanup-registry.js';
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as overlayRows from '../utils/overlay-rows.js';
+import * as overlayLayout from '../utils/overlay-layout.js';
+import * as panelGeometry from '../utils/panel-geometry.js';
+import * as choiceDialog from '../utils/choice-dialog.js';
 import * as dropLuck from '../utils/drop-luck.js';
 import * as complexFft from '../utils/complex-fft.js';
 import * as combatDropModel from '../utils/combat-drop-model.js';
@@ -97,6 +100,9 @@ toolashaRoot.Utils = {
     houseCostCalculator,
     enhancementCalculator,
     overlayRows,
+    overlayLayout,
+    panelGeometry,
+    choiceDialog,
     dropLuck,
     complexFft,
     combatDropModel,

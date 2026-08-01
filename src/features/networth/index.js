@@ -243,6 +243,7 @@ const networthFeature = new NetworthFeature();
 registerRow({
     key: 'netWorth',
     name: 'Net Worth',
+    defaultSize: { width: 180, height: 30 },
     render: (container) => {
         container.replaceChildren();
         const total = networthFeature.currentData?.totalNetworth;

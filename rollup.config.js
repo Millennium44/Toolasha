@@ -87,6 +87,12 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
     [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
     [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
+    [normalize(join(__dirname, 'src/utils/overlay-layout.js')), 'Toolasha.Utils.overlayLayout'],
+    // Shared above all for its cache: a private copy per bundle means the overlay
+    // and the Treasure panel each hold a stale map of every panel's geometry, and
+    // whichever saves last wipes the other's entry
+    [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
+    [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
 ]);
 
 // Combat feature modules imported cross-library (by ui)

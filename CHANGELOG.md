@@ -6,6 +6,28 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The overlay is a layout, not a list
+
+- **Rows are placed freely rather than stacked.** A stack forces one ordering decision — what goes above what — when the question you want to answer is what sits _beside_ what: revenue next to profit, luck next to expectation, so a glance reads a comparison instead of a column. Each tile carries its own position, size and text scale, and all of it is remembered.
+- **Locked by default (🔒).** An always-editable overlay is one where every click risks nudging the layout. Unlock to drag tiles by their body and resize them from the corner; lock again to go back to reading it.
+- **Snap to a 10px grid**, so tiles line up without being fiddled into place, and can be switched off when they need not to.
+- **Ctrl+scroll a tile to change its text size.** Tiles hold wildly different amounts — a timer is four characters and combat revenue is three lines of figures — so one text size for the whole panel means either a cramped tile or a wasteful one. Plain scroll is left to the panel, which still has to scroll.
+- **Autogrid** repacks everything from the top left in order, wrapping at the panel edge; a wrapped line clears the tallest tile above it rather than interleaving with it. **Reset layout** forgets every position, size and scale, and the panel's own geometry with them.
+- The row picker is now **chips that wrap** rather than one line each — fifteen rows as a vertical list is a panel of scrollbar; as chips it is four lines. Order still matters: it is what Autogrid packs by and where a new row is placed.
+- A row can declare the size it needs (`defaultSize`), because the row knows how much it draws and the panel does not. A row no saved layout has heard of is **placed in the first free space** rather than left at the origin under an existing tile, where it would read as a row that failed to render.
+- Refreshes hold off while you are dragging. The panel rewrites every tile's position once a second, which mid-drag meant the tile snapping back under the pointer a second in.
+
+### Panels remember their size and position, and can be resized
+
+- Every floating panel opened at a hardcoded corner at a hardcoded width and forgot anything you did to it, so the Treasure ledger and the Houses grid had to be dragged and re-read into shape on every page load. All three panels — Overlay, Treasure, Houses — now have a resize corner and one shared store behind them.
+- Saved geometry is **clamped to the current window** on the way back out. A panel restored wider than the screen cannot be resized back, because its resize grip is off the edge; a panel restored off the right edge cannot be reached at all, which looks exactly like a feature that stopped working.
+- **The chest popup remembers its size, but not its position — until you move it.** Sitting beside the game's loot dialog is the whole point of that popup, and a remembered position would silently switch that off the first time you nudged it out of the way. Dragging it pins it; the gear then offers **Unpin popup** to hand it back to auto-placement.
+
+### Import asks Add, Replace or Cancel, in three buttons
+
+- It was an OK/Cancel box with a paragraph explaining that OK meant add and Cancel meant replace — a sentence you have to read twice and can still read wrong, and reading it wrong overwrites a history that took months to accumulate. Buttons that say what they do cannot be misread.
+- Deleting all history asks the same way, with the destructive answer coloured as one.
+
 ### Treasure: choose what untradables are worth, and move your history in and out
 
 - **Capes, quivers and cloaks can be valued three ways.** They have no market price, so a chest that drops one otherwise reads as a chest that dropped nothing. A header button cycles between the **token cost** of what those tokens would have bought, the price of a **Mirror of Protection**, and **zero**. The token figure is read from the game's own shop table rather than hardcoded, so it follows a price change instead of going stale.
