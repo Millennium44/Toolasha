@@ -17,6 +17,7 @@ import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
+import treasureTracker from '../inventory/treasure-tracker.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -970,6 +971,12 @@ class SettingsUI {
         buttonsDiv.appendChild(resetBtn);
         buttonsDiv.appendChild(exportBtn);
         buttonsDiv.appendChild(importBtn);
+
+        const treasureBtn = document.createElement('button');
+        treasureBtn.textContent = 'Treasure';
+        treasureBtn.className = 'toolasha-utility-button';
+        treasureBtn.addEventListener('click', () => treasureTracker.show());
+        buttonsDiv.appendChild(treasureBtn);
 
         const pformanceBtn = document.createElement('button');
         pformanceBtn.textContent = 'PFormance';

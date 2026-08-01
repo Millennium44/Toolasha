@@ -606,6 +606,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            treasureTracker: {
+                id: 'treasureTracker',
+                label: 'Treasure Tracker: Record chest openings and compare against expected value',
+                type: 'checkbox',
+                default: true,
+                help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
+            },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
                 label: 'Show gathering sources and profit',

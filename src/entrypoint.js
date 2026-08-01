@@ -193,6 +193,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'treasureTracker',
+            name: 'Treasure Tracker',
+            category: 'Inventory',
+            module: Market.treasureTracker,
+            async: true,
+        },
+        {
             key: 'inventorySort',
             name: 'Inventory Sort',
             category: 'Inventory',
