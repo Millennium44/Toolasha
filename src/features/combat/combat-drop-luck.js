@@ -32,7 +32,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { sessionLuck } from '../../utils/drop-luck.js';
 import { buildCombatSession, lootValue } from '../../utils/combat-drop-model.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { registerRow } from '../ui/overlay-panel.js';
+import { registerRow } from '../../utils/overlay-rows.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';

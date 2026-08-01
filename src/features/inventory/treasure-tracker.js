@@ -28,7 +28,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { recordOpening, resetTally, summariseTally, tallyTotals } from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { registerRow } from '../ui/overlay-panel.js';
+import { registerRow } from '../../utils/overlay-rows.js';
 
 const STORAGE_KEY = 'treasureTally';
 const PANEL_ID = 'toolasha-treasure-panel';

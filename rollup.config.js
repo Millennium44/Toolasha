@@ -65,6 +65,8 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/cleanup-registry.js')), 'Toolasha.Utils.cleanupRegistry'],
     [normalize(join(__dirname, 'src/utils/house-cost-calculator.js')), 'Toolasha.Utils.houseCostCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
+    // Shared or the overlay's row list is duplicated per bundle and the panel renders nothing
+    [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
 ]);
 
 // Combat feature modules imported cross-library (by ui)
