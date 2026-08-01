@@ -22,7 +22,15 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelSimulation } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
-import { runUpgradeAnalysis, getStyleExcludedSkills, houseRoomAffectsCombat } from './upgrade-advisor.js';
+import {
+    runUpgradeAnalysis,
+    getStyleExcludedSkills,
+    houseRoomAffectsCombat,
+    assignRankScores,
+    RANK_PLACES,
+    SCORE_METRICS,
+    DEFAULT_SCORE_KEYS,
+} from './upgrade-advisor.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
 
@@ -35,6 +43,21 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
+const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+const PANEL_SIZE_KEY = 'combatSimPanelSize';
+
+/** Floor sizes the resize grips will not take the panel below. */
+const MIN_PANEL_WIDTH = 400;
+const MIN_PANEL_HEIGHT = 300;
+
+/**
+ * Columns hidden until asked for.
+ *
+ * The raw deltas restate what the gold-per columns already price, and ROI is
+ * repay time inverted — all six are worth having on demand, none is worth the
+ * width by default. Sixteen columns at once is what forced the panel wider.
+ */
+const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
 
 /**
  * Sort result rows by a computed key, treating Infinity as "worst" so unknown
@@ -671,20 +694,30 @@ class CombatSimUI {
         this.panel.appendChild(upgradeContent);
         this.panel.appendChild(status);
 
-        const resizeHandle = document.createElement('div');
-        resizeHandle.style.cssText = `
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            width: 16px;
-            height: 16px;
-            cursor: nwse-resize;
-            background: linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
-            border-radius: 0 0 8px 0;
-            z-index: 1;
-        `;
-        this.panel.appendChild(resizeHandle);
-        this._setupResize(resizeHandle);
+        // Three grips, not one. The corner alone meant aiming at 16 square pixels
+        // to make the panel wider; the edges give the whole side as a target.
+        const addGrip = (css, axis) => {
+            const grip = document.createElement('div');
+            grip.style.cssText = `position:absolute; z-index:1; ${css}`;
+            this.panel.appendChild(grip);
+            this._setupResize(grip, axis);
+        };
+
+        addGrip('top:44px; bottom:18px; right:0; width:8px; cursor:ew-resize;', 'e');
+        addGrip('top:44px; bottom:18px; left:0; width:8px; cursor:ew-resize;', 'w');
+        addGrip('left:18px; right:18px; bottom:0; height:8px; cursor:ns-resize;', 's');
+        addGrip(
+            `bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; z-index:2;
+             background:linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
+             border-radius:0 0 8px 0;`,
+            'se'
+        );
+        addGrip(
+            `bottom:0; left:0; width:18px; height:18px; cursor:nesw-resize; z-index:2;
+             background:linear-gradient(225deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
+             border-radius:0 0 0 8px;`,
+            'sw'
+        );
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -715,6 +748,8 @@ class CombatSimUI {
             });
         });
         this._restoreUpgradeModes();
+        this._loadUpgradeColumnPrefs();
+        this._restorePanelSize();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -3083,29 +3118,83 @@ class CombatSimUI {
     /**
      * @private
      */
-    _setupResize(handle) {
+    _setupResize(handle, mode = 'se') {
         handle.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            const rect = this.panel.getBoundingClientRect();
             const startX = e.clientX;
             const startY = e.clientY;
-            const startWidth = this.panel.offsetWidth;
-            const startHeight = this.panel.offsetHeight;
+            const { width: startWidth, height: startHeight, right: startRight } = rect;
             bringPanelToFront(this.panel);
 
+            // The panel opens anchored to its right edge, which makes a widening
+            // drag push the *opposite* side across the screen. Pin it by the left
+            // edge before resizing so each grip moves the side you grabbed.
+            this.panel.style.left = `${rect.left}px`;
+            this.panel.style.right = 'auto';
+
+            // Without this, dragging over the page selects text instead of resizing
+            const priorSelect = document.body.style.userSelect;
+            document.body.style.userSelect = 'none';
+
             const onMove = (ev) => {
-                const newWidth = Math.max(400, startWidth + (ev.clientX - startX));
-                const newHeight = Math.max(300, startHeight + (ev.clientY - startY));
-                this.panel.style.width = `${newWidth}px`;
-                this.panel.style.height = `${newHeight}px`;
+                if (mode.includes('e')) {
+                    this.panel.style.width = `${Math.max(MIN_PANEL_WIDTH, startWidth + (ev.clientX - startX))}px`;
+                }
+                if (mode.includes('w')) {
+                    const width = Math.max(MIN_PANEL_WIDTH, startWidth - (ev.clientX - startX));
+                    this.panel.style.width = `${width}px`;
+                    // Hold the right edge still while the left one follows the cursor
+                    this.panel.style.left = `${startRight - width}px`;
+                }
+                if (mode.includes('s')) {
+                    this.panel.style.height = `${Math.max(MIN_PANEL_HEIGHT, startHeight + (ev.clientY - startY))}px`;
+                }
             };
             const onUp = () => {
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
+                document.body.style.userSelect = priorSelect;
+                this._persistPanelSize();
             };
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
         });
+    }
+
+    /**
+     * Remember the panel's size so it does not need resizing every session.
+     * @private
+     */
+    async _persistPanelSize() {
+        try {
+            await storage.set(
+                PANEL_SIZE_KEY,
+                { width: this.panel.offsetWidth, height: this.panel.offsetHeight },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save panel size:', error);
+        }
+    }
+
+    /**
+     * Restore a remembered panel size, clamped to the current viewport so a size
+     * saved on a larger monitor cannot open the panel off-screen.
+     * @private
+     */
+    async _restorePanelSize() {
+        try {
+            const saved = await storage.get(PANEL_SIZE_KEY, 'settings', null);
+            if (!saved || !this.panel) return;
+            const width = Number(saved.width);
+            const height = Number(saved.height);
+            if (width > 0) this.panel.style.width = `${Math.min(width, window.innerWidth * 0.95)}px`;
+            if (height > 0) this.panel.style.height = `${Math.min(height, window.innerHeight * 0.95)}px`;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore panel size:', error);
+        }
     }
 
     /**
@@ -3862,11 +3951,32 @@ class CombatSimUI {
             </div>
             <div style="margin-top:6px; color:#666; font-size:10px;">
                 Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit ${formatKMB(baseline.profitPerHour)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
-            </div>`;
+            </div>
+            ${this._renderUpgradeScoreBreakdown(r)}`;
     }
 
     /**
-     * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.1%.
+     * Where a row's Score came from, so the number is auditable rather than magic.
+     * @param {Object} r - Upgrade result row
+     * @returns {string} HTML, empty when the row scored nothing
+     * @private
+     */
+    _renderUpgradeScoreBreakdown(r) {
+        const entries = Object.values(r.rankPoints || {});
+        if (!entries.length) return '';
+
+        const parts = entries
+            .sort((a, b) => b.points - a.points)
+            .map((e) => `${e.label} #${e.place} (+${e.points})`)
+            .join(' &nbsp;·&nbsp; ');
+
+        return `<div style="margin-top:4px; color:#666; font-size:10px;">
+            Score ${r.score}: ${parts}
+        </div>`;
+    }
+
+    /**
+     * Gold-cost upgrade table: everything you can buy, ranked by gold per 0.01%.
      * @param {Array<Object>} rows - Non-combat-level results
      * @param {Object} baseline - Baseline metrics
      * @returns {string} HTML
@@ -3876,66 +3986,321 @@ class CombatSimUI {
         if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeSort;
 
-        const sortValue = (r) => {
-            switch (sortKey) {
-                case 'upgrade':
-                    return r.candidate.description.toLowerCase();
-                case 'cost':
-                    return r.cost == null ? Infinity : r.cost;
-                case 'xp':
-                    return r.goldPer.xp;
-                case 'profit':
-                    return r.goldPer.profit;
-                default:
-                    return r.goldPer.dps;
-            }
-        };
+        const columns = this._upgradeColumns(baseline).filter((c) => c.visible);
+        const column = columns.find((c) => c.key === sortKey) || columns[0];
+        // Higher-is-better columns are negated so one ascending sort serves all
+        const sortValue = (r) => (column.lowerIsBetter === false ? -column.value(r) : column.value(r));
         const sorted = sortRowsBy(rows, sortValue, sortAsc);
 
-        const thStyle =
-            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e;';
+        // Sticky needs an opaque background or rows scroll through the header.
+        // The offset is the results pane's own padding, so the header parks flush
+        // with the top of the scroll area rather than floating below it.
+        const thBase =
+            'padding:3px 4px; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; ' +
+            'user-select:none; position:sticky; top:-10px; z-index:2; background:#12121f; line-height:1.15;';
+        const tdBase = 'padding:3px 4px; border-bottom:1px solid #1a1a2e;';
+        // Numbers right-align and never wrap; only the Upgrade name may reflow,
+        // which is what keeps sixteen columns inside a panel this wide
+        const align = (c) => (c.numeric ? 'text-align:right; white-space:nowrap;' : 'text-align:left;');
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
 
-        let bestDps = Infinity;
-        let bestXp = Infinity;
-        let bestProfit = Infinity;
-        for (const r of rows) {
-            if (r.goldPer.dps < bestDps) bestDps = r.goldPer.dps;
-            if (r.goldPer.xp < bestXp) bestXp = r.goldPer.xp;
-            if (r.goldPer.profit < bestProfit) bestProfit = r.goldPer.profit;
+        // Best value per column, for the green highlight
+        const best = new Map();
+        for (const c of columns) {
+            if (!c.highlight) continue;
+            let winner = c.lowerIsBetter === false ? -Infinity : Infinity;
+            for (const r of rows) {
+                const v = c.value(r);
+                if (!Number.isFinite(v)) continue;
+                if (c.lowerIsBetter === false ? v > winner : v < winner) winner = v;
+            }
+            best.set(c.key, winner);
         }
 
-        let html = `<table style="width:100%; border-collapse:collapse; font-size:11px;">
-            <thead><tr>
-                <th style="${thStyle}" data-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
-                <th style="${thStyle}" data-sort-key="cost">Cost${arrow('cost')}</th>
-                <th style="${thStyle}" data-sort-key="dps">Gold/0.1% DPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-sort-key="xp">Gold/0.1% EXP${arrow('xp')}</th>
-                <th style="${thStyle}" data-sort-key="profit">Gold/0.1% Profit${arrow('profit')}</th>
-            </tr></thead><tbody>`;
+        let html = `${this._renderUpgradeColumnMenu()}
+        <table style="width:100%; border-collapse:collapse; font-size:10px;">
+            <thead><tr>`;
+        for (const c of columns) {
+            const title = c.title ? ` title="${c.title}"` : '';
+            // The second line carries the qualifier, so "Gold/0.01% Profit" costs
+            // the width of "Gold/0.01%" rather than the whole phrase
+            const heading = c.sub ? `${c.label}<br>${c.sub}${arrow(c.key)}` : `${c.label}${arrow(c.key)}`;
+            html += `<th style="${thBase} ${align(c)}" data-sort-key="${c.key}"${title}>${heading}</th>`;
+        }
+        html += '</tr></thead><tbody>';
 
         sorted.forEach((r, i) => {
             const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
-            const fmtGoldPer = (val) => (val === Infinity ? '—' : formatKMB(val));
-            const bestStyle = (val, best) =>
-                val === best && best !== Infinity ? 'color:#4caf50; font-weight:700;' : '';
 
-            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">
-                <td style="${tdStyle}">${r.candidate.description}</td>
-                <td style="${tdStyle}">${r.cost == null ? '?' : formatKMB(r.cost)}</td>
-                <td style="${tdStyle} ${bestStyle(r.goldPer.dps, bestDps)}">${fmtGoldPer(r.goldPer.dps)}</td>
-                <td style="${tdStyle} ${bestStyle(r.goldPer.xp, bestXp)}">${fmtGoldPer(r.goldPer.xp)}</td>
-                <td style="${tdStyle} ${bestStyle(r.goldPer.profit, bestProfit)}">${fmtGoldPer(r.goldPer.profit)}</td>
-            </tr>
+            html += `<tr style="cursor:pointer; color:${rowColor};" data-upgrade-row="${i}">`;
+            for (const c of columns) {
+                const value = c.value(r);
+                const isBest = c.highlight && Number.isFinite(value) && value === best.get(c.key) && rows.length > 1;
+                const style = `${tdBase} ${align(c)}${isBest ? ' color:#4caf50; font-weight:700;' : ''}`;
+                const title = c.title ? ` title="${c.title}"` : '';
+                html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;
+            }
+            html += `</tr>
             <tr data-upgrade-detail="${i}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                <td colspan="${columns.length}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
         });
 
         return html + '</tbody></table>';
+    }
+
+    /**
+     * The ⚙ Columns popover: what the table shows, and what the Score counts.
+     *
+     * The two lists are deliberately separate. Hiding a column is about screen
+     * width; dropping one from the score changes the ranking. Tying them
+     * together would mean you could not read a metric without scoring it.
+     *
+     * @returns {string} HTML
+     * @private
+     */
+    _renderUpgradeColumnMenu() {
+        const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
+        const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
+        const open = this._upgradeColumnMenuOpen ? '' : 'display:none;';
+
+        const optional = this._upgradeColumns().filter((c) => !c.fixed);
+        const box = 'display:flex; align-items:center; gap:6px; cursor:pointer; color:#ccc; padding:1px 0;';
+
+        const showList = optional
+            .map(
+                (c) => `<label style="${box}">
+                    <input type="checkbox" data-upgrade-col="${c.key}" ${hidden.has(c.key) ? '' : 'checked'}>
+                    ${c.label}
+                </label>`
+            )
+            .join('');
+
+        const scoreList = SCORE_METRICS.map(
+            (m) => `<label style="${box}">
+                <input type="checkbox" data-upgrade-score="${m.key}" ${scored.has(m.key) ? 'checked' : ''}>
+                ${m.label}
+            </label>`
+        ).join('');
+
+        return `<div style="position:relative; margin-bottom:6px;">
+            <button id="mwi-csim-upgrade-cols-btn" style="background:#1a1a2e; color:#ccc; border:1px solid #333;
+                border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer;">⚙ Columns</button>
+            <div id="mwi-csim-upgrade-cols-menu" style="${open} position:absolute; top:100%; left:0; z-index:5;
+                background:#12121f; border:1px solid #333; border-radius:4px; padding:8px 10px; margin-top:2px;
+                font-size:11px; display:flex; gap:18px; box-shadow:0 4px 12px rgba(0,0,0,0.6);">
+                <div>
+                    <div style="color:#888; font-weight:600; margin-bottom:4px;">Show</div>
+                    ${showList}
+                </div>
+                <div>
+                    <div style="color:#888; font-weight:600; margin-bottom:4px;">Counts toward Score</div>
+                    ${scoreList}
+                    <div style="color:#666; margin-top:6px; max-width:190px; line-height:1.35;">
+                        Repay and ROI are the same ratio inverted — scoring both counts it twice.
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    /**
+     * Every column the gold table can show, in display order.
+     *
+     * One definition per column carries its label, how to read it off a row, how
+     * to draw it, whether lower is better and whether it is currently shown, so
+     * sorting, highlighting, the visibility menu and rendering cannot drift apart.
+     *
+     * @returns {Array<Object>} Column definitions
+     * @private
+     */
+    _upgradeColumns(baseline = {}) {
+        const hidden = this._upgradeHiddenColumns || new Set(DEFAULT_HIDDEN_COLUMNS);
+        const scored = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
+
+        const goldPer = (val) => (Number.isFinite(val) ? formatKMB(val) : '—');
+        const delta = (val, digits = 1) => {
+            if (!Number.isFinite(val) || Math.abs(val) < 1e-9) return '—';
+            return `${val > 0 ? '+' : ''}${Math.abs(val) >= 1000 ? formatKMB(val) : val.toFixed(digits)}`;
+        };
+        // Never-repays shows blank rather than ∞: the column is a duration, and
+        // "infinite hours" reads as a measurement when it is really an absence
+        const hours = (h) => {
+            if (!Number.isFinite(h)) return '—';
+            if (h <= 0) return 'free';
+            if (h < 24) return `${h.toFixed(1)}h`;
+            const days = h / 24;
+            return days < 90 ? `${days.toFixed(1)}d` : `${(days / 30.44).toFixed(1)}mo`;
+        };
+
+        const scoreNote = (key) => (scored.has(key) ? ' Counts toward Score.' : '');
+
+        const defs = [
+            {
+                key: 'upgrade',
+                label: 'Upgrade',
+                fixed: true,
+                value: (r) => r.candidate.description.toLowerCase(),
+                render: (r) => r.candidate.description,
+            },
+            {
+                key: 'cost',
+                label: 'Cost',
+                fixed: true,
+                numeric: true,
+                value: (r) => (r.cost == null ? Infinity : r.cost),
+                render: (r) => (r.cost == null ? '?' : formatKMB(r.cost)),
+            },
+            {
+                key: 'payback',
+                label: 'Time',
+                numeric: true,
+                title:
+                    'How long you grind at your current profit rate to afford this. Every row divides by ' +
+                    'that same rate, so this orders candidates exactly as Cost does — it is the Cost ' +
+                    'column in hours, which is why it cannot be scored.',
+                value: (r) => r.economics?.paybackHours ?? Infinity,
+                render: (r, v) => hours(v),
+            },
+            {
+                key: 'repay',
+                label: 'Repay',
+                numeric: true,
+                highlight: true,
+                title:
+                    'How long the extra profit takes to earn the cost back. Blank means the upgrade does ' +
+                    'not raise profit, so it never repays — which does not make it a bad buy if you ' +
+                    'bought it for DPS.' +
+                    scoreNote('repay'),
+                value: (r) => r.economics?.repayHours ?? Infinity,
+                render: (r, v) => hours(v),
+            },
+            {
+                key: 'roi',
+                label: 'ROI',
+                sub: '1yr',
+                numeric: true,
+                lowerIsBetter: false,
+                highlight: true,
+                title:
+                    'A year of the added profit against the outlay. This is repay time inverted, so it ' +
+                    'ranks candidates identically — scoring both counts one signal twice.' +
+                    scoreNote('roi'),
+                value: (r) => r.economics?.roiAnnualPct ?? -Infinity,
+                render: (r, v) => (Number.isFinite(v) ? `${v.toFixed(0)}%` : '—'),
+            },
+            {
+                key: 'deltaDps',
+                label: 'ΔDPS',
+                numeric: true,
+                lowerIsBetter: false,
+                value: (r) => r.metrics.dps - (baseline.dps ?? 0),
+                render: (r, v) => delta(v, 2),
+            },
+            {
+                key: 'dps',
+                label: 'Gold/0.01%',
+                sub: 'DPS',
+                numeric: true,
+                highlight: true,
+                title: 'Cost of one 0.01% DPS improvement. Lower is better.' + scoreNote('dps'),
+                value: (r) => r.goldPer.dps,
+                render: (r, v) => goldPer(v),
+            },
+            {
+                key: 'deltaXp',
+                label: 'ΔEXP',
+                sub: '/hr',
+                numeric: true,
+                lowerIsBetter: false,
+                value: (r) => r.metrics.xpPerHour - (baseline.xpPerHour ?? 0),
+                render: (r, v) => delta(v),
+            },
+            {
+                key: 'xp',
+                label: 'Gold/0.01%',
+                sub: 'EXP',
+                numeric: true,
+                highlight: true,
+                title: 'Cost of one 0.01% EXP/hr improvement. Lower is better.' + scoreNote('xp'),
+                value: (r) => r.goldPer.xp,
+                render: (r, v) => goldPer(v),
+            },
+            {
+                key: 'deltaProfit',
+                label: 'ΔProfit',
+                sub: '/hr',
+                numeric: true,
+                lowerIsBetter: false,
+                value: (r) => r.economics?.profitGainPerHour ?? 0,
+                render: (r, v) => delta(v),
+            },
+            {
+                key: 'profit',
+                label: 'Gold/0.01%',
+                sub: 'Profit',
+                numeric: true,
+                highlight: true,
+                title: 'Cost of one 0.01% profit improvement. Lower is better.' + scoreNote('profit'),
+                value: (r) => r.goldPer.profit,
+                render: (r, v) => goldPer(v),
+            },
+            {
+                key: 'deltaEph',
+                label: 'ΔEPH',
+                numeric: true,
+                lowerIsBetter: false,
+                value: (r) => r.metrics.encountersPerHour - (baseline.encountersPerHour ?? 0),
+                render: (r, v) => delta(v, 2),
+            },
+            {
+                key: 'encounters',
+                label: 'Gold/0.01%',
+                sub: 'EPH',
+                numeric: true,
+                highlight: true,
+                title: 'Cost of one 0.01% encounters-per-hour improvement.' + scoreNote('encounters'),
+                value: (r) => r.goldPer.encounters,
+                render: (r, v) => goldPer(v),
+            },
+            {
+                key: 'deltaDph',
+                label: 'ΔDPH',
+                numeric: true,
+                value: (r) => r.metrics.deathsPerHour - (baseline.deathsPerHour ?? 0),
+                render: (r, v) => delta(v, 2),
+            },
+            {
+                key: 'deaths',
+                label: 'Gold/0.01%',
+                sub: 'DPH',
+                numeric: true,
+                highlight: true,
+                title:
+                    'Cost of one 0.01% reduction in deaths per hour. Blank when deaths did not fall.' +
+                    scoreNote('deaths'),
+                value: (r) => r.goldPer.deaths,
+                render: (r, v) => goldPer(v),
+            },
+            {
+                key: 'score',
+                label: 'Score',
+                fixed: true,
+                numeric: true,
+                lowerIsBetter: false,
+                highlight: true,
+                title:
+                    `Points for placing in the top ${RANK_PLACES} of each scored metric, summed. Finds ` +
+                    'all-rounders that never top a single column. Ordinal, so winning a metric narrowly ' +
+                    'scores the same as winning it outright. Use ⚙ Columns to choose what counts.',
+                value: (r) => r.score ?? 0,
+                render: (r, v) => v || '—',
+            },
+        ];
+
+        return defs.map((c) => ({ ...c, visible: c.fixed || !hidden.has(c.key) }));
     }
 
     /**
@@ -4088,6 +4453,9 @@ class CombatSimUI {
         }
 
         this._upgradeResultsData = results;
+        // The analysis scores with the defaults; re-rank here so a saved score
+        // selection applies to results that were computed before it was loaded
+        this._rescoreUpgrades();
         const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
         const goldRows = results.results.filter((r) => r.candidate?.type !== 'combat_level');
 
@@ -4115,6 +4483,8 @@ class CombatSimUI {
         const wireSort = (attr, stateKey) => {
             container.querySelectorAll(`[${attr}]`).forEach((th) => {
                 th.addEventListener('click', () => {
+                    // Sorting is the table talking, not the menu — get it out of the way
+                    this._setUpgradeColumnMenuOpen(false);
                     const key = th.getAttribute(attr);
                     if (this[stateKey].key === key) {
                         this[stateKey].asc = !this[stateKey].asc;
@@ -4127,6 +4497,119 @@ class CombatSimUI {
         };
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
+        this._wireUpgradeColumnMenu(container);
+    }
+
+    /**
+     * Wire the ⚙ Columns popover: toggling, visibility, and score membership.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireUpgradeColumnMenu(container) {
+        const button = container.querySelector('#mwi-csim-upgrade-cols-btn');
+        const menu = container.querySelector('#mwi-csim-upgrade-cols-menu');
+        if (!button || !menu) return;
+
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._setUpgradeColumnMenuOpen(!this._upgradeColumnMenuOpen);
+        });
+        // Clicks inside must not close it, or every checkbox would shut the menu
+        menu.addEventListener('click', (e) => e.stopPropagation());
+
+        menu.querySelectorAll('[data-upgrade-col]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.getAttribute('data-upgrade-col');
+                if (!this._upgradeHiddenColumns) this._upgradeHiddenColumns = new Set();
+                if (input.checked) this._upgradeHiddenColumns.delete(key);
+                else this._upgradeHiddenColumns.add(key);
+                this._persistUpgradeColumnPrefs();
+                this._renderUpgradeResults(this._upgradeResultsData);
+            });
+        });
+
+        menu.querySelectorAll('[data-upgrade-score]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const key = input.getAttribute('data-upgrade-score');
+                const keys = new Set(this._upgradeScoreKeys || DEFAULT_SCORE_KEYS);
+                if (input.checked) keys.add(key);
+                else keys.delete(key);
+                this._upgradeScoreKeys = [...keys];
+                this._persistUpgradeColumnPrefs();
+                this._rescoreUpgrades();
+                this._renderUpgradeResults(this._upgradeResultsData);
+            });
+        });
+    }
+
+    /**
+     * Open or close the ⚙ Columns popover.
+     *
+     * While open it holds one document-level listener so a click anywhere else
+     * dismisses it; closing removes that listener again, so nothing accumulates.
+     * The open flag survives re-renders on purpose — toggling a checkbox rebuilds
+     * the table underneath and the menu should stay put while you configure —
+     * but sorting closes it, since that is the table talking, not the menu.
+     *
+     * @param {boolean} open - Desired state
+     * @private
+     */
+    _setUpgradeColumnMenuOpen(open) {
+        this._upgradeColumnMenuOpen = open;
+        const menu = this.panel?.querySelector('#mwi-csim-upgrade-cols-menu');
+        if (menu) menu.style.display = open ? 'flex' : 'none';
+
+        if (open && !this._upgradeColumnMenuAway) {
+            this._upgradeColumnMenuAway = () => this._setUpgradeColumnMenuOpen(false);
+            document.addEventListener('click', this._upgradeColumnMenuAway);
+        } else if (!open && this._upgradeColumnMenuAway) {
+            document.removeEventListener('click', this._upgradeColumnMenuAway);
+            this._upgradeColumnMenuAway = null;
+        }
+    }
+
+    /**
+     * Re-rank the stored results against the current score selection.
+     *
+     * Scoring is pure ranking over figures already measured, so changing what
+     * counts never means re-running a simulation.
+     * @private
+     */
+    _rescoreUpgrades() {
+        const rows = this._upgradeResultsData?.results;
+        if (!rows) return;
+        assignRankScores(
+            rows.filter((r) => r.candidate?.type !== 'combat_level'),
+            { keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS }
+        );
+    }
+
+    /** @private */
+    async _persistUpgradeColumnPrefs() {
+        try {
+            await storage.set(
+                UPGRADE_COLUMNS_KEY,
+                {
+                    hidden: [...(this._upgradeHiddenColumns || DEFAULT_HIDDEN_COLUMNS)],
+                    scored: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
+                },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save upgrade column preferences:', error);
+        }
+    }
+
+    /** @private */
+    async _loadUpgradeColumnPrefs() {
+        try {
+            const saved = await storage.get(UPGRADE_COLUMNS_KEY, 'settings', null);
+            if (!saved) return;
+            this._upgradeHiddenColumns = new Set(Array.isArray(saved.hidden) ? saved.hidden : []);
+            if (Array.isArray(saved.scored)) this._upgradeScoreKeys = saved.scored;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
+        }
     }
 }
 

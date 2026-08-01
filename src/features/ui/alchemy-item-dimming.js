@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { findAlchemizeMenu } from '../alchemy/alchemy-item-selector.js';
 
 /**
  * AlchemyItemDimming class dims items based on level requirements
@@ -34,7 +35,7 @@ class AlchemyItemDimming {
         this.isInitialized = true;
 
         // Register with centralized observer to watch for alchemy panel
-        this.unregisterObserver = domObserver.onClass('AlchemyItemDimming', 'ItemSelector_menu__12sEM', () => {
+        this.unregisterObserver = domObserver.onClass('AlchemyItemDimming', 'ItemSelector_menu', () => {
             this.processAlchemyItems();
         });
 
@@ -49,7 +50,7 @@ class AlchemyItemDimming {
      */
     processAlchemyItems() {
         // Check if alchemy panel is open
-        const alchemyPanel = this.findAlchemyPanel();
+        const alchemyPanel = findAlchemizeMenu();
         if (!alchemyPanel) {
             return;
         }
@@ -67,8 +68,11 @@ class AlchemyItemDimming {
         const playerAlchemyLevel = alchemySkill?.level || 1;
 
         // Find all item icon divs within the alchemy panel
+        // Matched on the class prefix, not the full name. The suffixes are
+        // regenerated on every game build, so a selector carrying one stops
+        // matching at the next patch and the feature just quietly does nothing.
         const iconDivs = alchemyPanel.querySelectorAll(
-            'div.Item_itemContainer__x7kH1 div.Item_item__2De2O.Item_clickable__3viV6'
+            'div[class*="Item_itemContainer"] div[class*="Item_item"][class*="Item_clickable"]'
         );
 
         // Always re-evaluate every tile — skipping processed divs would freeze the
@@ -109,47 +113,6 @@ class AlchemyItemDimming {
                 div.classList.remove('mwi-alchemy-dimmed');
             }
         }
-    }
-
-    /**
-     * Find the alchemy panel in the DOM
-     * @returns {Element|null} Alchemy panel element or null
-     */
-    findAlchemyPanel() {
-        // The alchemy item selector menu appears when clicking in the "Alchemize Item" box
-        const itemSelectorMenus = document.querySelectorAll('div.ItemSelector_menu__12sEM');
-
-        for (const menu of itemSelectorMenus) {
-            // Scope to the selector that owns this menu: the nearest ancestor containing an
-            // ItemSelector_label identifies the owner (catalyst/guild selectors have their
-            // own labels and must not be dimmed by alchemy level)
-            let owned = false;
-            let ancestor = menu.parentElement;
-            while (ancestor && ancestor !== document.body) {
-                const label = ancestor.querySelector('div.ItemSelector_label__22ds9');
-                if (label) {
-                    owned = true;
-                    if (label.textContent.trim() === 'Alchemize Item') {
-                        return menu;
-                    }
-                    break;
-                }
-                ancestor = ancestor.parentElement;
-            }
-            if (owned) continue;
-
-            // Portalled menu (no owning selector in its ancestry): accept only while a
-            // visible "Alchemize Item" label exists — labels left mounted in hidden tab
-            // panels must not claim unrelated menus
-            const alchemyLabels = document.querySelectorAll('div.ItemSelector_label__22ds9');
-            for (const label of alchemyLabels) {
-                if (label.textContent.trim() === 'Alchemize Item' && !label.closest('[class*="TabPanel_hidden"]')) {
-                    return menu;
-                }
-            }
-        }
-
-        return null;
     }
 
     /**

@@ -53,6 +53,20 @@ function formatCompletionTime(completionTime, includeDate) {
 /**
  * ActionTimeDisplay class manages the time display panel and queue tooltips
  */
+
+/**
+ * Whether an element in the action-name row was put there by a script rather
+ * than by the game — Toolasha's own annotations all carry an `mwi-` class or
+ * id, and anything else following that convention is equally not part of the
+ * action's name.
+ * @param {Element} node - A child of the action name element
+ * @returns {boolean}
+ */
+function isScriptAnnotation(node) {
+    const className = typeof node.className === 'string' ? node.className : '';
+    return className.includes('mwi-') || String(node.id || '').startsWith('mwi-');
+}
+
 class ActionTimeDisplay {
     constructor() {
         this.displayElement = null;
@@ -785,6 +799,13 @@ class ActionTimeDisplay {
         if (!action) {
             this.displayElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
+            // The name matched nothing queued, which the labyrinth does every
+            // time — its header reads "Labyrinth - Mimic Lv.252" and no action
+            // is called that. The width policy only needs the action's type,
+            // and the queue gives that without going through the header text.
+            const frontHrid = cachedActions.length > 0 ? cachedActions[0].actionHrid : null;
+            const frontType = frontHrid ? dataManager.getActionDetails(frontHrid)?.type : null;
+            if (frontType) this.applyActionBarWidth(actionNameElement, frontType === '/action_types/combat');
             // Only retry if no cached actions (data not loaded yet).
             // If cached actions exist but none match, data updated before DOM —
             // the mutation observer will trigger updateDisplay when DOM catches up.
@@ -810,53 +831,7 @@ class ActionTimeDisplay {
             if (this.profitElement) this.profitElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
 
-            const combatCompact = config.getSetting('actionBar_compactWidth');
-
-            if (!combatCompact) {
-                // FULL MODE: Expand parent containers so HP/MP bars match skilling progress bar width
-                actionNameElement.style.removeProperty('overflow');
-                actionNameElement.style.removeProperty('text-overflow');
-                actionNameElement.style.removeProperty('white-space');
-                actionNameElement.style.removeProperty('max-width');
-                actionNameElement.style.removeProperty('width');
-                actionNameElement.style.removeProperty('min-width');
-
-                const parent1 = actionNameElement.parentElement;
-                const parent2 = parent1?.parentElement;
-
-                if (parent1) {
-                    parent1.style.setProperty('max-width', 'none', 'important');
-                    parent1.style.setProperty('width', 'auto', 'important');
-                    parent1.style.setProperty('overflow', 'visible', 'important');
-                }
-
-                if (parent2) {
-                    parent2.style.setProperty('max-width', 'none', 'important');
-                    parent2.style.setProperty('width', 'auto', 'important');
-                    parent2.style.setProperty('overflow', 'visible', 'important');
-                }
-            } else {
-                // COMPACT/MINIMAL: Remove all CSS overrides to restore game defaults
-                actionNameElement.style.removeProperty('overflow');
-                actionNameElement.style.removeProperty('text-overflow');
-                actionNameElement.style.removeProperty('white-space');
-                actionNameElement.style.removeProperty('max-width');
-                actionNameElement.style.removeProperty('width');
-                actionNameElement.style.removeProperty('min-width');
-
-                let parent = actionNameElement.parentElement;
-                let levels = 0;
-                while (parent && levels < 5) {
-                    parent.style.removeProperty('overflow');
-                    parent.style.removeProperty('text-overflow');
-                    parent.style.removeProperty('white-space');
-                    parent.style.removeProperty('max-width');
-                    parent.style.removeProperty('width');
-                    parent.style.removeProperty('min-width');
-                    parent = parent.parentElement;
-                    levels++;
-                }
-            }
+            this.applyActionBarWidth(actionNameElement, true);
 
             this.reconnectActionNameObserver(actionNameElement);
             return;
@@ -874,54 +849,7 @@ class ActionTimeDisplay {
         // ONLY for non-combat actions (combat needs normal width for HP/MP bars)
         // Use setProperty with 'important' to ensure we override game's styles
 
-        // Check compact width setting
-        const compactWidth = config.getSetting('actionBar_compactWidth');
-
-        if (compactWidth) {
-            // COMPACT MODE: Limit to 800px and reset parents
-            actionNameElement.style.setProperty('max-width', '800px', 'important');
-            actionNameElement.style.setProperty('overflow', 'hidden', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('width', '', 'important');
-
-            const parent1 = actionNameElement.parentElement;
-            const parent2 = parent1?.parentElement;
-
-            if (parent1) {
-                parent1.style.removeProperty('max-width');
-                parent1.style.removeProperty('width');
-                parent1.style.removeProperty('overflow');
-            }
-
-            if (parent2) {
-                parent2.style.removeProperty('max-width');
-                parent2.style.removeProperty('width');
-                parent2.style.removeProperty('overflow');
-            }
-        } else {
-            // FULL WIDTH: Expand containers to show all text
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('max-width', 'none', 'important');
-            actionNameElement.style.setProperty('width', 'auto', 'important');
-
-            const parent1 = actionNameElement.parentElement;
-            const parent2 = parent1?.parentElement;
-
-            if (parent1) {
-                parent1.style.setProperty('max-width', 'none', 'important');
-                parent1.style.setProperty('width', 'auto', 'important');
-                parent1.style.setProperty('overflow', 'visible', 'important');
-            }
-
-            if (parent2) {
-                parent2.style.setProperty('max-width', 'none', 'important');
-                parent2.style.setProperty('width', 'auto', 'important');
-                parent2.style.setProperty('overflow', 'visible', 'important');
-            }
-        }
+        this.applyActionBarWidth(actionNameElement, false);
 
         // Get character data
         const equipment = dataManager.getEquipment();
@@ -1552,6 +1480,72 @@ class ActionTimeDisplay {
         }
     }
 
+    /**
+     * Apply the action bar's width policy.
+     *
+     * Kept apart from the time display because the two need different things:
+     * the display must know exactly which action is running, while the width
+     * only needs to know whether it is a fight. A labyrinth room's header reads
+     * "Labyrinth - Mimic Lv.252", which never equals any action's name, so the
+     * lookup driving the display finds nothing there — and while the width rode
+     * on that lookup, entering the labyrinth left the bar at whatever width the
+     * previous action had set, until a redraw dropped it to the game's narrow
+     * default with nothing left to put it back.
+     *
+     * @param {HTMLElement} actionNameElement - The header's action name element
+     * @param {boolean} isCombat - Combat leaves the name element alone so the
+     *   game's own HP/MP bars size themselves; only the parents are opened up
+     */
+    applyActionBarWidth(actionNameElement, isCombat) {
+        if (!actionNameElement) return;
+        const compact = config.getSetting('actionBar_compactWidth');
+        const parent1 = actionNameElement.parentElement;
+        const parent2 = parent1?.parentElement;
+        const SIZING = ['overflow', 'text-overflow', 'white-space', 'max-width', 'width', 'min-width'];
+
+        if (compact && isCombat) {
+            // Hand the whole column back to the game
+            for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+            let parent = parent1;
+            for (let levels = 0; parent && levels < 5; levels++) {
+                for (const prop of SIZING) parent.style.removeProperty(prop);
+                parent = parent.parentElement;
+            }
+            return;
+        }
+
+        if (compact) {
+            actionNameElement.style.setProperty('max-width', '800px', 'important');
+            actionNameElement.style.setProperty('overflow', 'hidden', 'important');
+            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
+            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+            actionNameElement.style.setProperty('width', '', 'important');
+            for (const parent of [parent1, parent2]) {
+                if (!parent) continue;
+                parent.style.removeProperty('max-width');
+                parent.style.removeProperty('width');
+                parent.style.removeProperty('overflow');
+            }
+            return;
+        }
+
+        if (isCombat) {
+            for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+        } else {
+            actionNameElement.style.setProperty('overflow', 'visible', 'important');
+            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
+            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
+            actionNameElement.style.setProperty('max-width', 'none', 'important');
+            actionNameElement.style.setProperty('width', 'auto', 'important');
+        }
+        for (const parent of [parent1, parent2]) {
+            if (!parent) continue;
+            parent.style.setProperty('max-width', 'none', 'important');
+            parent.style.setProperty('width', 'auto', 'important');
+            parent.style.setProperty('overflow', 'visible', 'important');
+        }
+    }
+
     matchCurrentActionFromText(currentActions, actionNameText) {
         const { actionNameFromDom, itemNameFromDom } = this.parseActionNameFromDom(actionNameText);
         const itemHridFromDom = this.buildItemHridFromName(itemNameFromDom || actionNameFromDom);
@@ -1624,10 +1618,16 @@ class ActionTimeDisplay {
     getCleanActionName(actionNameElement) {
         // Walk direct children to join their text with spaces, preserving word boundaries
         // that textContent would collapse (e.g. <span>Dragon</span><span>Fruit</span> → "Dragon Fruit")
-        const markerSpan = actionNameElement.querySelector('.mwi-appended-stats');
+        //
+        // Every annotation is skipped, not just this feature's own. The row is
+        // shared: the battle counter appends "· Attempt #3", the labyrinth
+        // readouts append "[Clear ~85%]". Folding those into the name stops it
+        // matching any action in the queue, and the failed match takes the
+        // width override down with it — the action bar reverts to the game's
+        // narrow default for as long as an annotation happens to be showing.
         const parts = [];
         for (const node of actionNameElement.childNodes) {
-            if (node === markerSpan) continue;
+            if (node.nodeType === 1 && isScriptAnnotation(node)) continue;
             const text = node.textContent.trim();
             if (text) parts.push(text);
         }

@@ -441,6 +441,8 @@ export async function runLabyrinthSimulation(params, onProgress) {
         roomLevel,
         crates,
         hours,
+        precision,
+        liveState,
         communityBuffs,
         labyrinthCombatBuffs,
         seed,
@@ -469,7 +471,12 @@ export async function runLabyrinthSimulation(params, onProgress) {
             monsterHrid,
             roomLevel,
             crates: crates || [],
+            // Replays a fight in progress instead of starting each encounter
+            // clean, for a conditional "will I clear from here" estimate
+            liveState: liveState || null,
         },
+        // Time is the ceiling; precision is what usually ends the run
+        precision: precision || null,
         seed: deriveSeed(seed, 0),
     };
 

@@ -15,12 +15,18 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import listingMarkers, { markerStateFor } from './listing-markers.js';
+
+/** Rows here are finished trades, not working orders. Markers are told so. */
+const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
 
 class MarketHistoryViewer {
     constructor() {
         this.isInitialized = false;
         this.modal = null;
+        this.unsubscribeMarkers = null;
         this.listings = [];
         this.filteredListings = [];
         this.currentPage = 1;
@@ -86,6 +92,14 @@ class MarketHistoryViewer {
 
         // Load saved filters
         await this.loadFilters();
+
+        // A marker registered after this table was built would otherwise not
+        // appear until it was next opened — and the scripts that register them
+        // load after this one does, so that is the ordinary case rather than
+        // the exception
+        this.unsubscribeMarkers = listingMarkers.onChange(() => {
+            if (this.modal && this.modal.style.display !== 'none') this.renderTable();
+        });
 
         // Add marketplace tab
         this.addMarketplaceTab();
@@ -1188,6 +1202,7 @@ class MarketHistoryViewer {
             { key: 'orderQuantity', label: 'Quantity' },
             { key: 'filledQuantity', label: 'Filled' },
             { key: 'total', label: 'Total' },
+            ...listingMarkers.all().map((marker) => ({ key: `_marker_${marker.name}`, label: '' })),
             { key: '_delete', label: '' },
         ];
 
@@ -1338,6 +1353,18 @@ class MarketHistoryViewer {
                 textSpan.textContent = this.getItemName(listing.itemHrid);
                 itemCell.appendChild(textSpan);
 
+                // Clicking the item opens its marketplace page. The row already
+                // names an item and an enhancement level, which is everything
+                // the marketplace needs, so retyping it into the search box was
+                // only ever busywork. The modal closes first — navigating behind
+                // an overlay would look like nothing happened.
+                itemCell.style.cursor = 'pointer';
+                itemCell.title = 'Open this item in the marketplace';
+                itemCell.addEventListener('click', () => {
+                    this.closeModal();
+                    navigateToMarketplace(listing.itemHrid, listing.enhancementLevel || 0);
+                });
+
                 row.appendChild(itemCell);
 
                 // Enhancement
@@ -1397,6 +1424,38 @@ class MarketHistoryViewer {
                 totalCell.textContent = this.formatNumber(totalValue);
                 totalCell.style.padding = '4px 10px';
                 row.appendChild(totalCell);
+
+                // Whatever other scripts want to mark this listing with. The
+                // viewer supplies a cell and a click; the meaning is theirs.
+                for (const marker of listingMarkers.all()) {
+                    const cell = document.createElement('td');
+                    cell.style.cssText = 'padding: 4px 4px; text-align: center;';
+                    const state = markerStateFor(
+                        marker,
+                        listing,
+                        (name, error) => console.error(`[MarketHistory] Listing marker "${name}" failed:`, error),
+                        HISTORY_SURFACE
+                    );
+                    if (state) {
+                        const button = document.createElement('button');
+                        button.textContent = state.glyph;
+                        button.title = state.title;
+                        button.style.cssText =
+                            'background:none; border:none; cursor:pointer; font-size:14px; line-height:1; ' +
+                            `padding:2px 4px; color:${state.active ? state.color || '#ffc866' : '#555'};`;
+                        button.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            try {
+                                await marker.onToggle(listing, HISTORY_SURFACE);
+                            } catch (error) {
+                                console.error(`[MarketHistory] Listing marker "${marker.name}" toggle failed:`, error);
+                            }
+                            this.renderTable();
+                        });
+                        cell.appendChild(button);
+                    }
+                    row.appendChild(cell);
+                }
 
                 // Delete button
                 const deleteCell = document.createElement('td');
@@ -2810,6 +2869,11 @@ class MarketHistoryViewer {
      * Disable the feature
      */
     disable() {
+        if (this.unsubscribeMarkers) {
+            this.unsubscribeMarkers();
+            this.unsubscribeMarkers = null;
+        }
+
         // Disconnect the marketplace-tab watcher and remove the injected tab
         // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
         if (this.tabCleanupObserver) {

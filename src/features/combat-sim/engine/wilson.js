@@ -1,0 +1,182 @@
+/**
+ * Wilson score interval — how sure a simulated win rate is.
+ *
+ * A labyrinth room's clear chance is a proportion estimated by repeated trials,
+ * so how much of it to believe depends entirely on how many trials there were.
+ * Simulating for a fixed span of game time gets that backwards: the budget buys
+ * trials at a rate set by how long each fight lasts, so a room that resolves in
+ * five seconds is measured twenty times more finely than one that runs the full
+ * timeout — and the slow ones are the marginal ones, where the decision is
+ * closest and the precision matters most.
+ *
+ * Wilson rather than the textbook normal interval because the interesting cases
+ * sit at the ends. A room that has lost every trial has p̂ = 0, and the normal
+ * interval calls that zero ± zero: certainty from a sample that cannot support
+ * it. Wilson keeps a sane interval there, which is what lets a hopeless room
+ * stop early instead of grinding out trials to disprove what it already knows.
+ */
+
+/** 1.96 — the two-sided 95% normal quantile */
+export const Z_95 = 1.959963984540054;
+
+/**
+ * Half-width of the Wilson score interval for a proportion.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} [z=Z_95] - Normal quantile; the default reads as "95% sure"
+ * @returns {number} Half-width in proportion units (0.01 = ±1 percentage point),
+ *   or Infinity when there is nothing to go on
+ */
+export function wilsonHalfWidth(successes, trials, z = Z_95) {
+    const n = Math.floor(Number(trials) || 0);
+    if (n <= 0) return Infinity;
+    const wins = Math.min(Math.max(0, Math.floor(Number(successes) || 0)), n);
+    const p = wins / n;
+    const z2 = z * z;
+    return (z / (1 + z2 / n)) * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n));
+}
+
+/**
+ * The Wilson interval itself, for reporting rather than for stopping.
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} [z=Z_95] - Normal quantile
+ * @returns {{low: number, high: number, halfWidth: number}} Bounds clamped to 0..1
+ */
+export function wilsonInterval(successes, trials, z = Z_95) {
+    const n = Math.floor(Number(trials) || 0);
+    if (n <= 0) return { low: 0, high: 1, halfWidth: Infinity };
+    const wins = Math.min(Math.max(0, Math.floor(Number(successes) || 0)), n);
+    const p = wins / n;
+    const z2 = z * z;
+    const center = (p + z2 / (2 * n)) / (1 + z2 / n);
+    const half = wilsonHalfWidth(wins, n, z);
+    return { low: Math.max(0, center - half), high: Math.min(1, center + half), halfWidth: half };
+}
+
+/**
+ * Whether the sample has settled which side of a threshold the true rate is on.
+ *
+ * Answering "does this level clear at least half the time" is a cheaper
+ * question than "what is this level's clear rate", and the two should not be
+ * paid for at the same price. A level clearing 90% of the time is placed above
+ * a 50% bar within a few dozen fights, while measuring that 90% to the
+ * percentage point takes nearly two thousand. Only a level sitting genuinely on
+ * the bar is undecidable, and no amount of simulation fixes that one.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} threshold - The bar, as a proportion
+ * @param {number} [z=Z_95] - Normal quantile
+ * @returns {boolean} True once the interval sits wholly to one side
+ */
+export function decidedAgainst(successes, trials, threshold, z = Z_95) {
+    return decideSide(successes, trials, threshold, { zAbove: z, zBelow: z }) !== null;
+}
+
+/**
+ * Confidence demanded before calling a rate *above* a bar. Deliberately
+ * stricter than the usual 95%, for two reasons.
+ *
+ * The rule is checked repeatedly as evidence accumulates, and a boundary tested
+ * over and over is crossed far more often than its nominal rate — measured on a
+ * rate one point under a 70% bar, checking after every fight called it "above"
+ * 39% of the time at z=1.96. And the two mistakes are not equal: calling a room
+ * clearable when it is not sends you to auto-fight it, while the reverse only
+ * costs a room you could have taken.
+ */
+export const Z_DECIDE_ABOVE = 3.0;
+
+/** The lenient side: being wrong here only forgoes a room */
+export const Z_DECIDE_BELOW = 2.0;
+
+/**
+ * Which side of a bar the sample has settled on, or null while it is still in
+ * doubt.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {number} threshold - The bar, as a proportion
+ * @param {Object} [z] - Confidence to demand each way
+ * @param {number} [z.zAbove=Z_DECIDE_ABOVE] - For calling it above the bar
+ * @param {number} [z.zBelow=Z_DECIDE_BELOW] - For calling it below
+ * @returns {'above'|'below'|null}
+ */
+export function decideSide(successes, trials, threshold, { zAbove = Z_DECIDE_ABOVE, zBelow = Z_DECIDE_BELOW } = {}) {
+    const n = Math.floor(Number(trials) || 0);
+    const bar = Number(threshold);
+    if (n <= 0 || !Number.isFinite(bar)) return null;
+    if (wilsonInterval(successes, n, zAbove).low > bar) return 'above';
+    if (wilsonInterval(successes, n, zBelow).high < bar) return 'below';
+    return null;
+}
+
+/**
+ * Whether a run has learned enough to stop.
+ *
+ * The floor matters as much as the target: a run that opens with three straight
+ * losses would otherwise satisfy any interval you asked for and stop having
+ * seen almost nothing.
+ *
+ * @param {number} successes - Trials won
+ * @param {number} trials - Trials run
+ * @param {Object} [rule] - Stopping rule. Three ways to end a run, checked in
+ *   order: a hard trial count, a decision against a threshold, an interval
+ *   width. A rule may set any of them.
+ * @param {number} [rule.maxTrials] - Always stop at this many
+ * @param {number} [rule.minTrials=50] - Never stop before this many
+ * @param {number} [rule.decideAgainst] - Stop once the interval excludes this
+ *   proportion, for questions that only need a side rather than a figure
+ * @param {number} [rule.zAbove] - Confidence for calling it above the bar
+ * @param {number} [rule.zBelow] - Confidence for calling it below
+ * @param {number} [rule.targetHalfWidth] - Interval half-width to reach, in
+ *   proportion units; 0 or absent means precision never stops the run
+ * @returns {boolean}
+ */
+export function hasConverged(successes, trials, rule = {}) {
+    const n = Math.floor(Number(trials) || 0);
+    const minTrials = Number.isFinite(Number(rule.minTrials)) ? Number(rule.minTrials) : 50;
+    const maxTrials = Number(rule.maxTrials);
+    if (Number.isFinite(maxTrials) && maxTrials > 0 && n >= maxTrials) return true;
+    if (n < Math.max(1, minTrials)) return false;
+
+    const bar = Number(rule.decideAgainst);
+    if (Number.isFinite(bar) && bar > 0 && bar < 1) {
+        return decideSide(successes, n, bar, { zAbove: rule.zAbove, zBelow: rule.zBelow }) !== null;
+    }
+
+    const target = Number(rule.targetHalfWidth);
+    if (!Number.isFinite(target) || target <= 0) return false;
+    return wilsonHalfWidth(successes, n) <= target;
+}
+
+/**
+ * Whether a stopping rule can ever fire, so callers can tell a real rule from
+ * an empty object without knowing which of the three forms it uses.
+ * @param {Object} [rule] - Stopping rule
+ * @returns {boolean}
+ */
+export function isStoppingRule(rule) {
+    if (!rule) return false;
+    const bar = Number(rule.decideAgainst);
+    return (
+        Number(rule.targetHalfWidth) > 0 ||
+        (Number.isFinite(Number(rule.maxTrials)) && Number(rule.maxTrials) > 0) ||
+        (Number.isFinite(bar) && bar > 0 && bar < 1)
+    );
+}
+
+/**
+ * Trials a proportion needs before its interval is tight enough — the answer to
+ * "how long will this take", for the rooms whose answer is not yet obvious.
+ * @param {number} p - Assumed proportion
+ * @param {number} targetHalfWidth - Interval half-width to reach
+ * @param {number} [z=Z_95] - Normal quantile
+ * @returns {number} Trials, rounded up
+ */
+export function trialsNeeded(p, targetHalfWidth, z = Z_95) {
+    if (!(targetHalfWidth > 0)) return Infinity;
+    const q = Math.min(Math.max(Number(p) || 0, 0), 1);
+    return Math.ceil((z * z * q * (1 - q)) / (targetHalfWidth * targetHalfWidth));
+}

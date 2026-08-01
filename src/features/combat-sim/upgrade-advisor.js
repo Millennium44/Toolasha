@@ -1775,7 +1775,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
-        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer };
+        const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
+
+        const row = { candidate, cost: candidate.cost, metrics, deltas, goldPer, economics };
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
@@ -1835,6 +1837,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         current++;
         onProgress?.({ current, total, description: candidate.description });
     }
+
+    // Score only what can actually be bought — combat levels have no gold cost,
+    // so ranking them alongside gear would seed the ladders with non-purchases
+    assignRankScores(results.filter((r) => r.candidate.type !== 'combat_level'));
 
     // Sort by best value (lowest gold per 0.01% DPS improvement)
     results.sort((a, b) => {
@@ -1951,24 +1957,32 @@ function computeDeltas(baseline, upgraded) {
     };
 }
 
+/** Improvement step the gold-per figures are quoted against, in percent. */
+export const GOLD_PER_STEP_PCT = 0.01;
+
 /**
- * Compute gold per 0.1% improvement for each metric.
+ * Compute gold per 0.01% improvement for each metric.
  * Lower = better value.
+ *
+ * The step size only rescales the figures — it divides every row by the same
+ * constant, so the ranking is identical whichever step is quoted.
  */
 function computeGoldPerImprovement(cost, deltas) {
     // Unknown cost (null) must rank as Infinity, never as free
     const safeCost = cost == null ? Infinity : cost;
+    // pctDelta is already in percent (e.g. 2 = 2%), so a 0.01% step means
+    // dividing by pctDelta / 0.01
+    const steps = (pctDelta) => Math.abs(pctDelta) / GOLD_PER_STEP_PCT;
+
     const goldPer = (pctDelta) => {
         if (pctDelta <= 0) return Infinity;
-        // Gold per 0.1% = cost / (pctDelta * 10)
-        // pctDelta is already in percent (e.g., 2 = 2%)
-        return safeCost / (pctDelta * 10);
+        return safeCost / steps(pctDelta);
     };
 
     // For deaths, fewer is better — use negative delta (reduction)
     const goldPerReduction = (pctDelta) => {
         if (pctDelta >= 0) return Infinity; // Deaths didn't decrease
-        return safeCost / (Math.abs(pctDelta) * 10);
+        return safeCost / steps(pctDelta);
     };
 
     return {
@@ -1978,6 +1992,168 @@ function computeGoldPerImprovement(cost, deltas) {
         encounters: goldPer(deltas.encounters),
         deaths: goldPerReduction(deltas.deaths),
     };
+}
+
+/** Hours in a year, for annualising an hourly profit gain. */
+const HOURS_PER_YEAR = 24 * 365;
+
+/**
+ * Extra simulated time a candidate may take to reach the baseline's fight
+ * count. Upgrades usually kill faster and need less, but a defensive swap can
+ * need more, and a run cut short by the clock is no longer paired.
+ */
+const PAIRED_TIME_HEADROOM = 3;
+
+/**
+ * Make every run in a comparison play exactly as many fights as the baseline
+ * did.
+ *
+ * The advisor ranks by the *difference* two loadouts make, and shares one seed
+ * across the baseline and every candidate so their random draws cancel out of
+ * that difference. That cancellation needs the runs to line up fight for fight.
+ * Stopping each on its own precision would end them at different points on
+ * different slices of the sequence and throw the pairing away, leaving a
+ * one-point delta to be read off two independently noisy numbers.
+ *
+ * A time budget breaks it more quietly: a candidate that kills faster fits more
+ * fights into the same hours, so the two runs cover different encounters
+ * altogether. Taking the count from the baseline keeps the sample the time
+ * budget would have bought, while making it identical across candidates.
+ *
+ * @param {Object} baselineResult - The baseline run's SimResult
+ * @returns {Object} A stopping rule pinned to that fight count
+ */
+function pairedTrialRule(baselineResult) {
+    const trials = Math.max(1, Math.floor(Number(baselineResult?.labyAttemptCount) || 0));
+    return { minTrials: trials, maxTrials: trials };
+}
+
+/**
+ * How long the upgrade takes to afford, and how long it takes to pay for itself.
+ *
+ * Gold per 0.01% answers "which upgrade is the most efficient". These answer a
+ * different question — "is it worth buying at all" — and the two often disagree.
+ * An upgrade with an excellent gold-per-DPS figure and a nine-month payback is
+ * still a bad purchase for anyone whose bankroll is the binding constraint.
+ *
+ * Both are derived from the averaged profit figures rather than any single run.
+ * A profit delta thin enough to be RNG would otherwise send the repay period
+ * asymptotic, and a table cell reading "412 years" from noise is worse than
+ * useless — it looks like a measurement.
+ *
+ * @param {number|null} cost - Gold cost; null means unknown, never free
+ * @param {Object} baseline - Baseline metrics ({ profitPerHour })
+ * @param {Object} upgraded - Upgraded metrics ({ profitPerHour })
+ * @returns {Object} { profitGainPerHour, paybackHours, repayHours } — hours are
+ *   Infinity when the cost is unknown, or when the relevant profit is not positive
+ */
+export function computeEconomics(cost, baseline, upgraded) {
+    const safeCost = cost == null ? Infinity : cost;
+    const profitGainPerHour = (upgraded?.profitPerHour ?? 0) - (baseline?.profitPerHour ?? 0);
+
+    // Free is free: nothing to save up for and nothing to earn back
+    if (safeCost <= 0) {
+        return {
+            profitGainPerHour,
+            paybackHours: 0,
+            repayHours: 0,
+            roiAnnualPct: profitGainPerHour > 0 ? Infinity : 0,
+        };
+    }
+
+    const basePerHour = baseline?.profitPerHour ?? 0;
+    return {
+        profitGainPerHour,
+        paybackHours: basePerHour > 0 ? safeCost / basePerHour : Infinity,
+        repayHours: profitGainPerHour > 0 ? safeCost / profitGainPerHour : Infinity,
+        // A year of the added profit against the outlay. Null when the cost is
+        // unknown — zero would read as "no return" rather than "no idea"
+        roiAnnualPct: Number.isFinite(safeCost) ? (profitGainPerHour * HOURS_PER_YEAR * 100) / safeCost : null,
+    };
+}
+
+/** Placings that earn points in the rank score, best first. */
+export const RANK_PLACES = 5;
+
+/**
+ * Metrics the Score can be built from, and which direction is good.
+ *
+ * Only value metrics appear here — every one weighs a result against what it
+ * costs. Raw deltas are deliberately absent: ranking by ΔDPS alone rewards
+ * whatever is most expensive, which is the opposite of what the score is for.
+ */
+export const SCORE_METRICS = [
+    { key: 'dps', label: 'Gold/0.01% DPS', lowerIsBetter: true, value: (r) => r.goldPer?.dps },
+    { key: 'xp', label: 'Gold/0.01% EXP', lowerIsBetter: true, value: (r) => r.goldPer?.xp },
+    { key: 'profit', label: 'Gold/0.01% Profit', lowerIsBetter: true, value: (r) => r.goldPer?.profit },
+    { key: 'encounters', label: 'Gold/0.01% EPH', lowerIsBetter: true, value: (r) => r.goldPer?.encounters },
+    { key: 'deaths', label: 'Gold/0.01% DPH', lowerIsBetter: true, value: (r) => r.goldPer?.deaths },
+    { key: 'repay', label: 'Repay time', lowerIsBetter: true, value: (r) => r.economics?.repayHours },
+    { key: 'roi', label: 'ROI (1yr)', lowerIsBetter: false, value: (r) => r.economics?.roiAnnualPct },
+];
+
+/**
+ * Metrics scored unless the user says otherwise.
+ *
+ * ROI is off by default because it is `profit gain / cost` and repay time is
+ * `cost / profit gain` — the same ratio inverted. Scoring both counts one
+ * signal twice, exactly the trap that keeps the Time column out of the list.
+ */
+export const DEFAULT_SCORE_KEYS = ['dps', 'xp', 'profit', 'encounters', 'deaths', 'repay'];
+
+/**
+ * Score every candidate by how often it places well across the value metrics.
+ *
+ * Sorting by one column answers only that column's question, and a candidate
+ * that is second-best at everything never surfaces. Ranking within each metric
+ * and summing the placings finds those all-rounders.
+ *
+ * The scoring is deliberately ordinal, and that is also its limitation: winning
+ * a metric by a mile scores exactly what winning it by a hair scores. It is a
+ * shortlisting aid, not a verdict, which is why it is not the default sort.
+ *
+ * The Time column (cost over current profit rate) is excluded on purpose.
+ * Baseline profit is one number shared by every row, so dividing each cost by it
+ * preserves the cost ordering exactly — Time is the Cost column in hours, and
+ * scoring it would count cost twice. Repay is the one that carries new
+ * information, dividing by a gain that differs per row.
+ *
+ * Ties share a placing, so two candidates that measure identically cannot be
+ * separated by list order.
+ *
+ * Mutates and returns the rows, adding `score` and a `rankPoints` breakdown.
+ *
+ * @param {Array<Object>} results - Rows carrying `goldPer` and `economics`
+ * @param {Object} [options]
+ * @param {Array<string>} [options.keys=DEFAULT_SCORE_KEYS] - SCORE_METRICS keys to count
+ * @param {number} [options.places=RANK_PLACES] - How many placings earn points
+ * @returns {Array<Object>} The same rows
+ */
+export function assignRankScores(results, options = {}) {
+    const places = options.places ?? RANK_PLACES;
+    const keys = options.keys ?? DEFAULT_SCORE_KEYS;
+    const metrics = SCORE_METRICS.filter((m) => keys.includes(m.key));
+
+    for (const row of results) {
+        row.rankPoints = {};
+        row.score = 0;
+    }
+
+    for (const metric of metrics) {
+        const ladder = [...new Set(results.map(metric.value).filter((v) => Number.isFinite(v)))]
+            .sort((a, b) => (metric.lowerIsBetter ? a - b : b - a))
+            .slice(0, places);
+        if (!ladder.length) continue;
+
+        for (const row of results) {
+            const index = ladder.indexOf(metric.value(row));
+            if (index === -1) continue;
+            row.rankPoints[metric.key] = { label: metric.label, place: index + 1, points: places - index };
+            row.score += places - index;
+        }
+    }
+
+    return results;
 }
 
 // ─── Labyrinth Buff Upgrade Candidates ──────────────────────────────────────
@@ -2280,6 +2456,9 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         seed: simSeed,
     });
     current++;
+    // Every candidate below plays exactly the baseline's fight count
+    const pairedRule = pairedTrialRule(baselineResult);
+    const pairedHours = hours * PAIRED_TIME_HEADROOM;
 
     if (abortSignal?.()) return { baseline: null, results: [] };
 
@@ -2339,7 +2518,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             monsterHrid,
             roomLevel,
             crates,
-            hours,
+            hours: pairedHours,
+            precision: pairedRule,
             communityBuffs,
             labyrinthCombatBuffs,
             seed: simSeed,
@@ -2381,7 +2561,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             monsterHrid,
             roomLevel,
             crates,
-            hours,
+            hours: pairedHours,
+            precision: pairedRule,
             communityBuffs,
             labyrinthCombatBuffs: modifiedBuffs,
             seed: simSeed,
@@ -2497,7 +2678,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const simSeed = analysisSeed();
     const fightSeed = (fightIndex) => deriveSeed(simSeed, fightIndex);
 
-    const simFightWinRate = async (fight, dtoOverride, seed) => {
+    // A fight's baseline pass sets the fight count every candidate pass for
+    // that fight must match, so each comparison stays paired
+    const pairedRules = new Map();
+    const simFightWinRate = async (fight, dtoOverride, seed, fightIndex) => {
+        const rule = pairedRules.get(fightIndex) || null;
         const simResult = await runLabyrinthSimulation({
             gameData,
             playerDTOs: [dtoOverride || fight.dto],
@@ -2505,12 +2690,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             monsterHrid: fight.monsterHrid,
             roomLevel: fight.roomLevel,
             crates,
-            hours,
+            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            precision: rule,
             communityBuffs,
             labyrinthCombatBuffs,
             seed,
         });
         const attempts = simResult.labyAttemptCount || 1;
+        if (!rule) pairedRules.set(fightIndex, pairedTrialRule(simResult));
         return (simResult.encounters || 0) / attempts;
     };
 
@@ -2527,7 +2714,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const fight = fights[i];
         if (abortSignal?.()) return { baseline: null, results: [] };
         onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-        const winRate = await simFightWinRate(fight, null, fightSeed(i));
+        const winRate = await simFightWinRate(fight, null, fightSeed(i), i);
         baselineFights.push({ ...fightMeta(fight), winRate });
         current++;
     }
@@ -2547,7 +2734,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
             const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
             boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
-            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i));
+            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
             fightResults.push({
                 ...fightMeta(fights[i]),
                 winRate,

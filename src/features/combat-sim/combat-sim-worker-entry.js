@@ -27,6 +27,7 @@ onmessage = function (event) {
             simulationTimeLimit,
             extraBuffs,
             labyrinth: labyrinthData,
+            precision,
             seed,
         } = event.data;
 
@@ -44,7 +45,12 @@ onmessage = function (event) {
         // Create Labyrinth if specified
         let labyrinth = null;
         if (labyrinthData) {
-            labyrinth = new Labyrinth(labyrinthData.monsterHrid, labyrinthData.roomLevel, labyrinthData.crates || []);
+            labyrinth = new Labyrinth(
+                labyrinthData.monsterHrid,
+                labyrinthData.roomLevel,
+                labyrinthData.crates || [],
+                labyrinthData.liveState || null
+            );
         }
 
         // Create Players
@@ -76,7 +82,7 @@ onmessage = function (event) {
         );
 
         // Run simulation
-        const simResult = combatSimulator.simulate(simulationTimeLimit);
+        const simResult = combatSimulator.simulate(simulationTimeLimit, precision);
 
         postMessage({
             type: 'result',

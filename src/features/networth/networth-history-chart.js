@@ -26,6 +26,10 @@ const CATEGORIES = [
     { key: 'abilities', label: 'Abilities', color: '#06b6d4' },
 ];
 
+/** The chart modal's element id, and the control that opens and closes it */
+export const MODAL_ID = 'mwi-nw-chart-modal';
+export const CHART_BUTTON_ID = 'mwi-networth-chart-btn';
+
 class NetworthHistoryChart {
     constructor() {
         this.chartInstance = null;
@@ -102,6 +106,22 @@ class NetworthHistoryChart {
     }
 
     /**
+     * Open the chart, or close it if it is already open.
+     *
+     * What the button press means: the control is a switch, not a re-open. Any
+     * other reading leaves no way to dismiss the chart from where you opened it.
+     *
+     * @returns {Promise<void>}
+     */
+    async toggleModal() {
+        if (document.getElementById(MODAL_ID)) {
+            this.closeModal();
+            return;
+        }
+        await this.openModal();
+    }
+
+    /**
      * Open the chart modal
      */
     async openModal() {
@@ -109,14 +129,14 @@ class NetworthHistoryChart {
         await this._loadChartPrefs();
 
         // Remove existing modal if any
-        const existing = document.getElementById('mwi-nw-chart-modal');
+        const existing = document.getElementById(MODAL_ID);
         if (existing) {
             existing.remove();
         }
 
         // Create modal container
         const modal = document.createElement('div');
-        modal.id = 'mwi-nw-chart-modal';
+        modal.id = MODAL_ID;
         modal.style.cssText = `
             position: fixed;
             top: 50%;
@@ -536,13 +556,17 @@ class NetworthHistoryChart {
         };
         document.addEventListener('keydown', this.escHandler);
 
-        // Click outside to close (but not if clicking in the delete popup)
+        // Click outside to close (but not if clicking in the delete popup, and
+        // not on the button that opens this — that press is a toggle, and
+        // closing here would let the click reopen it a moment later, so the
+        // chart could never be dismissed by the control that summoned it)
         this.outsideClickHandler = (e) => {
             const breakdownPopout = document.getElementById('mwi-nw-24h-breakdown');
             if (
                 !modal.contains(e.target) &&
                 !this._deletePopup?.contains(e.target) &&
-                !breakdownPopout?.contains(e.target)
+                !breakdownPopout?.contains(e.target) &&
+                !e.target?.closest?.(`#${CHART_BUTTON_ID}`)
             ) {
                 this.closeModal();
             }
@@ -1632,7 +1656,7 @@ class NetworthHistoryChart {
             breakdown.remove();
         }
 
-        const modal = document.getElementById('mwi-nw-chart-modal');
+        const modal = document.getElementById(MODAL_ID);
         if (modal) {
             modal.remove();
         }

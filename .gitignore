@@ -7,4 +7,6 @@ dist/
 .vscode/
 .idea/
 .tmp/
-docs/
+docs/*
+# Exception: attribution that is not in the repository is not attribution
+!docs/THIRD-PARTY-LICENSES.md

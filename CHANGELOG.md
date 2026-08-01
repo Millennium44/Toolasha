@@ -4,6 +4,351 @@
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
+## Unreleased — branch `claude/new-session-s8abcv`
+
+### Fixed: the alchemy pins never appeared
+
+The picker could not be recognised at all, which also means the existing item dimming has been silently doing nothing — it shared the logic. Three things were wrong:
+
+- **There is no "Alchemize Item" label.** The recognition looked for one. The alchemized-item slot is unlabelled; only the catalyst names itself, as "Consumed Item".
+- **The menu's own "Remove" tile carries the label class.** So walking up from the menu for the nearest label found the menu's own contents and concluded the selector was called "Remove" — which then excluded it. This is why even the fallback failed.
+- **The menu is portalled**, rendered outside the selector that owns it, so it cannot be identified by what it sits inside either.
+
+It now watches **which selector was clicked**. A menu opens because something was clicked, and the thing clicked stays where it belongs in the DOM whatever the menu does afterwards. The structural check is kept for the case where the menu is not portalled, and the catalyst is excluded by its own label.
+
+- **Only one tile was ever being found**, so a matched menu still only got one pin. Two versions assumed the tiles were siblings — first taking the parent of the first tile as the grid, then the parent holding the most — and both came back with exactly one, because **each tile is wrapped in a container of its own** and no two share a parent. The grid is now the deepest element containing every tile, and each tile is represented by whichever of its ancestors that grid can actually move.
+- The **Remove** cell keeps the front of the grid rather than being swept along with the unpinned items, so pinning something does not push the way to clear the selection down behind it.
+- **Pins would have vanished on the first keystroke in the filter box.** Typing replaces the tiles inside the menu without replacing the menu, so a watcher that only sees the menu appear decorates it once and never again. The menu's contents are watched now, with the decoration made idempotent so it cannot react to its own writes.
+- `Toolasha.Debug.alchemyMenu()` now also dumps each menu's ancestry, its owning label, its tile count and which selector was last clicked — enough to correct a wrong answer rather than guess at it.
+
+### Pin items in the alchemy picker
+
+- New setting, on by default: a **📌** on each item in the Alchemize Item list moves it to the front. The picker lists everything you own in whatever order the game keeps it, and the handful of items anyone actually feeds it are scattered through that — the alternative is typing the same filter every time.
+- **Kept per action.** Coinify, Decompose, Transmute and Unrefine each have their own list, because the same item means different things in each and one shared list would be the union of four unrelated shortlists.
+- **Pins reorder, they do not exempt.** A pinned item that does not match what you typed in the filter box stays hidden — the filter has to keep meaning what it says, or it stops being usable for finding anything else.
+- New pins go to the **end** of the list rather than the front, so adding one does not shuffle the one you reach for most.
+- Catalysts are untouched: that selector is a separate menu and pinning it was not asked for.
+- Finding the right menu is now shared with the item dimming feature rather than duplicated. The page carries several identical-looking item selectors — the catalyst and guild have their own — and the logic for telling them apart, including the portalled case and labels left mounted in hidden tabs, is fiddly enough to want exactly one copy of.
+- While there: the dimming feature matched items by exact CSS-module class names like `Item_item__2De2O`. The game regenerates those suffixes on every build, so it would have stopped working at the next patch and looked merely broken. It matches on the class prefix now.
+
+### The labyrinth room header says "Attempt #2" rather than "try 2"
+
+- Matches how the room log and the tile badges already word it, and reads as a count rather than an instruction.
+
+### EXP / Hour pays for the walk to a room, once, on every room type
+
+- Combat rooms charged nothing for travel while skilling and enhancing rooms did, so the two figures sat in the same panel measuring different things. Both now go through one shared calculation and can be read side by side.
+- The travel second is charged **once per room**, not once per attempt: back-to-back retries happen where you are already standing, so failing a room five times still only involves walking to it once. It was previously amortised over the attempts a clear takes, which charged a room cleared one time in twenty for twenty walks it never made.
+- Net effect: combat figures drop by a hair, and hard skilling rooms go **up** — a room cleared one time in twenty was being charged twenty seconds of imaginary walking and is now charged one.
+
+### Combat experience corrected, and the skip list's combat rows get the full card
+
+- **A labyrinth room pays on completion, not per swing.** The combat tile's experience figures were totalled from what the simulated fights earned by landing hits, which credited losing attempts for damage they dealt and paid out for rooms that were never cleared. They are now the room's own level-based award, the same one a skilling room gives, granted on a clear.
+- **EXP / Hour on a combat tile is therefore what clearing pays, amortised over the attempts you lose getting there** — it uses the expected time to a clear, so a room you never clear reads 0 however long you fight it, which is what an unreachable room is actually worth. The figures were also missing entirely before this, because the simulation's experience totals were empty for labyrinth runs.
+- **Rooms you gave up on now count their time** toward measured experience per hour. Since a room pays only when completed, an abandoned one is time spent for nothing, and leaving it out raised the measured rate every time you walked away from a room — precisely backwards. Its duration is kept apart from the completed rooms' so it cannot distort what a room takes to finish, which is a different question.
+- **Combat rows in the labyrinth skip settings now show the same full preview card the skilling rows do** — clear chance with its margin, fights simulated, combat style, damage type, accuracy, evasion, the monster's abilities at room-scaled levels, and the expected token and box drops. They used to fall back to a three-line tooltip, which was the wrong way round: a fight is the row where the detail is hardest to get at any other way, since its numbers come out of a simulation rather than off the screen.
+
+### Fixed: rooms you completed showed no experience for the floor
+
+- Every floor read `xp not measured`. A room's experience was measured by sampling your skill totals when the room opened and again when it closed — but a room closes the instant the floor says the path moved on, and the experience it earned arrives in its own message that need not have landed by then. The room was being closed before it had been paid.
+- Experience is now **watched for as it lands** and credited to whichever room is open, against a rolling baseline rather than a snapshot per room. Experience arriving while no room is open still advances the baseline, so it cannot be mistaken for the next room's.
+- A finished room stays **claimable for a few seconds** before going into the long-term record, so experience credited a moment after the room ends still counts toward it.
+- New diagnostic: `Toolasha.Debug.watchLabXp()` watches your skill totals across every message type that could plausibly carry experience and prints which one actually moved them, so if the labyrinth credits experience some other way it says so rather than silently reporting nothing. `Toolasha.Debug.stopLabXp()` prints early.
+
+### Combat rooms get experience figures, and the logs moved somewhere you can reach
+
+- **Expected EXP / Room and EXP / Hour on the combat tile hover.** Taken from the simulation itself rather than a formula: a skilling room's experience is a closed-form function of its level, but a fight earns it by landing hits, so a room you usually lose still pays and one you lose at the two-minute mark pays more than one you lose in twenty seconds. Only the replayed fights know that, and they have already been run.
+- Both figures are **per entry, not per clear**. Quoting only what a win is worth would make a room you clear 5% of the time look like it returns nothing at all.
+- **Measured experience per hour on combat room cards** in the log, alongside the skilling ones — the hover tooltip sets the sim's expected rate beside what you actually gained.
+- **The Logs button is now a ⧉ Room Logs tab beside Lab Sim**, matching the Bulk Sell tab: cloned from the game's own tabs, dimmed while the panel is closed. It used to sit on the calculate bar inside a run, which put the history of your last three floors behind having to be standing in a fourth — and reviewing a run is something you do after it.
+
+### Skilling rooms get the same results check, and the log now shows what a floor is worth
+
+- **Skilling and enhancing rooms join the accuracy record.** A skilling room is failed by running out of the two minutes rather than by dying, but it is still a room the calculator gave a chance of clearing and still a room you either cleared or did not — so the same entry counting answers the same question. They can be judged from the first room you walk into, too, because a skilling forecast is closed-form maths rather than a simulation that has to be run first.
+- **Three numbers per action, not two.** The server states the success and double chance it is using with every action, so a skilling room can be checked twice over: **the calculator against the server's stated rate**, which needs no sample at all and is flagged `formula off` when they disagree by more than half a point, and **the stated rate against what the actions actually did**, which needs one. A formula that contradicts the server is a bug no amount of play will fix or reveal.
+- **Expected time against actual.** Each finished room's duration is recorded against the calculator's estimate, per room on the card and averaged in the accuracy tab (`74s vs 61s est`).
+- **Experience per hour, measured not derived.** Taken from the change in your skill totals across a room rather than from a formula — the formula is the thing being checked, and combat rooms have no formula here at all. Shown per room, and per floor.
+- **The room list is grouped by floor**, each with a header: rooms, how many cleared, time spent, and experience per hour across the floor. A floor is the unit a run is actually planned in, and throughput over one room says far less than throughput over the thirty you have to get through. Rate is measured over the rooms, not the floor's wall-clock — the time between rooms is spent reading the map, and charging that to the rooms would make a floor you thought about look slower than the same floor rushed.
+- **History length is now a setting**, default **120** rooms, up from a fixed 30. A floor is around thirty rooms, so the old cap showed barely one floor and nothing to compare it against; 120 keeps roughly three. The long-term accuracy record is separate and has never been trimmed.
+- `Toolasha.Debug.labAccuracy()` gains columns for the calculator/server/observed rates, the timing comparison and experience per hour.
+
+### Fixed: the sim accuracy record counted every defeat and no victory
+
+- Every room read `0/N`. **Clearing a room strips it** — the server stops sending its monster, its skill and its type, leaving a cell that says only `isCleared` — and the scan that fed the record looked for rooms naming a monster. So it saw the room on every attempt you lost and never once on the attempt you won. Attempts piled up, clears never did, and the verdict could only ever be "sim too high".
+- The scan now reads every room on the floor, and the fold credits a cleared square to the monster **last seen standing on it**. That memory is scoped to a run and floor, because coordinates repeat on every floor — without the scope, descending onto a floor whose corner room was already cleared would hand a free win to whatever was in the same corner one floor up.
+- **A win can no longer outrun its own attempt.** A room cleared first try can go from unseen straight to cleared with no update in between showing it entered, which would have recorded 1 clear in 0 attempts — a rate above 100%.
+- **Per-room state is now saved.** It was held in memory only, so every refresh made the record forget where each room stood and re-count its entire entry history from scratch — inflating attempts a little more every session.
+- **Records written before this fix are discarded on load.** They are not a small sample of the truth; they are every loss and no win, so carrying them forward would poison every verdict from here on. The count starts again from your next fight.
+- The room log itself was reading the same flag with the same blind spot and only got the right answer by falling back to the monster's health on the last tick. It now asks the floor properly.
+- New console diagnostic: `Toolasha.Debug.labRooms()` prints the current floor exactly as the server describes it, including which fields each room still carries, so what a cleared room looks like can be read rather than inferred.
+
+### Resize the battle panel, from settings, per character
+
+- New setting, off by default: scale **your side** and the **enemy side** of the battle panel independently, choose how the two sit, and set the height of the character panel beside them. A ten-monster wave and a solo fight get the same slab of screen, so one is cramped and the other mostly empty — and the right answer differs per character, which is why every one of these is stored **per character** like the rest of Toolasha's settings.
+- Lives in **UI & Appearance** in the settings page rather than a floating panel, and every number applies **as you change it**. Finding the right scale means nudging a number and looking at the result, so a reload between nudges would make it unusable.
+- **How to resize** is configurable: `zoom` (the default) changes the layout size, so a side you shrink actually gives its space back; `transform` only redraws smaller and leaves the original box behind, with an anchor corner you can pick. The transform path reclaims the leftover space with a matching negative margin rather than needing a spacer element.
+- **Layout** is opt-in — leave the game's own, or force side-by-side or stacked. Forcing one overrides how the game arranges the panel at your window width, so it is not the default.
+- **Character panel height** takes a percentage of the window, with 0 meaning "leave the height the game picks". Taller shows more inventory at once; shorter gives the fight room.
+- Idea and target selection from **Scaley Way Idle** by Frotty, credited in `docs/THIRD-PARTY-LICENSES.md`. That script carries no licence, so nothing was copied — this is written against Toolasha's own settings and style helpers. It also differs where the original had problems: one stylesheet instead of a `MutationObserver` sweep re-setting inline styles on every combat tick, and class-prefix selectors instead of pinned CSS-module hashes like `BattlePanel_playersArea__vvwlB`, which the game regenerates on every build — a script written that way stops working silently at the next patch. Not reproduced: dragging the two areas to fixed pixel positions, which does not survive a window resize.
+
+### Combat rooms are in the room log, next to the clear chance the sim promised
+
+- The Logs panel recorded skilling and enhancing rooms and ignored fights entirely — which left the one room type where the script makes a falsifiable prediction as the only one with no record of whether it came true. Combat rooms are now logged the same way, one entry per **attempt** rather than per swing.
+- Each fight card reads `Sim 24% | Won 0/3 (0%) | 2 died, 1 timed out`. Deaths and timeouts are counted separately because they fail the same room for opposite reasons, and the fix for one makes the other worse: dying says you cannot survive the fight, timing out says you cannot finish it.
+- Every attempt shows a number. A win shows **how long it took**; a loss shows **the health the monster had left**, because "lost with it on 4%" and "lost with it on 71%" are different problems — the first is worth another attempt, the second a different loadout.
+- The outcome is taken from the floor, not from the last tick. `battle_updated` stops dead when a fight ends and the killing blow's update usually never arrives, so a won fight's final tick still shows the monster alive; the room's own cleared flag is the only reliable witness. A fight interrupted by a refresh is filed as unknown and left out of the counts rather than assumed lost.
+
+### A Sim accuracy tab, for whether the clear chances are true over the long run
+
+- Second tab on the Logs panel, totalling **every labyrinth fight ever recorded** against the rate the sim predicted for it — per monster and room level, most-fought first. Thirty rooms of history cannot settle this; a room that says 24% and loses three times running has said nothing, and the same room losing twenty-one times running has said plenty.
+- Each row gives the sim's rate, the rate you actually cleared at, the range those fights support, and a verdict: **consistent**, **sim too high**, or **sim too low**. Rows the record genuinely contradicts also show how often the sim's own rate would produce a record that lopsided — a `p=0.4%` is the sim being told it is wrong.
+- A summary at the top: how many fights, and how many clears the sim owed you against how many you got. Rooms that were never simmed are counted in the totals but left out of the expectation, so the sim is not credited with predicting nothing for fights it made no claim about.
+- The prediction is now **stamped on each room as the fights land**, instead of being looked up when the record is read. Sim results live in a cache keyed by loadout and crates and do not survive a refresh, so a record read a week later used to say "not simmed" for almost everything — the one thing it exists to avoid. Comparing a fight to the number that was on screen when you walked in is also the honest comparison: that is the claim the sim actually made.
+- `Reset` on that tab throws the record away, and asks twice, since it is the only copy of every fight you have had. `await Toolasha.Debug.labAccuracy()` still prints the same data as a console table.
+
+### Fixed: the labyrinth fight record read as empty until you entered the labyrinth
+
+- `Toolasha.Debug.labAccuracy()` reported "0 fights recorded" on a fresh session even with a full record stored. Loading only happened on the way _in_ — when a labyrinth message arrived to be folded — so anything that merely **read** the record saw nothing until then. The console table and a tile's "Actually Cleared" row both read it.
+- It is now loaded on demand by whatever asks for it. Call it as `await Toolasha.Debug.labAccuracy()`, since it may have to fetch first.
+
+### Price history panel, ingested from mooket II
+
+- New setting, off by default: a floating chart of an item's ask, bid, traded price and volume over the last day to six months, following whatever the marketplace is showing. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge — 840,000 is cheap or dear only against what it has been.
+- Pin items to a row of chips with the 📌 beside the item icon: price, percentage move since you pinned it, reorderable, right-click to unpin. One button cycles how much of each chip to show, because the right amount depends on how many are pinned.
+- The volume line is split on hover into an estimate of how much was **bought at the ask** versus **sold into the bid**. The server reports how much traded and at what average price, never who crossed, so where in the spread that average landed is the evidence — it is an estimate and says so.
+- Ranges past a week are grouped into one point per day using the **median**, not the mean. A single absurd listing — a 300-coin item at 40 million to see if anyone bites — moves a mean for the whole day and a median not at all.
+- Adapted from **mooket II** by Q7, used under the MIT licence; see `docs/THIRD-PARTY-LICENSES.md`. Left behind deliberately: the second WebSocket hook (Toolasha has one, and two scripts patching `MessageEvent.data` is how a page silently drops messages), the bundled item-name dictionaries (the game's own are already loaded), the localStorage cache with its defensive pruning (this uses IndexedDB), and the crosshair plugin (the index-mode tooltip covers it without another dependency).
+- Shown and hidden by a **⧉ History** tab at the end of the marketplace tab bar, and closed with the ✕ on the panel itself. It starts hidden — a panel that appears over the marketplace the moment you open it is in the way of the thing you opened.
+
+### Panel tabs look like panel tabs
+
+- **⧉ Bulk Sell** and **⧉ History** now carry a ⧉ and sit dimmed until their panel is up. Both borrow the game's own tab styling, so they read as two more places to navigate to — and a tab that does not change the page when clicked, then does nothing visible when clicked again, looks broken. The glyph says it opens a panel; the dimming says whether that panel is currently open.
+- Reading and contributing are **one switch**, not two. A version that let you read without giving anything back would work perfectly and quietly drain a shared resource: the history is only as good as what people send, and a reader who contributes nothing is someone else's missing data point. The setting says plainly what each direction does.
+
+### Bulk Sell panel is draggable, and closing it stops the run
+
+- Drag the panel anywhere by its background; the position is remembered. It defaults to the top-right, which is where the game puts its own gold counter and controls, so on a narrow window it landed on top of them. It is clamped to the viewport — a panel dragged off the edge could not be dragged back.
+- Dragging starts only on the panel's own background, so the tab select and the buttons still work.
+- The ✕ now **stops** a run as well as closing the panel. The panel is the only thing showing what is being sold and how far through it is, so leaving a run going behind a closed panel would mean the next confirm click landing on a sale you could no longer see coming. Hiding it from the Bulk Sell tab still leaves it running — that gesture keeps the progress one click away.
+
+### Bulk Sell panel can be closed from the panel
+
+- An ✕ on the floating panel hides it. The panel is fixed over the game and follows you out of the marketplace, so dismissing it used to mean navigating back to a tab you had left.
+- Hiding never stops a run — reopen from the Bulk Sell tab and the progress is still there.
+- The stop button now reads **Stop** instead of ✕. Two identical glyphs a few pixels apart, one abandoning a run and one only hiding the panel, is a mis-click waiting to happen.
+- The Bulk Sell tab's hover text now explains what the feature actually does — that it queues your tradable inventory, prefills each sell modal, and never confirms a sale itself — and recommends pointing it at a Toolasha inventory tab, so nothing outside that tab can be sold by a mis-click.
+
+### The net worth chart button closes the chart
+
+- Clicking 📈 again dismisses the chart instead of rebuilding it. The control is a switch, and any other reading left no way to close the chart from where you opened it.
+- The click-outside-to-close handler now ignores that button. It fired on mousedown and the button's own click reopened the chart a moment later, so a toggle alone would have looked like nothing happening.
+
+### Sidebar Marketplace badge can be limited to finished listings
+
+- New setting, off by default. The game badges **Marketplace** in the left sidebar the moment anything is collectable, including a buy order that has taken 30 of 200 units and is still working — collecting those 30 does nothing except silence the badge until the next fill, which teaches you to ignore the badge.
+- With it on, the sidebar badge appears only for listings that have finished: filled completely, or cancelled and holding a refund. Both are things you can actually close out.
+- The badge on the **My Listings** tab is left alone. Once you are in the marketplace, knowing there is something to collect is useful; it is only the sidebar nag that isn't.
+- Done with a stylesheet toggled by listing data, not by clearing the badge's text — React rewrites that node on every update, so anything written into it would be gone within the second.
+
+### My Listings can carry other scripts' markers too
+
+- The same marker column Market History has, on the live My Listings table. No setting guards it: nothing appears unless a script has registered a marker, so a switch would only ever be turned on by someone who had already installed the thing that draws it.
+- Markers are now told which surface a row is on — `history` or `myListings` — because the two mean different things. A finished trade can be adopted with a real cost basis; a working order cannot, but it is exactly the one worth marking ahead of time so its fills are counted as they arrive.
+- The column is appended past the last column rather than inserted among them: the Top Order Price cells are placed by index arithmetic, and a column inserted into the middle of that would silently misalign them.
+- A marker registered after the table was built now redraws it, instead of appearing only the next time the table happened to rebuild.
+
+### Market History items open in the marketplace when clicked
+
+- Clicking an item in the Market History table closes the viewer and opens that item's marketplace page, at the row's own enhancement level. The row already names both, so retyping them into the search box was only ever busywork.
+
+### Attempt badge moved off the ETA
+
+- The `↻N` badge sits at the middle of the tile's left edge rather than the bottom-left corner, where it overlapped the clear-chance and ETA badge.
+
+### Fixed: the attempt count vanished once you queued more than one room
+
+- The battle counter read the **last** entry of the labyrinth's path data as the room you are in. That data is the queue, not the trail behind you — `[0]` is the room being run and the rest are what you lined up after it. With one room queued the two coincide, which is why it worked at first; queue a second and the counter looked up the far end of the queue instead, found an unrevealed room, and gave up before reading the count. The live clear chance and the `try N` readout keyed off the same wrong end.
+- **The tile badge is just the number now**, without the `↻` in front of it, which was crowding the tile.
+
+### Skip thresholds below the recommendation now read differently
+
+- A threshold set **under** the recommendation used to be green, the same as sitting exactly on it — which hid the one case that costs you rooms rather than risking them. It is now blue, with the tooltip saying how far under and what that means: safe, but skipping fights that would have cleared.
+- Green now means what it looks like: on the recommendation. Amber and red still grade being above it, where the mistake is fighting rooms below your target clear rate rather than passing on rooms you could take.
+- The tooltip states the current setting alongside the recommendation, so the gap does not have to be worked out from two numbers in different places.
+
+### Market History rows can carry other scripts' markers
+
+- Another script can add a column of toggles to the Market History table:
+
+    ```js
+    Toolasha.Market.listingMarkers.register('flip-finder', {
+        stateFor: (listing) => ({ glyph: '★', active: isFlip(listing), title: 'Count this as a flip' }),
+        onToggle: (listing) => toggleFlip(listing),
+    });
+    ```
+
+- Toolasha never learns what a mark means. It supplies a cell, a glyph and a click; the meaning stays with whoever registered it — which is what lets a marker defined in a private script appear in a public one without its reasons coming too.
+- A malformed marker is refused at registration rather than throwing once per row, and one that fails while rendering loses only its own cell. The table is your trading record and is worth more than any annotation on it.
+- **With no marker registered the table is exactly as it was** — no column, no empty cells, no shifted layout. The header and the rows are both built from the registered set, so an unused hook costs nothing.
+- An open table redraws when a marker is registered. The scripts that register them load after this one does, so a marker arriving late is the ordinary case, not the exception.
+
+### Bulk Sell can be told to hold items back
+
+- Another script can now claim inventory the sell queue must skip:
+
+    ```js
+    const release = Toolasha.Market.bulkSellAssistant.addHoldProvider('flip-finder', () => [
+        '/items/cheese',
+        '/items/cheese_sword+3',
+    ]);
+    ```
+
+- The assistant never learns **why** anything is held — a flip waiting to be relisted, a crafting reserve, something promised to a guildmate. It takes keys and gives them back, so nothing about the reason has to live in Toolasha, and a caller with a reason of its own does not have to either.
+- Keys follow the convention the custom inventory tabs already use: bare hrid for an unenhanced item, `hrid+level` once enhanced, so a `+3` sword can be held while the plain one still sells.
+- **Held items are counted, not silently dropped.** The panel says `3 items held back`, because an item vanishing from the sell queue with no explanation is indistinguishable from a bug.
+- A provider that throws loses its own claim and nothing else. Failing to hold something back is bad; being unable to sell at all because someone else's list is broken is worse.
+
+### Simulated clear rates are now checked against what actually happens
+
+- Every labyrinth fight is recorded: the server counts entries per room and marks a room cleared, so a room beaten on the fifth try is one clear in five attempts, and a room walked away from is none in however many it took. Totals accumulate per monster and level, and persist.
+- **A combat tile's hover now shows `Actually Cleared 0/21 (0%) — sim too high`** whenever the record contradicts the prediction. A simulation can converge on a precise wrong answer and no number of extra trials will say so; only the game can.
+- **`Toolasha.Debug.labAccuracy()`** prints the whole comparison — predicted rate, observed clears, the observed range, and how often the sim's own rate would produce a record that lopsided. A likelihood of 0.28% means the sim is being contradicted, not that you were unlucky.
+- Rooms given up on still count their attempts. Counting only the rooms you finished would quietly discard the losing half of the sample and make every rate look better than it is.
+
+### Fixed: guild leaderboard XP/h columns were blank
+
+- The guild leaderboard refreshes on its own 20-minute cycle, so opening the panel again inside that window hands back the **same snapshot**. Every one of those was being recorded, which left two identical readings at the end of each guild's history — and a rate measured across two identical readings is zero, so the column rendered blank. Clicking around the leaderboard actively made it worse. The own guild kept working because its history is fed by `guild_updated`, whose experience really does move.
+- A reading that only repeats the one before it is now dropped. A flat reading is still kept once the refresh window has passed, where it means the guild genuinely earned nothing rather than that nothing new was asked for.
+- **Existing histories are healed on load**, so the columns fill in without waiting for fresh samples to age out the bad ones.
+
+### Fixed: the action bar stayed narrow in the labyrinth
+
+- Deciding the bar's width rode on looking the running action up by the name in the header — and a labyrinth room's header reads `Labyrinth - Mimic Lv.252`, which is not the name of any action, so the lookup found nothing and the width was never applied. The bar then showed whatever width the previous action had left behind, which is why it seemed to come and go. Width is now decided from the action queue's own type rather than from the header text, so it no longer depends on a name match at all. The earlier fix — keeping script annotations out of that name — was needed too, but was not the whole story.
+
+### Diagnostic for guild XP tracking
+
+- **`Toolasha.Debug.guildXp()`** prints how many XP samples are held per guild and how far apart they are. An XP/h column needs two readings, the guild leaderboard refreshes only every 20 minutes, and samples are only taken while the panel is open — so a blank column can mean "not enough readings yet" or "the readings never arrived", and those need telling apart before anything is changed.
+
+### The live combat clear chance now replays the fight instead of extrapolating it
+
+- During a labyrinth fight, the readout is computed by **replaying that exact fight 400 times** through the combat engine — both sides rewound to their current health, the room timer already part-spent — and counting how many replays end in a clear. Each replay covers only the seconds the fight has left, so the whole thing costs a fraction of a tile badge's simulation.
+- This replaces racing two rates of health loss, which knew nothing about abilities, procs, healing or what a monster does at low health. The extrapolation is still there: it carries the display between replays and covers the first seconds before one has finished, and the tooltip shows both figures so they can be compared.
+- **What a replay still cannot see** is anything the server does not send: buff timers, ability cooldowns, food and drink remaining. Each replay starts those fresh, which flatters a fight whose cooldowns are actually spent — an error that shrinks as the fight goes on and the remaining window gets shorter.
+- A replay is tagged with the fight it came from and discarded when that fight ends, so a result landing late never describes a moment that has passed. Off via **Labyrinth: Replay the live fight for a better clear chance** if the extrapolation is preferred.
+
+### Skip-level recommendations are now conservative where they used to guess
+
+- Measured against a 70% bar, the decision rule shipped an hour ago called a room clearable **39% of the time when its true rate was 69%**, and still 4.5% of the time at 66% — because a boundary re-tested after every fight is crossed far more often than its nominal confidence implies. That is the dangerous direction: it recommends auto-fighting a room that does not meet your bar.
+- Two changes fix it. Decisions are now tested on a **growing schedule** rather than after every fight, and the confidence required to call a room **above** the bar is stricter than the confidence to rule it out — being wrong upward sends you to fight something you should not, while being wrong downward only forgoes a room you could have taken.
+- The result, measured over 5,000 simulated searches per rate: a room at 65% or below is **never** recommended, one at 68% is never recommended, and only a room within about a point of the bar is still a coin toss — where the practical difference is negligible anyway. For comparison, the old hours-budgeted version wrongly recommended 68% rooms **30% of the time** and 66% rooms 6% of the time, because the time ceiling stopped it at a few hundred fights and it then simply compared the point estimate to the bar.
+
+### Combat skip-level recommendations decide a side instead of measuring a rate
+
+- The Automation tab's **Recommend** button binary-searches a skip threshold per monster, and every probe only asks whether that level clears above or below your target rate. Since sims began stopping on precision, each probe was measuring the level to ±1% to answer a yes/no question. Probes now stop as soon as the interval clears the bar: one that is decisively on a side settles in about 40 fights where measuring it takes hundreds to thousands, so most of a binary search runs roughly **ten times faster** — and the probes near the bar get _more_ dependable, since they keep going until genuinely decided rather than stopping at a fixed width.
+- **Decided and measured results are cached separately.** A decided one is deliberately coarse — 40 fights can leave ±12 points — so letting a tile badge read it would present that as a measurement. A measured result already in hand is still reused for a decision when its interval clears the bar.
+- Skilling and enhancing skip levels are unchanged: those are closed-form, with no simulation to budget.
+
+### Fixed: the action bar started narrow whenever a labyrinth readout was showing
+
+- With compact width off, the action bar is widened by re-applying a CSS override each time the action display updates — but that update first parses the action's name out of the header row and matches it against the queue, and gives up when nothing matches. The row is shared: the battle counter appends `· Attempt #3` and the labyrinth readouts append `[Clear ~85%]`, and both were being folded into the parsed name, so the match failed and the width override went with it. The bar then sat at the game's narrow default for as long as an annotation happened to be showing, which is why it came and went. Name parsing now skips every script-added element in the row rather than only this feature's own.
+- **Fixed: the battle counter could read the wrong action.** It took the first unfinished entry from the action list, which arrives in insertion order, so an action queued behind the running one could be picked instead — suppressing the counter on a combat zone because something queued after it was not a fight. It now sorts by ordinal, as the rest of the codebase does.
+
+### Lab Simulator tabs stop on the question they are actually asking
+
+- **Max Level probes now test a side of the bar, not a rate.** Each step of the binary search only has to place a level above or below your target clear rate, which is a far cheaper question than measuring that level. A level clearing 90% against a 50% bar is settled in 40 fights; measuring the 90% to a percentage point would take nearly two thousand. Most probes now finish about **ten times faster**, the ones within a few points of the bar take longer, and a level sitting exactly on it runs to a cap — where the search is indifferent to which way it falls anyway.
+- **Upgrade and all-fights comparisons now play every candidate over exactly the baseline's fight count.** The advisor ranks by the difference a loadout makes and shares one seed across the baseline and every candidate so their random draws cancel out of that difference — but the cancellation only holds if the runs line up fight for fight. A time budget quietly broke that: a candidate that kills faster fits more fights into the same hours, so the two runs covered different encounters. Taking the count from the baseline keeps the sample the time budget buys while making it identical across candidates. This is a correctness fix to the ranking, not a speed change.
+- **The single-room sim stops on precision**, the same rule as the tile badges, with Hours as the ceiling. Its result now reports the band and whether the ceiling cut it short: `92.30% ±0.98%`, or `(capped)` when it did.
+- Skilling is unaffected — it is closed-form maths, with no simulation to budget.
+
+### Fixed: the labyrinth attempt count followed you out of the labyrinth
+
+- Finishing a labyrinth room and starting something else left `Attempt #N` sitting beside the new action — an alchemy craft wearing the number from the fight before it. React swaps the header's text in place rather than replacing the element, so the observer watching for a new header never fired on an action switch and the counter was simply never re-evaluated. It now re-checks on every action change, and a battle number is suppressed outright while a non-combat action is running.
+
+### Labyrinth sims stop when the answer is pinned down, not when a clock runs out
+
+- **The `Sim Hours` control is now `Precision ±`**, in percentage points. A room's sim runs until its clear chance is measured that tightly and then stops, instead of always burning a fixed span of simulated time.
+- **Simulated hours bought accuracy at a rate set by fight length**, so a room resolving in five seconds was measured twenty times more finely than one running the full 120-second timeout — and the slow rooms are the marginal ones, where the decision is closest. On a real floor the badges carried anywhere from ±0.7 to ±4.8 points at 95% confidence, with the widest band on the room hardest to call.
+- **Hovering a combat tile now shows the band and the sample**: `44.1% ±1.0` over `2,400 fights`, marked `(capped)` when the time ceiling stopped the run before the target was met. A rate is only worth the number of fights behind it, and that number now varies room to room.
+- **Sim Hours survives as a ceiling**, renamed and moved to settings. Precision can only end a run early, never extend it, so nothing got slower: settled rooms — the 0% and 100% ones that fill a hard floor — now finish in a couple of hundred fights instead of the whole budget, while a room near a coin toss still runs to the ceiling and says so. Pinning a 44% room to ±1% would take about 9,500 fights, which no sane time budget covers; the marker is there so you can see when raising the ceiling would actually buy something.
+- **Fixed a small bias in every labyrinth sim.** The attempt in progress when a run ended was counted as a trial but could never be a win, since the attempt count rises when a monster spawns and a win is only recorded when one dies — worth about a third of a point at 300 trials, worst on the slowest rooms. Runs that stop on precision stop at a spawn, where nothing is half-fought, and the trailing attempt is dropped either way.
+- Cached sim results are keyed by precision rather than by hours, so the first calculation after updating recomputes.
+
+### Fixed: the live clear chance flickered and read ~0% on a retried room
+
+- **Retrying a room kept the previous attempt's fight record.** Neither the battle id nor the monster's maximum health changes when you re-enter the same room, and if the first update of the new fight already carried damage there was nothing left to notice it by — so the estimate measured against a start time from minutes earlier and read as no chance at all. A new fight is now recognised by health that went up, which only a fresh monster can do, and by an attack counter that went down, which only a fresh battle can do.
+- **The readout is drawn once a second** rather than on every combat tick. Ticks arrive several times a second and the estimate moves on all of them, which reads as flicker rather than as information.
+- **It is quoted in steps of five.** Rates measured off two health bars do not support a figure to the percentage point, and a number wobbling between 71 and 73 as blows land is noise however accurate its average is. 0% and 100% stay exact, being claims worth making precisely.
+
+### Live clear chance in labyrinth combat rooms
+
+- Combat rooms now show a **live clear chance** in the action bar, beside the room name: `[Clear ~72% | 48s left]`. Until now the only number for a fight was the tile badge's win rate, simulated before you walked in — it says nothing about how the fight in front of you is going.
+- It is measured, not simulated. `battle_updated` carries both sides' current and maximum hitpoints about three times a second; the two rates of health loss are extrapolated to three finish lines — the monster dies, you die, the 120-second timer expires — and the readout is the chance the monster's lands first. Hovering gives both times-to-die, which race is the binding one, and the raw hitpoints.
+- **Early numbers are marked with `?`.** Damage arrives in lumps, so a rate read off six seconds is a guess and one read off a minute is a measurement. The spread narrows as the fight supplies evidence, and nothing is shown at all for the first six seconds.
+- **A fight joined in progress still reports.** Rates are measured over the window actually watched rather than assumed to run back to a full health bar — an estimator that insisted on catching the start would simply never appear if the first update arrived with damage already done. What being late costs is the clock: the time already spent is invisible, so the timer drops out of the estimate instead of being guessed at, and the readout omits the `Ns left`.
+- Abilities, procs, healing and monster mechanics are not modelled. What the number captures is whether the trade is going your way fast enough.
+
+### Groundwork behind it
+
+- **`Toolasha.Debug.captureLab()`** records every WebSocket message for a minute and prints a digest: which message types arrive and how often, every numeric field that changed between consecutive messages, and a full field inventory per message type. Nothing registers or schedules it — it runs only when typed.
+- The first version searched for fields whose **names** looked like hitpoints and found nothing on a live fight — a name search can only find what you can already name. It now diffs consecutive payloads and reports whatever moved, so the field turns up whatever the server calls it. (It is `pMap`/`mMap` keyed by unit index, with `cHP` and `mHP`.)
+- **`battle_updated` is now exempt from message deduplication.** Consecutive combat ticks can open with identical text — same type, same battle, same unit ids — differing only in hitpoints further in, and the 100-character content hash was dropping them. Measured on a real fight, the message rate went from 0.65/s to 3.17/s: four out of five combat updates were being discarded before any feature saw them.
+
+### Room attempt counter
+
+- Rooms entered **more than once** are marked on the map with a `↻N` badge in the bottom-left of the tile, and the room you are running now adds `try N` to the end of the action bar's clear readout. The map gave no sign of this before: a tile looks identical on your fourth attempt and your first.
+- The count is the server's own `entryCount`, the same figure the battle counter already shows as `Attempt #N` on combat rooms — so nothing is inferred, and the badge covers skilling and enhancing rooms, where no attempt count was shown at all.
+
+### Beacon plans stop chasing a corridor that was never required
+
+- **A beacon count you set now plans for coverage**: the beacons go wherever they reveal the most rooms, with ties between equally dark spots settled toward the one on your way to the exit. Previously a set count was forced into a chain of reveal areas covering an unbroken revealed path from the entrance to the exit, which pinned every beacon onto the entrance-to-exit line and clustered them by the exit corner — the odd-looking placements.
+- **That corridor was never a real constraint.** Unrevealed rooms are walkable — the path planner routes through them and says so — so a floor can always be crossed without beacons. It now shapes only the answer that asks for it (count 0: the fewest beacons that cover a revealed path), and the set-count mode reports whether the way out ended up covered instead of being ruled by it.
+- **Fixed: asking for fewer beacons than a corridor needs planned nothing at all**, answering "Need at least 3 beacons for a covered path" when the question was where to put the two you have. A set count always gets a plan now.
+- **Fixed: an already-revealed path to the exit suppressed the plan entirely.** Asking for four beacons on a floor whose corridor was open returned none, however much of the floor was still dark; the same floor now gets 48 rooms revealed.
+- **Route redundancy no longer outranks coverage.** It counts unrevealed rooms as blocked, which they are not, so it decides ties between equal chains and is reported in the status line — it is no longer paid for in rooms.
+- Beacon and path planning now share one test for whether a room is revealed. The beacon side ignored `skillHrid`/`monsterHrid`, so a room the path planner treated as known could be counted as newly revealed.
+
+### Credit dakonglong for the labyrinth simulator
+
+- The README's credits now thank dakonglong, author of [迷宫胜率计算器 — Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829-%E8%BF%B7%E5%AE%AB%E8%83%9C%E7%8E%87%E8%AE%A1%E7%AE%97%E5%99%A8), for the code and inspiration behind the labyrinth simulator, and link to the script.
+
+### Resize from either side, and Payback is now Time
+
+- **The sim panel resizes from the left edge and bottom-left corner too**, alongside the right, bottom and bottom-right grips. Each grip now moves the side you grabbed: the panel opens anchored to its right edge, so widening it used to push the opposite side across the screen — resizing now pins the panel by whichever edge you are not dragging.
+- **Payback is renamed Time.** Shorter, and it matches what the figure is: how long you grind to afford the upgrade.
+- **Gold/0.01% EPH and DPH now count toward the Score by default**, joining DPS, EXP, Profit and Repay. ROI stays out, being repay time inverted.
+
+### Easier panel resizing, tighter upgrade columns, and a Columns menu that stays put
+
+- **The sim panel resizes from its right and bottom edges**, not just the corner grip — the whole side is a target instead of sixteen square pixels. Dragging no longer selects page text, and **the size is remembered**, clamped to the viewport on restore so a size saved on a bigger monitor cannot open the panel off-screen.
+- **Upgrade columns are narrower.** Headers split across two lines, so "Gold/0.01% Profit" costs the width of "Gold/0.01%" rather than the whole phrase; numbers right-align and never wrap, and only the upgrade name may reflow.
+- **The raw deltas and ROI are hidden by default.** The deltas restate what the gold-per columns already price and ROI is repay time inverted, so none of the six earns its width up front — showing all sixteen at once is what forced the panel wider. Every one is a checkbox away in ⚙ Columns.
+- **Fixed: the Columns menu reopened on almost any click.** It now closes when you click outside it or sort a column, while staying open as you tick boxes inside it — configuring should not dismiss the thing you are configuring. The dismiss listener is added on open and removed on close rather than living permanently on the document.
+
+### Sticky headers, eight more columns, and a configurable Score
+
+- The upgrade table's **header row now sticks** to the top of the results pane, so the columns stay labelled however far you scroll.
+- **New columns**: ΔDPS, ΔEXP/hr, ΔProfit/hr, ΔEPH and ΔDPH as raw per-hour changes, plus **Gold/0.01% EPH** and **Gold/0.01% DPH** — both already computed and previously thrown away — and **ROI (1yr)**, a year of the added profit against the outlay.
+- **⚙ Columns** above the table chooses which of those are shown and, separately, which count toward the Score. Hiding a column is about screen width; dropping one from the score changes the ranking, so the two lists are independent — you can read a metric without scoring it. Choices persist.
+- Changing what the score counts re-ranks instantly. Scoring is pure ranking over figures already measured, so nothing is re-simulated.
+- **ROI is off by default in the score.** It is `profit gain / cost` while repay time is `cost / profit gain` — the same ratio inverted, ranking candidates identically — so counting both would weigh one signal twice. The popover says so, and a test pins the two orderings together.
+- Raw deltas are shown but cannot be scored: ranking by ΔDPS alone rewards whatever is most expensive, which is the opposite of what a value score is for.
+
+### Gold-per columns now quote 0.01% instead of 0.1%
+
+- The three **Gold/0.01%** columns quote the cost of a ten-times-finer improvement step, so the figures are a tenth of what they were. The step is only a rescaling — it divides every row by the same constant — so nothing reorders and no ranking or score changes.
+- The Payback tooltip claimed the column was "a property of your bankroll, not of the upgrade". Both halves were wrong: it is driven by your profit rate rather than by coins on hand, and it plainly does depend on the upgrade, being proportional to its cost. It now says the accurate thing — every row divides by the same baseline rate, so Payback orders candidates exactly as Cost does, which is the real reason it is not scored.
+
+### Payback, repay time and a Score column in the upgrade advisor
+
+- **Payback** is how long you grind at your current profit rate to afford an upgrade; **Repay** is how long its extra profit takes to earn that cost back. Gold per 0.01% ranks upgrades by efficiency, which is a different question from whether one is worth buying at all — an upgrade with a great gold-per-DPS figure and a nine-month repay is still a poor purchase while your bankroll is the constraint.
+- Both are derived from the averaged profit figures rather than a single run. A profit delta thin enough to be noise would otherwise send the repay period asymptotic, and a cell reading "412 years" off RNG looks like a measurement when it isn't. An upgrade that doesn't raise profit shows a blank rather than ∞ — it never repays, which says nothing against it if you bought it for DPS.
+- **Score** awards points for placing in the top 5 of each value metric (gold per 0.01% DPS, EXP and Profit, plus repay time) and sums them, surfacing all-rounders that never top any single column. Expanding a row lists exactly which placings made up its score. The scoring is ordinal — winning a metric narrowly counts the same as winning it outright — so it sorts on request rather than by default.
+- Payback is deliberately left out of the score: it follows from cost alone, so scoring it would count the Cost column twice under another name. Combat levels are excluded too, having no gold cost to rank. Ties share a placing rather than being split by list order.
+
+### Credit jigglymoose for JIGS
+
+- The README's credits now thank jigglymoose, author of [JIGS — Jigglymoose's Intelligent Gear Simulator](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator), for several of the ideas behind the upgrade advisor and the wider combat-sim tooling, and link to the script. The acknowledgement sits alongside the existing MWITools credit.
+
 ## Unreleased — branch `claude/code-review-improvements-q6i4d5`
 
 ### Panel sizes you drag are remembered across reloads

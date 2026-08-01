@@ -77,7 +77,15 @@ class CombatBattleCounter {
             this.isDungeon = false;
             this.labyrinthAttempt = 0;
             document.getElementById(COUNTER_ID)?.remove();
+            return;
         }
+
+        // Re-evaluate on any action change even when none of the above matched.
+        // React swaps the header's text in place rather than replacing the
+        // element, so the class observer does not fire on an action switch and
+        // a counter left from the last fight would sit beside the new action —
+        // an alchemy craft wearing "Attempt #1" from the labyrinth room before it.
+        this._injectOrUpdate();
     }
 
     _onLabyrinthUpdated(data) {
@@ -103,7 +111,10 @@ class CombatBattleCounter {
         }
         if (!pathCoords.length || !Array.isArray(roomRows)) return;
 
-        const active = pathCoords[pathCoords.length - 1];
+        // pathData is the queue, and [0] is the room being run — the last
+        // entry is the far end of what you lined up, which is routinely an
+        // unrevealed room and used to abandon the count entirely
+        const active = pathCoords[0];
         const room = roomRows?.[active.y]?.[active.x];
         if (!room || room.roomType !== '/labyrinth_room_types/combat') {
             // Moved to a non-combat room — the previous fight's attempt count
@@ -144,11 +155,25 @@ class CombatBattleCounter {
         // the word, so reading the row's full text is safe)
         const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
 
+        // A battle number describes a fight, so it has no business beside a
+        // craft or an alchemy action. The labyrinth variant needs no such
+        // guard: its title check already fails on anything else.
+        // Lowest ordinal is the action actually running — the array arrives in
+        // insertion order, so the first unfinished entry can be one you queued
+        // behind it
+        const runningAction = (dataManager.getCurrentActions() || [])
+            .filter((action) => !action.isDone)
+            .sort((a, b) => a.ordinal - b.ordinal)[0];
+        const inSkillingAction =
+            !!runningAction && !String(runningAction.actionHrid || '').startsWith('/actions/combat/');
+
         let text = '';
         if (isLabyrinthFight) {
             // Never show "Battle #" on a labyrinth fight — if the attempt
             // count hasn't arrived yet, show nothing
             text = this.labyrinthAttempt > 0 ? `· Attempt #${this.labyrinthAttempt}` : '';
+        } else if (inSkillingAction) {
+            text = '';
         } else if (this.isDungeon && this.battleId > 0) {
             text = `· Wave ${this.currentWave} · Battle #${this.battleId}`;
         } else if (this.battleId > 0) {

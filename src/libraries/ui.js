@@ -15,6 +15,7 @@ import hideGuildBadge from '../features/ui/hide-guild-badge.js';
 import panelSizeMemory from '../features/ui/panel-size-memory.js';
 import tabReorder from '../features/ui/tab-reorder.js';
 import draggableModals from '../features/ui/draggable-modals.js';
+import combatPanelScale from '../features/ui/combat-panel-scale.js';
 
 // Navigation features
 import altClickNavigation from '../features/navigation/alt-click-navigation.js';
@@ -90,6 +91,8 @@ import pformancePanel from '../features/dev/pformance-panel.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
+// Shared console-only debug namespace; nothing schedules these
+toolashaRoot.Debug = { ...(toolashaRoot.Debug || {}), guildXp: () => guildXPTracker.debugState() };
 window.Toolasha = toolashaRoot;
 
 if (typeof unsafeWindow !== 'undefined') {
@@ -106,6 +109,7 @@ toolashaRoot.UI = {
     panelSizeMemory,
     tabReorder,
     draggableModals,
+    combatPanelScale,
     altClickNavigation,
     collectionNavigation,
     collectionFilters,

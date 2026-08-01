@@ -1,25 +1,135 @@
 /**
  * Labyrinth Room Logs
- * Records per-action success/fail/double outcomes for labyrinth skilling and
- * enhancing rooms, shown in a floating panel toggled from the calculate bar.
- * Ported from dakonglong's MIT-licensed Labyrinth Clear Rate Calculator.
+ *
+ * What actually happened in each room, and — for fights — whether the sim was
+ * right about it.
+ *
+ * Skilling and enhancing rooms announce every action they take, so their logs
+ * are a direct transcript. Combat rooms announce nothing of the sort: the tile
+ * badge quotes a clear chance computed before you walked in, the fight happens,
+ * and then the tile is either cleared or it is not. Standing those two side by
+ * side is the only way to find out whether the number was ever true.
+ *
+ * Two views, because they answer different questions. The room list is "how did
+ * this run go" — grouped by floor, with what each floor cost and returned; the
+ * accuracy view is "does the calculator know what it is talking about", which
+ * needs every room ever recorded rather than the last few floors.
+ *
+ * Reached from a tab beside Lab Sim, which is up whether or not a run is in
+ * progress: reviewing a run is something you do after it.
+ *
+ * Ported in part from dakonglong's MIT-licensed Labyrinth Clear Rate Calculator.
  */
 
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
+import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
+import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
 const STORAGE_KEY = 'labyrinthRoomLogs';
-const MAX_SESSIONS = 30;
+/** Used when the setting is unreadable; the setting itself is the real bound */
+const DEFAULT_SESSIONS = 120;
+/** However large the log is set, one room cannot fill it */
 const MAX_ACTIONS = 60;
+/** A room retried this many times has made its point */
+const MAX_ATTEMPTS = 40;
 const PANEL_ID = 'mwi-lab-logs-panel';
+const TAB_ID = 'mwi-lab-logs-tab';
+
+/**
+ * Ticks arrive about three times a second and stop dead when the fight ends.
+ * Nothing announces the ending, so this silence is the ending.
+ */
+const FIGHT_STALE_MS = 4000;
+
+/**
+ * How long a finished room stays open to experience still arriving for it.
+ *
+ * A room ends when the floor says the path moved on, and the experience it
+ * earned is a separate message that need not have arrived by then. Sampling the
+ * skill totals at the moment of finalizing therefore caught nothing at all: the
+ * room was closed before it had been paid. The room stays claimable for a few
+ * seconds, and only then goes into the long-term record.
+ */
+const XP_GRACE_MS = 4000;
 
 const OUTCOME_COLORS = {
     success: '#3ddc84',
     fail: '#ff6464',
     double: '#ffcf5c',
     unknown: '#9ab0d8',
+    clear: '#3ddc84',
+    death: '#ff6464',
+    timeout: '#ffa94d',
 };
+
+const VERDICT_COLORS = {
+    'sim too high': '#ff8a8a',
+    'sim too low': '#8ac6ff',
+    consistent: '#8fe3b0',
+};
+
+/**
+ * Split a newest-first list of rooms into the floors they were run on.
+ *
+ * Grouped on consecutive runs of the same run-and-floor key rather than by
+ * collecting every session with that key, so a floor revisited on a later run
+ * reads as a second group instead of being silently merged into the first.
+ *
+ * @param {Array<Object>} sessions - Sessions, newest first
+ * @returns {Array<{runKey: string, floor: number, sessions: Array<Object>}>}
+ */
+export function groupByFloor(sessions) {
+    const groups = [];
+    for (const session of sessions || []) {
+        const runKey = String(session?.runKey || '');
+        const last = groups[groups.length - 1];
+        if (last && last.runKey === runKey) {
+            last.sessions.push(session);
+        } else {
+            groups.push({ runKey, floor: Math.max(0, Math.floor(Number(session?.floor) || 0)), sessions: [session] });
+        }
+    }
+    return groups;
+}
+
+/**
+ * What a floor cost and what it returned.
+ *
+ * Experience per hour is measured over the rooms on the floor, not over the
+ * whole floor's wall-clock: the time between rooms is spent reading the map and
+ * deciding where to go, and charging that to the rooms would make a floor you
+ * thought about look slower than the same floor rushed.
+ *
+ * @param {Array<Object>} sessions - The floor's rooms
+ * @returns {{rooms: number, cleared: number, seconds: number, xp: number, xpPerHour: number|null}}
+ */
+export function floorSummary(sessions) {
+    const list = sessions || [];
+    let seconds = 0;
+    let xp = 0;
+    let cleared = 0;
+
+    for (const session of list) {
+        const ended = session?.endedAt || 0;
+        // Only a finished room has a duration; one still running has not
+        // taken its time yet
+        if (ended > 0) seconds += Math.max(0, (ended - (Number(session.startedAt) || 0)) / 1000);
+        xp += Math.max(0, Number(session?.xp) || 0);
+        if (session?.completed) cleared++;
+    }
+
+    return {
+        rooms: list.length,
+        cleared,
+        seconds,
+        xp,
+        xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
+    };
+}
 
 class LabyrinthRoomLogs {
     constructor() {
@@ -27,9 +137,89 @@ class LabyrinthRoomLogs {
         this.sessions = [];
         this.activeSession = null;
         this.labContext = null; // { runKey, roomKey, room }
+        this.roomData = null;
         this.progressHandler = null;
         this.labyrinthHandler = null;
+        this.battleHandler = null;
         this.panel = null;
+        this.view = 'rooms';
+        this.simSource = null;
+        this.fight = null;
+        this.fightTimer = null;
+        this.renderToken = 0;
+        this.resetArmed = false;
+        this.tabButton = null;
+        this.unregisterTab = null;
+        this.xpHandlers = [];
+        this.xpBaseline = null;
+        this.pendingReport = null;
+        this.reportTimer = null;
+    }
+
+    /** How many rooms of history to keep */
+    logSize() {
+        const raw = Number(config.getSettingValue('labyrinthRoomLogSize', DEFAULT_SESSIONS));
+        return Math.min(500, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
+    }
+
+    /**
+     * Total experience across every skill, right now.
+     *
+     * Measured rather than derived. The calculator has a formula for what a
+     * room is worth, but that formula is one of the things being checked here,
+     * so reading it back would only confirm itself. Summing every skill also
+     * picks up the experience a fight spreads over several of them.
+     *
+     * @returns {number|null} null when character data has not arrived
+     */
+    totalExperience() {
+        const skills = dataManager.getSkills();
+        if (!Array.isArray(skills)) return null;
+        return skills.reduce((sum, skill) => sum + (Number(skill?.experience) || 0), 0);
+    }
+
+    /**
+     * Credit experience that has just landed to the room that earned it.
+     *
+     * Differences against a rolling baseline rather than a snapshot taken per
+     * room, because the two ends of a room are not the two ends of its payment.
+     * Experience arriving while no room is open — outside the labyrinth, or in
+     * the gap between rooms — still advances the baseline so it cannot be
+     * mistaken for the next room's.
+     */
+    absorbExperience() {
+        const total = this.totalExperience();
+        if (!Number.isFinite(total)) return;
+        if (!Number.isFinite(this.xpBaseline)) {
+            this.xpBaseline = total;
+            return;
+        }
+
+        const gained = total - this.xpBaseline;
+        this.xpBaseline = total;
+        if (gained <= 0) return;
+
+        const pending = this.pendingReport;
+        const target = this.activeSession || (pending && Date.now() - pending.endedAt < XP_GRACE_MS ? pending : null);
+        if (!target) return;
+
+        target.xp = Math.max(0, (Number(target.xp) || 0) + gained);
+        this.persist();
+        this.renderIfOpen();
+    }
+
+    /**
+     * Accept the sim's predictions and its fight record.
+     *
+     * The clear-rate feature owns both — it runs the sims and keeps the tally of
+     * how fights went — and it already imports this module to hang a button off
+     * the labyrinth panel. Importing it back would close the loop, so it hands
+     * over accessors instead and this module works without them.
+     *
+     * @param {Object} source - { predictedFor, accuracy, reset }
+     */
+    useSimSource(source) {
+        this.simSource = source || null;
     }
 
     async initialize() {
@@ -39,7 +229,7 @@ class LabyrinthRoomLogs {
 
         const stored = await storage.getJSON(STORAGE_KEY, 'settings', null);
         if (Array.isArray(stored?.sessions)) {
-            this.sessions = stored.sessions.slice(0, MAX_SESSIONS);
+            this.sessions = stored.sessions.slice(0, this.logSize());
         }
 
         this.progressHandler = (data) => this.onRoomProgress(data);
@@ -47,6 +237,26 @@ class LabyrinthRoomLogs {
 
         this.labyrinthHandler = (data) => this.onLabyrinthUpdated(data);
         webSocketHook.on('labyrinth_updated', this.labyrinthHandler);
+
+        this.battleHandler = (data) => this.onBattleUpdated(data);
+        webSocketHook.on('battle_updated', this.battleHandler);
+
+        // Experience is credited by its own messages, on their own schedule.
+        // Watching for it to land and attributing it to whichever room is open
+        // works whichever message brings it and whether it turns up during the
+        // room or a moment after it.
+        this.xpBaseline = this.totalExperience();
+        const absorb = () => this.absorbExperience();
+        for (const type of ['action_completed', 'skills_updated', 'labyrinth_updated']) {
+            webSocketHook.on(type, absorb);
+            this.xpHandlers.push([type, absorb]);
+        }
+
+        this.unregisterTab = domObserver.onClass('LabyrinthRoomLogsTab', 'LabyrinthPanel_tabsComponentContainer', () =>
+            this.ensureTabButton()
+        );
+        this.ensureTabButton();
+        setTimeout(() => this.ensureTabButton(), 500);
     }
 
     disable() {
@@ -58,10 +268,25 @@ class LabyrinthRoomLogs {
             webSocketHook.off('labyrinth_updated', this.labyrinthHandler);
             this.labyrinthHandler = null;
         }
+        if (this.battleHandler) {
+            webSocketHook.off('battle_updated', this.battleHandler);
+            this.battleHandler = null;
+        }
+        for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
+        this.xpHandlers = [];
+        this.flushReport();
+        if (this.unregisterTab) {
+            this.unregisterTab();
+            this.unregisterTab = null;
+        }
+        this.resolveFight();
         this.finalizeActiveSession('feature_disabled');
+        document.getElementById(TAB_ID)?.remove();
+        this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
         this.panel = null;
         this.labContext = null;
+        this.roomData = null;
         this.isInitialized = false;
     }
 
@@ -72,21 +297,30 @@ class LabyrinthRoomLogs {
     onLabyrinthUpdated(data) {
         const labyrinth = data?.labyrinth;
         if (!labyrinth) {
+            this.resolveFight();
             this.finalizeActiveSession('left_labyrinth');
             this.labContext = null;
             return;
         }
 
-        const runKey = `${labyrinth.startedAt || ''}|${Math.floor(Number(labyrinth.currentFloor) || 0)}`;
+        // Held so a fight can ask, once it is over, whether the room it was in
+        // ended up cleared. The last tick of a won fight usually still shows the
+        // monster alive — the killing blow's update never arrives — so the floor
+        // is the only reliable witness.
+        if (labyrinth.roomData) this.roomData = labyrinth.roomData;
+
+        const floor = Math.floor(Number(labyrinth.currentFloor) || 0);
+        const runKey = `${labyrinth.startedAt || ''}|${floor}`;
         const path = this.parsePathData(labyrinth.pathData);
         const head = path?.[0];
         const roomKey = head && Number.isInteger(head.x) && Number.isInteger(head.y) ? `${head.x},${head.y}` : '';
         const room = roomKey ? labyrinth.roomData?.[head.y]?.[head.x] || null : null;
 
-        this.labContext = { runKey, roomKey, room };
+        this.labContext = { runKey, roomKey, room, floor };
 
         // Finalize the active session when the run or the current room changed
         if (this.activeSession && (this.activeSession.runKey !== runKey || this.activeSession.roomKey !== roomKey)) {
+            this.resolveFight();
             this.finalizeActiveSession('room_switch');
         }
     }
@@ -102,6 +336,17 @@ class LabyrinthRoomLogs {
             }
         }
         return [];
+    }
+
+    /**
+     * Whether the header is showing a labyrinth fight. Read from the title
+     * rather than from run state, following the battle counter: a labyrinth run
+     * stays active while you fight regular zones, so the flags mislabel it.
+     * @returns {boolean}
+     */
+    inLabyrinthFight() {
+        const row = document.querySelector("div[class*='Header_actionName']");
+        return !!row && /labyrinth/i.test(row.textContent || '');
     }
 
     // -------------------------------------------------------------------------
@@ -149,28 +394,45 @@ class LabyrinthRoomLogs {
         };
     }
 
+    /**
+     * Close out whatever room was being logged, if this is a different one.
+     * @param {string} sessionKey - Key of the room now being logged
+     * @returns {Object|null} The active session when it is still the right one
+     */
+    reuseSession(sessionKey) {
+        if (this.activeSession && this.activeSession.sessionKey !== sessionKey) {
+            this.resolveFight();
+            this.finalizeActiveSession('room_switch');
+        }
+        return this.activeSession;
+    }
+
     ensureSession(snapshot) {
         const context = this.labContext || {};
         const mode = snapshot.isEnhancing ? 'enhancing' : 'skilling';
         const sessionKey = `${context.runKey || ''}|${context.roomKey || ''}|${mode}`;
 
-        if (this.activeSession && this.activeSession.sessionKey !== sessionKey) {
-            this.finalizeActiveSession('room_switch');
-        }
-        if (this.activeSession) {
-            return this.activeSession;
-        }
+        const existing = this.reuseSession(sessionKey);
+        if (existing) return existing;
 
         const room = context.room || {};
         const skillHrid = String(room.skillHrid || '');
+        const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
         this.activeSession = {
             id: `lab-log-${Date.now()}`,
             sessionKey,
             runKey: String(context.runKey || ''),
             roomKey: String(context.roomKey || ''),
+            floor: Math.max(0, Math.floor(Number(context.floor) || 0)),
             mode,
+            subjectHrid: skillHrid,
             skillName: this.prettySkillName(skillHrid, mode),
-            roomLevel: Math.max(0, Math.floor(Number(room.recommendedLevel) || 0)),
+            roomLevel,
+            forecast: this.forecastFor(skillHrid, roomLevel, 'skilling'),
+            xp: 0,
+            actionCount: 0,
+            successCount: 0,
+            doubleCount: 0,
             startedAt: Date.now(),
             endedAt: 0,
             successRate: snapshot.successRate,
@@ -193,6 +455,14 @@ class LabyrinthRoomLogs {
         return tail.charAt(0).toUpperCase() + tail.slice(1);
     }
 
+    prettyMonsterName(monsterHrid) {
+        const tail = String(monsterHrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ');
+        return tail.replace(/\b\w/g, (c) => c.toUpperCase()) || 'Monster';
+    }
+
     appendAction(session, snapshot) {
         const prev = session.lastSnapshot;
         const prevCounter = Math.max(0, Math.floor(Number(prev?.actionCounter) || 0));
@@ -207,7 +477,16 @@ class LabyrinthRoomLogs {
             }
         }
 
-        session.actions.push(this.deriveAction(prev, snapshot));
+        const action = this.deriveAction(prev, snapshot);
+        // Counted here rather than from the drawn list, which is trimmed once a
+        // room runs long — the rate has to survive the trimming
+        session.actionCount = (session.actionCount || 0) + 1;
+        if (action.outcome === 'success' || action.outcome === 'double') {
+            session.successCount = (session.successCount || 0) + 1;
+        }
+        if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
+
+        session.actions.push(action);
         if (session.actions.length > MAX_ACTIONS) {
             session.incomplete = true;
             session.actions = session.actions.slice(session.actions.length - MAX_ACTIONS);
@@ -248,7 +527,206 @@ class LabyrinthRoomLogs {
         session.lastSnapshot = snapshot;
     }
 
+    // -------------------------------------------------------------------------
+    // Combat rooms
+    //
+    // A fight has no progress messages to transcribe, so it is watched through
+    // battle_updated — both sides' health, three times a second — and recorded
+    // as one attempt per fight rather than one entry per swing. Individual
+    // swings are noise; whether the room fell, and how close it came, is not.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Track a labyrinth fight for the room log.
+     * @param {Object} data - battle_updated payload
+     */
+    onBattleUpdated(data) {
+        const player = data?.pMap?.['0'];
+        const monster = data?.mMap?.['0'];
+        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0)) return;
+
+        const context = this.labContext;
+        const room = context?.room;
+        if (!room?.monsterHrid || !this.inLabyrinthFight()) return;
+
+        const session = this.ensureCombatSession(context, room);
+        if (!session) return;
+
+        const monsterHpFraction = monster.cHP / monster.mHP;
+        const playerHpFraction = player.cHP / player.mHP;
+        const atkCounter = Number(player.atkCounter) || 0;
+
+        // battleId stays put across labyrinth attempts and a retry of the same
+        // room brings back a monster with the same maximum, so neither says a
+        // new fight started. Two things do: health that went up, which only a
+        // fresh monster can do, and an attack counter that went down, which only
+        // a fresh battle can do.
+        const fight = this.fight;
+        const isNewFight =
+            !fight ||
+            fight.session !== session ||
+            fight.battleId !== data.battleId ||
+            fight.monsterMaxHp !== monster.mHP ||
+            monster.cHP > fight.lastMonsterHp ||
+            atkCounter < fight.lastAtkCounter;
+
+        if (isNewFight) {
+            this.resolveFight(); // whatever was being watched has ended
+            this.fight = {
+                session,
+                roomKey: session.roomKey,
+                monsterHrid: session.monsterHrid,
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                startedAt: Date.now(),
+            };
+        }
+
+        Object.assign(this.fight, {
+            lastMonsterHp: monster.cHP,
+            lastAtkCounter: atkCounter,
+            monsterHpFraction,
+            playerHpFraction,
+        });
+
+        // The tile may not have been calculated when the room was entered, and
+        // a prediction that arrives during the fight is still a prediction made
+        // before the outcome was known
+        if (session.predicted === null) {
+            session.forecast = this.forecastFor(session.monsterHrid, session.roomLevel, 'combat');
+            session.predicted = session.forecast?.clearChance ?? null;
+        }
+        session.entryCount = Math.max(session.entryCount || 0, Math.floor(Number(room.entryCount) || 0));
+
+        if (this.fightTimer) clearTimeout(this.fightTimer);
+        this.fightTimer = setTimeout(() => this.resolveFight(), FIGHT_STALE_MS);
+
+        if (isNewFight) this.renderIfOpen();
+    }
+
+    /**
+     * What the calculator claims about a room, captured on the way in.
+     *
+     * Taken once at the start rather than read when the room is drawn, because
+     * the claim being checked is the one that was on screen when you decided to
+     * walk in — not one recomputed later for gear you have since changed.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @param {number} roomLevel - Room level
+     * @param {string} kind - 'combat' or 'skilling'
+     * @returns {Object|null} Trimmed to the fields worth keeping
+     */
+    forecastFor(subjectHrid, roomLevel, kind) {
+        try {
+            const forecast = this.simSource?.forecast?.(subjectHrid, roomLevel, kind);
+            if (!forecast) return null;
+            const keep = (v) => (Number.isFinite(v) ? v : null);
+            return {
+                clearChance: keep(forecast.clearChance),
+                expectedSeconds: Number.isFinite(forecast.expectedSeconds) ? forecast.expectedSeconds : null,
+                successChance: keep(forecast.successChance),
+                doubleChance: keep(forecast.doubleChance),
+                xpPerRoom: keep(forecast.xpPerRoom),
+                xpPerHour: keep(forecast.xpPerHour),
+            };
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Reading the room forecast failed:', error);
+            return null;
+        }
+    }
+
+    ensureCombatSession(context, room) {
+        const sessionKey = `${context.runKey || ''}|${context.roomKey || ''}|combat`;
+
+        const existing = this.reuseSession(sessionKey);
+        if (existing) return existing;
+
+        const monsterHrid = String(room.monsterHrid || '');
+        const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+        const forecast = this.forecastFor(monsterHrid, roomLevel, 'combat');
+        this.activeSession = {
+            id: `lab-log-${Date.now()}`,
+            sessionKey,
+            runKey: String(context.runKey || ''),
+            roomKey: String(context.roomKey || ''),
+            floor: Math.max(0, Math.floor(Number(context.floor) || 0)),
+            mode: 'combat',
+            monsterHrid,
+            subjectHrid: monsterHrid,
+            skillName: this.prettyMonsterName(monsterHrid),
+            roomLevel,
+            forecast,
+            predicted: forecast && Number.isFinite(forecast.clearChance) ? forecast.clearChance : null,
+            xp: 0,
+            entryCount: Math.max(0, Math.floor(Number(room.entryCount) || 0)),
+            startedAt: Date.now(),
+            endedAt: 0,
+            actions: [],
+            cleared: false,
+            incomplete: false,
+            completed: false,
+        };
+        return this.activeSession;
+    }
+
+    /**
+     * Whether the floor says a room was cleared.
+     *
+     * A cleared room is stripped of its monster, so demanding that the square
+     * still name the fight you just had is demanding the one thing a won room
+     * cannot do — it would answer "cannot say" for exactly the wins it is being
+     * asked about. A square naming a *different* monster is a different room on
+     * a floor that has moved on, and that one really is unanswerable.
+     *
+     * @param {string} roomKey - "x,y"
+     * @param {string} monsterHrid - The monster that was there
+     * @returns {boolean|undefined} undefined when the floor cannot say
+     */
+    roomCleared(roomKey, monsterHrid) {
+        const [x, y] = String(roomKey || '')
+            .split(',')
+            .map(Number);
+        if (!Number.isInteger(x) || !Number.isInteger(y)) return undefined;
+        const room = this.roomData?.[y]?.[x];
+        if (!room) return undefined;
+        if (room.monsterHrid && room.monsterHrid !== monsterHrid) return undefined;
+        return !!room.isCleared;
+    }
+
+    /** File the fight being watched as an attempt, whatever became of it */
+    resolveFight() {
+        const fight = this.fight;
+        this.fight = null;
+        if (this.fightTimer) {
+            clearTimeout(this.fightTimer);
+            this.fightTimer = null;
+        }
+        if (!fight) return;
+
+        const session = fight.session;
+        const attempt = classifyFight({
+            monsterHpFraction: fight.monsterHpFraction,
+            playerHpFraction: fight.playerHpFraction,
+            seconds: (Date.now() - fight.startedAt) / 1000,
+            cleared: this.roomCleared(fight.roomKey, fight.monsterHrid),
+        });
+
+        session.actions.push(attempt);
+        if (session.actions.length > MAX_ATTEMPTS) {
+            session.incomplete = true;
+            session.actions = session.actions.slice(session.actions.length - MAX_ATTEMPTS);
+        }
+        if (attempt.outcome === 'clear') session.cleared = true;
+        session.endedAt = Date.now();
+
+        this.persist();
+        this.renderIfOpen();
+    }
+
     isSessionComplete(session) {
+        if (session.mode === 'combat') {
+            return !!session.cleared;
+        }
         if (session.mode === 'enhancing') {
             return session.targetLevel > 0 && session.currentEnhLevel >= session.targetLevel;
         }
@@ -270,10 +748,69 @@ class LabyrinthRoomLogs {
         }
         delete session.lastSnapshot;
 
+        // Held back rather than reported now: the experience this room earned
+        // may not have been credited yet, and a record written before the
+        // payment arrives is a record of a room that earned nothing
+        this.flushReport();
+        this.pendingReport = session;
+        this.reportTimer = setTimeout(() => this.flushReport(), XP_GRACE_MS);
+
         this.sessions.unshift(session);
-        this.sessions = this.sessions.slice(0, MAX_SESSIONS);
+        this.sessions = this.sessions.slice(0, this.logSize());
         this.persist();
         this.renderIfOpen();
+    }
+
+    /** Report whichever room has been waiting for its experience, if any */
+    flushReport() {
+        if (this.reportTimer) {
+            clearTimeout(this.reportTimer);
+            this.reportTimer = null;
+        }
+        const session = this.pendingReport;
+        this.pendingReport = null;
+        if (session) this.reportRoomResult(session);
+    }
+
+    /**
+     * Hand a finished room to the long-term record.
+     *
+     * Rooms you gave up on are reported too. A labyrinth room pays only when it
+     * is completed, so an abandoned one is time spent for nothing — and dropping
+     * it would raise the measured experience per hour every time you walked away
+     * from a room. The record keeps its duration apart from the finished rooms'
+     * so it cannot distort what a room takes to complete, which is a different
+     * question.
+     *
+     * @param {Object} session - The finalized session
+     */
+    reportRoomResult(session) {
+        if (!session.subjectHrid || !this.simSource?.record) return;
+
+        const seconds = Math.max(0, (session.endedAt - session.startedAt) / 1000);
+        const skilling = session.mode !== 'combat';
+
+        Promise.resolve(
+            this.simSource.record({
+                subjectHrid: session.subjectHrid,
+                roomLevel: session.roomLevel,
+                kind: skilling ? 'skilling' : 'combat',
+                cleared: !!session.completed,
+                seconds,
+                xp: session.xp,
+                actions: skilling ? session.actionCount : 0,
+                successes: skilling ? session.successCount : 0,
+                doubles: skilling ? session.doubleCount : 0,
+                predictedSeconds: session.forecast?.expectedSeconds,
+                predictedSuccess: session.forecast?.successChance,
+                predictedDouble: session.forecast?.doubleChance,
+                // The server states the rates it is using with every action, so
+                // the calculator's figure can be checked against the truth
+                // rather than only against a sample of outcomes
+                serverSuccess: skilling ? session.successRate : undefined,
+                serverDouble: skilling ? session.doubleChance : undefined,
+            })
+        ).catch((error) => console.error('[LabyrinthRoomLogs] Recording a finished room failed:', error));
     }
 
     persist() {
@@ -290,6 +827,7 @@ class LabyrinthRoomLogs {
     clearLogs() {
         this.sessions = [];
         this.activeSession = null;
+        this.fight = null;
         this.persist();
         this.renderIfOpen();
     }
@@ -298,14 +836,99 @@ class LabyrinthRoomLogs {
     // UI
     // -------------------------------------------------------------------------
 
+    /**
+     * The labyrinth page's own tab bar, which is up whether or not a run is in
+     * progress.
+     *
+     * The button used to live on the calculate bar inside a run, which put the
+     * history of your last three floors behind having to be standing in a
+     * fourth. Reviewing a run is something you do after it, so the way in has to
+     * outlive it.
+     *
+     * @returns {HTMLElement|null}
+     */
+    findLabyrinthTabBar() {
+        const container = document.querySelector('[class*="LabyrinthPanel_tabsComponentContainer"]');
+        return container?.querySelector('[class*="TabsComponent_tabsContainer"] > div > div > div') || null;
+    }
+
+    /**
+     * A tab beside Lab Sim that shows and hides the panel.
+     *
+     * Cloned from one of the game's own tabs so it sits in the row properly, and
+     * marked with a ⧉ and dimmed while closed: a tab that does not change the
+     * page when clicked, then does nothing visible when clicked again, reads as
+     * broken. The glyph says it opens a panel, the dimming says whether that
+     * panel is currently up. Same treatment as the Bulk Sell tab.
+     */
+    ensureTabButton() {
+        const bar = this.findLabyrinthTabBar();
+        if (!bar) {
+            this.tabButton?.remove();
+            this.tabButton = null;
+            return;
+        }
+        if (this.tabButton && bar.contains(this.tabButton)) {
+            this.keepAfterLabSim(bar);
+            this.syncTabButton();
+            return;
+        }
+        this.tabButton?.remove();
+
+        const native = Array.from(bar.children).find(
+            (el) => el.classList?.contains('MuiTab-root') && !el.classList.contains('toolasha-lab-sim-btn')
+        );
+        if (!native) return;
+
+        const button = native.cloneNode(true);
+        button.id = TAB_ID;
+        button.title =
+            'Room Logs — what happened in each room, and whether the calculator was right about it.\n\n' +
+            'Rooms: the last runs grouped by floor, with time, clears and experience per hour for each.\n' +
+            'Sim accuracy: every room ever recorded, set against the chance it was given.\n\n' +
+            'Click to show or hide the panel.';
+        const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) {
+            badge.innerHTML = '<div style="text-align: center;"><div>⧉ Room Logs</div></div>';
+        } else {
+            button.textContent = '⧉ Room Logs';
+        }
+        button.classList.remove('Mui-selected');
+        button.setAttribute('aria-selected', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.togglePanel();
+        });
+
+        bar.appendChild(button);
+        this.tabButton = button;
+        this.keepAfterLabSim(bar);
+        this.syncTabButton();
+    }
+
+    /** Lab Sim injects itself too and can land after us; stay on its right */
+    keepAfterLabSim(bar) {
+        const labSim = bar.querySelector('.toolasha-lab-sim-btn');
+        if (labSim && labSim.nextElementSibling !== this.tabButton) labSim.after(this.tabButton);
+    }
+
+    syncTabButton() {
+        if (!this.tabButton) return;
+        const open = !!this.panel?.isConnected && this.panel.style.display !== 'none';
+        this.tabButton.style.opacity = open ? '1' : '0.6';
+    }
+
     togglePanel() {
         const panel = this.ensurePanel();
         if (panel.style.display === 'none') {
             panel.style.display = 'flex';
-            this.renderPanel();
+            this.render();
         } else {
             panel.style.display = 'none';
         }
+        this.syncTabButton();
     }
 
     ensurePanel() {
@@ -314,7 +937,7 @@ class LabyrinthRoomLogs {
         const panel = document.createElement('div');
         panel.id = PANEL_ID;
         panel.style.cssText =
-            'position:fixed; top:90px; right:14px; width:330px; max-height:60vh; display:none; flex-direction:column; ' +
+            'position:fixed; top:90px; right:14px; width:340px; max-height:60vh; display:none; flex-direction:column; ' +
             'border:1px solid rgba(128,170,255,0.5); border-radius:8px; background:rgba(10,14,22,0.97); color:#f2f7ff; ' +
             `box-shadow:0 10px 24px rgba(0,0,0,0.55); z-index:${config.Z_FLOATING_PANEL}; user-select:none;`;
 
@@ -323,18 +946,22 @@ class LabyrinthRoomLogs {
             'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 6px; ' +
             'border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
 
-        const title = document.createElement('div');
-        title.style.cssText = 'color:#9ec4ff; font-size:12px; font-weight:700;';
-        title.textContent = `Room Logs (Last ${MAX_SESSIONS})`;
+        const tabs = document.createElement('div');
+        tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
+        this.tabButtons = {
+            rooms: this.makeTab('Rooms', 'rooms'),
+            accuracy: this.makeTab('Sim accuracy', 'accuracy'),
+        };
+        tabs.appendChild(this.tabButtons.rooms);
+        tabs.appendChild(this.tabButtons.accuracy);
 
         const actions = document.createElement('div');
         actions.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
 
-        const clearBtn = document.createElement('button');
-        clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText =
+        this.clearButton = document.createElement('button');
+        this.clearButton.style.cssText =
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
-        clearBtn.addEventListener('click', () => this.clearLogs());
+        this.clearButton.addEventListener('click', () => this.onClearClicked());
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '×';
@@ -342,11 +969,12 @@ class LabyrinthRoomLogs {
             'width:18px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:13px; line-height:1; cursor:pointer;';
         closeBtn.addEventListener('click', () => {
             panel.style.display = 'none';
+            this.syncTabButton();
         });
 
-        actions.appendChild(clearBtn);
+        actions.appendChild(this.clearButton);
         actions.appendChild(closeBtn);
-        header.appendChild(title);
+        header.appendChild(tabs);
         header.appendChild(actions);
 
         const list = document.createElement('div');
@@ -360,7 +988,63 @@ class LabyrinthRoomLogs {
 
         this.setupDrag(panel, header);
         this.panel = panel;
+        this.paintChrome();
         return panel;
+    }
+
+    makeTab(label, view) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        button.addEventListener('click', () => {
+            if (this.view === view) return;
+            this.view = view;
+            this.resetArmed = false;
+            this.paintChrome();
+            this.render();
+        });
+        return button;
+    }
+
+    /** Light the active tab and word the Clear button for what it would clear */
+    paintChrome() {
+        for (const [view, button] of Object.entries(this.tabButtons || {})) {
+            const on = this.view === view;
+            button.style.cssText =
+                'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; padding:0 7px; ' +
+                (on
+                    ? 'background:rgba(77,151,255,0.95); color:#fff;'
+                    : 'background:rgba(255,255,255,0.1); color:#9ec4ff;');
+        }
+        if (!this.clearButton) return;
+
+        const accuracy = this.view === 'accuracy';
+        this.clearButton.textContent = accuracy ? (this.resetArmed ? 'Sure?' : 'Reset') : 'Clear';
+        this.clearButton.title = accuracy
+            ? 'Throw away every recorded fight and start the accuracy record over'
+            : 'Clear the room log';
+        this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+    }
+
+    /**
+     * Clearing the room log is cheap and clearing the fight record is not — it
+     * is the only copy of every fight you have had — so the destructive one
+     * takes two clicks.
+     */
+    onClearClicked() {
+        if (this.view !== 'accuracy') {
+            this.clearLogs();
+            return;
+        }
+        if (!this.resetArmed) {
+            this.resetArmed = true;
+            this.paintChrome();
+            return;
+        }
+        this.resetArmed = false;
+        this.paintChrome();
+        Promise.resolve(this.simSource?.reset?.())
+            .then(() => this.render())
+            .catch((error) => console.error('[LabyrinthRoomLogs] Clearing the fight record failed:', error));
     }
 
     setupDrag(panel, header) {
@@ -389,6 +1073,14 @@ class LabyrinthRoomLogs {
 
     renderIfOpen() {
         if (this.panel && this.panel.isConnected && this.panel.style.display !== 'none') {
+            this.render();
+        }
+    }
+
+    render() {
+        if (this.view === 'accuracy') {
+            this.renderAccuracy();
+        } else {
             this.renderPanel();
         }
     }
@@ -397,20 +1089,68 @@ class LabyrinthRoomLogs {
         const panel = this.ensurePanel();
         const list = panel.querySelector('.mwi-lab-logs-list');
         if (!list) return;
+        this.renderToken++;
         list.textContent = '';
 
-        const sessions = this.activeSession ? [this.activeSession, ...this.sessions] : this.sessions;
+        const sessions = (this.activeSession ? [this.activeSession, ...this.sessions] : this.sessions).slice(
+            0,
+            this.logSize()
+        );
         if (!sessions.length) {
-            const empty = document.createElement('div');
-            empty.style.cssText = 'font-size:11px; color:#9ab0d8; text-align:center; padding:8px;';
-            empty.textContent = 'No logs yet';
-            list.appendChild(empty);
+            list.appendChild(this.makeNote('No logs yet'));
             return;
         }
 
-        for (const session of sessions.slice(0, MAX_SESSIONS)) {
-            list.appendChild(this.renderSessionCard(session));
+        // Grouped by floor because a floor is the unit a labyrinth run is
+        // actually planned in — throughput over one room says far less than
+        // throughput over the thirty of them you have to get through
+        for (const group of groupByFloor(sessions)) {
+            list.appendChild(this.renderFloorHeader(group));
+            for (const session of group.sessions) list.appendChild(this.renderSessionCard(session));
         }
+    }
+
+    renderFloorHeader(group) {
+        const summary = floorSummary(group.sessions);
+
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-top:2px; ' +
+            'padding:3px 2px 2px; border-bottom:1px solid rgba(146,182,255,0.25); font-size:11px;';
+
+        const name = document.createElement('span');
+        name.style.cssText = 'color:#9ec4ff; font-weight:700;';
+        name.textContent = group.floor > 0 ? `Floor ${group.floor}` : 'Earlier rooms';
+        header.appendChild(name);
+
+        const stats = document.createElement('span');
+        stats.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.85);';
+        const parts = [`${summary.rooms} room${summary.rooms === 1 ? '' : 's'}`];
+        if (summary.cleared < summary.rooms) parts.push(`${summary.cleared} cleared`);
+        if (summary.seconds > 0) parts.push(timeReadable(Math.round(summary.seconds)));
+        parts.push(summary.xpPerHour ? `${formatKMB(summary.xpPerHour)} xp/h` : 'xp not measured');
+        stats.textContent = parts.join(' · ');
+        header.appendChild(stats);
+
+        header.title = [
+            group.floor > 0 ? `Floor ${group.floor}` : 'Rooms logged before floors were recorded',
+            `${summary.rooms} rooms logged, ${summary.cleared} of them cleared`,
+            summary.seconds > 0 ? `${Math.round(summary.seconds)}s spent in them` : '',
+            summary.xp > 0 ? `${Math.round(summary.xp).toLocaleString()} experience gained` : '',
+            summary.xpPerHour
+                ? 'Rate is measured experience over measured time, across every room on this floor'
+                : 'Experience is measured by the change in your skill totals, so rooms logged before that was recorded show none',
+        ]
+            .filter(Boolean)
+            .join('\n');
+        return header;
+    }
+
+    makeNote(text) {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:11px; color:#9ab0d8; text-align:center; padding:8px; line-height:1.4;';
+        note.textContent = text;
+        return note;
     }
 
     renderSessionCard(session) {
@@ -434,6 +1174,8 @@ class LabyrinthRoomLogs {
 
         if (session === this.activeSession) {
             header.appendChild(this.makeChip('Live', 'rgba(61,220,132,0.2)', '#3ddc84'));
+        } else if (session.mode === 'combat' && session.cleared) {
+            header.appendChild(this.makeChip('Cleared', 'rgba(61,220,132,0.2)', '#3ddc84'));
         } else if (session.incomplete || !session.completed) {
             header.appendChild(this.makeChip('Incomplete', 'rgba(244,124,71,0.22)', '#ffba92'));
         }
@@ -441,11 +1183,16 @@ class LabyrinthRoomLogs {
 
         const meta = document.createElement('div');
         meta.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.9); margin-bottom:3px;';
-        const successPct = (session.successRate * 100).toFixed(0);
-        const doublePct = (session.doubleChance * 100).toFixed(0);
-        if (session.mode === 'enhancing') {
+        if (session.mode === 'combat') {
+            meta.textContent = this.combatMeta(session);
+            card.title = this.combatTooltip(session).join('\n');
+        } else if (session.mode === 'enhancing') {
+            const successPct = (session.successRate * 100).toFixed(0);
+            const doublePct = (session.doubleChance * 100).toFixed(0);
             meta.textContent = `Success ${successPct}% / Double ${doublePct}% | Enh +${session.currentEnhLevel}/+${session.targetLevel}`;
         } else {
+            const successPct = (session.successRate * 100).toFixed(0);
+            const doublePct = (session.doubleChance * 100).toFixed(0);
             const progressPct =
                 session.targetWorkValue > 0
                     ? Math.min(100, (session.currentWorkValue / session.targetWorkValue) * 100).toFixed(0)
@@ -454,13 +1201,24 @@ class LabyrinthRoomLogs {
         }
         card.appendChild(meta);
 
+        if (session.mode !== 'combat') {
+            const check = this.skillingCheck(session);
+            if (check) {
+                const line = document.createElement('div');
+                line.style.cssText = 'font-size:10px; color:#9ec4ff; margin-bottom:3px;';
+                line.textContent = check;
+                card.appendChild(line);
+                card.title = this.skillingTooltip(session).join('\n');
+            }
+        }
+
         const actionsRow = document.createElement('div');
         actionsRow.style.cssText = 'display:flex; align-items:center; flex-wrap:wrap; gap:2px;';
         const actions = Array.isArray(session.actions) ? session.actions : [];
         if (!actions.length) {
             const dash = document.createElement('span');
             dash.style.color = OUTCOME_COLORS.unknown;
-            dash.textContent = '--';
+            dash.textContent = session.mode === 'combat' ? 'fighting…' : '--';
             actionsRow.appendChild(dash);
         }
         actions.forEach((action, index) => {
@@ -480,6 +1238,355 @@ class LabyrinthRoomLogs {
         return card;
     }
 
+    /**
+     * The skilling room's own results check: what the calculator predicted, what
+     * actually happened, and what the room returned.
+     *
+     * Three numbers rather than two. The server states the rate it is using with
+     * every action, so a skilling room can be checked twice over — the
+     * calculator against the stated rate, which needs no sample at all, and the
+     * stated rate against the actions, which does.
+     *
+     * @param {Object} session - A skilling or enhancing session
+     * @returns {string} Empty when there is nothing to compare
+     */
+    skillingCheck(session) {
+        const pct = (v) => `${Math.round(v * 100)}%`;
+        const parts = [];
+
+        const actions = Math.max(0, Math.floor(Number(session.actionCount) || 0));
+        const predicted = session.forecast?.successChance;
+        if (actions > 0) {
+            const observed = (Number(session.successCount) || 0) / actions;
+            parts.push(
+                Number.isFinite(predicted)
+                    ? `Calc ${pct(predicted)} → hit ${pct(observed)} of ${actions}`
+                    : `Hit ${pct(observed)} of ${actions}`
+            );
+        }
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const expected = session.forecast?.expectedSeconds;
+        if (session.completed && Number.isFinite(expected) && expected > 0) {
+            parts.push(`${Math.round(seconds)}s vs ${Math.round(expected)}s est`);
+        }
+
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0 && seconds > 0) parts.push(`${formatKMB((xp / seconds) * 3600)} xp/h`);
+
+        return parts.join(' | ');
+    }
+
+    skillingTooltip(session) {
+        const pct = (v, places = 1) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '—');
+        const lines = [`${session.skillName} Lv.${session.roomLevel}`];
+
+        const actions = Math.max(0, Math.floor(Number(session.actionCount) || 0));
+        const forecast = session.forecast || {};
+        if (Number.isFinite(forecast.successChance)) {
+            lines.push(`Toolasha's formula predicted a ${pct(forecast.successChance)} success rate`);
+        }
+        if (Number.isFinite(session.successRate)) {
+            lines.push(`The server says the rate is ${pct(session.successRate)}`);
+        }
+        if (
+            Number.isFinite(forecast.successChance) &&
+            Number.isFinite(session.successRate) &&
+            Math.abs(forecast.successChance - session.successRate) > 0.005
+        ) {
+            lines.push('Those disagree, which is the formula being wrong rather than a run of bad luck');
+        }
+        if (actions > 0) {
+            lines.push(`${session.successCount} of ${actions} actions succeeded, ${session.doubleCount} doubled`);
+        }
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        if (Number.isFinite(forecast.expectedSeconds) && forecast.expectedSeconds > 0) {
+            lines.push(`Expected to take ${Math.round(forecast.expectedSeconds)}s; took ${Math.round(seconds)}s`);
+        }
+        if (Number.isFinite(forecast.clearChance)) {
+            lines.push(`Given a ${pct(forecast.clearChance)} chance of clearing inside the room's two minutes`);
+        }
+
+        const xp = Math.max(0, Number(session.xp) || 0);
+        lines.push(
+            xp > 0
+                ? `Gained ${Math.round(xp).toLocaleString()} experience, measured from your skill totals`
+                : 'No experience change was measured for this room'
+        );
+        return lines;
+    }
+
+    /** The one line under a fight's heading: what was promised against what happened */
+    combatMeta(session) {
+        const tally = fightTally(session.actions);
+        const parts = [session.predicted === null ? 'Sim —' : `Sim ${(session.predicted * 100).toFixed(0)}%`];
+
+        parts.push(
+            tally.total ? `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)` : 'No result yet'
+        );
+        const shape = failureShape(tally);
+        if (shape) parts.push(shape);
+
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0 && seconds > 0) parts.push(`${formatKMB((xp / seconds) * 3600)} xp/h`);
+
+        return parts.join(' | ');
+    }
+
+    combatTooltip(session) {
+        const tally = fightTally(session.actions);
+        const lines = [`${session.skillName} Lv.${session.roomLevel}`];
+
+        lines.push(
+            session.predicted === null
+                ? 'No clear chance was simulated for this room — calculate its tile and the next fights get judged'
+                : `The sim gave this room a ${(session.predicted * 100).toFixed(1)}% chance of clearing`
+        );
+        if (tally.total) {
+            lines.push(`Logged ${tally.clears} clears in ${tally.total} attempts (${Math.round(tally.rate * 100)}%)`);
+        }
+        const shape = failureShape(tally);
+        if (shape) lines.push(`Losing by: ${shape}`);
+        if (tally.unknown) lines.push(`${tally.unknown} attempt(s) ended out of sight and are not counted`);
+        if (session.entryCount > tally.total) {
+            lines.push(
+                `The server has counted ${session.entryCount} entries for this room, including earlier sessions`
+            );
+        }
+        const seconds = Math.max(0, ((session.endedAt || Date.now()) - session.startedAt) / 1000);
+        const xp = Math.max(0, Number(session.xp) || 0);
+        if (xp > 0) {
+            lines.push(
+                `Gained ${Math.round(xp).toLocaleString()} experience over ${Math.round(seconds)}s in this room`
+            );
+            lines.push('Measured from your skill totals, so losing attempts count toward it as well as the win');
+        }
+        if (Number.isFinite(session.forecast?.xpPerHour) && session.forecast.xpPerHour > 0) {
+            lines.push(`The sim expected ${formatKMB(session.forecast.xpPerHour)} experience per hour here`);
+        }
+        lines.push('Wins show how long they took; losses show the health the monster had left');
+        return lines;
+    }
+
+    // -------------------------------------------------------------------------
+    // Sim accuracy
+    //
+    // The room list covers one run. This covers every fight ever recorded,
+    // because that is the only sample large enough to say anything: a room that
+    // says 24% and loses three times running has said nothing, and the same
+    // room losing twenty-one times running has said plenty.
+    // -------------------------------------------------------------------------
+
+    async renderAccuracy() {
+        const panel = this.ensurePanel();
+        const list = panel.querySelector('.mwi-lab-logs-list');
+        if (!list) return;
+
+        const token = ++this.renderToken;
+        list.textContent = '';
+
+        if (!this.simSource?.accuracy) {
+            list.appendChild(
+                this.makeNote('The labyrinth clear rate feature is off, so no fights are being recorded.')
+            );
+            return;
+        }
+
+        let snapshot;
+        try {
+            snapshot = await this.simSource.accuracy();
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Reading the fight record failed:', error);
+            list.appendChild(this.makeNote('Could not read the fight record.'));
+            return;
+        }
+        // A slow read that lands after the user has moved on describes a view
+        // that is no longer showing
+        if (token !== this.renderToken || this.view !== 'accuracy') return;
+
+        list.textContent = '';
+        const { rows, summary } = snapshot;
+        if (!rows.length) {
+            list.appendChild(
+                this.makeNote('No labyrinth fights recorded yet. Fight some combat rooms and they will show up here.')
+            );
+            return;
+        }
+
+        list.appendChild(this.renderAccuracySummary(summary));
+        for (const row of rows) list.appendChild(this.renderAccuracyRow(row));
+    }
+
+    renderAccuracySummary(summary) {
+        const card = document.createElement('div');
+        card.style.cssText =
+            'border:1px solid rgba(146,182,255,0.35); border-radius:5px; background:rgba(30,44,64,0.95); padding:6px 7px; ' +
+            'font-size:11px; line-height:1.4;';
+
+        const head = document.createElement('div');
+        head.style.cssText = 'font-weight:700; color:#9ec4ff;';
+        head.textContent = `${summary.attempts} fights over ${summary.buckets} monster/level rooms`;
+        card.appendChild(head);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.92);';
+        if (summary.expected === null) {
+            body.textContent = 'None of them have a simulated rate to compare against yet.';
+        } else {
+            const off = summary.judgedClears - summary.expected;
+            const direction = off >= 0 ? 'above' : 'below';
+            body.textContent =
+                `Over the ${summary.judged} it had a rate for, the sim expected ${summary.expected.toFixed(1)} clears ` +
+                `and you got ${summary.judgedClears} — ${Math.abs(off).toFixed(1)} ${direction}.`;
+        }
+        card.appendChild(body);
+
+        if (summary.contested > 0) {
+            const flag = document.createElement('div');
+            flag.style.cssText = 'font-size:10px; color:#ff8a8a; font-weight:700;';
+            flag.textContent = `${summary.contested} room${summary.contested === 1 ? '' : 's'} the record contradicts`;
+            card.appendChild(flag);
+        }
+        return card;
+    }
+
+    renderAccuracyRow(row) {
+        const pct = (v, places = 0) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '—');
+
+        const card = document.createElement('div');
+        card.style.cssText =
+            'border:1px solid rgba(146,182,255,0.25); border-radius:5px; background:rgba(22,31,45,0.92); padding:6px 7px; font-size:11px; line-height:1.35;';
+
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:flex; align-items:center; justify-content:space-between; gap:6px; font-weight:700;';
+        const name = document.createElement('span');
+        name.textContent = `${this.prettyMonsterName(row.subjectHrid)} Lv.${row.level}`;
+        const record = document.createElement('span');
+        record.style.cssText = 'opacity:0.85;';
+        record.textContent = `${row.clears}/${row.attempts}`;
+        header.appendChild(name);
+        header.appendChild(record);
+        card.appendChild(header);
+
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
+        const numbers = document.createElement('span');
+        numbers.style.color = 'rgba(221,232,255,0.92)';
+        numbers.textContent =
+            row.predicted === null
+                ? `Never simmed — you clear ${pct(row.observed)} (${pct(row.low)}–${pct(row.high)})`
+                : `Sim ${pct(row.predicted)} → actual ${pct(row.observed)} (${pct(row.low)}–${pct(row.high)})`;
+        line.appendChild(numbers);
+
+        const colour = VERDICT_COLORS[row.verdict];
+        if (colour) {
+            line.appendChild(this.makeChip(row.verdict, 'rgba(255,255,255,0.08)', colour));
+        }
+        if (row.likelihood !== null && row.likelihood < 0.05) {
+            const odds = document.createElement('span');
+            odds.style.cssText = 'color:#ffba92; font-weight:700;';
+            odds.textContent = `p=${(row.likelihood * 100).toFixed(row.likelihood < 0.001 ? 3 : 2)}%`;
+            line.appendChild(odds);
+        }
+        card.appendChild(line);
+
+        const rates = row.rates?.success;
+        if (rates) {
+            const actionLine = document.createElement('div');
+            actionLine.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
+            const text = document.createElement('span');
+            text.style.color = 'rgba(221,232,255,0.8)';
+            text.textContent =
+                `Per action — calc ${pct(rates.predicted)}, ` +
+                `server ${pct(rates.server)}, hit ${pct(rates.observed)} of ${row.measured.actions}`;
+            actionLine.appendChild(text);
+            // A formula that disagrees with the rate the server states is wrong
+            // outright, which no amount of play will fix or reveal
+            if (rates.formulaOff) {
+                actionLine.appendChild(this.makeChip('formula off', 'rgba(255,255,255,0.08)', '#ff8a8a'));
+            }
+            card.appendChild(actionLine);
+        }
+
+        const throughput = [];
+        if (row.timing)
+            throughput.push(`${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s est`);
+        if (row.measured?.xpPerHour) throughput.push(`${formatKMB(row.measured.xpPerHour)} xp/h`);
+        if (row.measured?.rooms) throughput.push(`${row.measured.rooms} finished`);
+        if (throughput.length) {
+            const timingLine = document.createElement('div');
+            timingLine.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.65);';
+            timingLine.textContent = throughput.join(' · ');
+            card.appendChild(timingLine);
+        }
+
+        card.title = this.accuracyTooltip(row, pct).join('\n');
+        return card;
+    }
+
+    /** The extra lines a room with finished runs behind it earns */
+    throughputTooltip(row, pct) {
+        const lines = [];
+        if (row.rates?.success) {
+            const { predicted, server, observed, low, high, formulaOff } = row.rates.success;
+            lines.push(
+                `Success rate — Toolasha's formula says ${pct(predicted, 1)}, the server says ${pct(server, 1)}, ` +
+                    `and ${pct(observed, 1)} of ${row.measured.actions} actions succeeded (${pct(low, 0)}–${pct(high, 0)})`
+            );
+            if (formulaOff) {
+                lines.push(
+                    'The formula and the server disagree, which is a bug rather than variance — the server states the ' +
+                        'rate it is actually using, so no amount of play will bring the two together'
+                );
+            }
+        }
+        if (row.timing) {
+            lines.push(
+                `Took ${Math.round(row.timing.actual)}s on average over ${row.timing.rooms} finished room(s), ` +
+                    `against ${Math.round(row.timing.predicted)}s expected — ${row.timing.ratio.toFixed(2)}x`
+            );
+        }
+        if (row.measured?.xpPerHour) {
+            lines.push(
+                `${formatKMB(row.measured.xpPerHour)} experience per hour, measured from your skill totals over the ` +
+                    'time actually spent in this room'
+            );
+        }
+        return lines;
+    }
+
+    accuracyTooltip(row, pct) {
+        const lines = [`${this.prettyMonsterName(row.subjectHrid)} at room level ${row.level} (${row.kind})`];
+        lines.push(`${row.clears} clears in ${row.attempts} attempts — ${pct(row.observed, 1)}`);
+        lines.push(`A record this size puts the true rate between ${pct(row.low, 1)} and ${pct(row.high, 1)}`);
+
+        if (row.predicted === null) {
+            lines.push('No forecast on record for this room, so its clear rate has nothing to be judged against.');
+            lines.push('Calculate its tile once and the prediction is stamped on the next attempts.');
+            return [...lines, ...this.throughputTooltip(row, pct)];
+        }
+
+        lines.push(
+            `The sim says ${pct(row.predicted, 1)}${row.fromCache ? ' (from the sim run this session)' : ' (recorded when the fights happened)'}`
+        );
+        if (row.verdict === 'consistent') {
+            lines.push('That sits inside the range these fights support, so the record does not contradict it.');
+        } else {
+            lines.push(`That sits outside the range these fights support: ${row.verdict}.`);
+        }
+        if (row.likelihood !== null) {
+            const oneIn = row.likelihood > 0 ? Math.round(1 / row.likelihood) : Infinity;
+            lines.push(
+                `If the sim's rate were right, a record at least this lopsided would happen ${pct(row.likelihood, 2)} ` +
+                    `of the time — about 1 run in ${Number.isFinite(oneIn) ? oneIn : 'a great many'}.`
+            );
+        }
+        return [...lines, ...this.throughputTooltip(row, pct)];
+    }
+
     makeChip(text, background, color) {
         const chip = document.createElement('span');
         chip.style.cssText = `display:inline-flex; border-radius:999px; padding:0 6px; background:${background}; color:${color}; font-size:10px; font-weight:700;`;
@@ -495,4 +1602,5 @@ export default {
     initialize: () => labyrinthRoomLogs.initialize(),
     disable: () => labyrinthRoomLogs.disable(),
     togglePanel: () => labyrinthRoomLogs.togglePanel(),
+    useSimSource: (source) => labyrinthRoomLogs.useSimSource(source),
 };
