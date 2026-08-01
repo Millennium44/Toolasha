@@ -37,6 +37,7 @@ import {
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, clearGeometry } from '../../utils/panel-geometry.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -1440,28 +1441,18 @@ registerRow({
     name: 'Treasure',
     defaultSize: { width: 200, height: 30 },
     render: (container) => {
-        if (!treasureTracker.isInitialized) {
-            container.replaceChildren();
-            return;
-        }
+        if (!treasureTracker.isInitialized) return blank(container);
 
         const { totals } = treasureTracker._summary();
-        container.replaceChildren();
-        if (!totals.opened) return;
-
-        const label = document.createElement('span');
-        label.textContent = `${totals.opened} chests `;
+        if (!totals.opened) return blank(container);
 
         const verdict = formatReturn(totals.ratio);
-        const value = document.createElement('span');
-        value.style.color = verdict.color;
-        value.textContent = `${formatLargeNumber(Math.round(totals.difference))} · ${verdict.text}`;
-
-        container.style.display = 'flex';
-        container.style.justifyContent = 'space-between';
-        container.style.gap = '10px';
-        container.appendChild(label);
-        container.appendChild(value);
+        row(container, [
+            { text: '🎁' },
+            { text: `${formatLargeNumber(totals.opened)} chests`, color: ROW_COLORS.dim },
+            { text: verdict.text, color: verdict.color, bold: true, push: true },
+        ]);
+        container.title = `${formatLargeNumber(Math.round(totals.difference))} against expectation over every chest opened.`;
     },
     onOpen: () => treasureTracker.show(),
 });

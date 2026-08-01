@@ -62,8 +62,10 @@ import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry, clearGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../../utils/panel-geometry.js';
 import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
+import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 import {
     resolveLayout,
     autoGrid,
@@ -424,6 +426,15 @@ class OverlayPanel {
         const autogrid = this._textButton('Autogrid', 'Repack every tile from the top left, in order', () =>
             this._autoGrid()
         );
+        const importBtn = this._textButton(
+            'Import layout',
+            'Read a layout from an OPanel or Toolasha overlay file',
+            () => this._importLayout()
+        );
+        const exportBtn = this._textButton('Export layout', 'Write this layout to a file OPanel can also read', () =>
+            this._exportLayout()
+        );
+
         const reset = this._textButton('Reset layout', 'Forget every position, size and text scale', () =>
             this._resetLayout()
         );
@@ -436,7 +447,7 @@ class OverlayPanel {
             : 'Drag tiles to move, corner to resize, Ctrl+scroll to resize text.';
         Object.assign(hint.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
 
-        controls.append(autogrid, reset, hint);
+        controls.append(autogrid, importBtn, exportBtn, reset, hint);
         return controls;
     }
 
@@ -502,6 +513,82 @@ class OverlayPanel {
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
         this._renderBody();
         this._renderPicker();
+    }
+
+    /**
+     * Write this layout to a file.
+     *
+     * In OPanel's shape rather than in one of our own, because a format only
+     * this script can read is a format that strands the layout here. Rows OPanel
+     * has no name for are left out — see `utils/opanel-config.js`.
+     */
+    async _exportLayout() {
+        try {
+            const geometry = (await allGeometry())[GEOMETRY_KEY] || null;
+            const file = toOPanelConfig(this.settings, geometry);
+            const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `toolasha-overlay-${new Date().toISOString().slice(0, 10)}.json`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        } catch (error) {
+            console.error('[OverlayPanel] Exporting the layout failed:', error);
+            window.alert('Could not write the layout file.');
+        }
+    }
+
+    /** Read a layout from an OPanel file, or from one of ours */
+    _importLayout() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json';
+
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+
+            try {
+                const read = fromOPanelConfig(JSON.parse(await file.text()));
+                if (!read) {
+                    window.alert('That file is not an OPanel or Toolasha overlay layout.');
+                    return;
+                }
+
+                const rows = read.settings.order.length;
+                const missing = read.unknown.length
+                    ? `\n\n${read.unknown.length} row${read.unknown.length === 1 ? '' : 's'} in that file ` +
+                      `${read.unknown.length === 1 ? 'has' : 'have'} no equivalent here and will be left out:\n` +
+                      read.unknown.join(', ')
+                    : '';
+
+                const answer = await askChoice({
+                    title: 'Import overlay layout',
+                    message: `Replace this layout with ${rows} row${rows === 1 ? '' : 's'} from the file.${missing}`,
+                    choices: [
+                        { value: 'import', label: 'Replace layout', tone: 'primary' },
+                        { value: null, label: 'Cancel' },
+                    ],
+                });
+                if (!answer) return;
+
+                this.settings = { ...this.settings, ...read.settings };
+                this._save();
+                if (read.geometry) {
+                    await saveGeometry(GEOMETRY_KEY, read.geometry);
+                    await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
+                }
+
+                this._refreshLockButton();
+                this._renderPicker();
+                this._renderBody();
+            } catch (error) {
+                console.error('[OverlayPanel] Importing the layout failed:', error);
+                window.alert('Could not read that file.');
+            }
+        });
+        input.click();
     }
 
     /** Usable width inside the scroller, less the scrollbar */

@@ -23,29 +23,8 @@
 
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import networthFeature from './index.js';
-
-/**
- * Lay a row out as label on the left, figure on the right.
- * @param {HTMLElement} container - The row's container
- * @param {string} label - Left side
- * @param {string} value - Right side
- * @param {string} [color] - Colour for the figure
- */
-function layout(container, label, value, color) {
-    container.replaceChildren();
-    Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
-
-    const left = document.createElement('span');
-    left.textContent = label;
-
-    const right = document.createElement('span');
-    right.textContent = value;
-    right.style.whiteSpace = 'nowrap';
-    if (color) right.style.color = color;
-
-    container.append(left, right);
-}
 
 /**
  * A field of the last published net worth, or null.
@@ -66,11 +45,12 @@ registerRow({
     render: (container) => {
         const coins = fromNetworth((data) => data.coins);
         // Zero coins is a real answer and worth showing; no answer yet is not
-        if (coins === null) {
-            container.replaceChildren();
-            return;
-        }
-        layout(container, '🪙 Coins', formatLargeNumber(Math.round(coins)), '#ffcf5c');
+        if (coins === null) return blank(container);
+
+        row(container, [
+            { text: '🪙' },
+            { text: formatLargeNumber(Math.round(coins)), color: ROW_COLORS.gold, bold: true, push: true },
+        ]);
     },
 });
 
@@ -80,11 +60,12 @@ registerRow({
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
         const listings = fromNetworth((data) => data.currentAssets?.listings?.value);
-        if (listings === null) {
-            container.replaceChildren();
-            return;
-        }
-        layout(container, '📈 Listed', formatLargeNumber(Math.round(listings)), '#9ec4ff');
+        if (listings === null) return blank(container);
+
+        row(container, [
+            { text: '📈' },
+            { text: formatLargeNumber(Math.round(listings)), color: ROW_COLORS.accent, bold: true, push: true },
+        ]);
     },
 });
 
@@ -94,11 +75,9 @@ registerRow({
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
         const inventory = fromNetworth((data) => data.currentAssets?.inventory?.value);
-        if (inventory === null) {
-            container.replaceChildren();
-            return;
-        }
-        layout(container, '🎒 Inventory', formatLargeNumber(Math.round(inventory)));
+        if (inventory === null) return blank(container);
+
+        row(container, [{ text: '🎒' }, { text: formatLargeNumber(Math.round(inventory)), bold: true, push: true }]);
     },
 });
 
@@ -118,17 +97,13 @@ registerRow({
     render: (container) => {
         const books = networthFeature.currentData?.fixedAssets?.abilityBooks;
         const breakdown = books?.breakdown || [];
-        if (!breakdown.length) {
-            container.replaceChildren();
-            return;
-        }
+        if (!breakdown.length) return blank(container);
 
         const count = breakdown.reduce((sum, entry) => sum + (entry.count || 0), 0);
-        layout(
-            container,
-            `📖 ${formatLargeNumber(count)} books`,
-            formatLargeNumber(Math.round(books.totalCost || 0)),
-            '#c9a0ff'
-        );
+        row(container, [
+            { text: '📖' },
+            { text: `${formatLargeNumber(count)} books`, color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(books.totalCost || 0)), color: ROW_COLORS.violet, push: true },
+        ]);
     },
 });

@@ -18,6 +18,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -486,28 +487,28 @@ registerRow({
     name: 'Houses',
     defaultSize: { width: 200, height: 50 },
     render: (container) => {
-        container.replaceChildren();
-
         const rooms = dataManager.getCombinedData()?.characterHouseRoomMap;
-        if (!rooms) return;
+        if (!rooms) return blank(container);
 
         const { affordable, total, cheapest } = affordableUpgrades(rooms, coinBalance());
-        if (!total) return;
+        if (!total) return blank(container);
 
-        Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
-
-        const label = document.createElement('span');
-        label.textContent = `${affordable} of ${total} upgrades`;
-        // Nothing affordable is information, not an error — it just means the
-        // next one is still being saved for
-        label.style.color = affordable > 0 ? '#4ade80' : 'inherit';
-
-        const value = document.createElement('span');
-        value.style.whiteSpace = 'nowrap';
-        value.textContent = cheapest ? `${cheapest.name} ${formatLargeNumber(Math.round(cheapest.cost))}` : '';
-
-        container.appendChild(label);
-        container.appendChild(value);
+        rows(container, [
+            [
+                {
+                    text: `${affordable} of ${total} affordable`,
+                    // Nothing affordable is information, not an error — it just
+                    // means the next one is still being saved for
+                    color: affordable > 0 ? ROW_COLORS.good : ROW_COLORS.dim,
+                },
+            ],
+            cheapest
+                ? [
+                      { text: cheapest.name, color: ROW_COLORS.gold, ellipsis: true },
+                      { text: formatLargeNumber(Math.round(cheapest.cost)), color: ROW_COLORS.dim, push: true },
+                  ]
+                : null,
+        ]);
     },
     onOpen: () => housesPanel.show(),
 });

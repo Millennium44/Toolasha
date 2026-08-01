@@ -31,6 +31,7 @@ import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 
 /**
  * Ticks arrive about three times a second. A gap longer than this means the
@@ -158,46 +159,25 @@ registerRow({
     defaultSize: { width: 180, height: 40 },
     render: (container) => {
         const dealt = combatDPS.dps;
-        if (dealt === null) {
-            container.replaceChildren();
-            return;
-        }
-
-        container.replaceChildren();
-        Object.assign(container.style, { display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
+        if (dealt === null) return blank(container);
 
         const solo = combatDPS.partySize <= 1;
-        const top = document.createElement('div');
-        Object.assign(top.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
-        const label = document.createElement('span');
-        // Named for what it measures — in a party this is everyone's damage,
-        // and calling it yours would be a straightforwardly wrong number
-        label.textContent = solo ? 'DPS' : `Party DPS ×${combatDPS.partySize}`;
-        const value = document.createElement('span');
-        value.textContent = formatLargeNumber(Math.round(dealt));
-        value.style.color = '#4ade80';
-        value.style.whiteSpace = 'nowrap';
-        top.append(label, value);
-
-        const bottom = document.createElement('div');
-        Object.assign(bottom.style, {
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: '8px',
-            color: 'rgba(232, 236, 245, 0.6)',
-        });
-        const takenLabel = document.createElement('span');
-        takenLabel.textContent = 'Taken';
-        const takenValue = document.createElement('span');
-        takenValue.textContent = formatLargeNumber(Math.round(combatDPS.dtps || 0));
-        takenValue.style.whiteSpace = 'nowrap';
-        bottom.append(takenLabel, takenValue);
-
-        container.append(top, bottom);
+        rows(container, [
+            [
+                // Named for what it measures — in a party this is everyone's
+                // damage, and calling it yours would be a plainly wrong number
+                { text: solo ? 'DPS' : `Party DPS ×${combatDPS.partySize}`, color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(dealt)), color: ROW_COLORS.good, bold: true, push: true },
+            ],
+            [
+                { text: 'Taken', color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(combatDPS.dtps || 0)), color: ROW_COLORS.bad, push: true },
+            ],
+        ]);
         container.title =
             'Damage inferred from health lost between combat ticks, over time spent in combat.\n' +
             'Overkill is not counted — a hit that takes a monster from 40 to dead counts 40.\n' +
-            (solo ? '' : 'In a party this is the whole party’s damage; nothing on the wire says who struck.');
+            (solo ? '' : 'In a party this is the whole party\u2019s damage; nothing on the wire says who struck.');
     },
 });
 

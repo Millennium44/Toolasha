@@ -39,6 +39,9 @@ import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as overlayRows from '../utils/overlay-rows.js';
 import * as overlayLayout from '../utils/overlay-layout.js';
+import * as overlayFormat from '../utils/overlay-format.js';
+import * as opanelConfig from '../utils/opanel-config.js';
+import * as skillProgress from '../utils/skill-progress.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
 import * as choiceDialog from '../utils/choice-dialog.js';
 import * as dropLuck from '../utils/drop-luck.js';
@@ -101,6 +104,9 @@ toolashaRoot.Utils = {
     enhancementCalculator,
     overlayRows,
     overlayLayout,
+    overlayFormat,
+    opanelConfig,
+    skillProgress,
     panelGeometry,
     choiceDialog,
     dropLuck,

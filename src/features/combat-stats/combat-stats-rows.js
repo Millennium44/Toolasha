@@ -19,7 +19,8 @@
 
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { formatLargeNumber, timeReadable } from '../../utils/formatters.js';
+import { formatLargeNumber, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
+import { row, rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -59,36 +60,13 @@ function currentStats() {
     return cached;
 }
 
-/**
- * Lay a row out as label on the left, value on the right.
- * @param {HTMLElement} container - The row's container
- * @param {string} label - Left side
- * @param {string|HTMLElement} value - Right side
- */
-function layout(container, label, value) {
-    container.replaceChildren();
-    Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
-
-    const left = document.createElement('span');
-    left.textContent = label;
-    const right = value instanceof HTMLElement ? value : document.createElement('span');
-    if (!(value instanceof HTMLElement)) right.textContent = value;
-    right.style.whiteSpace = 'nowrap';
-
-    container.appendChild(left);
-    container.appendChild(right);
-}
-
 registerRow({
     key: 'combatRevenue',
     name: 'Combat Revenue',
     defaultSize: { width: 280, height: 40 },
     render: (container) => {
         const stats = currentStats();
-        if (!stats) {
-            container.replaceChildren();
-            return;
-        }
+        if (!stats) return blank(container);
 
         // Income, what it cost to earn it, and what is left — the third number is
         // the only one worth acting on, and it is the one an income figure alone
@@ -97,25 +75,17 @@ registerRow({
         const costs = stats.dailyConsumableCosts + stats.dailyKeyCosts;
         const profit = stats.dailyProfit.bid;
 
-        const value = document.createElement('span');
-        value.style.whiteSpace = 'nowrap';
-
-        const earned = document.createElement('span');
-        earned.textContent = formatLargeNumber(Math.round(income));
-        earned.style.color = '#4ade80';
-
-        const spent = document.createElement('span');
-        spent.textContent = ` − ${formatLargeNumber(Math.round(costs))} = `;
-        spent.style.color = '#f87171';
-
-        const net = document.createElement('span');
-        net.textContent = `${formatLargeNumber(Math.round(profit))}/day`;
-        net.style.color = profit >= 0 ? '#4ade80' : '#f87171';
-
-        value.appendChild(earned);
-        value.appendChild(spent);
-        value.appendChild(net);
-        layout(container, 'Revenue', value);
+        row(container, [
+            { text: formatLargeNumber(Math.round(income)), color: ROW_COLORS.good },
+            { text: '−', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(costs)), color: ROW_COLORS.bad },
+            { text: '=', color: ROW_COLORS.dim },
+            {
+                text: `${formatLargeNumber(Math.round(profit))}/day`,
+                color: profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
+                bold: true,
+            },
+        ]);
     },
 });
 
@@ -125,11 +95,13 @@ registerRow({
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
         const stats = currentStats();
-        if (!stats?.expPerHour) {
-            container.replaceChildren();
-            return;
-        }
-        layout(container, 'Experience', `${formatLargeNumber(Math.round(stats.expPerHour))}/hr`);
+        if (!stats?.expPerHour) return blank(container);
+
+        // Separators rather than K/M here: experience per hour is compared with
+        // itself between runs, and 260,572 against 261K is the comparison
+        row(container, [
+            { text: `${formatWithSeparator(Math.round(stats.expPerHour))} exp/hr`, color: ROW_COLORS.good },
+        ]);
     },
 });
 
@@ -139,17 +111,16 @@ registerRow({
     defaultSize: { width: 130, height: 30 },
     render: (container) => {
         const stats = currentStats();
-        if (!stats) {
-            container.replaceChildren();
-            return;
-        }
+        if (!stats) return blank(container);
 
-        const value = document.createElement('span');
-        value.textContent = `${stats.deathsPerHour.toFixed(1)}/hr`;
         // Zero deaths is the goal rather than a shortfall, so it is not coloured
         // as a problem
-        value.style.color = stats.deathsPerHour > 0 ? '#f87171' : 'inherit';
-        layout(container, 'Deaths', value);
+        row(container, [
+            {
+                text: `${stats.deathsPerHour.toFixed(1)} deaths/hr`,
+                color: stats.deathsPerHour > 0 ? ROW_COLORS.bad : ROW_COLORS.dim,
+            },
+        ]);
     },
 });
 
@@ -168,21 +139,17 @@ registerRow({
     render: (container) => {
         const data = combatStatsDataCollector.getLatestData();
         const duration = sessionSeconds(data);
-        if (!(duration > 0)) {
-            container.replaceChildren();
-            return;
-        }
+        if (!(duration > 0)) return blank(container);
 
         // battleId counts the battle in progress, which has paid out nothing yet
         const battles = Math.max(0, (data.battleId || 1) - 1);
         const eph = (3600 * battles) / duration;
 
-        const value = document.createElement('span');
-        value.style.whiteSpace = 'nowrap';
-        value.textContent = `${eph.toFixed(1)} EPH`;
-        value.style.color = '#9ec4ff';
-
-        layout(container, clock(duration), value);
+        row(container, [
+            { text: clock(duration) },
+            { text: '|', color: ROW_COLORS.dim },
+            { text: `${eph.toFixed(2)} EPH`, color: ROW_COLORS.accent },
+        ]);
     },
 });
 
@@ -199,25 +166,18 @@ registerRow({
     defaultSize: { width: 220, height: 30 },
     render: (container) => {
         const stats = currentStats();
-        if (!stats) {
-            container.replaceChildren();
-            return;
-        }
+        if (!stats) return blank(container);
 
-        const banked = stats.income.bid - stats.consumableCosts - stats.keyCosts;
-        const value = document.createElement('span');
-        value.style.whiteSpace = 'nowrap';
+        // Both cost figures are {ask, bid} rather than numbers; subtracting the
+        // objects gave NaN
+        const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
 
-        const total = document.createElement('span');
-        total.textContent = formatLargeNumber(Math.round(banked));
-        total.style.color = banked >= 0 ? '#4ade80' : '#f87171';
-
-        const rate = document.createElement('span');
-        rate.textContent = ` · ${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`;
-        rate.style.color = 'rgba(232, 236, 245, 0.6)';
-
-        value.append(total, rate);
-        layout(container, 'Profit', value);
+        row(container, [
+            { text: stats.name || 'You', color: ROW_COLORS.gold, bold: true, ellipsis: true },
+            { text: '🪙' },
+            { text: formatLargeNumber(Math.round(banked)), color: banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad },
+            { text: `${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`, color: ROW_COLORS.dim, push: true },
+        ]);
     },
 });
 
@@ -236,47 +196,28 @@ registerRow({
         const stats = currentStats();
         const breakdown = stats?.consumableBreakdown || [];
         const running = breakdown.filter((entry) => Number.isFinite(entry.timeToZeroSeconds));
-        if (!stats || !running.length) {
-            container.replaceChildren();
-            return;
-        }
+        if (!stats || !running.length) return blank(container);
 
         const soonest = running.reduce((worst, entry) =>
             entry.timeToZeroSeconds < worst.timeToZeroSeconds ? entry : worst
         );
 
-        container.replaceChildren();
-        Object.assign(container.style, { display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
-
-        const first = document.createElement('div');
-        Object.assign(first.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
-        const name = document.createElement('span');
-        name.textContent = soonest.itemName;
-        name.style.overflow = 'hidden';
-        name.style.textOverflow = 'ellipsis';
-        name.style.whiteSpace = 'nowrap';
-
-        const left = document.createElement('span');
-        left.textContent = `${timeReadable(soonest.timeToZeroSeconds)} · ${formatLargeNumber(soonest.inventoryAmount)}`;
-        left.style.whiteSpace = 'nowrap';
-        // Under an hour is the point at which it is worth acting on now
-        left.style.color = soonest.timeToZeroSeconds < 3600 ? '#f87171' : '#4ade80';
-        first.append(name, left);
-
-        const second = document.createElement('div');
-        Object.assign(second.style, {
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: '8px',
-            color: 'rgba(232, 236, 245, 0.6)',
-        });
-        const label = document.createElement('span');
-        label.textContent = 'Cost/day';
-        const cost = document.createElement('span');
-        cost.textContent = formatLargeNumber(Math.round(stats.dailyConsumableCosts));
-        second.append(label, cost);
-
-        container.append(first, second);
+        rows(container, [
+            [
+                { text: soonest.itemName, ellipsis: true },
+                {
+                    text: timeReadable(soonest.timeToZeroSeconds),
+                    // Under an hour is the point at which it is worth acting now
+                    color: soonest.timeToZeroSeconds < 3600 ? ROW_COLORS.bad : ROW_COLORS.good,
+                    push: true,
+                },
+                { text: `· ${formatLargeNumber(soonest.inventoryAmount)}`, color: ROW_COLORS.dim },
+            ],
+            [
+                { text: 'Cost/day', color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(stats.dailyConsumableCosts)), color: ROW_COLORS.bad, push: true },
+            ],
+        ]);
     },
 });
 
@@ -292,29 +233,22 @@ registerRow({
     name: 'Combat Status',
     defaultSize: { width: 160, height: 30 },
     render: (container) => {
-        container.replaceChildren();
-
         const actions = dataManager.getCurrentActions?.() || [];
         const current = actions.find((action) => !action.isDone);
 
-        const value = document.createElement('span');
-        value.style.fontWeight = 'bold';
-        value.style.whiteSpace = 'nowrap';
-
-        if (!current) {
-            value.textContent = 'Idle';
-            value.style.color = '#f87171';
-        } else if (current.actionHrid?.startsWith('/actions/combat/')) {
-            value.textContent = 'In Combat';
-            value.style.color = '#4ade80';
-        } else {
+        let text = 'Idle';
+        let color = ROW_COLORS.bad;
+        if (current?.actionHrid?.startsWith('/actions/combat/')) {
+            text = 'In Combat';
+            color = ROW_COLORS.good;
+        } else if (current) {
             // Not idle and not fighting: the queue is busy with something else,
             // which is not a problem but is not combat either
-            value.textContent = 'Skilling';
-            value.style.color = '#9ec4ff';
+            text = 'Skilling';
+            color = ROW_COLORS.accent;
         }
 
-        container.appendChild(value);
+        row(container, [{ text, color, bold: true }]);
     },
 });
 

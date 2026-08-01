@@ -29,6 +29,7 @@
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { timeReadable } from '../../utils/formatters.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { experiencePerHour, timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
 
 /** How far back the rate is measured over */
@@ -111,27 +112,19 @@ registerRow({
         sample();
 
         const training = trainingSkill();
-        if (!training) {
-            container.replaceChildren();
-            return;
-        }
+        if (!training) return blank(container);
 
-        container.replaceChildren();
-        Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
-
-        const label = document.createElement('span');
-        label.textContent = `${training.name} ${training.level}`;
-        label.style.whiteSpace = 'nowrap';
-
-        const value = document.createElement('span');
         // At the cap there is no next level, which is a different answer from
         // "not yet measurable" but reads the same on one line — the tooltip
         // carries the difference
-        value.textContent = training.seconds === null ? '—' : timeReadable(training.seconds);
-        value.style.whiteSpace = 'nowrap';
-        value.style.color = '#9ec4ff';
-
-        container.append(label, value);
+        row(container, [
+            { text: `${training.name} ${training.level}:`, color: ROW_COLORS.gold, ellipsis: true },
+            {
+                text: training.seconds === null ? '—' : timeReadable(training.seconds),
+                color: ROW_COLORS.accent,
+                push: true,
+            },
+        ]);
         container.title =
             `${Math.round(training.xpPerHour).toLocaleString()} xp/hr over the last ten minutes.\n` +
             (training.seconds === null ? 'No next level — this skill is at the cap.' : 'Time to the next level.');
