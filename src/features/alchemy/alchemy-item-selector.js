@@ -134,10 +134,15 @@ export function activeAlchemyAction() {
 /**
  * The item tiles in a menu, and the element they all sit in.
  *
- * The grid is taken to be whichever parent holds the most tiles, not the parent
- * of the first one. The "Remove" box is a tile too and sits in a wrapper of its
- * own ahead of the grid, so keying off the first match found exactly one tile
- * and left the other ninety unsorted.
+ * Returns the elements that can actually be **moved**, which are not always the
+ * tiles themselves. Two earlier versions assumed the tiles were siblings —
+ * first taking the parent of the first tile as the grid, then the parent
+ * holding the most — and both came back with exactly one tile, because each
+ * tile is wrapped in a container of its own and no two share a parent.
+ *
+ * So the grid is found as the deepest element containing every tile, and each
+ * tile is represented by whichever of its ancestors is a direct child of that
+ * grid. Reordering has to move those, not the tiles inside them.
  *
  * @param {HTMLElement} menu - An item selector menu
  * @returns {{grid: HTMLElement|null, tiles: HTMLElement[]}}
@@ -146,19 +151,20 @@ export function menuTiles(menu) {
     const all = Array.from(menu?.querySelectorAll(TILE_SELECTOR) || []);
     if (!all.length) return { grid: null, tiles: [] };
 
-    const byParent = new Map();
-    for (const tile of all) {
-        const parent = tile.parentElement;
-        if (!parent) continue;
-        byParent.set(parent, [...(byParent.get(parent) || []), tile]);
-    }
+    const holdsEveryTile = (node) => all.every((tile) => node.contains(tile));
+    let grid = all[0].parentElement;
+    while (grid && !holdsEveryTile(grid)) grid = grid.parentElement;
+    if (!grid) return { grid: null, tiles: [] };
 
-    let grid = null;
-    let tiles = [];
-    for (const [parent, group] of byParent) {
-        if (group.length > tiles.length) {
-            grid = parent;
-            tiles = group;
+    const seen = new Set();
+    const tiles = [];
+    for (const tile of all) {
+        let node = tile;
+        while (node.parentElement && node.parentElement !== grid) node = node.parentElement;
+        // A wrapper holding two tiles would otherwise be listed twice
+        if (node.parentElement === grid && !seen.has(node)) {
+            seen.add(node);
+            tiles.push(node);
         }
     }
     return { grid, tiles };
@@ -199,13 +205,20 @@ export function describeAlchemyMenus() {
             chain.push(`${ancestor.tagName.toLowerCase()}.${cls.split(' ')[0] || '(no class)'}`);
             ancestor = ancestor.parentElement;
         }
-        const { tiles } = menuTiles(menu);
+        const { grid, tiles } = menuTiles(menu);
+        const raw = menu.querySelectorAll(TILE_SELECTOR).length;
+        const parents = new Set(Array.from(menu.querySelectorAll(TILE_SELECTOR)).map((el) => el.parentElement)).size;
         return {
             menu: index,
             matched: menu === found,
             insidePrimarySlot: !!menu.closest(PRIMARY_SELECTOR),
             ownerLabel: ownerLabel(menu) || '(none)',
-            tiles: tiles.length,
+            // rawTiles well above movable means each tile is wrapped; the two
+            // being equal means they are siblings in one grid
+            rawTiles: raw,
+            distinctTileParents: parents,
+            movable: tiles.length,
+            grid: grid ? `${grid.tagName.toLowerCase()}.${(grid.className || '').split(' ')[0]}` : '(none)',
             ancestors: chain.join(' < ') || '(portalled to body)',
         };
     });
