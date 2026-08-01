@@ -91,3 +91,16 @@ describe('skillName', () => {
         expect(skillName(null)).toBe('');
     });
 });
+
+describe('fastestGaining and the total level', () => {
+    test('ignores the total level, which is not a skill you train', () => {
+        // It is the sum of every skill, so it gains faster than any of them by
+        // definition — and has no row in the experience table, so it always
+        // reported "no next level"
+        expect(fastestGaining({ '/skills/total_level': 99999, '/skills/melee': 10 })).toBe('/skills/melee');
+    });
+
+    test('the total level alone is nobody, not the total level', () => {
+        expect(fastestGaining({ '/skills/total_level': 99999 })).toBeNull();
+    });
+});

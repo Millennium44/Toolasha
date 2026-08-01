@@ -75,6 +75,16 @@ export function timeToNextLevel({ experience, level, levelExperienceTable, xpPer
 }
 
 /**
+ * Entries in `characterSkills` that are not skills you train.
+ *
+ * The game keeps the total level in the same list, and it gains experience
+ * faster than anything else by definition — it is the sum of them all. Left in,
+ * it always wins the "which is being trained" question and always reports no
+ * next level, since there is no row for it in the experience table.
+ */
+const NOT_A_SKILL = new Set(['/skills/total_level']);
+
+/**
  * Which skill is being trained, judged by which is gaining fastest.
  *
  * By rate rather than by the current action, because an action trains several
@@ -89,6 +99,7 @@ export function fastestGaining(ratesByHrid) {
     let bestRate = 0;
 
     for (const [hrid, rate] of Object.entries(ratesByHrid || {})) {
+        if (NOT_A_SKILL.has(hrid)) continue;
         if (rate > bestRate) {
             best = hrid;
             bestRate = rate;

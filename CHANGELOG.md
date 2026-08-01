@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: importing a layout wider than the panel folded it in half
+
+- The layout was laid out against the width the panel **currently** was, and the panel is only resized to fit a moment later. A canvas narrower than the file asks for does not scroll — it _clamps_, pulling every tile past the right edge back inside it. That dropped the right-hand column on top of the left one, and settling then stacked the collision into a single very tall column with holes in it.
+- It is now laid out against the width the file actually needs, which is the width the panel is about to have. Measured on the two-column layout: at the old panel width 19 of 20 tiles moved; now none do, so an imported layout arrives exactly as it was designed.
+
+### Fixed: Time to Level tracked the total level
+
+- The game keeps the total level in the same list as real skills, and it gains experience faster than any of them by definition — it is the sum of them all. So it always won "which skill is being trained", and always reported no next level, since there is no row for it in the experience table. The row read `Total Level 2274: —` and never anything else.
+
 ### Text size, per tile and for the panel at once
 
 - **Every tile shows − and + when you hover it while the layout is unlocked**, for its own text size. The rest of the time a tile is something you read, and two buttons sitting on the figure are two buttons in the way.

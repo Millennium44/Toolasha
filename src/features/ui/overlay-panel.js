@@ -705,17 +705,26 @@ class OverlayPanel {
                 this._snapshot('Import');
                 this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
 
+                // Laid out against the width the file asks for, not the width
+                // the panel happens to be. Using the current width clamps every
+                // tile that sits beyond the right edge back inside it, which
+                // drops a second column on top of the first — and settling then
+                // stacks the collision into one very tall column. The panel is
+                // resized to fit a moment later, so the width it is about to
+                // have is the honest one to lay out against.
+                const width = this._importWidth(this.settings);
+                const laid = resolveLayout(
+                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                    this.settings,
+                    width
+                );
+
                 // OPanel measured those tiles against OPanel's rendering, and
                 // the same rows drawn here are not the same size — so they are
                 // grown to fit and then settled, which resolves the collisions
                 // that causes and closes the gaps it leaves
-                const laid = resolveLayout(
-                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                    this.settings,
-                    this._canvasWidth()
-                );
                 const positions = { ...this.settings.positions };
-                for (const { key, x, y } of compactColumns(laid, this._canvasWidth())) positions[key] = { x, y };
+                for (const { key, x, y } of compactColumns(laid, width)) positions[key] = { x, y };
                 this.settings.positions = positions;
 
                 this._save();
@@ -729,7 +738,7 @@ class OverlayPanel {
                     resolveLayout(
                         resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
                         this.settings,
-                        this._canvasWidth()
+                        width
                     )
                 );
                 await saveGeometry(GEOMETRY_KEY, {
@@ -749,6 +758,26 @@ class OverlayPanel {
             }
         });
         input.click();
+    }
+
+    /**
+     * How wide the canvas has to be for an imported layout to fit.
+     *
+     * Taken from the layout rather than from the panel, because on import the
+     * panel is still whatever size it was before — and laying a 560-wide layout
+     * out against a 470-wide canvas does not scroll, it *clamps*, folding the
+     * right-hand column onto the left one.
+     *
+     * @param {Object} settings - Settings holding the imported positions and sizes
+     * @returns {number} Canvas width
+     */
+    _importWidth(settings) {
+        let needed = 0;
+        for (const [key, position] of Object.entries(settings.positions || {})) {
+            const size = settings.sizes?.[key];
+            if (size?.width > 0) needed = Math.max(needed, (position?.x || 0) + size.width);
+        }
+        return Math.max(this._canvasWidth(), needed);
     }
 
     /**
