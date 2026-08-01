@@ -110,6 +110,7 @@ class OverlayPanel {
             locked: true,
             snapToGrid: true,
             separators: true,
+            textScale: 100,
             open: false,
         };
         this.panel = null;
@@ -200,7 +201,7 @@ class OverlayPanel {
             borderRadius: '8px',
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.55)',
             color: COLORS.text,
-            fontSize: '13px',
+            fontSize: `${this._baseFontPx()}px`,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -491,6 +492,19 @@ class OverlayPanel {
         ruleLabel.append(ruleBox, document.createTextNode('Separators'));
         controls.appendChild(ruleLabel);
 
+        const textSize = document.createElement('div');
+        Object.assign(textSize.style, { display: 'inline-flex', alignItems: 'center', gap: '4px' });
+        const smaller = this._textButton('−', 'Smaller text in every tile', () => this._stepTextScale(-ZOOM_STEP));
+        const larger = this._textButton('+', 'Larger text in every tile', () => this._stepTextScale(ZOOM_STEP));
+
+        const scaleLabel = document.createElement('span');
+        scaleLabel.textContent = `Text ${clampZoom(this.settings.textScale ?? 100)}%`;
+        scaleLabel.style.color = COLORS.textDim;
+        scaleLabel.style.minWidth = '62px';
+
+        textSize.append(scaleLabel, smaller, larger);
+        controls.appendChild(textSize);
+
         const autogrid = this._textButton('Autogrid', 'Repack every tile from the top left, in order', () =>
             this._autoGrid()
         );
@@ -518,8 +532,8 @@ class OverlayPanel {
 
         const hint = document.createElement('div');
         hint.textContent = this.settings.locked
-            ? 'Unlock (🔒) to drag tiles. Ctrl+scroll a tile to resize its text.'
-            : 'Drag tiles to move, corner to resize, Ctrl+scroll to resize text.';
+            ? 'Unlock (🔒) to drag tiles, resize them, and set each one’s text size.'
+            : 'Drag a tile to move it, its corner to resize it, and hover it for − and + to size its text.';
         Object.assign(hint.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
 
         controls.append(autogrid, importBtn, exportBtn, ...(undo ? [undo] : []), reset, hint);
@@ -580,6 +594,7 @@ class OverlayPanel {
             positions: { ...this.settings.positions },
             sizes: { ...this.settings.sizes },
             zoom: { ...this.settings.zoom },
+            textScale: this.settings.textScale,
         };
     }
 
@@ -587,10 +602,11 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { positions, sizes, zoom } = this.undoState;
-        this.settings = { ...this.settings, positions, sizes, zoom };
+        const { positions, sizes, zoom, textScale } = this.undoState;
+        this.settings = { ...this.settings, positions, sizes, zoom, textScale };
         this.undoState = null;
         this._save();
+        if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
         this._renderBody();
         this._renderPicker();
         this._placePicker();
@@ -617,10 +633,12 @@ class OverlayPanel {
         this.settings.positions = {};
         this.settings.sizes = {};
         this.settings.zoom = {};
+        this.settings.textScale = 100;
         this._save();
         clearGeometry(GEOMETRY_KEY);
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
+        this.panel.style.fontSize = `${this._baseFontPx()}px`;
         this._renderBody();
         this._renderPicker();
         this._placePicker();
@@ -762,6 +780,34 @@ class OverlayPanel {
         return sizes;
     }
 
+    /**
+     * The panel's base text size.
+     *
+     * Every tile's own zoom is a percentage of this, so the global control
+     * scales the whole panel while leaving the differences between tiles intact
+     * — a tile you made 130% stays half again as large as its neighbours.
+     *
+     * @returns {number} Pixels
+     */
+    _baseFontPx() {
+        return (13 * clampZoom(this.settings.textScale ?? 100)) / 100;
+    }
+
+    /**
+     * Change the base text size for every tile at once.
+     * @param {number} delta - Percentage points
+     */
+    _stepTextScale(delta) {
+        const next = clampZoom((this.settings.textScale ?? 100) + delta);
+        if (next === this.settings.textScale) return;
+
+        this.settings.textScale = next;
+        this._save();
+        if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
+        this._renderPicker();
+        this._placePicker();
+    }
+
     /** Usable width inside the scroller, less the scrollbar */
     _canvasWidth() {
         return Math.max(120, (this.scrollEl?.clientWidth || DEFAULT_PANEL.width) - 12);
@@ -821,6 +867,7 @@ class OverlayPanel {
                     this.isEditable || this.settings.separators === false ? undefined : `1px solid ${COLORS.separator}`,
             });
             tile._grip.style.display = this.isEditable ? '' : 'none';
+            if (!this.isEditable) tile._zoom.style.display = 'none';
 
             try {
                 row.render(tile._content);
@@ -882,7 +929,10 @@ class OverlayPanel {
 
         this._attachTileDrag(tile, row.key);
         this._attachTileResize(tile, grip, row.key);
-        this._attachTileZoom(tile, row.key);
+
+        const zoomControl = this._tileZoomControl(tile, row.key);
+        tile.appendChild(zoomControl);
+        tile._zoom = zoomControl;
 
         if (row.onOpen) {
             tile.title = `Double-click to open ${row.name}`;
@@ -1012,34 +1062,76 @@ class OverlayPanel {
     }
 
     /**
-     * Ctrl+scroll to change how large a tile draws.
+     * The − and + a tile shows while the layout is unlocked.
      *
-     * Tiles hold wildly different amounts — a timer is four characters and combat
-     * revenue is three lines of figures — so one text size for the panel means
-     * either a cramped tile or a wasteful one. Requiring Ctrl leaves a plain
-     * scroll to the panel, which still has to scroll.
+     * Buttons rather than Ctrl+scroll, which is what this was: Ctrl+wheel is the
+     * browser's own page-zoom gesture, and a page that zooms when you meant to
+     * resize one tile is worse than no shortcut at all. Buttons are also
+     * findable, where a modifier gesture has to be told to you.
+     *
+     * Only while unlocked, and only on hover — the rest of the time a tile is
+     * something you read, and two buttons sitting on top of the figure are two
+     * buttons in the way.
      *
      * @param {HTMLElement} tile - The tile
      * @param {string} key - Row key
+     * @returns {HTMLElement} The control, hidden until hovered
      */
-    _attachTileZoom(tile, key) {
-        tile.addEventListener(
-            'wheel',
-            (event) => {
-                if (!event.ctrlKey) return;
-                event.preventDefault();
+    _tileZoomControl(tile, key) {
+        const holder = document.createElement('div');
+        Object.assign(holder.style, {
+            position: 'absolute',
+            right: '1px',
+            top: '1px',
+            display: 'none',
+            gap: '1px',
+            background: 'rgba(8, 10, 20, 0.9)',
+            borderRadius: '3px',
+            zIndex: '1',
+        });
+
+        const step = (delta) => {
+            const current = this.settings.zoom?.[key] ?? 100;
+            const next = clampZoom(current + delta);
+            if (next === current) return;
+
+            this.settings.zoom = { ...this.settings.zoom, [key]: next };
+            this._save();
+            this._renderBody();
+        };
+
+        for (const [label, delta] of [
+            ['−', -ZOOM_STEP],
+            ['+', ZOOM_STEP],
+        ]) {
+            const button = document.createElement('button');
+            button.textContent = label;
+            button.title = `${label === '+' ? 'Larger' : 'Smaller'} text in this tile`;
+            Object.assign(button.style, {
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: COLORS.text,
+                cursor: 'pointer',
+                fontSize: '11px',
+                lineHeight: '1',
+                padding: '2px 5px',
+            });
+            button.addEventListener('mousedown', (event) => event.stopPropagation());
+            button.addEventListener('click', (event) => {
                 event.stopPropagation();
+                step(delta);
+            });
+            holder.appendChild(button);
+        }
 
-                const current = this.settings.zoom?.[key] ?? 100;
-                const next = clampZoom(current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
-                if (next === current) return;
+        // Shown on hover, but only when there is something to hover for
+        tile.addEventListener('mouseenter', () => {
+            if (this.isEditable) holder.style.display = 'flex';
+        });
+        tile.addEventListener('mouseleave', () => (holder.style.display = 'none'));
 
-                this.settings.zoom = { ...this.settings.zoom, [key]: next };
-                this._save();
-                this._renderBody();
-            },
-            { passive: false }
-        );
+        return holder;
     }
 
     _startRefreshing() {

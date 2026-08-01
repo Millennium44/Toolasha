@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Text size, per tile and for the panel at once
+
+- **Every tile shows − and + when you hover it while the layout is unlocked**, for its own text size. The rest of the time a tile is something you read, and two buttons sitting on the figure are two buttons in the way.
+- **A Text control in settings scales the whole panel.** Each tile's own size is a percentage of that, so scaling everything leaves the differences between tiles intact — a tile you made 130% stays half again as large as its neighbours. Reset puts it back to 100%, and Undo carries it back with the rest of the layout.
+
+### Fixed: Ctrl+scroll zoomed the whole page
+
+- Ctrl+wheel is the browser's own page-zoom gesture, and a page that zooms when you meant to resize one tile is worse than no shortcut at all. The buttons above replace it — and unlike a modifier gesture, they can be found without being told about.
+
 ### The settings popover moved out of the panel, and Autogrid can be undone
 
 - **Settings open above the panel, not inside it.** The gear section took its height out of the tiles, so opening it squashed the very layout you opened it to arrange. It is now its own floating popover, placed above the panel — below it only when there is no room above — and it follows the panel when you drag or resize it.
