@@ -52,26 +52,43 @@ the game's WebSocket traffic through a shared hook and keep per-character state 
 | TReasure              | Chest valuation, including cape/quiver/cloak token value and cowbell pricing.                                                                                                     |
 | Floating Combat Text  | Damage numbers over the battle panel.                                                                                                                                             |
 
-## The parts worth porting first
+## What has been taken
 
-Most of the twenty-one are panels — the value is in the analysis behind them, and four pieces
-of that are pure computation with no DOM and no game hook. Those port cleanly into
-`src/utils/` with tests, which the panels do not.
+Most of the twenty-one are panels. The value is in the analysis behind them, which is pure
+computation with no DOM and no game hook and ports cleanly into `src/utils/` with tests.
 
-- **Drop luck** (`CharaFunc`, `CDFDropAnalyzer`, `RuckBattleDropAnalyzer`, `SimpleFFT`) — builds
-  the characteristic function of a session's drop distribution and inverts it through a
-  hand-rolled FFT to get the CDF, so "was that unlucky?" gets a percentile instead of a feeling.
-  Toolasha has nothing comparable.
-- **Enhancement cost** (`mcs_ko_enhancelate`, `mcs_ko_findBestEnhanceStrat`, line 19132) — an
+**Ported.**
+
+- **Drop luck** (`SimpleFFT` line 37999, `CharaFunc` 38073, `CDFDropAnalyzer` 38219,
+  `RuckBattleDropAnalyzer` 38292) → `src/utils/drop-luck.js`, `src/utils/complex-fft.js`.
+  Builds the characteristic function of a session's income and inverts it through a hand-rolled
+  FFT, so "was that unlucky?" gets a percentile rather than a feeling. Toolasha had nothing
+  comparable. Validated against an exact binomial and against a Monte Carlo of the drop process.
+- **Expected spawns** (`LuckyDropAnalyzer.computeExpectedSpawns` 38568) →
+  `src/utils/spawn-expectation.js`. Dynamic programming over a zone's spawn table for the
+  expected count of each enemy per wave, which is what turns a drop rate into an expectation.
+  Validated against `combat-sim/engine/zone.js`, which samples the same process.
+
+Both now normalise spawn rates by the table's total. The originals read `rate` as a probability;
+the game treats it as a weight and divides by the sum when it draws.
+
+**Already in Toolasha, and better — not ported.**
+
+- **Chest EV** and **token-shop valuation** (`_tr_buildChestValueCache` 35014,
+  `mcs_tr_calculateTokenValue` 34840). `src/features/market/expected-value-calculator.js` runs
+  the same four-round fixed point for chests-inside-chests, but across a worker pool and with
+  cowbells, coins and dungeon tokens handled as special cases; `src/utils/token-valuation.js`
+  reads the shop from the game's own `shopItemDetailMap` instead of a hardcoded table that goes
+  stale whenever the shop changes.
+
+**Not yet assessed.**
+
+- **Enhancement cost** (`mcs_ko_enhancelate`, `mcs_ko_findBestEnhanceStrat`, 19132) — an
   absorbing Markov chain over enhancement levels, solved as `(I − Q)⁻¹`, giving expected attempts
   and expected protections for a target level; the strategy search sweeps the protect-from level
-  and prices each. Compare against Toolasha's own enhancement maths before porting — this one
-  hardcodes the enhancing level, lab level and teas.
-- **Expected spawns** (`LuckyDropAnalyzer.computeExpectedSpawns`, line 38568) — dynamic
-  programming over a zone's spawn table for the expected count of each enemy per wave, which is
-  what turns a drop rate into an expectation.
-- **Chest EV** — an iterative fixed point over chests that contain chests, plus a
-  value-per-token valuation for the token shop.
+  and prices each. Toolasha has its own enhancement maths in `src/utils/enhancement-calculator.js`
+  and `src/features/enhancement/`, so this needs comparing before anything is taken — and this
+  version hardcodes the enhancing level, lab level and teas.
 
 ## Reading it
 

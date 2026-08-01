@@ -23,16 +23,33 @@ belongs to Frotty.
 ## MWI Combat Suite
 
 `third-party/mwi-combat-suite/` holds **MWI Combat Suite v0.9.36235** by Frotty verbatim, under
-the MIT licence it declares in its own userscript header. It is source material: nothing in that
-directory is imported, bundled, linted, or executed, and Toolasha ships none of it today.
+the MIT licence it declares in its own userscript header. Nothing in that directory is imported,
+bundled, linted, or executed — it is the source the ports below were read from.
 
 Same author as Scaley Way Idle above, but not the same situation. Scaley Way Idle carries no
 licence, so that feature could take the idea and nothing else. This one is MIT, which permits the
-code itself to be reused — so the copy is kept in the repository rather than read once and
-discarded, and anything ported out of it will be recorded here with what was taken.
+code itself to be reused.
 
-Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what the script contains, and which
-parts are worth porting, in `third-party/mwi-combat-suite/README.md`.
+Ported so far, all of it the analysis rather than the panels around it:
+
+- `src/utils/drop-luck.js` and `src/utils/complex-fft.js` — the drop-luck analysis, from
+  `SimpleFFT`, `CharaFunc`, `CDFDropAnalyzer` and `RuckBattleDropAnalyzer`. The algorithm is
+  Frotty's throughout: modelling session income as a product of characteristic functions, the
+  three-case discretisation of a drop's count, the guard band and re-basing that contain
+  wrap-around, and the shrinking search for a transform window. Restructured into modules with
+  the dead FFT twiddle cache dropped and the four-at-a-time vector loops replaced by plain ones
+  (they overran any length that was not a multiple of four), and the spawn-table weights are now
+  normalised.
+- `src/utils/spawn-expectation.js` — the expected-spawn dynamic programme, from
+  `LuckyDropAnalyzer.computeExpectedSpawns`. Same states and recurrence; spawn rates normalised
+  by the table's total, matching how the game draws.
+
+Deliberately not ported: the chest expected-value fixed point and token-shop valuation.
+`src/features/market/expected-value-calculator.js` and `src/utils/token-valuation.js` already do
+both, across a worker pool and from the game's own shop data rather than a hardcoded table.
+
+Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what else the script contains in
+`third-party/mwi-combat-suite/README.md`.
 
 ## mooket II
 

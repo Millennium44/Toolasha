@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Drop luck and expected spawns, ported from MWI Combat Suite
+
+Two analysis engines from Frotty's script, as pure utilities with tests. **Nothing calls them yet** — no setting, no panel, no change to how Toolasha behaves. Wiring them to something you can see is a separate decision.
+
+- **Drop luck** (`src/utils/drop-luck.js`, `src/utils/complex-fft.js`) — where a session's takings sit in the distribution of takings it could have had. Toolasha already computes what a zone pays on average, but an average cannot say whether a run that came in 30% under is routine or remarkable: a zone whose income is mostly a common drop and a zone whose income is mostly one rare drop have the same mean and nothing else in common. This gives the percentile instead.
+    - Income is a sum over every drop of every monster in every wave, and sums of distributions are convolutions — quadratic, and worse with every drop added. Each drop instead contributes one characteristic function, they multiply, and a single inverse FFT at the end turns the product back into a distribution. A thousand waves costs the same as one, because repetition is a power rather than a repeated convolution.
+    - The transform needs a window and the answer's size is not known in advance, so it searches for one: a cheap 64-sample inversion reports where the mass actually ends, the window shrinks to fit, and the accurate inversion runs once at the end. Starting from a window five thousand times too wide, it settles within 0.3% of the true range.
+    - Checked against an exact binomial across its whole range (worst error 1.4e-4), and against a Monte Carlo of the full process — multiple monsters, a strength cap, count ranges, a rare drop worth two million, and boss waves — matching to 0.0013 at every quantile from the 1st to the 99th.
+- **Expected spawns** (`src/utils/spawn-expectation.js`) — how many of each monster a wave is expected to contain, which is what turns a drop rate into an expectation. A wave is not a fixed roster: the game draws monsters until the next one would break the strength budget, so a heavy monster is rarer than its weight suggests and a light one commoner. Solved exactly by walking every state rather than sampled; checked against Toolasha's own combat-sim sampler, which it matches to Monte Carlo noise.
+- **Both fix the same bug in the original**, which read spawn `rate` as a probability. The game treats it as a weight and divides by the table's total when it draws — which the two agree on only when a table happens to sum to 1.
+
+### Chest expected value was already here, and better — not ported
+
+- The third piece of the plan turned out to be a duplicate. `src/features/market/expected-value-calculator.js` already runs the same four-round fixed point for chests that contain chests, but spread across a worker pool, with coins, cowbells and dungeon tokens handled as special cases. `src/utils/token-valuation.js` already picks the best value per token, reading the shop out of the game's own data rather than the hardcoded table the other version carries — one that goes stale the next time the shop changes.
+- Recorded in `docs/THIRD-PARTY-LICENSES.md` and the vendored README so the next reader does not re-derive it.
+
 ### MWI Combat Suite is vendored as source material, with attribution
 
 - Frotty's **MWI Combat Suite v0.9.36235** now sits verbatim in `third-party/mwi-combat-suite/`, under the MIT licence it declares. Nothing there is imported, bundled, linted or executed — the build reads `src/`, so the copy is inert and no behaviour changes.
