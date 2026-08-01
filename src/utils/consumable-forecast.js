@@ -186,3 +186,38 @@ export function costPerDaySides(forecasts) {
     }
     return { ask, bid };
 }
+
+/**
+ * When you stop, and when the party stops.
+ *
+ * Two separate answers because they mean different things to act on: your own
+ * countdown is what you can do something about right now, and the party's is
+ * what ends the run regardless of how well stocked you are. Rolling them into
+ * one figure loses whichever of those you needed.
+ *
+ * The party figure deliberately **excludes you** — it answers "and how is
+ * everyone else doing", which is the only part of it you cannot see already.
+ *
+ * @param {Array<{isCurrent: boolean, name: string, forecasts: Forecast[]}>} players - Per player
+ * @returns {{you: Forecast|null, party: Forecast|null, partyName: string|null}}
+ */
+export function partyOutlook(players) {
+    let you = null;
+    let party = null;
+    let partyName = null;
+
+    for (const player of players || []) {
+        const soonest = firstToRunOut(player.forecasts);
+        if (!soonest) continue;
+
+        if (player.isCurrent) {
+            you = soonest;
+            continue;
+        }
+        if (!party || soonest.secondsLeft < party.secondsLeft) {
+            party = soonest;
+            partyName = player.name || null;
+        }
+    }
+    return { you, party, partyName };
+}
