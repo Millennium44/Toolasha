@@ -20,7 +20,16 @@
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
-import { row, rows, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
+import {
+    row,
+    blank,
+    shortDuration,
+    drawLine,
+    itemIcon,
+    linkToMarketplace,
+    ROW_COLORS,
+} from '../../utils/overlay-format.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -202,22 +211,49 @@ registerRow({
             entry.timeToZeroSeconds < worst.timeToZeroSeconds ? entry : worst
         );
 
-        rows(container, [
-            [
-                { text: soonest.itemName, ellipsis: true },
-                {
-                    text: shortDuration(soonest.timeToZeroSeconds),
-                    // Under an hour is the point at which it is worth acting now
-                    color: soonest.timeToZeroSeconds < 3600 ? ROW_COLORS.bad : ROW_COLORS.good,
-                    push: true,
-                },
-                { text: `· ${formatLargeNumber(soonest.inventoryAmount)}`, color: ROW_COLORS.dim },
-            ],
-            [
-                { text: 'Cost/day', color: ROW_COLORS.dim },
-                { text: formatLargeNumber(Math.round(stats.dailyConsumableCosts)), color: ROW_COLORS.bad, push: true },
-            ],
+        container.replaceChildren();
+        Object.assign(container.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            lineHeight: '1.3',
+            overflow: 'hidden',
+        });
+
+        // The icon and the name open the marketplace, because a row that says
+        // "six hours left" is read while deciding whether to go and buy more
+        const top = document.createElement('div');
+        Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
+
+        const icon = itemIcon(soonest.itemHrid, 16);
+        linkToMarketplace(icon, soonest.itemHrid, navigateToMarketplace);
+        top.appendChild(icon);
+
+        const name = document.createElement('span');
+        name.textContent = soonest.itemName;
+        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        linkToMarketplace(name, soonest.itemHrid, navigateToMarketplace);
+        top.appendChild(name);
+
+        const rest = document.createElement('span');
+        rest.style.marginLeft = 'auto';
+        drawLine(rest, [
+            {
+                text: shortDuration(soonest.timeToZeroSeconds),
+                // Under an hour is the point at which it is worth acting now
+                color: soonest.timeToZeroSeconds < 3600 ? ROW_COLORS.bad : ROW_COLORS.good,
+            },
+            { text: `· ${formatLargeNumber(soonest.inventoryAmount)}`, color: ROW_COLORS.dim },
         ]);
+        top.appendChild(rest);
+        container.appendChild(top);
+
+        const bottom = document.createElement('div');
+        drawLine(bottom, [
+            { text: 'Cost/day', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(stats.dailyConsumableCosts)), color: ROW_COLORS.bad, push: true },
+        ]);
+        container.appendChild(bottom);
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one

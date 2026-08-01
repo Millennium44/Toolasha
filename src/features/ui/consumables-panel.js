@@ -38,8 +38,10 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
-import { shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
-import { forecastAll, firstToRunOut, costPerDay, refillFor, refillAll } from '../../utils/consumable-forecast.js';
+import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
+import { getItemPrices } from '../../utils/market-data.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { forecastAll, firstToRunOut, costPerDaySides, refillFor, refillAll } from '../../utils/consumable-forecast.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 
@@ -119,7 +121,7 @@ class ConsumablesPanel {
                 return {
                     name: player.name || 'Unknown',
                     isCurrent: !!player.isCurrentPlayer,
-                    forecasts: forecastAll(stats?.consumableBreakdown),
+                    forecasts: forecastAll(stats?.consumableBreakdown, (hrid) => getItemPrices(hrid)),
                 };
             })
             .filter((entry) => entry.forecasts.length)
@@ -267,7 +269,7 @@ class ConsumablesPanel {
         section.style.marginBottom = '12px';
 
         const soonest = firstToRunOut(player.forecasts);
-        const cost = costPerDay(player.forecasts);
+        const sides = costPerDaySides(player.forecasts);
         const need = refillAll(player.forecasts, this.target.seconds);
 
         const heading = document.createElement('div');
@@ -301,9 +303,11 @@ class ConsumablesPanel {
         section.appendChild(heading);
 
         section.appendChild(this._columnHeadings());
-        for (const entry of player.forecasts) section.appendChild(this._entryRow(entry));
+        for (const entry of player.forecasts) {
+            section.appendChild(this._entryRow(entry, entry === soonest));
+        }
 
-        section.appendChild(this._footer(cost, need));
+        section.appendChild(this._footer(sides, need));
         return section;
     }
 
@@ -311,14 +315,16 @@ class ConsumablesPanel {
     _columnHeadings() {
         const row = this._grid();
         row.style.color = COLORS.textDim;
-        row.style.marginBottom = '2px';
+        row.style.marginBottom = '3px';
 
         for (const [text, align] of [
-            ['Item', 'left'],
             ['Held', 'right'],
+            ['', 'left'],
+            ['Item', 'left'],
             ['Per day', 'right'],
-            ['Lasts', 'right'],
+            ['Cost/day', 'right'],
             [`Buy for ${this.target.label}`, 'right'],
+            ['Lasts', 'right'],
         ]) {
             const cell = document.createElement('span');
             cell.textContent = text;
@@ -329,68 +335,118 @@ class ConsumablesPanel {
     }
 
     /**
-     * One consumable.
+     * One consumable, laid out the way MCS's CRack lays it out: the count you
+     * hold, the icon, the name, then the rates and the countdown.
+     *
+     * The one that runs out first is coloured throughout rather than only in its
+     * time column — it is the row the whole panel exists to point at, and a
+     * single red figure at the far right is easy to miss.
+     *
      * @param {Object} entry - A forecast
+     * @param {boolean} isLimiting - Whether this is the one that stops the run
      * @returns {HTMLElement}
      */
-    _entryRow(entry) {
+    _entryRow(entry, isLimiting) {
         const row = this._grid();
-        row.style.padding = '1px 0';
+        row.style.padding = '2px 0';
+
+        const held = this._cell(formatLargeNumber(entry.held));
+        held.style.color = isLimiting ? ROW_COLORS.bad : COLORS.text;
+
+        const icon = itemIcon(entry.itemHrid, 18);
+        linkToMarketplace(icon, entry.itemHrid, navigateToMarketplace);
 
         const name = document.createElement('span');
         name.textContent = entry.name;
-        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        Object.assign(name.style, {
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: isLimiting ? ROW_COLORS.bad : COLORS.text,
+        });
+        linkToMarketplace(name, entry.itemHrid, navigateToMarketplace);
 
-        const held = this._cell(formatLargeNumber(entry.held));
-
-        const perDay = this._cell(entry.perDay >= 1 ? formatLargeNumber(Math.round(entry.perDay)) : '—');
+        const perDay = this._cell(entry.perDay >= 1 ? `${entry.perDay.toFixed(1)}/day` : '—');
         perDay.style.color = COLORS.textDim;
+
+        // Both sides stacked, because buying costs ask and what you hold is worth
+        // bid — averaging them hides a gap that is real money at this scale
+        const cost = document.createElement('span');
+        Object.assign(cost.style, { textAlign: 'right', lineHeight: '1.15', fontSize: '90%' });
+        const sides = entry.costPerDaySides;
+        if (sides.ask === null && sides.bid === null) {
+            cost.textContent = '—';
+            cost.style.color = COLORS.textDim;
+        } else {
+            cost.appendChild(this._side('Ask', sides.ask));
+            cost.appendChild(this._side('Bid', sides.bid));
+        }
+
+        const need = refillFor(entry, this.target.seconds);
+        const buy = this._cell(need.count ? formatLargeNumber(need.count) : '✓');
+        buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
+        if (need.count && need.cost !== null) buy.title = `About ${Math.round(need.cost).toLocaleString()} coins.`;
 
         const lasts = this._cell(Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞');
         if (!Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;
-        else lasts.style.color = entry.secondsLeft < URGENT_SECONDS ? ROW_COLORS.bad : ROW_COLORS.good;
+        else lasts.style.color = isLimiting || entry.secondsLeft < URGENT_SECONDS ? ROW_COLORS.bad : ROW_COLORS.good;
 
-        // The shortfall, not the requirement: what to buy rather than what to own
-        const need = refillFor(entry, this.target.seconds);
-        const buy = this._cell(
-            need.count
-                ? `${formatLargeNumber(need.count)}${need.cost === null ? '' : ` · ${formatLargeNumber(Math.round(need.cost))}`}`
-                : '✓'
-        );
-        buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
-
-        row.append(name, held, perDay, lasts, buy);
+        row.append(held, icon, name, perDay, cost, buy, lasts);
         return row;
     }
 
     /**
-     * @param {{total: number, unpriced: number}} cost - Cost per day
+     * One side of the book, on its own line.
+     * @param {string} label - `Ask` or `Bid`
+     * @param {number|null} value - Coins per day
+     * @returns {HTMLElement}
+     */
+    _side(label, value) {
+        const line = document.createElement('div');
+        line.textContent = `${label}: ${value === null ? '—' : formatLargeNumber(Math.round(value))}`;
+        line.style.color = COLORS.textDim;
+        line.style.whiteSpace = 'nowrap';
+        return line;
+    }
+
+    /**
+     * @param {{ask: number, bid: number}} sides - Cost per day
      * @param {{items: number, cost: number, unpriced: number}} need - Total shortfall
      * @returns {HTMLElement}
      */
-    _footer(cost, need) {
-        const footer = this._grid();
+    _footer(sides, need) {
+        const footer = document.createElement('div');
         Object.assign(footer.style, {
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: '8px',
             borderTop: `1px solid ${COLORS.border}`,
-            marginTop: '4px',
-            paddingTop: '3px',
+            marginTop: '5px',
+            paddingTop: '4px',
             fontWeight: 'bold',
         });
 
         const label = document.createElement('span');
-        label.textContent = 'Total';
+        label.textContent = 'Total Cost/Day:';
+        label.style.color = COLORS.accent;
 
-        const blank = document.createElement('span');
-        const perDay = this._cell(`${formatLargeNumber(Math.round(cost.total))}/day`);
-        perDay.style.color = ROW_COLORS.bad;
+        const value = document.createElement('span');
+        value.textContent = `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`;
+        value.style.whiteSpace = 'nowrap';
 
-        const spacer = document.createElement('span');
+        const buy = document.createElement('span');
+        buy.style.marginLeft = 'auto';
+        buy.style.whiteSpace = 'nowrap';
+        if (need.items) {
+            buy.textContent = `Buy ${formatLargeNumber(need.items)} · ${formatLargeNumber(Math.round(need.cost))}`;
+            buy.style.color = ROW_COLORS.gold;
+            if (need.unpriced) buy.title = `${need.unpriced} item(s) could not be priced and are not in this total.`;
+        } else {
+            buy.textContent = 'Stocked ✓';
+            buy.style.color = ROW_COLORS.good;
+        }
 
-        const buy = this._cell(need.items ? formatLargeNumber(Math.round(need.cost)) : '✓');
-        buy.style.color = need.items ? ROW_COLORS.gold : ROW_COLORS.good;
-        if (need.unpriced) buy.title = `${need.unpriced} item(s) could not be priced and are not in this total.`;
-
-        footer.append(label, blank, perDay, spacer, buy);
+        footer.append(label, value, buy);
         return footer;
     }
 
@@ -399,7 +455,7 @@ class ConsumablesPanel {
         const row = document.createElement('div');
         Object.assign(row.style, {
             display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) 64px 68px 78px 116px',
+            gridTemplateColumns: '64px 20px minmax(0, 1fr) 76px 84px 74px 64px',
             gap: '6px',
             alignItems: 'baseline',
         });

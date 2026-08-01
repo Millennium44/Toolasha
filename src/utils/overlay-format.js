@@ -20,6 +20,82 @@
  * Toolasha's own.
  */
 
+/**
+ * The game's own item sprite sheet, found once.
+ *
+ * Read off an existing icon rather than hardcoded: the URL carries a build hash
+ * that changes with every game update, so a constant would be right until the
+ * next Tuesday and silently wrong after it.
+ */
+let spriteSheet = null;
+
+/**
+ * The sprite sheet URL, or an empty string before the game has drawn anything.
+ * @returns {string}
+ */
+export function itemSpriteUrl() {
+    if (spriteSheet !== null) return spriteSheet;
+    const use = document.querySelector('svg use[href*="items_sprite"]');
+    spriteSheet = use?.getAttribute('href')?.split('#')[0] || '';
+    // Not cached when it came back empty — the game may simply not have drawn an
+    // icon yet, and one empty answer should not be the answer forever
+    if (!spriteSheet) spriteSheet = null;
+    return spriteSheet || '';
+}
+
+/**
+ * An item's icon.
+ * @param {string} itemHrid - Item to draw
+ * @param {number} [size] - Pixels
+ * @returns {SVGElement|HTMLElement} An icon, or a spacer while the sheet is unknown
+ */
+export function itemIcon(itemHrid, size = 18) {
+    const sprite = itemSpriteUrl();
+    if (!sprite) {
+        const spacer = document.createElement('span');
+        Object.assign(spacer.style, { width: `${size}px`, flex: '0 0 auto', display: 'inline-block' });
+        return spacer;
+    }
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.style.flex = '0 0 auto';
+
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `${sprite}#${String(itemHrid).split('/').pop()}`);
+    svg.appendChild(use);
+    return svg;
+}
+
+/**
+ * Make an element open an item's marketplace listing when clicked.
+ *
+ * Applied to icons and names rather than to a separate button, because the icon
+ * and the name are what you point at when you think "what does that cost" — and
+ * a row about consumables is read while deciding whether to go and buy some.
+ *
+ * @param {HTMLElement} element - Icon or name
+ * @param {string} itemHrid - Item to open
+ * @param {Function} navigate - `(itemHrid) => void`, injected so this file stays DOM-only
+ */
+export function linkToMarketplace(element, itemHrid, navigate) {
+    if (!element || !itemHrid) return;
+
+    element.style.cursor = 'pointer';
+    element.title = 'Open in the marketplace';
+    element.addEventListener('click', (event) => {
+        // Stopped, or the click reaches the tile behind and counts towards a
+        // double-click that would toggle the panel shut under you
+        event.stopPropagation();
+        try {
+            navigate(itemHrid);
+        } catch (error) {
+            console.error('[OverlayFormat] Opening the marketplace failed:', error);
+        }
+    });
+}
+
 /** The palette every row draws from, so two rows never disagree about what green means */
 export const ROW_COLORS = {
     good: '#4ade80',
