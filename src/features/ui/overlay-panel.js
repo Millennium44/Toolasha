@@ -196,7 +196,10 @@ class OverlayPanel {
             position: 'fixed',
             top: '120px',
             left: '20px',
-            zIndex: String(config.Z_FLOATING_PANEL),
+            // Z_HUD, not Z_FLOATING_PANEL: this one is always up, so it has to
+            // sit *below* the game's own interactive UI rather than over the
+            // tabs and buttons it happens to overlap
+            zIndex: String(config.Z_HUD),
             width: `${DEFAULT_PANEL.width}px`,
             height: `${DEFAULT_PANEL.height}px`,
             background: COLORS.background,
@@ -348,7 +351,9 @@ class OverlayPanel {
         Object.assign(picker.style, {
             display: 'none',
             position: 'fixed',
-            zIndex: String(config.Z_FLOATING_PANEL + 1),
+            // Deliberately summoned, unlike the panel it belongs to, so it is
+            // allowed above the game UI for as long as it is open
+            zIndex: String(config.Z_POPUP),
             padding: '8px 10px 9px',
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
