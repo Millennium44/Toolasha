@@ -1110,8 +1110,10 @@ class OverlayPanel {
         const holder = document.createElement('div');
         Object.assign(holder.style, {
             position: 'absolute',
-            right: '1px',
-            top: '1px',
+            // Bottom left: top right is where a tile's value sits, and the
+            // resize grip already owns bottom right
+            left: '1px',
+            bottom: '1px',
             display: 'none',
             gap: '1px',
             background: 'rgba(8, 10, 20, 0.9)',
