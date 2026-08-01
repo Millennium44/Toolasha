@@ -41,6 +41,16 @@ describe('nextLevelCost', () => {
 describe('affordableUpgrades', () => {
     const rooms = { '/house_rooms/dojo': { level: 3 }, '/house_rooms/gym': { level: 2 } };
 
+    test('counts rooms you have not bought yet', () => {
+        // characterHouseRoomMap holds only rooms already bought. A character
+        // with one maxed room and the rest unbuilt has fifteen upgrades to
+        // consider, not none — reading only the owned map showed nothing at all
+        const onlyOwned = { '/house_rooms/dojo': { level: 8 } };
+        const result = affordableUpgrades(onlyOwned, 100000);
+        expect(result.total).toBe(1);
+        expect(result.cheapest).toEqual({ name: 'Gym', cost: 1000 });
+    });
+
     test('counts each upgrade against your coins on its own', () => {
         // Dojo's next level is 100, the gym's is 1000
         expect(affordableUpgrades(rooms, 500)).toMatchObject({ affordable: 1, total: 2 });
@@ -53,15 +63,17 @@ describe('affordableUpgrades', () => {
     });
 
     test('maxed rooms are not counted as upgrades you declined', () => {
-        const maxed = { '/house_rooms/dojo': { level: 8 }, '/house_rooms/gym': { level: 2 } };
-        expect(affordableUpgrades(maxed, 0).total).toBe(1);
+        const maxed = { '/house_rooms/dojo': { level: 8 }, '/house_rooms/gym': { level: 8 } };
+        expect(affordableUpgrades(maxed, 0).total).toBe(0);
     });
 
     test('a room at level zero still has a next level', () => {
         expect(affordableUpgrades({ '/house_rooms/dojo': { level: 0 } }, 100).affordable).toBe(1);
     });
 
-    test('survives no house data', () => {
-        expect(affordableUpgrades(null, 100)).toEqual({ affordable: 0, total: 0, cheapest: null });
+    test('a character who owns nothing still sees every room', () => {
+        // The common case for a new character, and the one that used to draw a
+        // blank row
+        expect(affordableUpgrades(null, 100000)).toMatchObject({ affordable: 2, total: 2 });
     });
 });

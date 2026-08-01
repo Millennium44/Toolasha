@@ -39,6 +39,13 @@ const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalCon
 /** Gap between the two, and how far off a screen edge the popup may not go */
 const DIALOG_GAP = 12;
 const EDGE_MARGIN = 8;
+/**
+ * The dialog is rendered by React in response to the same message that brings us
+ * the loot, so it is reliably absent at the moment we are told about it. These
+ * bound how long to keep looking.
+ */
+const DIALOG_TRIES = 12;
+const DIALOG_RETRY_MS = 60;
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.96)',
@@ -94,6 +101,7 @@ class TreasureTracker {
         this.expanded = new Set();
         this.isDragging = false;
         this.popup = null;
+        this._dialogRetry = null;
     }
 
     async initialize() {
@@ -153,7 +161,7 @@ class TreasureTracker {
         this.popup = this._buildPopup(chestHrid, opening, lifetime);
         document.body.appendChild(this.popup);
         registerFloatingPanel(this.popup);
-        this._placeBesideDialog();
+        this._placeBesideDialog(0);
     }
 
     /**
@@ -164,17 +172,29 @@ class TreasureTracker {
      * look back and forth across the whole window.
      *
      * Measured after mounting, because the height depends on how many items the
-     * chest paid out. Falls back to the top-right corner when the dialog is not
-     * up, which happens when a chest is opened by some route that does not raise
-     * one.
+     * chest paid out — and retried, because the dialog is rendered from the same
+     * message that brings us the loot and is reliably not there yet on the first
+     * look. Falls back to the top-right corner once the retries run out, which
+     * is what happens when a chest is opened by a route that raises no dialog.
+     *
+     * @param {number} tries - How many attempts have been made
      */
-    _placeBesideDialog() {
+    _placeBesideDialog(tries) {
+        if (!this.popup) return;
+
         const dialog = document.querySelector(LOOT_DIALOG_SELECTOR);
-        if (!dialog) return;
+        // Not up yet — the message that told us about the loot is the same one
+        // React is still rendering the dialog from
+        if (!dialog || !dialog.getBoundingClientRect().width) {
+            if (tries >= DIALOG_TRIES) return;
+            const retry = setTimeout(() => this._placeBesideDialog(tries + 1), DIALOG_RETRY_MS);
+            this._dialogRetry = retry;
+            return;
+        }
 
         const anchor = dialog.getBoundingClientRect();
         const self = this.popup.getBoundingClientRect();
-        if (!anchor.width || !self.width) return;
+        if (!self.width) return;
 
         // To the right of the dialog, unless that would run off screen, in which
         // case the left side has the room
@@ -444,6 +464,8 @@ class TreasureTracker {
     }
 
     _removePopup() {
+        clearTimeout(this._dialogRetry);
+        this._dialogRetry = null;
         this._detachPopupDrag?.();
         this._detachPopupDrag = null;
         if (!this.popup) return;

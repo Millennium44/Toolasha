@@ -56,8 +56,12 @@ export function affordableUpgrades(houseRooms, coins) {
     let total = 0;
     let cheapest = null;
 
-    for (const [houseRoomHrid, room] of Object.entries(houseRooms || {})) {
-        const level = room?.level || 0;
+    // Walk the game's full room list, not the character's. `characterHouseRoomMap`
+    // holds only rooms you have already bought, so a character with one maxed
+    // room and fifteen unbuilt ones looks like a character with nothing left to
+    // buy — when the unbuilt ones are the whole point of the figure.
+    for (const houseRoomHrid of Object.keys(roomDetails)) {
+        const level = (houseRooms || {})[houseRoomHrid]?.level || 0;
         const cost = nextLevelCost(houseRoomHrid, level);
         // A maxed room, or one whose materials cannot be priced, is not an
         // upgrade you are choosing not to buy
@@ -101,8 +105,8 @@ export function describeHouses() {
     const rooms = combined?.characterHouseRoomMap || {};
     const roomDetails = initData?.houseRoomDetailMap || {};
 
-    const rows = Object.entries(rooms).map(([hrid, room]) => {
-        const level = room?.level || 0;
+    const rows = Object.keys(roomDetails).map((hrid) => {
+        const level = rooms[hrid]?.level || 0;
         const detail = roomDetails[hrid];
         const costsMap = detail?.upgradeCostsMap;
         const nextCosts = costsMap?.[level + 1];
@@ -123,7 +127,8 @@ export function describeHouses() {
     const summary = affordableUpgrades(rooms, coins);
 
     console.log(
-        `[Toolasha] ${Object.keys(rooms).length} house room(s) known; coins = ${coins}. ` +
+        `[Toolasha] ${Object.keys(roomDetails).length} room(s) in the game, ${Object.keys(rooms).length} owned; ` +
+            `coins = ${coins}. ` +
             `houseRoomDetailMap present = ${!!initData?.houseRoomDetailMap}. ` +
             `Row shows: ${summary.total ? `${summary.affordable} of ${summary.total}` : 'nothing (no upgrade could be priced)'}.\n` +
             'upgradeCost of 0 on every row means the cost table was read wrong or its materials have no market price.'
