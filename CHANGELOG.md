@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### GWhiz, part two: the session, targets, charms and the lookup
+
+- **Corrected the combat level formula.** The two maxima are over **different sets**: the flat sum takes the best of Melee, Ranged and Magic, and the doubled term takes the best of those _plus Attack and Defense_. Part one used the offensive maximum for both. The two agree whenever an offensive skill leads overall — which is most builds, and is exactly why the wrong reading survived a check against a real character — and part company the moment Attack or Defense is your highest, where it understated the level by as much as fifteen. The panel now names both skills, and the tooltip on the formula says which is which.
+- **A Session block, and a Combat Session overlay row.** How long you have been at it, how much combat experience it has been worth, at what rate, and which skills it went to — with a **Reset** to start the measurement again. It survives closing the panel, since tidying up is not the same gesture as starting a new measurement, and it re-baselines itself rather than reporting a loss when the readings belong to a different character.
+- **A target level per skill.** The Skills table gained an editable **Target** box and a **Time** column, so any level is answerable, not just the next one. This is the whole of GWhiz's separate skill-and-target selector, on the row it belongs to rather than behind a dropdown. Hovering the time says how much experience the target is worth.
+- **Charms & Wisdom.** What is actually multiplying the experience in the table above it: the wisdom on every combat skill, and per skill the charm bonus, which charm it comes from, and the resulting multiplier. Read through Toolasha's own experience parser rather than re-derived, so it agrees with the figures the action panels already show.
+- **Experience Lookup.** Experience between any two levels, which the game never shows.
+- The panel no longer rebuilds itself under a box you are typing into, so a target half-entered on the five-second refresh is not lost.
+
+The session arithmetic is in `utils/exp-session.js` with 9 tests, and the corrected formula is pinned by three in `utils/combat-level.js` that fail under the old reading.
+
 ### GWhiz, part one: combat level and what moves it
 
 - **A Combat Level row and panel.** The game shows a whole number, which hides the two facts worth acting on: combat level is a weighted average, so the fraction you have already earned is invisible, and the skill that would finish it soonest is not the one most people are training.
@@ -16,7 +27,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The arithmetic is in `utils/combat-level.js` with 22 tests, checked against the figures GWhiz shows for the same build — `126.300` and "2 levels of Melee" are both reproduced from the screenshot's own numbers.
 
-**Still to port from GWhiz:** the session timer and exp total, the TTL selector with arbitrary target levels, the per-skill target table, Charms, and the Exp Lookup.
+**Still to port from GWhiz:** the session timer and exp total, the TTL selector with arbitrary target levels, the per-skill target table, Charms, and the Exp Lookup. — _All of these landed in part two above, which also corrects the formula quoted here: `0.5 ×` takes the best of five skills, not of the three offensive ones. For this particular build the two happen to agree._
 
 ### Every feature that adds marketplace tabs now finds the visible marketplace
 

@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     bestOffense,
+    bestDoubled,
     combatLevel,
     combatValueOf,
     levelsToNextCombat,
@@ -53,17 +54,55 @@ describe('combatLevel', () => {
     });
 });
 
+describe('the two maxima are over different sets', () => {
+    // The detail the formula turns on: the flat sum takes the best of the three
+    // offensive skills, and the doubled term takes the best of five. They agree
+    // on most builds — which is why reading them as one set survives a casual
+    // check — and part company the moment Attack or Defense leads.
+    const attackLed = { stamina: 100, intelligence: 100, attack: 150, defense: 100, melee: 120, ranged: 0, magic: 0 };
+
+    test('the doubled term can be Attack, which is not an offensive skill', () => {
+        expect(bestOffense(attackLed).skill).toBe('melee');
+        expect(bestDoubled(attackLed).skill).toBe('attack');
+    });
+
+    test('and the level follows the doubled skill, not the offensive one', () => {
+        // 0.1 x (100 + 100 + 150 + 100 + 120) + 0.5 x 150 = 57 + 75 = 132
+        expect(combatLevel(attackLed).exact).toBeCloseTo(132, 6);
+    });
+
+    test('reading both maxima as the offensive set would understate it', () => {
+        // That reading gives 0.5 x 120 = 60, so 117 — fifteen levels adrift
+        expect(combatLevel(attackLed).exact).not.toBeCloseTo(117, 6);
+    });
+});
+
 describe('combatValueOf', () => {
     test('the doubled skill is worth six of anything else', () => {
         expect(combatValueOf(build, 'melee')).toBeCloseTo(0.6, 6);
         expect(combatValueOf(build, 'defense')).toBeCloseTo(0.1, 6);
     });
 
-    test('an offensive skill behind the best is worth nothing yet', () => {
-        // Levelling Magic under a higher Melee moves the combat level not at all
-        // until it overtakes, and calling that 0.1 would be a lie
-        expect(combatValueOf(build, 'magic')).toBe(0);
-        expect(combatValueOf(build, 'ranged')).toBe(0);
+    test('an offensive skill behind the leader is worth nothing yet', () => {
+        // Levelling Magic under a higher Melee moves nothing until it overtakes
+        expect(combatValueOf(build, 'magic')).toBeCloseTo(0, 6);
+        expect(combatValueOf(build, 'ranged')).toBeCloseTo(0, 6);
+    });
+
+    test('Attack still counts in the flat sum even when it is not the leader', () => {
+        // It is a named term, unlike the offensive skills which only appear
+        // through their maximum
+        expect(combatValueOf(build, 'attack')).toBeCloseTo(0.1, 6);
+    });
+
+    test('the level that overtakes is worth more than the ones before it', () => {
+        // A fixed table of per-skill weights cannot say this, which is why the
+        // value is measured by adding one and re-running the formula
+        const behind = { stamina: 0, intelligence: 0, attack: 0, defense: 0, melee: 100, ranged: 99, magic: 0 };
+        expect(combatValueOf(behind, 'ranged')).toBeCloseTo(0, 6);
+
+        const level = { ...behind, ranged: 100 };
+        expect(combatValueOf(level, 'ranged')).toBeCloseTo(0.6, 6);
     });
 
     test('something that is not a combat skill is worth nothing', () => {
@@ -82,9 +121,15 @@ describe('levelsToNextCombat', () => {
         expect(levelsToNextCombat(build, 'stamina')).toBe(7);
     });
 
-    test('a skill that cannot move it says so rather than saying zero', () => {
-        // "0" would read as "already done" for a skill that will never do it
-        expect(levelsToNextCombat(build, 'magic')).toBeNull();
+    test('a skill far behind reports the real number, not nothing', () => {
+        // Magic at 106 has to reach 136 before the whole number moves — 135
+        // leaves it at 126.9, still short — which is a true and useful answer
+        // where null was merely an absence
+        expect(levelsToNextCombat(build, 'magic')).toBe(30);
+    });
+
+    test('past the search limit it declines rather than guessing', () => {
+        expect(levelsToNextCombat(build, 'magic', 5)).toBeNull();
     });
 
     test('rounds up, since two thirds of a level is not a level', () => {
@@ -99,7 +144,7 @@ describe('cheapestRouteToNextCombat', () => {
         expect(cheapestRouteToNextCombat(build)).toEqual({ skill: 'melee', levels: 2 });
     });
 
-    test('skips the skills that cannot move it at all', () => {
+    test('does not pick a skill that has to overtake first', () => {
         expect(['magic', 'ranged']).not.toContain(cheapestRouteToNextCombat(build).skill);
     });
 });
