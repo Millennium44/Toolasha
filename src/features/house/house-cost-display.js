@@ -14,6 +14,7 @@ import {
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 
 class HouseCostDisplay {
@@ -639,7 +640,7 @@ class HouseCostDisplay {
         const delayMs = 100;
 
         for (let i = 0; i < maxAttempts; i++) {
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = visibleTabsContainer();
             if (tabsContainer) {
                 const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
                     btn.textContent.includes('Market Listings')
@@ -664,7 +665,7 @@ class HouseCostDisplay {
      * @param {Array} missingMaterials - Array of missing material objects
      */
     createMissingMaterialTabs(missingMaterials) {
-        const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+        const tabsContainer = visibleTabsContainer();
         if (!tabsContainer) {
             console.error('[HouseCostDisplay] Tabs container not found');
             return;

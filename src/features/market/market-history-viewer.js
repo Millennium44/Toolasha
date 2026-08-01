@@ -15,7 +15,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, visibleTabsContainer } from '../../utils/marketplace-tabs.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 
 /** Rows here are finished trades, not working orders. Markers are told so. */
@@ -149,7 +149,7 @@ class MarketHistoryViewer {
     addMarketplaceTab() {
         const ensureTabExists = () => {
             // Get tabs container
-            const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+            const tabsContainer = visibleTabsContainer();
             if (!tabsContainer) return;
 
             // Verify this is the marketplace tabs (check for Market Listings tab)
@@ -218,7 +218,7 @@ class MarketHistoryViewer {
                 document.body,
                 () => {
                     // Check if marketplace is still active
-                    const tabsContainer = document.querySelector('.MuiTabs-flexContainer[role="tablist"]');
+                    const tabsContainer = visibleTabsContainer();
                     if (!tabsContainer) {
                         // Marketplace closed, clean up tab
                         if (this.marketplaceTab && !document.body.contains(this.marketplaceTab)) {
