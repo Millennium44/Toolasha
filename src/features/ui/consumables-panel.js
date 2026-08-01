@@ -210,6 +210,9 @@ class ConsumablesPanel {
      */
     _openShoppingList(shortfall) {
         try {
+            // Out of the way first: it is a floating panel and the marketplace it
+            // is sending you to opens underneath it
+            this.hide();
             openShoppingList(shortfall);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the shopping list failed:', error);
@@ -230,6 +233,7 @@ class ConsumablesPanel {
     _buy(entry, count) {
         if (!count) return;
         try {
+            this.hide();
             this.autofill.setQuantity(count);
             navigateToMarketplace(entry.itemHrid);
         } catch (error) {
