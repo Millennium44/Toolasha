@@ -6,6 +6,8 @@ import {
     costPerDay,
     costPerDaySides,
     partyOutlook,
+    drinkRatePerDay,
+    buyStrategy,
     refillFor,
     refillAll,
 } from './consumable-forecast.js';
@@ -223,5 +225,55 @@ describe('partyOutlook', () => {
 
     test('survives no players', () => {
         expect(partyOutlook([])).toEqual({ you: null, party: null, partyName: null });
+    });
+});
+
+describe('drinkRatePerDay', () => {
+    test('is the day divided by how long one lasts', () => {
+        // A 300-second drink with no concentration: 288 a day
+        expect(drinkRatePerDay(300 * 1e9, 0)).toBeCloseTo(288, 6);
+    });
+
+    test('concentration shortens the buff, so more are drunk', () => {
+        // 300s at 20% is a 250s buff — the 345.6 the old hardcoded cap assumed
+        expect(drinkRatePerDay(300 * 1e9, 0.2)).toBeCloseTo(345.6, 4);
+    });
+
+    test('less concentration than the cap means fewer drinks, not the cap', () => {
+        // The measured rate was capped at 345.6 for everyone, telling anyone
+        // below maximum concentration they drink faster than they do
+        expect(drinkRatePerDay(300 * 1e9, 0.05)).toBeLessThan(345.6);
+    });
+
+    test('an unknown duration has no answer rather than a zero rate', () => {
+        expect(drinkRatePerDay(0)).toBeNull();
+        expect(drinkRatePerDay(undefined)).toBeNull();
+    });
+});
+
+describe('buyStrategy', () => {
+    const base = { count: 100, ask: 110, bid: 100, secondsLeft: 30 * 86400 };
+
+    test('a worthwhile spread with time to spare is an order', () => {
+        const result = buyStrategy(base);
+        expect(result.mode).toBe('order');
+        expect(result.saving).toBe(1000);
+    });
+
+    test('running out first beats the saving', () => {
+        // A fill that arrives after you have stopped has saved you nothing
+        expect(buyStrategy({ ...base, secondsLeft: 3600 }).mode).toBe('instant');
+    });
+
+    test('a spread too thin to wait for is taken at ask', () => {
+        expect(buyStrategy({ ...base, bid: 109 }).mode).toBe('instant');
+    });
+
+    test('nothing bid leaves an order nothing to sit at', () => {
+        expect(buyStrategy({ ...base, bid: 0 }).mode).toBe('instant');
+    });
+
+    test('nothing to buy needs no strategy', () => {
+        expect(buyStrategy({ ...base, count: 0 }).mode).toBe('instant');
     });
 });
