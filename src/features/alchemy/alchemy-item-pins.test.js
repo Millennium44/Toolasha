@@ -55,6 +55,14 @@ describe('orderTiles', () => {
         expect(out.map(hridOf)).toEqual(['/items/a', '/items/b', '/items/c', '/items/d']);
     });
 
+    test('a cell standing for no item keeps the front', () => {
+        // The Remove cell shares the grid; pinning something must not push the
+        // way to clear the selection down behind it
+        const withRemove = [tile(''), ...tiles];
+        const out = orderTiles(withRemove, ['/items/c'], hridOf);
+        expect(out.map(hridOf)).toEqual(['', '/items/c', '/items/a', '/items/b', '/items/d']);
+    });
+
     test('no pins leaves the order alone', () => {
         expect(orderTiles(tiles, [], hridOf)).toEqual(tiles);
         expect(orderTiles(tiles, null, hridOf)).toEqual(tiles);
