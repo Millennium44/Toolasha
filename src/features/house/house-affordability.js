@@ -14,13 +14,29 @@
  * only when you spend.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
+import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
+const PANEL_ID = 'toolasha-houses-panel';
+
+const COLORS = {
+    background: 'rgba(8, 10, 20, 0.96)',
+    headerBg: 'rgba(14, 30, 20, 0.85)',
+    border: 'rgba(120, 200, 150, 0.3)',
+    text: '#e6efe9',
+    textDim: 'rgba(230, 239, 233, 0.55)',
+    accent: '#7fd6a3',
+    affordable: 'rgba(60, 140, 90, 0.35)',
+    tooDear: 'rgba(120, 60, 60, 0.3)',
+    maxed: 'rgba(60, 60, 70, 0.35)',
+};
 
 /**
  * What the next level of one room costs, on its own.
@@ -76,6 +92,44 @@ export function affordableUpgrades(houseRooms, coins) {
     }
 
     return { affordable, total, cheapest };
+}
+
+/**
+ * Every room, with what its next level costs and whether you can afford it.
+ *
+ * Sorted cheapest first, because the panel exists to answer "what can I buy
+ * next" and the cheapest upgrade is almost always the answer.
+ *
+ * @param {Object} houseRooms - `characterHouseRoomMap`
+ * @param {number} coins - Coins in hand
+ * @returns {Array<Object>} `{ hrid, name, level, cost, affordable, maxed, materials }`
+ */
+export function roomUpgrades(houseRooms, coins) {
+    const gameData = dataManager.getInitClientData();
+    const roomDetails = gameData?.houseRoomDetailMap || {};
+
+    const rooms = Object.keys(roomDetails).map((hrid) => {
+        const level = (houseRooms || {})[hrid]?.level || 0;
+        const cost = nextLevelCost(hrid, level);
+        const maxed = level >= MAX_ROOM_LEVEL;
+
+        return {
+            hrid,
+            name: roomDetails[hrid]?.name || hrid.replace('/house_rooms/', ''),
+            level,
+            cost,
+            maxed,
+            affordable: !maxed && cost > 0 && cost <= coins,
+            materials: roomDetails[hrid]?.upgradeCostsMap?.[level + 1] || [],
+        };
+    });
+
+    rooms.sort((a, b) => {
+        // Maxed rooms last; there is nothing to decide about them
+        if (a.maxed !== b.maxed) return a.maxed ? 1 : -1;
+        return a.cost - b.cost;
+    });
+    return rooms;
 }
 
 /**
@@ -138,6 +192,278 @@ export function describeHouses() {
     return { coins, rooms: rows, summary };
 }
 
+/**
+ * The Houses panel: a grid of rooms and what each one's next level costs.
+ *
+ * The overlay row is a headline — how many you can afford, and the cheapest. The
+ * question it provokes is "which ones, and what do they need", and that needs a
+ * list. So the row opens this on a double-click and stays one line itself.
+ *
+ * Rooms are ordered cheapest first, with maxed ones last, because the panel is
+ * read to decide what to buy next rather than to audit what you own.
+ */
+class HousesPanel {
+    constructor() {
+        this.panel = null;
+        this.gridEl = null;
+        this.detailEl = null;
+        this.selected = null;
+        this.detachDrag = null;
+        this.refreshId = null;
+    }
+
+    /** Open the panel, or raise it if it is already up */
+    show() {
+        if (this.panel && document.body.contains(this.panel)) {
+            bringPanelToFront(this.panel);
+            return;
+        }
+        this._create();
+    }
+
+    hide() {
+        this._remove();
+    }
+
+    toggle() {
+        if (this.panel) this.hide();
+        else this.show();
+    }
+
+    _create() {
+        this.panel = document.createElement('div');
+        this.panel.id = PANEL_ID;
+        Object.assign(this.panel.style, {
+            position: 'fixed',
+            top: '100px',
+            left: '60px',
+            zIndex: String(config.Z_FLOATING_PANEL),
+            width: '560px',
+            background: COLORS.background,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '8px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            color: COLORS.text,
+            fontSize: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+        });
+
+        const header = this._header();
+        this.panel.appendChild(header);
+
+        const body = document.createElement('div');
+        Object.assign(body.style, { display: 'flex', gap: '10px', padding: '10px', maxHeight: '60vh' });
+
+        this.gridEl = document.createElement('div');
+        Object.assign(this.gridEl.style, {
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '6px',
+            flex: '0 0 auto',
+            overflow: 'auto',
+        });
+
+        this.detailEl = document.createElement('div');
+        Object.assign(this.detailEl.style, { flex: '1', overflow: 'auto', minWidth: '0' });
+
+        body.appendChild(this.gridEl);
+        body.appendChild(this.detailEl);
+        this.panel.appendChild(body);
+
+        this.detachDrag = makeDraggable(this.panel, header);
+        document.body.appendChild(this.panel);
+        registerFloatingPanel(this.panel);
+
+        this._render();
+        // Costs move with the market, and coins move as you play
+        this.refreshId = setInterval(() => this._render(), 5000);
+    }
+
+    _header() {
+        const header = document.createElement('div');
+        Object.assign(header.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: '10px',
+            cursor: 'move',
+            padding: '7px 8px 7px 11px',
+            background: COLORS.headerBg,
+            borderBottom: `1px solid ${COLORS.border}`,
+            userSelect: 'none',
+        });
+
+        this.titleEl = document.createElement('span');
+        this.titleEl.style.fontWeight = 'bold';
+        this.titleEl.style.color = COLORS.accent;
+
+        const close = document.createElement('button');
+        close.textContent = '✕';
+        Object.assign(close.style, {
+            background: 'none',
+            border: 'none',
+            color: COLORS.text,
+            cursor: 'pointer',
+            fontSize: '13px',
+            padding: '2px 5px',
+        });
+        close.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.hide();
+        });
+
+        header.appendChild(this.titleEl);
+        header.appendChild(close);
+        return header;
+    }
+
+    _render() {
+        if (!this.gridEl) return;
+
+        const coins = coinBalance();
+        const rooms = roomUpgrades(dataManager.getCombinedData()?.characterHouseRoomMap, coins);
+        const buyable = rooms.filter((room) => room.affordable).length;
+        const cheapest = rooms.find((room) => !room.maxed && room.cost > 0);
+
+        this.titleEl.textContent = cheapest
+            ? `Houses — ${buyable} affordable · cheapest ${cheapest.name} ${formatLargeNumber(Math.round(cheapest.cost))}`
+            : 'Houses';
+
+        this.gridEl.replaceChildren();
+        for (const room of rooms) this.gridEl.appendChild(this._tile(room));
+
+        // Keep whatever was selected across a refresh, or fall back to the one
+        // you are most likely to want
+        const chosen = rooms.find((room) => room.hrid === this.selected) || cheapest || rooms[0];
+        this._renderDetail(chosen, coins);
+    }
+
+    /**
+     * @param {Object} room - From `roomUpgrades`
+     * @returns {HTMLElement} A tile
+     */
+    _tile(room) {
+        const tile = document.createElement('div');
+        const background = room.maxed ? COLORS.maxed : room.affordable ? COLORS.affordable : COLORS.tooDear;
+        Object.assign(tile.style, {
+            padding: '5px 6px',
+            borderRadius: '4px',
+            background,
+            border: `1px solid ${room.hrid === this.selected ? COLORS.accent : 'transparent'}`,
+            cursor: 'pointer',
+            minWidth: '92px',
+            lineHeight: '1.3',
+        });
+        tile.title = room.maxed
+            ? `${room.name} is at the maximum level`
+            : `${room.name} → level ${room.level + 1}: ${formatLargeNumber(Math.round(room.cost))}`;
+
+        const name = document.createElement('div');
+        name.textContent = room.name;
+        name.style.whiteSpace = 'nowrap';
+        name.style.overflow = 'hidden';
+        name.style.textOverflow = 'ellipsis';
+
+        const level = document.createElement('div');
+        level.textContent = room.maxed ? `Lv ${room.level} · max` : `Lv ${room.level} → ${room.level + 1}`;
+        level.style.color = COLORS.textDim;
+        level.style.fontSize = '11px';
+
+        tile.appendChild(name);
+        tile.appendChild(level);
+        tile.addEventListener('click', () => {
+            this.selected = room.hrid;
+            this._render();
+        });
+        return tile;
+    }
+
+    /**
+     * What the selected room's next level needs.
+     *
+     * Materials are listed with what you hold against what it wants, because the
+     * cost in coins is only the answer if you intend to buy the materials — and
+     * the usual question is whether you already have them.
+     *
+     * @param {Object} room - The selected room
+     * @param {number} coins - Coins in hand
+     */
+    _renderDetail(room, coins) {
+        this.detailEl.replaceChildren();
+        if (!room) return;
+
+        const title = document.createElement('div');
+        title.textContent = room.maxed ? `${room.name} — maxed` : `${room.name} ${room.level} → ${room.level + 1}`;
+        Object.assign(title.style, { fontWeight: 'bold', color: COLORS.accent, marginBottom: '4px' });
+        this.detailEl.appendChild(title);
+
+        if (room.maxed) return;
+
+        const cost = document.createElement('div');
+        cost.textContent = `Upgrade cost ${formatLargeNumber(Math.round(room.cost))}`;
+        cost.style.color = room.affordable ? COLORS.accent : '#f87171';
+        cost.style.marginBottom = '2px';
+        this.detailEl.appendChild(cost);
+
+        const held = document.createElement('div');
+        held.textContent = `You hold ${formatLargeNumber(coins)}`;
+        held.style.color = COLORS.textDim;
+        held.style.marginBottom = '6px';
+        this.detailEl.appendChild(held);
+
+        if (!room.materials.length) return;
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Materials';
+        heading.style.color = COLORS.textDim;
+        heading.style.marginBottom = '2px';
+        this.detailEl.appendChild(heading);
+
+        const inventory = dataManager.getCombinedData()?.characterItems || [];
+        for (const material of room.materials) {
+            const line = document.createElement('div');
+            Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
+
+            const name = document.createElement('span');
+            name.textContent =
+                dataManager.getItemDetails?.(material.itemHrid)?.name || material.itemHrid.split('/').pop();
+
+            const have =
+                material.itemHrid === '/items/coin'
+                    ? coins
+                    : inventory.find((item) => item.itemHrid === material.itemHrid && !item.enhancementLevel)?.count ||
+                      0;
+            const need = material.count || 0;
+
+            const amount = document.createElement('span');
+            amount.textContent = `${formatLargeNumber(have)} / ${formatLargeNumber(need)}`;
+            amount.style.color = have >= need ? COLORS.accent : '#f87171';
+            amount.style.whiteSpace = 'nowrap';
+
+            line.appendChild(name);
+            line.appendChild(amount);
+            this.detailEl.appendChild(line);
+        }
+    }
+
+    _remove() {
+        clearInterval(this.refreshId);
+        this.refreshId = null;
+        this.detachDrag?.();
+        this.detachDrag = null;
+        if (!this.panel) return;
+        unregisterFloatingPanel(this.panel);
+        this.panel.remove();
+        this.panel = null;
+        this.gridEl = null;
+        this.detailEl = null;
+    }
+}
+
+export const housesPanel = new HousesPanel();
+
 registerRow({
     key: 'houses',
     name: 'Houses',
@@ -165,4 +491,5 @@ registerRow({
         container.appendChild(label);
         container.appendChild(value);
     },
+    onOpen: () => housesPanel.show(),
 });

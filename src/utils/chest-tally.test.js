@@ -4,6 +4,7 @@ import {
     resetTally,
     expectedLootPerChest,
     chestPerformance,
+    chestBreakdown,
     summariseTally,
     tallyTotals,
 } from './chest-tally.js';
@@ -196,5 +197,42 @@ describe('the most recent opening', () => {
         let tally = recordOpening({}, CHEST, 1, [{ itemHrid: '/items/rare', count: 1 }]);
         tally = recordOpening(tally, CHEST, 1, []);
         expect(tally[CHEST].last).toEqual({ opened: 1, loot: {} });
+    });
+});
+
+describe('chestBreakdown', () => {
+    test('lines the three views up on the same items, in the same order', () => {
+        // The panel reads across a row; ordering each column separately would
+        // make that a lookup instead of a glance
+        let tally = recordOpening({}, CHEST, 9, [{ itemHrid: '/items/coin', count: 1800 }]);
+        tally = recordOpening(tally, CHEST, 1, [{ itemHrid: '/items/rare', count: 1 }]);
+
+        const { items, total, last } = chestBreakdown(tally[CHEST], dropTable, priceOf);
+        expect(items.map((i) => i.itemHrid)).toEqual(['/items/rare', '/items/coin']);
+        expect(total.opened).toBe(10);
+        expect(last.opened).toBe(1);
+    });
+
+    test('the last opening is judged against what that opening owed, not the run', () => {
+        // One chest owes 200 coin; ten owe 2000. Judging one against ten would
+        // report every single opening as catastrophic
+        let tally = recordOpening({}, CHEST, 9, [{ itemHrid: '/items/coin', count: 1800 }]);
+        tally = recordOpening(tally, CHEST, 1, [{ itemHrid: '/items/coin', count: 200 }]);
+
+        const coin = chestBreakdown(tally[CHEST], dropTable, priceOf).items.find((i) => i.itemHrid === '/items/coin');
+        expect(coin.lastRatio).toBeCloseTo(1, 6);
+        expect(coin.totalRatio).toBeCloseTo(1, 6);
+    });
+
+    test('reports what one chest is worth on average', () => {
+        const tally = recordOpening({}, CHEST, 1, [{ itemHrid: '/items/coin', count: 200 }]);
+        // 200 coin at 1, plus a 1% shot at a 100000 rare
+        expect(chestBreakdown(tally[CHEST], dropTable, priceOf).perChestValue).toBeCloseTo(1200, 6);
+    });
+
+    test('survives a chest opened once and never again', () => {
+        const tally = recordOpening({}, CHEST, 1, []);
+        const result = chestBreakdown(tally[CHEST], dropTable, priceOf);
+        expect(result.items.every((i) => i.lastCount === 0)).toBe(true);
     });
 });

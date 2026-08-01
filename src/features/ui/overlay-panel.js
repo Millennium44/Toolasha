@@ -21,8 +21,12 @@
  *     render: (container) => {    // called on every refresh; draw the current state
  *         container.textContent = `${chestsOpened} chests`;
  *     },
+ *     onOpen: () => panel.show(),  // optional — double-clicking the row opens this
  * });
  * ```
+ *
+ * A row is a summary. `onOpen` is where the detail behind it lives, so the
+ * overlay stays one glance tall and the full panel is one gesture away.
  *
  * Register at module scope, not inside `initialize`. The list lives in
  * `utils/overlay-rows.js` rather than here — see that file for why the bundle
@@ -372,6 +376,20 @@ class OverlayPanel {
             if (!container) {
                 container = document.createElement('div');
                 container.dataset.overlayRow = row.key;
+
+                // Attached once, at creation. Containers survive refreshes so a
+                // listener added per render would stack up one per second.
+                if (row.onOpen) {
+                    container.style.cursor = 'pointer';
+                    container.title = `Double-click to open ${row.name}`;
+                    container.addEventListener('dblclick', () => {
+                        try {
+                            row.onOpen();
+                        } catch (error) {
+                            console.error(`[OverlayPanel] Opening "${row.key}" failed:`, error);
+                        }
+                    });
+                }
                 this.containers.set(row.key, container);
             }
             if (this.bodyEl.children[index] !== container) {

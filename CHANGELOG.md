@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Double-click an overlay row to open the panel behind it
+
+- A row is a summary; the detail it provokes a question about now lives one gesture away. Rows that own a panel show a pointer cursor and a hint on hover; rows that do not are simply not interactive.
+- **Treasure** opens the full ledger, **Houses** opens the new room panel. Registering a row now takes an optional `onOpen`, so any future row gets this for free.
+
+### The Treasure ledger reads across three columns
+
+- Expanding a chest now shows **LAST**, **TOTAL** and **EXPECTED** side by side, one row per item, in a shared order — the question is always "how does this compare with that", and a single column cannot answer it.
+- The last opening is judged against what **that opening** owed, not against the whole run. One chest owes a fraction of what forty do, and scoring one against forty would report every single opening as a disaster.
+- The expected column carries both scales: what one chest owes, and what every chest you have opened owed. Counts below one keep three decimals or go exponential — a rare owed 0.002 of itself per chest rounds to zero, which reads as owing nothing rather than a one-in-five-hundred chance.
+
+### A Houses panel
+
+- The overlay row says how many upgrades you can afford and the cheapest one. Double-clicking opens a grid of every room, coloured by whether you can afford its next level, maxed rooms last and the rest cheapest first — the panel is read to decide what to buy next, not to audit what you own.
+- Selecting a room lists what its next level needs, with **what you hold against what it wants**. The coin cost is only the answer if you intend to buy the materials; the usual question is whether you already have them.
+
 ### Fixed: the Houses row counted only rooms you had already bought
 
 - `characterHouseRoomMap` holds the rooms you own, not every room in the game. A character with one maxed observatory and everything else unbuilt therefore looked like a character with nothing left to buy, and the row drew a blank. The unbuilt rooms are the whole point of the figure.

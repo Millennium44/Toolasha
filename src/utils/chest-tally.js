@@ -152,6 +152,60 @@ export function chestPerformance(entry, dropTable, priceOf) {
 }
 
 /**
+ * One chest's history in the three views the panel shows side by side.
+ *
+ * The same items appear in each column, in the same order, so a row can be read
+ * across: what the last opening gave, what every opening has given, and what one
+ * chest and the whole run were owed. Ordering them separately per column would
+ * make the comparison a lookup rather than a glance.
+ *
+ * @param {Object} entry - `{ opened, loot, last }` for one chest
+ * @param {Array<Object>} dropTable - That chest's drop table
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @returns {Object} `{ last, total, perChestValue, items }` where each item carries
+ *   its last, total and expected figures together
+ */
+export function chestBreakdown(entry, dropTable, priceOf) {
+    const total = chestPerformance(entry, dropTable, priceOf);
+    const last = chestPerformance(entry?.last, dropTable, priceOf);
+    const perChest = expectedLootPerChest(dropTable);
+
+    const lastByItem = new Map(last.items.map((item) => [item.itemHrid, item]));
+    const opened = entry?.opened || 0;
+
+    const items = total.items.map((item) => {
+        const price = priceOf(item.itemHrid) || 0;
+        const perOne = perChest[item.itemHrid] || 0;
+        const lastItem = lastByItem.get(item.itemHrid);
+        const lastOpened = entry?.last?.opened || 0;
+        const lastExpectedValue = perOne * lastOpened * price;
+
+        return {
+            itemHrid: item.itemHrid,
+            price,
+            lastCount: lastItem?.actualCount || 0,
+            lastValue: lastItem?.actualValue || 0,
+            lastRatio: lastExpectedValue > 0 ? (lastItem?.actualValue || 0) / lastExpectedValue : null,
+            totalCount: item.actualCount,
+            totalValue: item.actualValue,
+            totalRatio: item.expectedValue > 0 ? item.actualValue / item.expectedValue : null,
+            expectedPerChest: perOne,
+            expectedPerChestValue: perOne * price,
+            expectedTotal: perOne * opened,
+            expectedTotalValue: item.expectedValue,
+        };
+    });
+
+    // What one chest is worth on average, which is the figure beside its name
+    const perChestValue = Object.entries(perChest).reduce(
+        (sum, [itemHrid, count]) => sum + count * (priceOf(itemHrid) || 0),
+        0
+    );
+
+    return { last, total, perChestValue, items };
+}
+
+/**
  * Every chest with a history, worst first.
  *
  * Ordered by how far from expectation each sits rather than alphabetically —

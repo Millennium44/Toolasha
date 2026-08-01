@@ -42,14 +42,17 @@ const rows = [];
  * @param {string} row.name - Label in the row picker
  * @param {Function} row.render - `(container: HTMLElement) => void`, called per refresh
  * @param {boolean} [row.defaultVisible] - Whether it starts on
+ * @param {Function} [row.onOpen] - Called when the row is double-clicked. A row is
+ *   a summary; this is where the panel behind it opens. Rows without one are
+ *   simply not interactive.
  */
-export function registerRow({ key, name, render, defaultVisible = true }) {
+export function registerRow({ key, name, render, defaultVisible = true, onOpen = null }) {
     if (!key || typeof render !== 'function') {
         console.error('[OverlayPanel] A row needs a key and a render function:', key);
         return;
     }
 
-    const definition = { key, name: name || key, render, defaultVisible };
+    const definition = { key, name: name || key, render, defaultVisible, onOpen };
     const existing = rows.findIndex((row) => row.key === key);
     if (existing >= 0) rows[existing] = definition;
     else rows.push(definition);
