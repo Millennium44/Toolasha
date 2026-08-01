@@ -221,7 +221,7 @@ registerRow({
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
-    onOpen: () => window.Toolasha?.UI?.consumablesPanel?.show(),
+    onOpen: () => window.Toolasha?.UI?.consumablesPanel?.toggle(),
 });
 
 /**

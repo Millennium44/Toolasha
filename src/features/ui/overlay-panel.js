@@ -31,12 +31,15 @@
  *         container.textContent = `${chestsOpened} chests`;
  *     },
  *     defaultSize: { width: 160, height: 30 },  // optional — the row knows how much it draws
- *     onOpen: () => panel.show(),               // optional — double-clicking the tile opens this
+ *     onOpen: () => panel.toggle(),             // optional — double-clicking the tile runs this
  * });
  * ```
  *
  * A row is a summary. `onOpen` is where the detail behind it lives, so the
- * overlay stays a glance and the full panel is one gesture away.
+ * overlay stays a glance and the full panel is one gesture away. It should
+ * **toggle** rather than open: the same gesture that summoned a panel is the one
+ * you reach for to dismiss it, and a double-click that only ever opens leaves
+ * you hunting for the close button.
  *
  * Register at module scope, not inside `initialize`. The list lives in
  * `utils/overlay-rows.js` rather than here — see that file for why the bundle
@@ -964,7 +967,7 @@ class OverlayPanel {
         tile._zoom = zoomControl;
 
         if (row.onOpen) {
-            tile.title = `Double-click to open ${row.name}`;
+            tile.title = `Double-click to open or close ${row.name}`;
             tile.addEventListener('dblclick', () => {
                 try {
                     row.onOpen();

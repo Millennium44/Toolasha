@@ -43,8 +43,9 @@ const rows = [];
  * @param {Function} row.render - `(container: HTMLElement) => void`, called per refresh
  * @param {boolean} [row.defaultVisible] - Whether it starts on
  * @param {Function} [row.onOpen] - Called when the row is double-clicked. A row is
- *   a summary; this is where the panel behind it opens. Rows without one are
- *   simply not interactive.
+ *   a summary; this is where the panel behind it opens. It should **toggle**,
+ *   since the same gesture is what you reach for to dismiss what it summoned.
+ *   Rows without one are simply not interactive.
  * @param {{width: number, height: number}} [row.defaultSize] - How large a tile the row
  *   needs before anyone has resized it. A row knows how much it draws; the panel
  *   does not, and guessing one size for all of them leaves half of them clipped.

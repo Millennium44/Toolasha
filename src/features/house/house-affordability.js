@@ -510,5 +510,5 @@ registerRow({
                 : null,
         ]);
     },
-    onOpen: () => housesPanel.show(),
+    onOpen: () => housesPanel.toggle(),
 });
