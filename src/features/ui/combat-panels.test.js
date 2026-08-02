@@ -96,6 +96,20 @@ beforeEach(() => {
                 abilities: [{ action: 'auto', damage: 900000, hits: 90, crits: 18, misses: 10 }],
             },
         ],
+        logging: 400,
+        enemies: [
+            {
+                name: 'Rat',
+                damage: 600000,
+                hits: 60,
+                crits: 12,
+                misses: 6,
+                kills: 20,
+                maxHP: 2400,
+                dps: 2000,
+            },
+            { name: 'Wolf', damage: 300000, hits: 30, crits: 6, misses: 4, kills: 5, maxHP: 8800, dps: 1000 },
+        ],
     };
     state.luck = { percentile: 0.51, income: 5_000_000, expected: 4_000_000, battles: 300, hasBonuses: true };
     state.stats = {
@@ -133,7 +147,7 @@ describe('every panel draws', () => {
         state.dps = {};
         state.luck = null;
         state.stats = null;
-        state.breakdown = { seconds: 0, players: [] };
+        state.breakdown = { seconds: 0, logging: 0, players: [], enemies: [] };
 
         for (const panel of panels()) {
             panel.show();
@@ -238,6 +252,36 @@ describe('what the panels add over their tiles', () => {
         state.filtering = true;
     });
 
+    test('the enemies get their own rows', () => {
+        // The player table says who is doing the damage; this says to what, and
+        // a slow run is often one tanky monster rather than a rotation problem
+        dpsPanel.show();
+        const text = dpsPanel.panel.textContent;
+
+        expect(text).toContain('Rat');
+        expect(text).toContain('Wolf');
+    });
+
+    test('the health bars give a second reading the attribution cannot drift from', () => {
+        // 20 rats at 2.4K plus 5 wolves at 8.8K is 92K of health, over 300s of
+        // battle time and 400s of logging
+        dpsPanel.show();
+        const text = dpsPanel.panel.textContent;
+
+        expect(text).toContain('DPS based off enemy HPs');
+        expect(text).toContain('307'); // 92,000 / 300
+        expect(text).toContain('230'); // 92,000 / 400
+        expect(text).toContain('25'); // enemies killed
+        expect(text).toContain('20 × 2.4K');
+    });
+
+    test('with nothing dead it says so rather than dividing by nothing', () => {
+        state.breakdown = { ...state.breakdown, enemies: [{ name: 'Rat', damage: 10, hits: 1, kills: 0, maxHP: 0 }] };
+        dpsPanel.show();
+
+        expect(dpsPanel.panel.textContent).toContain('no health bars to count');
+    });
+
     test('and a Reset, as DPs has', () => {
         state.reset = false;
         dpsPanel.show();
@@ -247,7 +291,7 @@ describe('what the panels add over their tiles', () => {
     });
 
     test('with nothing attributed it says why rather than showing zeroes', () => {
-        state.breakdown = { seconds: 0, players: [] };
+        state.breakdown = { seconds: 0, logging: 0, players: [], enemies: [] };
         dpsPanel.show();
         expect(dpsPanel.panel.textContent).toContain('needs a cast to start');
     });

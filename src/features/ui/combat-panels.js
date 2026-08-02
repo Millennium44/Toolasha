@@ -398,6 +398,87 @@ function countAndShare(count, outOf) {
     return `${formatWithSeparator(count)} (${((count / outOf) * 100).toFixed(1)}%)`;
 }
 
+/**
+ * DPs' second reading of the same run: what the corpses say.
+ *
+ * The table measures attributed hits, and attribution has holes — a bleed, a
+ * tick before the counters were known, a fight where two people cast together.
+ * The health bars do not: a monster is dead or it is not, and its bar was worth
+ * exactly what it was worth. So the same run gets a second figure that cannot
+ * drift, and where the two disagree the difference is what attribution missed.
+ *
+ * It is quoted twice, as DPs quotes it. Against **battle time** it says how
+ * hard the party hits; against **total time** it says what the run actually
+ * produced, and the gap between them is time spent walking rather than
+ * fighting. No rotation fixes that gap — a zone with a shorter respawn does.
+ *
+ * @param {Object} breakdown - From `damageBreakdown`
+ * @returns {HTMLElement}
+ */
+function enemyHealthCard(breakdown) {
+    const holder = document.createElement('div');
+    const killed = breakdown.enemies.filter((enemy) => enemy.kills > 0 && enemy.maxHP > 0);
+
+    const block = card(holder, 'DPS based off enemy HPs');
+    if (!killed.length) {
+        block.appendChild(note('Nothing has died yet, so there are no health bars to count.'));
+        return holder;
+    }
+
+    const health = killed.reduce((sum, enemy) => sum + enemy.kills * enemy.maxHP, 0);
+    const kills = killed.reduce((sum, enemy) => sum + enemy.kills, 0);
+    const battleTime = breakdown.seconds;
+    const totalTime = Math.max(breakdown.logging, battleTime);
+
+    const totalDPS = totalTime > 0 ? health / totalTime : null;
+    const battleDPS = battleTime > 0 ? health / battleTime : null;
+
+    block.append(
+        line(
+            'Total time DPS',
+            totalDPS === null ? '—' : formatWithSeparator(Math.round(totalDPS)),
+            ROW_COLORS.gold,
+            'Every health bar emptied, over the whole time this has been logging.'
+        ),
+        line(
+            'Battle time DPS',
+            battleDPS === null ? '—' : formatWithSeparator(Math.round(battleDPS)),
+            ROW_COLORS.gold,
+            'The same, over the time actually spent swinging.'
+        ),
+        line(
+            'DPS loss between battles',
+            totalDPS === null || battleDPS === null ? '—' : formatWithSeparator(Math.round(battleDPS - totalDPS)),
+            ROW_COLORS.bad,
+            'What walking between fights costs. A rotation cannot fix this; a zone change can.'
+        ),
+        line('Time logging', timeReadable(Math.round(totalTime)), COLORS.text),
+        line('Time in battle', timeReadable(Math.round(battleTime)), COLORS.text),
+        line('Total health destroyed', formatKMB(health), ROW_COLORS.good),
+        line('Enemies killed', formatWithSeparator(kills), COLORS.text)
+    );
+
+    // Named per monster, because "fifty kills" is a different run depending on
+    // whether they were rats or bosses
+    for (const enemy of killed) {
+        block.appendChild(
+            line(
+                `  ${enemy.name}`,
+                `${formatWithSeparator(enemy.kills)} × ${formatKMB(enemy.maxHP)} = ${formatKMB(enemy.kills * enemy.maxHP)}`,
+                COLORS.textDim
+            )
+        );
+    }
+
+    block.appendChild(
+        note(
+            'Counted from full health bars rather than from attributed hits, so it does not drift where ' +
+                'attribution cannot see — a bleed, or a tick before the counters were known.'
+        )
+    );
+    return holder;
+}
+
 export const dpsPanel = new CombatPanel({
     id: 'dpsPanel',
     title: 'DPs',
@@ -526,6 +607,25 @@ export const dpsPanel = new CombatPanel({
                 );
             }
         }
+
+        for (const enemy of breakdown.enemies) {
+            const swings = enemy.hits + enemy.misses;
+            const share = partyDamage > 0 ? (enemy.damage / partyDamage) * 100 : 0;
+
+            body.appendChild(
+                dpsRow([
+                    { text: enemy.name, color: ROW_COLORS.bad, bold: true },
+                    { text: enemy.dps === null ? '—' : String(Math.round(enemy.dps)), color: ROW_COLORS.good },
+                    { text: `${formatKMB(enemy.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
+                    { text: formatWithSeparator(swings) },
+                    { text: countAndShare(enemy.hits, swings), color: ROW_COLORS.good },
+                    { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
+                    { text: countAndShare(enemy.misses, swings), color: ROW_COLORS.bad },
+                ])
+            );
+        }
+
+        body.appendChild(enemyHealthCard(breakdown));
 
         // The exchange, which the table cannot show: a party doing well on
         // paper is still losing if it is taking more than it deals

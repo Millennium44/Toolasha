@@ -6,6 +6,7 @@ import {
     attributeTick,
     foldEvents,
     isDamagingAction,
+    foldEnemies,
 } from './damage-attribution.js';
 
 const monster = (cHP, dmgCounter = 0, critCounter = 0) => ({ cHP, dmgCounter, critCounter });
@@ -167,5 +168,77 @@ describe('isDamagingAction', () => {
 
     test('the caller can name more', () => {
         expect(isDamagingAction('/abilities/heal', new Set(['/abilities/heal']))).toBe(false);
+    });
+});
+
+describe('foldEnemies', () => {
+    const nameOf = (index) => ({ 0: 'Rat', 1: 'Wolf' })[index] || null;
+
+    test('damage lands against the monster that took it', () => {
+        const tally = foldEnemies(
+            {},
+            [
+                { monsterIndex: '0', amount: 100, isCrit: false, isMiss: false },
+                { monsterIndex: '1', amount: 40, isCrit: true, isMiss: false },
+                { monsterIndex: '0', amount: 60, isCrit: false, isMiss: false },
+            ],
+            nameOf
+        );
+
+        expect(tally.Rat).toMatchObject({ damage: 160, hits: 2, crits: 0 });
+        expect(tally.Wolf).toMatchObject({ damage: 40, hits: 1, crits: 1 });
+    });
+
+    test('a kill is counted and is not also a hit', () => {
+        // A death is not a swing; counting it as one adds a phantom hit
+        const tally = foldEnemies({}, [{ monsterIndex: '0', isKill: true }], nameOf);
+
+        expect(tally.Rat).toMatchObject({ kills: 1, hits: 0, damage: 0 });
+    });
+
+    test('a bleed kill still counts, though no counter moved', () => {
+        // The killing blow can land on a tick with no hit at all, and those are
+        // the long fights — exactly the ones worth measuring
+        const tally = foldEnemies({}, [{ monsterIndex: '1', isKill: true }], nameOf);
+
+        expect(tally.Wolf.kills).toBe(1);
+    });
+
+    test('a monster it cannot name is left out rather than lumped together', () => {
+        // The index is a slot in this fight; without a name behind it the
+        // damage belongs to nobody in particular
+        const tally = foldEnemies({}, [{ monsterIndex: '9', amount: 500, isMiss: false }], nameOf);
+
+        expect(Object.keys(tally)).toHaveLength(0);
+    });
+
+    test('misses count as swings against the monster', () => {
+        const tally = foldEnemies({}, [{ monsterIndex: '0', amount: 0, isMiss: true }], nameOf);
+
+        expect(tally.Rat).toMatchObject({ misses: 1, hits: 0, damage: 0 });
+    });
+});
+
+describe('kills in a tick', () => {
+    test('a monster reaching zero emits a kill', () => {
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 100, dmgCounter: 0 } }, pMap: { 0: { cMP: 50 } } }, state);
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 1 } }, pMap: { 0: { cMP: 40 } } }, state);
+
+        expect(events.filter((event) => event.isKill)).toHaveLength(1);
+    });
+
+    test('a monster already dead is not killed twice', () => {
+        // It stays in the payload at zero health until the battle turns over
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 1 } }, pMap: { 0: { cMP: 50 } } }, state);
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 1 } }, pMap: { 0: { cMP: 50 } } }, state);
+
+        expect(events.filter((event) => event.isKill)).toHaveLength(0);
+    });
+
+    test('a kill event does not reach the player tally', () => {
+        const tally = foldEvents({}, [{ playerIndex: '0', monsterIndex: '0', isKill: true }]);
+        expect(tally['0']).toBeUndefined();
     });
 });
