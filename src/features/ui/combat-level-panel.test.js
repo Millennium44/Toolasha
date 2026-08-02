@@ -39,6 +39,11 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
 }));
 
+// The selection is persisted, and IndexedDB is not what this file is about
+vi.mock('../../core/storage.js', () => ({
+    default: { getJSON: async () => null, setJSON: async () => {} },
+}));
+
 vi.mock('../../utils/experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({
         totalWisdom: 62.65,
@@ -48,8 +53,18 @@ vi.mock('../../utils/experience-parser.js', () => ({
     }),
 }));
 
-const { combatLevelPanel, combatSkillState, combatProgress, nextCombatLevel, busiest, projectedRates, resetSession } =
-    await import('./combat-level-panel.js');
+const {
+    combatLevelPanel,
+    combatSkillState,
+    combatProgress,
+    nextCombatLevel,
+    busiest,
+    projectedRates,
+    selectedTarget,
+    select,
+    clearSelection,
+    resetSession,
+} = await import('./combat-level-panel.js');
 
 /** A plausible experience curve, since the real one is 200 rows of the game's */
 function experienceTable() {
@@ -120,9 +135,8 @@ afterEach(() => {
     // panel and wrong for a test — one test's target must not be the next's
     combatLevelPanel.targets = {};
     combatLevelPanel.lookup = { from: null, to: null };
-    combatLevelPanel.ttl = { skill: null, level: null };
-    combatLevelPanel.assigned = { primary: null, focus: null };
     combatLevelPanel.collapsed = {};
+    clearSelection();
     vi.useRealTimers();
     vi.restoreAllMocks();
 });
@@ -335,13 +349,15 @@ describe('the controls', () => {
 
     test('choosing a different skill in the selector drops the level meant for the old one', () => {
         combatLevelPanel.show();
-        combatLevelPanel.ttl = { skill: 'melee', level: 200 };
+        select({ skill: 'melee', level: 200 });
 
         const picker = selects()[0];
         picker.value = 'magic';
         picker.dispatchEvent(new Event('change'));
 
-        expect(combatLevelPanel.ttl).toEqual({ skill: 'magic', level: null });
+        expect(selectedTarget().name).toBe('Magic');
+        // The level was for the old skill, so it does not follow
+        expect(selectedTarget().target).toBe(107);
     });
 
     test('the exp lookup shows the subtraction it did', () => {
@@ -436,14 +452,57 @@ describe('a redraw the user asked for is not the five-second one', () => {
         combatLevelPanel.show();
         train(5, { melee: 200000 });
 
-        combatLevelPanel.ttl = { skill: 'defense', level: 151 };
-        combatLevelPanel.assigned.focus = 'defense';
+        select({ skill: 'defense', level: 151, focus: 'defense' });
         combatLevelPanel._render();
 
         const selector = [...combatLevelPanel.panel.querySelectorAll('div')].find((div) =>
             div.textContent.startsWith('Target Selector')
         );
         expect(selector.textContent).not.toContain('—');
+    });
+});
+
+describe('selectedTarget, which is what the overlay row reads', () => {
+    test('nothing chosen is nothing to say, not a default dressed up as a choice', () => {
+        // The Time to Level row must go on answering its own question rather
+        // than this one until a target is actually picked
+        expect(selectedTarget()).toBeNull();
+    });
+
+    test('it answers with the panel closed, since that is when the row is read', () => {
+        select({ skill: 'defense', level: 153 });
+        expect(combatLevelPanel.panel).toBeNull();
+
+        const chosen = selectedTarget();
+        expect(chosen.name).toBe('Defense');
+        expect(chosen.level).toBe(120);
+        expect(chosen.target).toBe(153);
+    });
+
+    test('no level chosen means the next one', () => {
+        select({ skill: 'ranged' });
+        expect(selectedTarget().target).toBe(108);
+    });
+
+    test('the time comes from the projected rate, so it matches the panel', () => {
+        combatLevelPanel.show();
+        grant('melee', 1000000);
+        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        combatLevelPanel._render();
+
+        select({ skill: 'defense', focus: 'defense' });
+        expect(selectedTarget().perHour).toBeCloseTo(12000000, 0);
+        expect(selectedTarget().seconds).toBeGreaterThan(0);
+    });
+
+    test('a skill nothing is pointed at has no time rather than a made-up one', () => {
+        select({ skill: 'magic' });
+        expect(selectedTarget().seconds).toBeNull();
+    });
+
+    test('a skill the game has not sent is no answer rather than a crash', () => {
+        select({ skill: 'nonsense' });
+        expect(selectedTarget()).toBeNull();
     });
 });
 
@@ -487,7 +546,7 @@ describe('Primary and Focus point the measured shares somewhere else', () => {
         expect(melee.perHour).toBeCloseTo(12000000, 0);
         expect(ranged.perHour).toBeNull();
 
-        combatLevelPanel.assigned.focus = 'ranged';
+        select({ focus: 'ranged' });
         combatLevelPanel._render();
 
         // Ranged is not gaining anything, but under this assignment it would be

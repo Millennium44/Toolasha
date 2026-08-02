@@ -46,6 +46,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -65,7 +66,8 @@ import {
 } from '../../utils/combat-level.js';
 import { beginSession, sessionProgress, sessionIsStale } from '../../utils/exp-session.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
-import { experiencePerHour, skillName } from '../../utils/skill-progress.js';
+import { skillName } from '../../utils/skill-progress.js';
+import { createSkillHistory } from '../../utils/skill-history.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 
 const PANEL_ID = 'toolasha-combat-level-panel';
@@ -110,9 +112,20 @@ const SKILL_COLORS = {
     magic: '#b47ae8',
 };
 
-/** skillHrid → [{t, xp}], oldest first */
-const history = new Map();
-let lastSampleAt = 0;
+/**
+ * This panel's own record of how fast each skill is going up.
+ *
+ * Its own rather than shared with the Time to Level row: neither should be able
+ * to reset the other's measurement by being opened or closed. The awkward parts
+ * — a clock that goes backwards, a reading from a different character — are in
+ * `utils/skill-history.js`, once, rather than in a loop copied into both.
+ */
+const history = createSkillHistory({ windowMs: WINDOW_MS, sampleMs: SAMPLE_MS });
+
+/** Take a reading of every skill, if one is due */
+function sample() {
+    history.sample(dataManager.getSkills?.());
+}
 
 /**
  * The session, kept at module scope so closing the panel does not reset it.
@@ -122,44 +135,6 @@ let lastSampleAt = 0;
  * been at this — is thrown away by tidying up.
  */
 let session = null;
-
-/**
- * Take a reading of every combat skill, if one is due.
- *
- * Kept here rather than shared with the Time to Level row because the two want
- * different windows and neither should be able to reset the other's history by
- * being opened or closed.
- */
-function sample() {
-    const now = Date.now();
-
-    // A clock that has gone backwards — a correction, a resume from sleep —
-    // leaves readings stamped in the future. Those cannot be measured against
-    // anything: the window between them is negative, so every rate reads as
-    // unmeasurable until real time catches up with the stale stamps. Starting
-    // again costs one window and is the only answer that recovers.
-    if (now < lastSampleAt) history.clear();
-    else if (now - lastSampleAt < SAMPLE_MS) return;
-
-    lastSampleAt = now;
-
-    for (const skill of dataManager.getSkills?.() || []) {
-        if (!skill?.skillHrid || !Number.isFinite(skill.experience)) continue;
-
-        let readings = history.get(skill.skillHrid) || [];
-
-        // Experience does not go down, so a reading below the last one is a
-        // different character — this script's own author plays a test server
-        // alongside a live one. Keeping the old readings would measure the gap
-        // between two characters as a rate, which is a large negative number
-        // dressed up as a measurement.
-        if (readings.length && skill.experience < readings[readings.length - 1].xp) readings = [];
-
-        readings.push({ t: now, xp: skill.experience });
-        while (readings.length > 2 && readings[1].t < now - WINDOW_MS) readings.shift();
-        history.set(skill.skillHrid, readings);
-    }
-}
 
 /**
  * The current character's combat skills, levels and measured rates.
@@ -186,8 +161,7 @@ export function combatSkillState() {
 
         levels[name] = skill.level;
 
-        const readings = history.get(hrid) || [];
-        const perHour = experiencePerHour(readings[0], readings[readings.length - 1]);
+        const perHour = history.rateFor(hrid);
         if (perHour) totalPerHour += perHour;
 
         skills.push({
@@ -208,6 +182,82 @@ export function combatSkillState() {
     for (const skill of skills) skill.share = totalPerHour > 0 ? (skill.perHour || 0) / totalPerHour : 0;
 
     return { levels, skills, table, totalPerHour };
+}
+
+/**
+ * What the Target Selector is pointed at, and where the shares are assigned.
+ *
+ * At module scope rather than on the panel because the Time to Level overlay row
+ * reads them, and that row is on screen while the panel is closed — which is
+ * most of the time. State that only exists while a panel is open cannot drive
+ * something that outlives the panel.
+ *
+ * Persisted, because a tile is a thing you set once and then read for a week. A
+ * choice that resets on every page load is a choice you stop making.
+ */
+const selection = { skill: null, level: null, primary: null, focus: null };
+const SELECTION_KEY = 'combatLevelSelection';
+
+// Fire and forget: the panel opens on today's defaults and settles a moment
+// later, which is the same trade `restoreGeometry` makes for the same reason
+storage
+    .getJSON(SELECTION_KEY, 'settings', null)
+    .then((saved) => saved && Object.assign(selection, saved))
+    .catch((error) => console.error('[CombatLevel] Loading the saved target failed:', error));
+
+/**
+ * What the Target Selector and the share assignment are set to.
+ * @returns {{skill: string|null, level: number|null, primary: string|null, focus: string|null}}
+ */
+export function currentSelection() {
+    return { ...selection };
+}
+
+/**
+ * Change part of the selection, and remember it.
+ * @param {Object} change - Any of `skill`, `level`, `primary`, `focus`
+ */
+export function select(change) {
+    Object.assign(selection, change);
+    storage
+        .setJSON(SELECTION_KEY, { ...selection }, 'settings')
+        .catch((error) => console.error('[CombatLevel] Saving the target failed:', error));
+}
+
+/** Forget the selection, so the defaults apply again. Exported for tests. */
+export function clearSelection() {
+    Object.assign(selection, { skill: null, level: null, primary: null, focus: null });
+}
+
+/**
+ * The chosen skill and target, resolved against the character.
+ *
+ * Returns null when nothing has been chosen, which is not the same as an error —
+ * it means the Time to Level row should go on answering its own question rather
+ * than this one.
+ *
+ * @returns {{name: string, hrid: string, level: number, target: number,
+ *   perHour: number|undefined, seconds: number|null}|null}
+ */
+export function selectedTarget() {
+    if (!selection.skill) return null;
+
+    sample();
+    const state = combatSkillState();
+    const skill = state?.skills.find((entry) => entry.name === selection.skill);
+    if (!skill) return null;
+
+    const target = selection.level ?? skill.level + 1;
+    const perHour = projectedRates(state, selection).rates[skill.name];
+
+    return {
+        name: skillName(skill.hrid),
+        hrid: skill.hrid,
+        level: skill.level,
+        target,
+        perHour,
+        seconds: timeToTargetLevel({ experience: skill.experience, target, table: state.table, perHour }),
+    };
 }
 
 /**
@@ -335,10 +385,6 @@ class CombatLevelPanel {
         this.targets = {};
         /** The two ends of the experience lookup */
         this.lookup = { from: null, to: null };
-        /** The standalone selector at the top */
-        this.ttl = { skill: null, level: null };
-        /** Which skills the measured shares are being applied to */
-        this.assigned = { primary: null, focus: null };
         /** Sections folded away */
         this.collapsed = {};
     }
@@ -512,7 +558,7 @@ class CombatLevelPanel {
 
         // Computed once and handed down, so the Target Selector and the table
         // cannot disagree about what a skill would be gaining
-        const projected = projectedRates(state, this.assigned);
+        const projected = projectedRates(state, selection);
 
         const sections = [
             () => this._sessionBar(state),
@@ -604,21 +650,20 @@ class CombatLevelPanel {
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
-        const chosen = this.ttl.skill ?? busiest(state)?.name ?? state.skills[0].name;
+        const chosen = selection.skill ?? busiest(state)?.name ?? state.skills[0].name;
         const skill = state.skills.find((entry) => entry.name === chosen) || state.skills[0];
-        const target = this.ttl.level ?? skill.level + 1;
+        const target = selection.level ?? skill.level + 1;
 
         const picker = this._select(state, chosen, 'ttl-skill', (value) => {
-            this.ttl.skill = value;
             // The level was for the old skill, so it is not carried across —
             // "level 135" means something different for a skill at 106
-            this.ttl.level = null;
+            select({ skill: value, level: null });
             this._render();
         });
         picker.style.width = '128px';
 
         const level = this._number(target, 'ttl-level', (value) => {
-            this.ttl.level = value;
+            select({ skill: chosen, level: value });
             this._render();
         });
         level.style.width = '68px';
@@ -907,13 +952,13 @@ class CombatLevelPanel {
         } else {
             card.appendChild(
                 this._assignment('Primary', primary, measuredPrimary, state, 'assign-primary', (value) => {
-                    this.assigned.primary = value;
+                    select({ primary: value });
                     this._render();
                 })
             );
             card.appendChild(
                 this._assignment('Focus', focus, measuredFocus, state, 'assign-focus', (value) => {
-                    this.assigned.focus = value;
+                    select({ focus: value });
                     this._render();
                 })
             );
