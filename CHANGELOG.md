@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Ability Books panel loses its labels, and tiles stop sitting an icon low
+
+- **The heading row and the ability-name column are gone.** They were what made the panel look cramped beside BRead: the labels were the widest thing in three columns — a third of the width spent writing "Books" above a column of book counts — and the name was ellipsed to `Pen…` at any width that left room for the figures. The book's icon is the name, as it is in BRead, with the ability named in its tooltip. Every cell keeps a tooltip, so nothing that was labelled is now unexplained.
+- **The figures are the size of figures.** Level and books at 17px, the icon at 28, and rows breathing at 7px rather than 2. Books get their own orange: side by side with the cost in gold, two figures in one colour read as one figure.
+- **An icon on an overlay tile no longer sits low.** Text on a line is aligned on its baseline, which is what makes a row of figures read as a row — but an icon is a box with no baseline, so it sat below the numbers and dragged the line's height about. A line carrying an icon is centred instead, aligning the box and the numbers on the only thing they share.
+
 ### The Ability Books panel is BRead's panel now
 
 - **BRead's columns, which are not the ones it had**: level, book, **experience still owed with the rate it is coming in at**, **time to get there**, books, cost, and a target level **per ability**. The old table had books and cost against a single shared target, which cannot answer the question anybody has — an ability at 41 and one at 70 are different purchases, and "how long" was not on the table at all.

@@ -74,14 +74,26 @@ afterEach(() => {
 });
 
 const text = () => abilityBookPanel.panel.textContent;
+
+/**
+ * Every tooltip in the panel, joined.
+ *
+ * The rows name abilities by their book's icon rather than in words, so what
+ * the panel says about an ability is in a `title` and not in its text.
+ */
+const tooltips = () =>
+    [...abilityBookPanel.panel.querySelectorAll('[title]')].map((el) => el.getAttribute('title')).join(' | ');
+
 const FAILED = 'could not be drawn';
 
 describe('the panel renders', () => {
     test('every section draws, and none of them fails', () => {
         abilityBookPanel.show();
 
-        expect(text()).toContain('Poke');
-        expect(text()).toContain('Smack');
+        // A row per ability, and each still says which ability it is — the icon
+        // carries the name now, so the name is in a tooltip rather than in text
+        expect(tooltips()).toContain('Poke');
+        expect(tooltips()).toContain('Smack');
         expect(text()).not.toContain(FAILED);
     });
 
@@ -151,7 +163,7 @@ describe('the rows', () => {
         expect(rare.booksToNext).toBe(1);
 
         abilityBookPanel.show();
-        expect(text()).toContain('Rare Move');
+        expect(tooltips()).toContain('Rare Move — not learned');
     });
 
     test('and a learned ability pays only for the experience', () => {

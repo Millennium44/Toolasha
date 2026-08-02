@@ -130,9 +130,16 @@ export const ROW_COLORS = {
  * @param {Segment[]} segments - The line
  */
 export function drawLine(host, segments) {
+    // Text on a line together is aligned on its baseline, which is what makes a
+    // row of figures read as a row. An icon has no baseline: it is a box, and
+    // against baselined text it sits low and drags the line's height with it.
+    // So a line carrying one is centred instead — the box and the numbers are
+    // then aligned on the only thing they share, their middles.
+    const hasIcon = segments.some((segment) => segment?.icon);
+
     Object.assign(host.style, {
         display: 'flex',
-        alignItems: 'baseline',
+        alignItems: hasIcon ? 'center' : 'baseline',
         gap: '5px',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
@@ -145,9 +152,6 @@ export function drawLine(host, segments) {
         // costs, which is the only reason a forty-pixel tile can name one at all
         if (segment.icon) {
             const icon = itemIcon(segment.icon, segment.size || 16);
-            // The line is baseline-aligned for text; an icon has no baseline to
-            // sit on and drops below the numbers if it is left to find one
-            icon.style.alignSelf = 'center';
             if (segment.push) icon.style.marginLeft = 'auto';
             host.appendChild(icon);
             continue;
