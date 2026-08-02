@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ rows: {}, party: null }));
+const game = vi.hoisted(() => ({ rows: {}, party: null, options: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (key, fallback) => fallback, COLOR_TEXT_PRIMARY: '#fff' },
@@ -28,6 +28,7 @@ vi.mock('../../utils/overlay-rows.js', () => ({
     registerRow: (definition) => {
         game.rows[definition.key] = definition;
     },
+    rowOption: (key) => Boolean(game.options[key]),
 }));
 
 const combatDropLuck = (await import('./combat-drop-luck.js')).default;
@@ -44,6 +45,7 @@ function draw(key) {
 }
 
 beforeEach(() => {
+    game.options = {};
     combatDropLuck.lastResult = { percentile: 0.347, income: 44_870_000, expected: 47_880_000, battles: 900 };
     game.party = {
         battles: 900,
@@ -112,5 +114,53 @@ describe('the Over Expected tile', () => {
     test('a player owed nothing reads as unmeasured rather than as par', () => {
         game.party.players[0].percent = null;
         expect(draw('overExpected')).toContain('—');
+    });
+});
+
+describe('the only-numbers options', () => {
+    test('Luck drops the name and keeps the figure', () => {
+        // On a tile shrunk to sit beside five others, the name is the part you
+        // already know
+        game.options.luckOnlyNumbers = true;
+        const text = draw('luck');
+
+        expect(text).not.toContain('Millennium44');
+        expect(text).toContain('34.7%');
+    });
+
+    test('Over Expected drops the names and the TOTAL label, not the total', () => {
+        game.options.expectedOnlyNumbers = true;
+        const text = draw('overExpected');
+
+        expect(text).not.toContain('Millennium44');
+        expect(text).not.toContain('TOTAL');
+        // Two rows still: the player and the party
+        expect(text.match(/-6\.3%/g)).toHaveLength(2);
+    });
+
+    test('Over Expected narrowed to one player drops the total as well', () => {
+        // A total of one row is that row again, printed twice
+        game.party.players.push({ name: 'Second', isCurrentPlayer: false, percent: 40 });
+        game.options.expectedOnlyPlayer = true;
+        const text = draw('overExpected');
+
+        expect(text).toContain('Millennium44');
+        expect(text).not.toContain('Second');
+        expect(text).not.toContain('TOTAL');
+    });
+
+    test('both together leave the figures alone', () => {
+        game.options.expectedOnlyPlayer = true;
+        game.options.expectedOnlyNumbers = true;
+        const text = draw('overExpected');
+
+        expect(text).toBe('-6.3%');
+    });
+
+    test('with the options off nothing changes', () => {
+        const text = draw('overExpected');
+
+        expect(text).toContain('Millennium44');
+        expect(text).toContain('TOTAL');
     });
 });

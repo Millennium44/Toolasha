@@ -135,3 +135,23 @@ export function moveRow(order, key, delta) {
     [next[index], next[target]] = [next[target], next[index]];
     return next;
 }
+
+/**
+ * A tile's display option, as set in the overlay's own settings.
+ *
+ * Some tiles can be drawn more than one way — with or without the names beside
+ * the figures, for one player or for the party — and OPanel keeps those choices
+ * beside the row list rather than in a settings dialog, which is where somebody
+ * arranging an overlay is already looking.
+ *
+ * Read through the global rather than imported: the panel that owns these lives
+ * in the UI bundle and the rows that read them are scattered across the others,
+ * so importing it would put a second copy of the panel in every one of them.
+ *
+ * @param {string} key - The option, e.g. `luckOnlyNumbers`
+ * @returns {boolean} False when the panel is not up, which is the quiet default
+ */
+export function rowOption(key) {
+    if (typeof window === 'undefined') return false;
+    return Boolean(window.Toolasha?.UI?.overlayPanel?.settings?.[key]);
+}

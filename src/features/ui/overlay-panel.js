@@ -490,36 +490,60 @@ class OverlayPanel {
     }
 
     /** Snap, Autogrid and Reset — everything that acts on the layout as a whole */
+    /**
+     * One checkbox bound to a layout setting.
+     *
+     * @param {string} label - What it says
+     * @param {string} key - The setting it sets
+     * @param {Object} [options] - `{on, title}` — `on` reads the current value
+     * @returns {HTMLElement}
+     */
+    _optionBox(label, key, { on, title } = {}) {
+        const wrap = document.createElement('label');
+        Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
+        if (title) wrap.title = title;
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = on ? on(this.settings) : Boolean(this.settings[key]);
+        box.style.cursor = 'pointer';
+        box.addEventListener('change', () => {
+            this.settings[key] = box.checked;
+            this._save();
+            this._renderBody();
+        });
+
+        wrap.append(box, document.createTextNode(label));
+        return wrap;
+    }
+
     _layoutControls() {
         const controls = document.createElement('div');
         Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
 
-        const snapLabel = document.createElement('label');
-        Object.assign(snapLabel.style, { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
-        const snapBox = document.createElement('input');
-        snapBox.type = 'checkbox';
-        snapBox.checked = this.settings.snapToGrid;
-        snapBox.style.cursor = 'pointer';
-        snapBox.addEventListener('change', () => {
-            this.settings.snapToGrid = snapBox.checked;
-            this._save();
-        });
-        snapLabel.append(snapBox, document.createTextNode(`Snap to ${GRID}px grid`));
-        controls.appendChild(snapLabel);
+        controls.appendChild(this._optionBox(`Snap to ${GRID}px grid`, 'snapToGrid'));
+        controls.appendChild(
+            this._optionBox('Separators', 'separators', { on: (settings) => settings.separators !== false })
+        );
 
-        const ruleLabel = document.createElement('label');
-        Object.assign(ruleLabel.style, { display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: 'pointer' });
-        const ruleBox = document.createElement('input');
-        ruleBox.type = 'checkbox';
-        ruleBox.checked = this.settings.separators !== false;
-        ruleBox.style.cursor = 'pointer';
-        ruleBox.addEventListener('change', () => {
-            this.settings.separators = ruleBox.checked;
-            this._save();
-            this._renderBody();
-        });
-        ruleLabel.append(ruleBox, document.createTextNode('Separators'));
-        controls.appendChild(ruleLabel);
+        // How the luck tiles are drawn, kept beside the row list as OPanel
+        // keeps them — somebody arranging an overlay is already looking here,
+        // and would not think to open a settings dialog for it
+        controls.appendChild(
+            this._optionBox('Expected: only numbers', 'expectedOnlyNumbers', {
+                title: 'Drop the names from Over Expected, leaving the percentages.',
+            })
+        );
+        controls.appendChild(
+            this._optionBox('Expected: only you', 'expectedOnlyPlayer', {
+                title: 'Show only your own row in Over Expected, without the party or the total.',
+            })
+        );
+        controls.appendChild(
+            this._optionBox('Luck: only numbers', 'luckOnlyNumbers', {
+                title: 'Drop the name from Drop Luck, leaving the percentage.',
+            })
+        );
 
         const textSize = document.createElement('div');
         Object.assign(textSize.style, { display: 'inline-flex', alignItems: 'center', gap: '4px' });

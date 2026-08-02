@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Only-numbers options for the luck tiles
+
+Three checkboxes beside the row list in the overlay's settings, where OPanel keeps the same ones — somebody arranging an overlay is already looking there and would not think to open a settings dialog for it.
+
+- **Luck: only numbers** and **Expected: only numbers** drop the names and leave the figures. On a tile narrowed to sit beside five others, the name is the part you already know.
+- **Expected: only you** shows your row alone. The total goes with it: a total of one row is that row again, printed twice.
+- The checkboxes share one builder now rather than a dozen lines each, so the next one is three lines.
+
 ### The DPS and luck tiles, in OPanel's shapes
 
 - **DPS reads to a tenth.** OPanel writes `347.6` rather than `348`, and at these magnitudes the tenth is the figure people watch move as they change a rotation. Past ten thousand it is noise on a number that no longer fits, so the compact form takes over there.

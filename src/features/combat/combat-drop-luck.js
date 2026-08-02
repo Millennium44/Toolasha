@@ -39,7 +39,7 @@ import { sessionLuck } from '../../utils/drop-luck.js';
 import { buildCombatSession, lootValue, sessionMean } from '../../utils/combat-drop-model.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { partyLuck } from './party-luck.js';
-import { registerRow } from '../../utils/overlay-rows.js';
+import { registerRow, rowOption } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { row, rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 
@@ -366,19 +366,25 @@ registerRow({
         const party = partyLuck(combatDropLuck.context);
         const me = party.players.find((player) => player.isCurrentPlayer) || party.players[0];
 
-        row(container, [
-            { text: me?.name || 'Luck', color: ROW_COLORS.gold, ellipsis: true },
-            {
-                text: `${percent.toFixed(1)}%`,
-                bold: true,
-                push: true,
-                color: {
-                    lucky: ROW_COLORS.good,
-                    unlucky: ROW_COLORS.bad,
-                    normal: ROW_COLORS.neutral,
-                }[tone],
-            },
-        ]);
+        const figure = {
+            text: `${percent.toFixed(1)}%`,
+            bold: true,
+            push: true,
+            color: {
+                lucky: ROW_COLORS.good,
+                unlucky: ROW_COLORS.bad,
+                normal: ROW_COLORS.neutral,
+            }[tone],
+        };
+
+        // Only Numbers, as OPanel has it: on a tile shrunk to fit beside five
+        // others the name is the part you already know
+        row(
+            container,
+            rowOption('luckOnlyNumbers')
+                ? [figure]
+                : [{ text: me?.name || 'Luck', color: ROW_COLORS.gold, ellipsis: true }, figure]
+        );
         container.title = `${formatOrdinal(result.percentile)} percentile — ${text}`;
     },
 });
@@ -407,26 +413,34 @@ registerRow({
         // the tooltip: they are what makes the figure meaningful, and they are
         // also three times as wide as the tile.
         const party = partyLuck(combatDropLuck.context);
-        const lines = party.players.map((player) => {
+        const onlyNumbers = rowOption('expectedOnlyNumbers');
+        const onlyPlayer = rowOption('expectedOnlyPlayer');
+
+        const shown = onlyPlayer ? party.players.filter((player) => player.isCurrentPlayer) : party.players;
+        const lines = shown.map((player) => {
             const each = signedPercent(player.percent ?? 0);
+            const figure = { text: player.percent === null ? '—' : each.text, color: each.color, push: true };
+            if (onlyNumbers) return [figure];
+
             return [
                 {
                     text: player.name,
                     color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
                     ellipsis: true,
                 },
-                { text: player.percent === null ? '—' : each.text, color: each.color, push: true },
+                figure,
             ];
         });
 
         // The party against the party's expectation, not an average of the
         // percentages — an average weights somebody who looted one item the
-        // same as somebody who looted a hundred
-        const total = party.total ? signedPercent(party.total.percent ?? 0) : verdict;
-        lines.push([
-            { text: 'TOTAL', color: ROW_COLORS.neutral, bold: true },
-            { text: total.text, color: total.color, bold: true, push: true },
-        ]);
+        // same as somebody who looted a hundred. Dropped when the tile has been
+        // narrowed to one player: a total of one row is that row again.
+        if (!onlyPlayer) {
+            const total = party.total ? signedPercent(party.total.percent ?? 0) : verdict;
+            const figure = { text: total.text, color: total.color, bold: true, push: true };
+            lines.push(onlyNumbers ? [figure] : [{ text: 'TOTAL', color: ROW_COLORS.neutral, bold: true }, figure]);
+        }
 
         rows(container, lines);
         container.title =
