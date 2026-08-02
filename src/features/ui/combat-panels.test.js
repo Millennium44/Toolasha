@@ -65,9 +65,9 @@ vi.mock('../../features/combat/damage-tracker.js', () => ({
     },
 }));
 
-const { dpsPanel, deathsPanel, dropLuckPanel, profitPanel } = await import('./combat-panels.js');
+const { dpsPanel, deathsPanel, profitPanel } = await import('./combat-panels.js');
 
-const panels = () => [dpsPanel, deathsPanel, dropLuckPanel, profitPanel];
+const panels = () => [dpsPanel, deathsPanel, profitPanel];
 const FAILED = 'could not be drawn';
 
 beforeEach(() => {
@@ -230,18 +230,6 @@ describe('what the panels add over their tiles', () => {
 
         expect(text).toContain('Pay the Tax');
         expect(text).toContain('25 bags');
-    });
-
-    test('Drop Luck says how many coins the verdict is about', () => {
-        // A percentile alone cannot distinguish a fortune from a rounding error
-        dropLuckPanel.show();
-        expect(dropLuckPanel.panel.textContent).toContain('+1.0M');
-    });
-
-    test('a shortfall reads as a shortfall', () => {
-        state.luck = { ...state.luck, income: 3_000_000 };
-        dropLuckPanel.show();
-        expect(dropLuckPanel.panel.textContent).toContain('-1.0M');
     });
 
     test('Profit shows what patience is worth', () => {

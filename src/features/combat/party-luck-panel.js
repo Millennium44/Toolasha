@@ -32,7 +32,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import combatDropLuck from './combat-drop-luck.js';
+import combatDropLuck, { formatOrdinal, describeLuck } from './combat-drop-luck.js';
 import { partyLuck } from './party-luck.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
@@ -106,6 +106,49 @@ function drawSessionStats(body, party) {
         ),
         panelLine('Difficulty tier', String(context?.difficultyTier ?? 0))
     );
+}
+
+/**
+ * The verdict the Drop Luck tile carries, in words.
+ *
+ * It used to have a panel of its own. Two panels split one question — a
+ * percentile in one and the item table that explains it in the other — so the
+ * answer was always in the half you did not open. It is a card here.
+ *
+ * @param {HTMLElement} body - Where it goes
+ */
+function drawVerdict(body) {
+    const result = combatDropLuck.lastResult;
+    if (!result) return;
+
+    // `describeLuck` returns `{text, tone}`; the object itself reaching a line
+    // is how this last went wrong
+    const verdict = describeLuck(result.percentile);
+    const card = panelCard(body, 'Verdict', ACCENT);
+    const difference = (result.income || 0) - (result.expected || 0);
+
+    card.append(
+        panelLine('Percentile', formatOrdinal(result.percentile), ROW_COLORS.accent),
+        panelLine(
+            'In words',
+            verdict.text,
+            { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[verdict.tone]
+        ),
+        // The percentile alone cannot say whether the verdict is about a
+        // fortune or a rounding error
+        panelLine(
+            'Difference',
+            `${difference >= 0 ? '+' : ''}${formatKMB(difference)}`,
+            difference >= 0 ? ROW_COLORS.good : ROW_COLORS.bad,
+            'How many coins the verdict is actually about.'
+        )
+    );
+
+    if (result.hasBonuses) {
+        card.appendChild(
+            panelNote('Drop-rate bonuses were included in the expectation, so this is luck against your own setup.')
+        );
+    }
 }
 
 /**
@@ -230,6 +273,7 @@ export const partyLuckPanel = createPanel({
             return;
         }
 
+        drawVerdict(body);
         drawSessionStats(body, party);
         drawRevenue(body, party);
         for (const player of party.players) drawPlayerTable(body, player);

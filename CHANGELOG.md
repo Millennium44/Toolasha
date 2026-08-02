@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The enhancement cost is your bench, and one luck panel instead of two
+
+- **It was costing the run at somebody else's bench.** The parameters came from `getEnhancingParams`, which hands back the enhancement simulator's _manual_ settings unless auto-detect happens to be switched on — and those default to a fully kitted enhancer: celestial tool at +13, every accessory at +10. So the quote was what a fully geared player would pay, which is not a number you can save towards. It reads the character's own gear, skill, house and teas now.
+- **"expected cost at the anvil" is "Enhancement Cost"**, in the card and in the picker preview.
+- **The Drop Luck panel is gone, and both luck tiles open Party Luck.** Splitting one question across two panels — a percentile in one, the item table that explains it in the other — meant the answer was always in the half you had not opened. The verdict, the percentile and the coins it is about are a card at the top of Party Luck, so nothing is lost and the drop that caused it is directly underneath.
+
 ### Fixed: the cape costing never fired, a layout came back rearranged, and the game drew over the panel
 
 - **The anvil path was gated on the wrong question.** It asked whether the item was untradable, and a cape is not — capes are perfectly tradable, they are simply never listed above +0. So the check never passed and a +7 cape read "nobody is selling this one" exactly as before. It now asks the question that actually matters: is anybody selling **this level**. If not, and you own one, the cost is the run from the level you already hold.

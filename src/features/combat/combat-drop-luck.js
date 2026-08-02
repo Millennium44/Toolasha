@@ -468,7 +468,10 @@ registerRow({
             `${result.battles} battles were owed ${Math.round(result.expected).toLocaleString()} coins on average.\n` +
             'Drops with no market price are left out of both sides.';
     },
-    onOpen: () => window.Toolasha?.UI?.dropLuckPanel?.toggle(),
+    // Both luck tiles open the same panel. Two panels split one question — a
+    // percentile in one and the item table that explains it in the other — and
+    // the answer is always in the half you did not open.
+    onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
 });
 
 export default combatDropLuck;

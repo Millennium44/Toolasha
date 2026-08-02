@@ -622,7 +622,10 @@ describe('targets nobody is selling at that level', () => {
                         protectFrom > 0 ? { attempts: 40, protectionCount: 5 } : { attempts: 200, protectionCount: 0 },
                 },
                 enhancementConfig: {
-                    getEnhancingParams: () => ({
+                    // The character's own bench. `getEnhancingParams` would
+                    // hand back the simulator's manual settings, which default
+                    // to a fully kitted enhancer nobody here owns.
+                    getAutoDetectedParams: () => ({
                         enhancingLevel: 100,
                         toolBonus: 10,
                         teas: { blessed: false },
@@ -713,8 +716,20 @@ describe('targets nobody is selling at that level', () => {
         equipmentSavingsPanel.show();
 
         expect(text()).toContain('Not sold at this level');
+        expect(text()).toContain('Enhancement Cost');
         expect(text()).toContain('Enhance +5');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('it costs the run at your own bench, not the simulator settings', () => {
+        // The simulator's manual defaults are a fully kitted enhancer. Costing
+        // a cape at somebody else's bench quotes a run you cannot make.
+        window.Toolasha.Utils.enhancementConfig.getEnhancingParams = () => {
+            throw new Error('the simulator settings are not this character');
+        };
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].cost).toBe(40 * 2 * 1_000_000 + 5 * 2_000_000);
     });
 
     test('without the calculator it is unpriced rather than wrong', () => {

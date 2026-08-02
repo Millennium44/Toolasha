@@ -26,7 +26,6 @@
 
 import config from '../../core/config.js';
 import combatDPS from '../../features/combat/combat-dps.js';
-import combatDropLuck, { formatOrdinal, describeLuck } from '../../features/combat/combat-drop-luck.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../../features/combat-stats/combat-stats-calculator.js';
 import {
@@ -455,54 +454,6 @@ export const deathsPanel = new CombatPanel({
         perPlayer.appendChild(
             note('The game reports that a death happened, not what caused it, so these are counts rather than causes.')
         );
-    },
-});
-
-export const dropLuckPanel = new CombatPanel({
-    id: 'dropLuckPanel',
-    title: 'Drop Luck',
-    size: { width: 400, height: 300 },
-    draw: (body) => {
-        const result = combatDropLuck.lastResult;
-        if (!result) {
-            body.appendChild(note('No luck reading yet — it is computed when you return from combat.'));
-            return;
-        }
-
-        // `describeLuck` returns `{text, tone}`, and the whole object reached the
-        // line as `[object Object]`
-        const verdict = describeLuck(result.percentile);
-        const heading = card(body, 'Verdict');
-        heading.append(
-            line('Percentile', formatOrdinal(result.percentile), ROW_COLORS.accent),
-            line(
-                'In words',
-                verdict.text,
-                { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: COLORS.text }[verdict.tone]
-            )
-        );
-
-        const numbers = card(body, 'What it is about');
-        const difference = (result.income || 0) - (result.expected || 0);
-        numbers.append(
-            line('Income', formatKMB(result.income), ROW_COLORS.good),
-            line('Expected', formatKMB(result.expected), COLORS.text),
-            // The percentile alone cannot say whether the verdict is about a
-            // fortune or a rounding error
-            line(
-                'Difference',
-                `${difference >= 0 ? '+' : ''}${formatKMB(difference)}`,
-                difference >= 0 ? ROW_COLORS.good : ROW_COLORS.bad,
-                'How many coins the verdict is actually about.'
-            ),
-            line('Battles', formatWithSeparator(result.battles), COLORS.text)
-        );
-
-        if (result.hasBonuses) {
-            body.appendChild(
-                note('Drop-rate bonuses were included in the expectation, so this is luck against your own setup.')
-            );
-        }
     },
 });
 
