@@ -225,6 +225,40 @@ export function busiest(state) {
 }
 
 /**
+ * What each skill would be gaining under a given assignment of the shares.
+ *
+ * The split between the two skills receiving experience is a property of the
+ * setup rather than of those skills — swap which style you attack with and the
+ * same proportions land somewhere else. So the shares are measured from whatever
+ * is actually gaining, and where they are pointed is the caller's to say.
+ *
+ * Only the two assigned skills get a rate. That is the model, not an oversight:
+ * under "what if I trained Defense instead", Melee would not be gaining either.
+ *
+ * @param {Object} state - From `combatSkillState`
+ * @param {{primary: string|null, focus: string|null}} [assigned] - Where to point them
+ * @returns {{rates: Object<string, number>, primary: string|null, focus: string|null,
+ *   measuredPrimary: Object|null, measuredFocus: Object|null}}
+ */
+export function projectedRates(state, assigned = {}) {
+    const gaining = (state?.skills || []).filter((skill) => skill.perHour).sort((a, b) => b.perHour - a.perHour);
+
+    const measuredFocus = gaining.find((skill) => OFFENSE_SKILLS.includes(skill.name)) || gaining[0] || null;
+    const measuredPrimary = gaining.find((skill) => skill !== measuredFocus) || null;
+
+    const focus = assigned.focus ?? measuredFocus?.name ?? null;
+    const primary = assigned.primary ?? measuredPrimary?.name ?? null;
+
+    const rates = {};
+    // Added rather than assigned, so pointing both shares at one skill gives it
+    // both rather than silently dropping the first
+    if (measuredPrimary && primary) rates[primary] = (rates[primary] || 0) + measuredPrimary.perHour;
+    if (measuredFocus && focus) rates[focus] = (rates[focus] || 0) + measuredFocus.perHour;
+
+    return { rates, primary, focus, measuredPrimary, measuredFocus };
+}
+
+/**
  * Start or restart the session against the current readings.
  * @param {Array<Object>} skills - From `combatSkillState`
  */
@@ -377,7 +411,7 @@ class CombatLevelPanel {
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 420, height: 240 });
 
         this._render();
-        this.refreshId = setInterval(() => this._render(), REFRESH_MS);
+        this.refreshId = setInterval(() => this._refresh(), REFRESH_MS);
     }
 
     _header() {
@@ -429,14 +463,31 @@ class CombatLevelPanel {
         return header;
     }
 
+    /**
+     * The five-second redraw.
+     *
+     * This is the one that must not pull the rug from under a field: rebuilding
+     * the body under a box being typed into takes the caret with it, and under
+     * an open dropdown closes it.
+     *
+     * A redraw the user asked for is a different thing, and must always happen —
+     * guarding both is what made changing a dropdown appear to do nothing. The
+     * `change` event fires while the dropdown still has focus, so the redraw it
+     * asked for was skipped, and the new figures only turned up whenever focus
+     * next moved and the clock came round.
+     */
+    _refresh() {
+        const active = document.activeElement;
+        if (this.panel?.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;
+        this._render();
+    }
+
     _render() {
         if (!this.bodyEl) return;
 
-        // Rebuilding the body under a field being used takes the caret or the
-        // open dropdown with it, so anything half-entered on the five-second
-        // boundary is lost
-        const active = document.activeElement;
-        if (this.panel.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'SELECT')) return;
+        // The control being used, so it can be handed its focus back after the
+        // rebuild that its own change asked for
+        const focused = document.activeElement?.dataset?.control;
 
         sample();
 
@@ -459,16 +510,22 @@ class CombatLevelPanel {
                 ? `Combat ${combatLevel(state.levels).level + 1}: ${shortDuration(next.seconds)}`
                 : '';
 
+        // Computed once and handed down, so the Target Selector and the table
+        // cannot disagree about what a skill would be gaining
+        const projected = projectedRates(state, this.assigned);
+
         const sections = [
             () => this._sessionBar(state),
-            () => this._targetSelector(state),
+            () => this._targetSelector(state, projected),
             () => this._combatBlock(state, next),
             ...state.skills.filter((entry) => entry.perHour).map((skill) => () => this._skillBlock(skill, state)),
-            () => this._timeToLevel(state),
+            () => this._timeToLevel(state, projected),
             () => this._charms(state),
             () => this._expLookup(state),
         ];
         for (const build of sections) this._section(build);
+
+        if (focused) this.bodyEl.querySelector(`[data-control="${focused}"]`)?.focus();
     }
 
     /**
@@ -537,10 +594,12 @@ class CombatLevelPanel {
 
     /**
      * Any skill, any level, how long.
+     *
      * @param {Object} state - From `combatSkillState`
+     * @param {Object} projected - From `projectedRates`
      * @returns {HTMLElement}
      */
-    _targetSelector(state) {
+    _targetSelector(state, projected) {
         const card = this._card('Target Selector');
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
@@ -549,7 +608,7 @@ class CombatLevelPanel {
         const skill = state.skills.find((entry) => entry.name === chosen) || state.skills[0];
         const target = this.ttl.level ?? skill.level + 1;
 
-        const picker = this._select(state, chosen, (value) => {
+        const picker = this._select(state, chosen, 'ttl-skill', (value) => {
             this.ttl.skill = value;
             // The level was for the old skill, so it is not carried across —
             // "level 135" means something different for a skill at 106
@@ -558,22 +617,22 @@ class CombatLevelPanel {
         });
         picker.style.width = '128px';
 
-        const level = this._number(target, (value) => {
+        const level = this._number(target, 'ttl-level', (value) => {
             this.ttl.level = value;
             this._render();
         });
         level.style.width = '68px';
 
-        const seconds = timeToTargetLevel({
-            experience: skill.experience,
-            target,
-            table: state.table,
-            perHour: skill.perHour,
-        });
+        // The projected rate rather than the measured one, so this agrees with
+        // the table below it. Picking a skill you are not training and being
+        // told "—" is not an answer when the table two inches down has one.
+        const perHour = projected.rates[skill.name];
+        const seconds = timeToTargetLevel({ experience: skill.experience, target, table: state.table, perHour });
+
         const answer = this._value(seconds === null ? '—' : shortDuration(seconds), COLORS.accent);
-        answer.title = skill.perHour
-            ? `At ${formatWithSeparator(Math.round(skill.perHour))} exp/hr.`
-            : 'No measured rate for this skill, so there is no honest time to give.';
+        answer.title = perHour
+            ? `At ${formatWithSeparator(Math.round(perHour))} exp/hr.`
+            : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
 
         line.append(picker, level, answer);
         card.appendChild(line);
@@ -833,42 +892,32 @@ class CombatLevelPanel {
      * would Ranged take" without spending a day finding out.
      *
      * @param {Object} state - From `combatSkillState`
+     * @param {Object} projected - From `projectedRates`
      * @returns {HTMLElement}
      */
-    _timeToLevel(state) {
+    _timeToLevel(state, projected) {
         const card = this._card();
         card.appendChild(this._foldHeading('Time to Level', 'ttl'));
         if (this.collapsed.ttl) return card;
 
-        const gaining = state.skills.filter((entry) => entry.perHour).sort((a, b) => b.perHour - a.perHour);
-        const measuredFocus = gaining.find((entry) => OFFENSE_SKILLS.includes(entry.name)) || gaining[0] || null;
-        const measuredPrimary = gaining.find((entry) => entry !== measuredFocus) || null;
+        const { measuredPrimary, measuredFocus, primary, focus } = projected;
 
-        const focus = this.assigned.focus ?? measuredFocus?.name ?? null;
-        const primary = this.assigned.primary ?? measuredPrimary?.name ?? null;
-
-        if (!gaining.length) {
+        if (!measuredPrimary && !measuredFocus) {
             card.appendChild(this._note('Nothing measurable yet — the split appears once experience is coming in.'));
         } else {
             card.appendChild(
-                this._assignment('Primary', primary, measuredPrimary, state, (value) => {
+                this._assignment('Primary', primary, measuredPrimary, state, 'assign-primary', (value) => {
                     this.assigned.primary = value;
                     this._render();
                 })
             );
             card.appendChild(
-                this._assignment('Focus', focus, measuredFocus, state, (value) => {
+                this._assignment('Focus', focus, measuredFocus, state, 'assign-focus', (value) => {
                     this.assigned.focus = value;
                     this._render();
                 })
             );
         }
-
-        // The rate each skill would see under the current assignment, rather
-        // than the rate it is seeing — that is the whole point of the selectors
-        const projected = {};
-        if (measuredPrimary && primary) projected[primary] = measuredPrimary.perHour;
-        if (measuredFocus && focus) projected[focus] = measuredFocus.perHour;
 
         const heading = this._tableRow();
         heading.style.color = COLORS.textDim;
@@ -884,7 +933,7 @@ class CombatLevelPanel {
 
         const doubled = combatLevel(state.levels).doubled;
         for (const skill of state.skills)
-            card.appendChild(this._skillRow(skill, state, doubled, projected[skill.name]));
+            card.appendChild(this._skillRow(skill, state, doubled, projected.rates[skill.name]));
         return card;
     }
 
@@ -895,10 +944,11 @@ class CombatLevelPanel {
      * @param {string|null} chosen - Which skill it is pointed at
      * @param {Object|null} measured - The skill the share was measured from
      * @param {Object} state - From `combatSkillState`
+     * @param {string} control - Stable id, so focus survives the redraw
      * @param {Function} onChange - Called with the new skill name
      * @returns {HTMLElement}
      */
-    _assignment(label, chosen, measured, state, onChange) {
+    _assignment(label, chosen, measured, state, control, onChange) {
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px', padding: '2px 0' });
 
@@ -916,7 +966,7 @@ class CombatLevelPanel {
             detail.append(this._value('not measured', COLORS.textDim));
         }
 
-        const picker = this._select(state, chosen, onChange);
+        const picker = this._select(state, chosen, control, onChange);
         picker.style.width = '128px';
         picker.title = `Apply this share to a different skill to see what training it instead would take.`;
 
@@ -963,7 +1013,7 @@ class CombatLevelPanel {
                 : `Each level is worth ${worth.toFixed(1)} combat levels right now.`;
 
         const target = this.targets[skill.name] ?? skill.level + 1;
-        const targetInput = this._number(target, (value) => {
+        const targetInput = this._number(target, `target-${skill.name}`, (value) => {
             this.targets[skill.name] = value;
             this._render();
         });
@@ -1118,13 +1168,13 @@ class CombatLevelPanel {
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
-        const fromInput = this._number(from, (value) => {
+        const fromInput = this._number(from, 'lookup-from', (value) => {
             this.lookup.from = value;
             this._render();
         });
         fromInput.style.width = '72px';
 
-        const toInput = this._number(to, (value) => {
+        const toInput = this._number(to, 'lookup-to', (value) => {
             this.lookup.to = value;
             this._render();
         });
@@ -1252,11 +1302,13 @@ class CombatLevelPanel {
      *
      * @param {Object} state - From `combatSkillState`
      * @param {string|null} chosen - Which is selected
+     * @param {string} control - Stable id, so focus survives the redraw
      * @param {Function} onChange - Called with the new skill name
      * @returns {HTMLElement}
      */
-    _select(state, chosen, onChange) {
+    _select(state, chosen, control, onChange) {
         const select = document.createElement('select');
+        select.dataset.control = control;
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.06)',
             border: `1px solid ${COLORS.hairline}`,
@@ -1287,14 +1339,16 @@ class CombatLevelPanel {
      * live render means being told about levels 1 and 12 on the way.
      *
      * @param {number} value - What it starts at
+     * @param {string} control - Stable id, so focus survives the redraw
      * @param {Function} onCommit - Called with the new number
      * @returns {HTMLElement}
      */
-    _number(value, onCommit) {
+    _number(value, control, onCommit) {
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '1';
         input.value = String(value);
+        input.dataset.control = control;
         Object.assign(input.style, {
             width: '100%',
             background: 'rgba(255, 255, 255, 0.06)',

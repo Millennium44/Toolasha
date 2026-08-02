@@ -48,7 +48,7 @@ vi.mock('../../utils/experience-parser.js', () => ({
     }),
 }));
 
-const { combatLevelPanel, combatSkillState, combatProgress, nextCombatLevel, busiest, resetSession } =
+const { combatLevelPanel, combatSkillState, combatProgress, nextCombatLevel, busiest, projectedRates, resetSession } =
     await import('./combat-level-panel.js');
 
 /** A plausible experience curve, since the real one is 200 rows of the game's */
@@ -95,6 +95,17 @@ function grant(name, amount) {
 
 const text = () => combatLevelPanel.panel.textContent;
 const FAILED = 'could not be drawn';
+
+/**
+ * The Time to Level line for one skill.
+ * @param {string} name - Skill label
+ * @returns {string} The row's text, cells run together
+ */
+function rowFor(name) {
+    const rows = [...combatLevelPanel.panel.querySelectorAll('div')];
+    const line = rows.find((div) => div.style.display === 'grid' && div.textContent.startsWith(name));
+    return line?.textContent ?? '';
+}
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -369,17 +380,98 @@ describe('the controls', () => {
 
         expect(text()).not.toContain('500,000');
     });
+});
 
-    test('a field being typed into is not rebuilt underneath', () => {
+describe('a redraw the user asked for is not the five-second one', () => {
+    /** Move the clock on and grant, so there are rates to look at */
+    function train(minutes, perMinute) {
+        for (const [name, amount] of Object.entries(perMinute)) grant(name, amount * minutes);
+        vi.setSystemTime(Date.now() + minutes * 60 * 1000);
+        combatLevelPanel._render();
+    }
+
+    test('changing a dropdown updates immediately, while it still has focus', () => {
+        // The bug: `change` fires with the dropdown still focused, and the
+        // refresh guard treats that as "someone is typing" and skips the
+        // redraw. So changing Focus appeared to do nothing until focus moved
+        // and the clock came round.
         combatLevelPanel.show();
-        const box = inputs()[1];
+        train(5, { melee: 200000, attack: 100000 });
+
+        const focus = combatLevelPanel.panel.querySelector('[data-control="assign-focus"]');
+        focus.focus();
+        focus.value = 'defense';
+        focus.dispatchEvent(new Event('change'));
+
+        expect(rowFor('Defense')).toContain('12,000,000');
+    });
+
+    test('the dropdown keeps focus across the redraw its own change caused', () => {
+        combatLevelPanel.show();
+        train(5, { melee: 200000, attack: 100000 });
+
+        const focus = combatLevelPanel.panel.querySelector('[data-control="assign-focus"]');
+        focus.focus();
+        focus.value = 'defense';
+        focus.dispatchEvent(new Event('change'));
+
+        expect(document.activeElement.dataset.control).toBe('assign-focus');
+    });
+
+    test('the five-second redraw still leaves a field being typed into alone', () => {
+        combatLevelPanel.show();
+        const box = combatLevelPanel.panel.querySelector('[data-control="target-stamina"]');
         box.focus();
         box.value = '14';
 
+        combatLevelPanel._refresh();
+
+        expect(combatLevelPanel.panel.querySelector('[data-control="target-stamina"]').value).toBe('14');
+    });
+
+    test('the Target Selector answers for a skill the shares have been pointed at', () => {
+        // It read the measured rate while the table read the projected one, so
+        // picking a skill you are not training said "—" with the answer two
+        // inches below it
+        combatLevelPanel.show();
+        train(5, { melee: 200000 });
+
+        combatLevelPanel.ttl = { skill: 'defense', level: 151 };
+        combatLevelPanel.assigned.focus = 'defense';
         combatLevelPanel._render();
 
-        // Half a level number survives the five-second refresh
-        expect(combatLevelPanel.panel.querySelectorAll('input[type="number"]')[1].value).toBe('14');
+        const selector = [...combatLevelPanel.panel.querySelectorAll('div')].find((div) =>
+            div.textContent.startsWith('Target Selector')
+        );
+        expect(selector.textContent).not.toContain('—');
+    });
+});
+
+describe('projectedRates', () => {
+    function measured(rates) {
+        return { skills: Object.entries(rates).map(([name, perHour]) => ({ name, perHour })) };
+    }
+
+    test('the offensive skill carries the focus share and the other the primary', () => {
+        const result = projectedRates(measured({ melee: 300, attack: 100 }));
+        expect(result.focus).toBe('melee');
+        expect(result.primary).toBe('attack');
+        expect(result.rates).toEqual({ melee: 300, attack: 100 });
+    });
+
+    test('pointing a share elsewhere moves the rate with it, and only it', () => {
+        const result = projectedRates(measured({ melee: 300, attack: 100 }), { focus: 'ranged' });
+        // Melee would no longer be gaining under that plan, which is the model
+        expect(result.rates).toEqual({ ranged: 300, attack: 100 });
+    });
+
+    test('both shares on one skill gives it both rather than losing one', () => {
+        const result = projectedRates(measured({ melee: 300, attack: 100 }), { focus: 'magic', primary: 'magic' });
+        expect(result.rates).toEqual({ magic: 400 });
+    });
+
+    test('nothing measured is no rates rather than a guess', () => {
+        expect(projectedRates(measured({})).rates).toEqual({});
     });
 });
 
@@ -403,15 +495,4 @@ describe('Primary and Focus point the measured shares somewhere else', () => {
         expect(rowFor('Ranged')).toContain('12,000,000');
         expect(text()).not.toContain(FAILED);
     });
-
-    /**
-     * The Time to Level line for one skill.
-     * @param {string} name - Skill label
-     * @returns {string} The row's text, cells run together
-     */
-    function rowFor(name) {
-        const rows = [...combatLevelPanel.panel.querySelectorAll('div')];
-        const line = rows.find((div) => div.style.display === 'grid' && div.textContent.startsWith(name));
-        return line?.textContent ?? '';
-    }
 });
