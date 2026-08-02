@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The combat level is a target you can aim at
+
+- **The Target Selector offers Combat alongside the skills**, so "when do I hit 151?" is answerable directly rather than by picking a skill and doing the last step in your head. It drives the Time to Level tile like any other target: `Combat → 130`.
+- **Combat level has no experience table of its own** — it moves because two skills underneath it are moving, at different rates and different weights — so this is not a division. The clock is run forward at the projected rates and the formula is asked when it crosses, found by doubling until it passes and then bisecting, which is exact to the second. A closed form would need the weights to hold still, and they do not: a skill overtaking another changes what a level of it is worth partway through, and the answer has to be right across that crossover.
+- A target the current rates can never reach — everything caps out — declines rather than reporting a century.
+- Combat is offered on the Target Selector only. Primary and Focus are shares of experience, and combat level does not receive experience.
+
+`fractionalLevelOf` and `timeToCombatLevel` are in `utils/combat-level.js` with 11 more tests, one of which checks the table inverts cleanly at all 150 levels rather than only at the ones anybody would try by hand.
+
 ### The Time to Level tile follows the Target Selector
 
 - **Pick a skill and a level in the panel and the tile reports that**, instead of going on about whichever skill happens to be going up fastest. A selector that drives nothing you can see is indistinguishable from a selector that does not work. A target beyond the next level reads `Defense → 130`; the next level reads as it always did, since the arrow would be saying nothing.

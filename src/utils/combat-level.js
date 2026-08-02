@@ -239,6 +239,96 @@ export function fractionalLevels(skills, table) {
 }
 
 /**
+ * The fractional level a cumulative experience total sits at.
+ *
+ * The inverse of the table: 3,500 experience against thresholds of 3,000 and
+ * 4,000 is level 3.5. At or past the last threshold it is the cap exactly, since
+ * there is no next one to be part of the way towards.
+ *
+ * @param {number} experience - Cumulative experience
+ * @param {number[]} table - The game's cumulative `levelExperienceTable`
+ * @returns {number|null} The fractional level, or null without a usable table
+ */
+export function fractionalLevelOf(experience, table) {
+    if (!Array.isArray(table) || table.length < 2) return null;
+
+    const total = Number(experience) || 0;
+    const cap = table.length - 1;
+    if (total >= table[cap]) return cap;
+
+    // Binary search rather than a scan: this is called inside the search below,
+    // which calls it a few hundred times per answer
+    let low = 1;
+    let high = cap;
+    while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (table[middle] <= total) low = middle;
+        else high = middle - 1;
+    }
+
+    const floor = table[low];
+    const ceiling = table[low + 1];
+    if (ceiling === undefined || !(ceiling > floor)) return low;
+
+    return low + (total - floor) / (ceiling - floor);
+}
+
+/**
+ * How long a target **combat** level is away.
+ *
+ * Combat level is not a skill, so there is no experience table to divide into —
+ * it moves because two skills underneath it are moving, at different rates and
+ * with different weights. The honest answer is to run the clock forward and ask
+ * the formula, which is what this does.
+ *
+ * Combat level is non-decreasing in time, since every skill's level is, so the
+ * time is found by doubling until the target is passed and then bisecting. That
+ * is exact to the second in a few dozen evaluations, where a closed form would
+ * need the weights to be constant — and they are not, because a skill overtaking
+ * another changes what a level of it is worth partway through.
+ *
+ * @param {Object} input - What it needs
+ * @param {Array<{name: string, experience: number}>} input.skills - Combat skills
+ * @param {number[]} input.table - The game's cumulative experience table
+ * @param {Object<string, number>} input.rates - Skill name → experience per hour
+ * @param {number} input.target - Target combat level
+ * @returns {number|null} Seconds, or null when nothing is moving or it is out of reach
+ */
+export function timeToCombatLevel({ skills, table, rates, target }) {
+    /** The combat level after a given number of seconds at the current rates */
+    const after = (seconds) => {
+        const levels = {};
+        for (const skill of skills || []) {
+            const gained = ((rates?.[skill.name] || 0) * seconds) / 3600;
+            levels[skill.name] = fractionalLevelOf(skill.experience + gained, table);
+        }
+        return combatLevel(levels).exact;
+    };
+
+    if (!Array.isArray(table) || table.length < 2) return null;
+    if (after(0) >= target) return 0;
+    if (!Object.values(rates || {}).some((rate) => rate > 0)) return null;
+
+    // A century of idling is not an answer anybody wants, and it is the guard
+    // against a target above what these rates can ever reach — the skills hit
+    // the level cap and the combat level stops moving
+    const LIMIT_SECONDS = 100 * 365 * 24 * 3600;
+    let high = 3600;
+    while (after(high) < target) {
+        high *= 2;
+        if (high > LIMIT_SECONDS) return null;
+    }
+
+    let low = 0;
+    for (let step = 0; step < 60; step++) {
+        const middle = (low + high) / 2;
+        if (after(middle) >= target) high = middle;
+        else low = middle;
+    }
+    return high;
+}
+
+/**
  * Experience between two levels.
  *
  * @param {number} from - Starting level

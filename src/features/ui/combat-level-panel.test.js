@@ -506,6 +506,69 @@ describe('selectedTarget, which is what the overlay row reads', () => {
     });
 });
 
+describe('the combat level as a target', () => {
+    /** Move the clock on and grant, so there is a rate to project from */
+    function train(minutes, perMinute) {
+        combatLevelPanel._render();
+        for (const [name, amount] of Object.entries(perMinute)) grant(name, amount * minutes);
+        vi.setSystemTime(Date.now() + minutes * 60 * 1000);
+        combatLevelPanel._render();
+    }
+
+    test('Combat is offered in the Target Selector and nowhere else', () => {
+        combatLevelPanel.show();
+        train(5, { melee: 200000, attack: 100000 });
+
+        const target = combatLevelPanel.panel.querySelector('[data-control="ttl-skill"]');
+        const focus = combatLevelPanel.panel.querySelector('[data-control="assign-focus"]');
+
+        expect([...target.options].map((option) => option.value)).toContain('combat');
+        // Primary and Focus are shares of experience, and combat level does not
+        // receive experience
+        expect([...focus.options].map((option) => option.value)).not.toContain('combat');
+    });
+
+    test('it defaults to the next combat level', () => {
+        select({ skill: 'combat' });
+        const chosen = selectedTarget();
+
+        expect(chosen.name).toBe('Combat');
+        expect(chosen.level).toBe(126);
+        expect(chosen.target).toBe(127);
+    });
+
+    test('the time is the clock run forward until the formula crosses', () => {
+        combatLevelPanel.show();
+        train(5, { melee: 200000 });
+        select({ skill: 'combat', level: 127 });
+
+        const chosen = selectedTarget();
+        expect(chosen.seconds).toBeGreaterThan(0);
+        expect(Number.isFinite(chosen.seconds)).toBe(true);
+    });
+
+    test('a target already reached is no time at all', () => {
+        combatLevelPanel.show();
+        train(5, { melee: 200000 });
+        select({ skill: 'combat', level: 100 });
+
+        expect(selectedTarget().seconds).toBe(0);
+    });
+
+    test('with nothing gaining there is no time to give', () => {
+        select({ skill: 'combat', level: 130 });
+        expect(selectedTarget().seconds).toBeNull();
+    });
+
+    test('the panel draws it without any section failing', () => {
+        select({ skill: 'combat', level: 130 });
+        combatLevelPanel.show();
+
+        expect(text()).toContain('Target Selector');
+        expect(text()).not.toContain(FAILED);
+    });
+});
+
 describe('projectedRates', () => {
     function measured(rates) {
         return { skills: Object.entries(rates).map(([name, perHour]) => ({ name, perHour })) };
