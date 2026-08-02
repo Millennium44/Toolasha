@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Drop Luck panel said `[object Object]`
+
+- `describeLuck` returns `{text, tone}` and the whole object was handed to the line, so the verdict rendered as `[object Object]` where the words should be. It reads the text now, and takes the colour from the tone — lucky green, unlucky red — which is what the tone was there for.
+
+### The DPS tile is a line per player, then the total
+
+- DPs' shape: **name, damage per second, hit rate** for each player, and a **Total DPS** line under them. A party figure says the group is doing damage and not who is doing it, and "who" is the whole question when somebody is under-geared for the zone.
+- **The total is the sum of the lines**, taken from attribution rather than from this module's own health-diff figure. The two measure different things — health lost includes bleeds nobody cast — and a total that did not add up to the lines above it would read as an arithmetic bug.
+- **It falls back to the party figure** when the Damage Tracker is off, still labelled `Party DPS ×N` so it cannot be read as yours, and the tooltip says which switch turns the per-player lines on.
+- No swings seen reads `--` rather than `0.0%`: an unmeasured hit rate is not a missed swing.
+
+### Charm panel folds are remembered between sessions
+
+- They survived a refresh but not a reload. Stored now, through the same deferred read the Watchlist uses, since IndexedDB opens after the libraries evaluate and a read at module scope reliably returns the default.
+
 ### Fixed: the Charms panel kept unfolding sections you folded away
 
 - Each section's fold lived in the DOM, and the panel rebuilds its whole body every few seconds — so every refresh put all three sections back to the shape they open in. Collapse the upgrades, watch them reappear three seconds later, over and over. The folds are held outside the draw now, so a redraw finds what you chose rather than the default.

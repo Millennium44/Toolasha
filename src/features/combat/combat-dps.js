@@ -29,9 +29,13 @@
 
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
+import { damageBreakdown } from './damage-tracker.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+
+/** Accuracy in its own colour, so it does not read as part of the damage figure */
+const ACCURACY_COLOR = '#ff9800';
 
 /**
  * Ticks arrive about three times a second. A gap longer than this means the
@@ -153,11 +157,64 @@ class CombatDPS {
 
 const combatDPS = new CombatDPS();
 
+/**
+ * A line per player, then the total, which is DPs' shape.
+ *
+ * A party figure says the group is doing damage and not who is doing it, and
+ * "who" is the whole question when somebody is under-geared for the zone. It
+ * needs attribution, so it is drawn only when the Damage Tracker has some.
+ *
+ * The lines and the total both come from attribution rather than the total
+ * coming from this module's own health-diff figure. The two measure different
+ * things — health lost includes bleeds nobody cast — and a total that did not
+ * equal the sum of the lines above it would read as an arithmetic bug.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} breakdown - From `damageBreakdown`
+ */
+function drawPerPlayer(container, breakdown) {
+    const lines = [];
+    let total = 0;
+
+    for (const player of breakdown.players) {
+        if (player.dps === null) continue;
+        total += player.dps;
+
+        lines.push([
+            { text: player.name, color: ROW_COLORS.gold, ellipsis: true },
+            { text: formatLargeNumber(Math.round(player.dps)), color: ROW_COLORS.good, push: true },
+            {
+                // Null accuracy is no swings seen, which is not a 0% hit rate
+                text: player.accuracy === null ? '--' : `${(player.accuracy * 100).toFixed(1)}%`,
+                color: ACCURACY_COLOR,
+            },
+        ]);
+    }
+
+    lines.push([
+        { text: 'Total DPS', color: ROW_COLORS.neutral, bold: true },
+        { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
+    ]);
+
+    rows(container, lines);
+    container.title =
+        'Damage per second and hit rate, per player, from attributed hits.\n' +
+        'The caster is whoever’s mana fell on the tick, since the game attributes nothing.\n' +
+        'Double-click for the breakdown by ability.';
+}
+
 registerRow({
     key: 'dps',
     name: 'DPS',
-    defaultSize: { width: 180, height: 40 },
+    defaultSize: { width: 200, height: 46 },
     render: (container) => {
+        // Attribution first, because per player is the answer people want; the
+        // health-diff figure is the fallback for when it is turned off
+        const breakdown = damageBreakdown();
+        if (breakdown.players.some((player) => player.dps !== null)) {
+            return drawPerPlayer(container, breakdown);
+        }
+
         const dealt = combatDPS.dps;
         if (dealt === null) return blank(container);
 
@@ -177,7 +234,8 @@ registerRow({
         container.title =
             'Damage inferred from health lost between combat ticks, over time spent in combat.\n' +
             'Overkill is not counted — a hit that takes a monster from 40 to dead counts 40.\n' +
-            (solo ? '' : 'In a party this is the whole party\u2019s damage; nothing on the wire says who struck.');
+            (solo ? '' : 'In a party this is the whole party\u2019s damage; nothing on the wire says who struck.') +
+            '\nTurn the Damage Tracker on for a line per player.';
     },
     // The panel behind it: a DPS figure alone cannot say whether you are
     // winning the exchange or merely surviving it

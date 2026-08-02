@@ -29,6 +29,12 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
 
+// The folds are persisted, and IndexedDB is not what this file is about
+vi.mock('../../core/storage.js', () => ({
+    default: { db: {}, getJSON: async () => null, setJSON: async () => {} },
+}));
+vi.mock('../../utils/deferred-load.js', () => ({ loadWhenReady: async () => {} }));
+
 const { charmPanel, equippedCharm, familyRows, resetCharmSort } = await import('./charm-value-row.js');
 
 beforeEach(() => {

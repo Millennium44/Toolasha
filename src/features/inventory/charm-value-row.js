@@ -29,6 +29,8 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
+import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
@@ -82,15 +84,30 @@ let sortDirection = 'desc';
  * the DOM would spring back to its default on the next refresh — folding one
  * away and watching it reappear three seconds later, over and over.
  *
- * @type {Map<string, boolean>}
+ * @type {Object<string, boolean>}
  */
-const sectionOpen = new Map();
+let sectionOpen = {};
+
+const FOLDS_KEY = 'charmPanelFolds';
+
+// Not read at module scope: IndexedDB opens after the libraries evaluate, so a
+// read here reliably returns the default and reliably logs that it could not
+loadWhenReady(FOLDS_KEY, 'settings', (saved) => Object.assign(sectionOpen, saved), 'the charm panel folds');
+
+/** Remember a fold across sessions, since a panel you keep refolding is a chore */
+async function saveFolds() {
+    try {
+        await storage.setJSON(FOLDS_KEY, sectionOpen, 'settings');
+    } catch (error) {
+        console.error('[CharmValue] Saving the panel folds failed:', error);
+    }
+}
 
 /** Put the ordering and the folds back, for a test that must not inherit them */
 export function resetCharmSort() {
     sortColumn = 'perMillion';
     sortDirection = 'desc';
-    sectionOpen.clear();
+    sectionOpen = {};
 }
 
 /**
@@ -184,7 +201,7 @@ export function familyRows() {
  * @returns {HTMLElement} The contents, to append rows to
  */
 function section(body, { id, title, accent, defaultOpen = true }) {
-    const open = sectionOpen.get(id) ?? defaultOpen;
+    const open = sectionOpen[id] ?? defaultOpen;
 
     const card = panelCard(body, undefined, accent);
     card.style.padding = '0';
@@ -206,7 +223,8 @@ function section(body, { id, title, accent, defaultOpen = true }) {
     header.addEventListener('click', () => {
         // Recorded before it is drawn, so the next refresh finds the choice
         // rather than the default
-        sectionOpen.set(id, !(sectionOpen.get(id) ?? defaultOpen));
+        sectionOpen[id] = !open;
+        saveFolds();
         charmPanel.render();
     });
 

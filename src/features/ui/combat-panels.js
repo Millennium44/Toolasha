@@ -469,10 +469,17 @@ export const dropLuckPanel = new CombatPanel({
             return;
         }
 
-        const verdict = card(body, 'Verdict');
-        verdict.append(
+        // `describeLuck` returns `{text, tone}`, and the whole object reached the
+        // line as `[object Object]`
+        const verdict = describeLuck(result.percentile);
+        const heading = card(body, 'Verdict');
+        heading.append(
             line('Percentile', formatOrdinal(result.percentile), ROW_COLORS.accent),
-            line('In words', describeLuck(result.percentile), COLORS.text)
+            line(
+                'In words',
+                verdict.text,
+                { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: COLORS.text }[verdict.tone]
+            )
         );
 
         const numbers = card(body, 'What it is about');
