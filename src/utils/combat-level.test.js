@@ -6,6 +6,8 @@ import {
     combatValueOf,
     levelsToNextCombat,
     cheapestRouteToNextCombat,
+    levelFraction,
+    fractionalLevels,
     experienceBetween,
     timeToTargetLevel,
 } from './combat-level.js';
@@ -146,6 +148,43 @@ describe('cheapestRouteToNextCombat', () => {
 
     test('does not pick a skill that has to overtake first', () => {
         expect(['magic', 'ranged']).not.toContain(cheapestRouteToNextCombat(build).skill);
+    });
+});
+
+describe('levelFraction', () => {
+    const table = [0, 0, 100, 300, 700];
+
+    test('is how far between the two thresholds the experience sits', () => {
+        expect(levelFraction(200, 2, table)).toBeCloseTo(0.5, 6);
+        expect(levelFraction(100, 2, table)).toBeCloseTo(0, 6);
+    });
+
+    test('at the cap there is nothing to be part of', () => {
+        expect(levelFraction(700, 4, table)).toBe(0);
+    });
+});
+
+describe('fractional levels change what the progress bar should say', () => {
+    // The build from the panel, with Melee 81.7% of the way to 135
+    const table = [];
+    for (let level = 0; level <= 140; level++) table[level] = level * 1000;
+
+    test('the whole-number formula and the fractional one disagree, and the second is right', () => {
+        const whole = combatLevel(build);
+        expect(whole.exact).toBeCloseTo(126.3, 6);
+
+        // Melee's part-finished level carries the doubled term, so 0.817 of a
+        // level is worth 0.817 x 0.6 = 0.49 combat levels already earned
+        const partial = combatLevel({ ...build, melee: 134.817 });
+        expect(partial.exact).toBeCloseTo(126.79, 2);
+        expect(partial.level).toBe(126);
+        expect(partial.progress).toBeCloseTo(0.79, 2);
+    });
+
+    test('fractionalLevels puts the game’s experience into those levels', () => {
+        // Level 3 spans 3000 to 4000, so 3500 is halfway
+        const skills = [{ name: 'melee', level: 3, experience: 3500 }];
+        expect(fractionalLevels(skills, table)).toEqual({ melee: 3.5 });
     });
 });
 

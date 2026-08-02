@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### GWhiz, part three: the bar was measuring the wrong thing
+
+- **The progress bar was 30% when it should have been 79%.** The obvious reading of "how far to the next combat level" is the fraction the displayed whole number throws away — `126.300` is 30% of the way to 127. That is wrong. Combat level is computed from **whole** skill levels, so it steps; feed it the part-finished levels instead and it becomes the continuous figure it really is. A build at `126.300` whose Melee is 81.7% of the way to its next level is 79% of the way to Combat 127, because most of the Melee level carrying the doubled term is already banked. That is the difference between "a third of the way" and "nearly there", and it is what GWhiz's bar has been showing all along.
+- **So the bar is drawn in two colours**, and the formula is run twice: whole levels give the number the game shows and the arithmetic beside it, fractional levels give the bar. The first colour is what completed levels have banked; the second is what the level in progress has added.
+- **Time to the next combat level**, on the block and on the title bar. It is the cheapest route's levels costed at that skill's measured rate against the real experience table — so "2 levels of Melee" and the 8d 22h beside it are the same plan, not two.
+- **Laid out like GWhiz.** Cards rather than one column; a session bar with Start, Duration, Exp and Exp/Hr; the formula in monospace with **every term coloured by the skill it is**, so the repeated one is visible rather than inferred; a full block per skill actually gaining, with its remaining experience, its share of the run, and its own bar; and folding headings on the lower sections.
+- **Time to Level answers "what if I trained something else".** The split between the two skills receiving experience — 28.4% and 71.6% on the reference build — is a property of the setup, not of those skills. The Primary and Focus selectors point those measured shares at any skill you like, and the table's rates and times follow, so the cost of switching is answerable without spending a day finding out. Projected rates are italicised, since they are not measurements.
+- **Skills with no rate get a tile instead of a row of dashes** — level and how far into it — which is what GWhiz's compact section is for. The charm and wisdom figures stay beneath them.
+- **Double-clicking Experience/hr or Time to Level opens the panel.** Both rows are one line about a question the panel answers in full. The Experience/hr row reaches it through the global rather than by import, since it is in the combat bundle and importing would have given it a second panel with its own session clock.
+- Exp Lookup shows the subtraction, not just its result, since the two thresholds are the answer to the next question.
+
+`levelFraction` and `fractionalLevels` are in `utils/combat-level.js` with 4 more tests, one of which reproduces the 79% from the reference build's own numbers.
+
 ### GWhiz, part two: the session, targets, charms and the lookup
 
 - **Corrected the combat level formula.** The two maxima are over **different sets**: the flat sum takes the best of Melee, Ranged and Magic, and the doubled term takes the best of those _plus Attack and Defense_. Part one used the offensive maximum for both. The two agree whenever an offensive skill leads overall — which is most builds, and is exactly why the wrong reading survived a check against a real character — and part company the moment Attack or Defense is your highest, where it understated the level by as much as fifteen. The panel now names both skills, and the tooltip on the formula says which is which.
