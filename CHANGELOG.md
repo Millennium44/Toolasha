@@ -8,11 +8,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Fixed: the blue box around Queue and Start
 
-That box was mine, and the first attempt at removing it missed — it styled the action panel's own scrollbar, and the bars stayed the game's blue, because the element that overflows is not always the one that was made to scroll.
+The box was never a border. It was the pinned strip's own background, painted with one of the game's themed colour variables — the one whose name reads like a dark background is not one; that scale is a set of visible tints. So the strip painted itself blue, and the blue showing above and below the buttons was the box. Two earlier attempts went looking for a border and a scrollbar instead.
 
-- **Every scrollbar in the modal is styled, not just the panel's.** Rather than work out which ancestor owns a given bar, anything scrollable inside an action modal is now grey. A blue line above the buttons and a blue line below them is a frame around the buttons, which is not what a scrollbar is for.
-- **Horizontal bars are removed outright.** Making an element a vertical scroller makes it a horizontal one too, and the vertical bar costs ten pixels of a width everything inside was already sized against — so a few pixels of overflow appear and draw a full-width bar directly under the pinned buttons. The content is not meaningfully wider than the panel; the bar is an artefact of the scrolling, so it is switched off.
-- **The divider is neutral and the drop shadow is gone**, so the row reads as the edge of the content sliding underneath rather than as a boxed-off group.
+- **The strip is painted a dark literal**, so it reads as the panel continuing behind the buttons rather than as a coloured band around them.
+- **The horizontal scrollbar is gone.** The buttons container measures a fraction of a pixel wider than the panel holding it — 321.883 against 320 — and that is all a horizontal scrollbar needs. Nothing directly inside the panel may now be wider than the panel: it is a column of rows, and a row wider than its column is always a bug rather than an intent. Chasing them one at a time is a game with no end.
+- **Scrollbars across the whole modal are neutral**, and the divider is a plain hairline with no drop shadow, so the row reads as the edge of the content sliding underneath.
 
 ### The action panel fits on the screen again
 

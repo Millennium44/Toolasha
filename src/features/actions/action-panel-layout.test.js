@@ -104,6 +104,27 @@ describe('the action panel layout', () => {
         expect(styleEl().textContent).toContain('height: 0');
     });
 
+    test('the pinned strip is painted a dark literal, not a themed variable', () => {
+        // var(--color-space-800) is not the dark background the name suggests:
+        // the game's space scale is a set of visible tints, so asking for it
+        // painted the strip blue above and below the buttons — which is the
+        // box that kept coming back
+        settings.values.actionPanelLayout = true;
+        actionPanelLayout.initialize();
+        const css = styleEl().textContent;
+
+        expect(css).not.toContain('--color-space');
+        expect(css).toMatch(/background:\s*#[0-9a-f]{6}/i);
+    });
+
+    test('no child may be wider than the panel', () => {
+        // One fractionally oversized row — the buttons container measured
+        // 321.883 against a 320 panel — is all a horizontal scrollbar needs
+        settings.values.actionPanelLayout = true;
+        actionPanelLayout.initialize();
+        expect(styleEl().textContent).toContain('max-width: 100%');
+    });
+
     test('cleanup is as thorough as disable', () => {
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();

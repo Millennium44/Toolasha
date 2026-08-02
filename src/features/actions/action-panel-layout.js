@@ -120,6 +120,15 @@ const CSS = `
         overflow-x: hidden;
     }
 
+    /* Nothing inside the panel may be wider than the panel. One fractionally
+       oversized child is all a horizontal scrollbar needs, and hunting them one
+       at a time is a game with no end — the panel is a column of rows, and a
+       row wider than its column is always the bug rather than the intent. */
+    [class*="SkillActionDetail_skillActionDetail"] > * {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
     /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
        to the panel and moves with a dragged modal.
 
@@ -133,8 +142,20 @@ const CSS = `
         z-index: 2;
         margin-top: 4px;
         padding: 8px 0 4px 0;
-        background: var(--color-space-800, var(--color-space-700, #14141f));
+        /* A literal, and deliberately not one of the game's themed background
+           variables. The one that reads like a dark background is not one —
+           that scale is a set of visible tints — so asking for it painted this
+           strip blue, and the blue showing above and below the buttons was the
+           box that kept coming back. It was never a border; it was this. */
+        background: #0e0e16;
         border-top: 1px solid rgba(255, 255, 255, 0.10);
+        /* The container measures a fraction of a pixel wider than the panel it
+           sits in — 321.883 against 320 — which is enough overflow to summon a
+           horizontal scrollbar across the bottom of the panel. Clipping the
+           panel alone does not help while the child is still asking for width
+           it cannot have. */
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     /* Ours, tightened. Seven sections at eight pixels a side is a section's
