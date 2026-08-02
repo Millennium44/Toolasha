@@ -242,3 +242,58 @@ describe('kills in a tick', () => {
         expect(tally['0']).toBeUndefined();
     });
 });
+
+describe('foldEvents, split by enemy', () => {
+    const nameOf = (index) => ({ 0: 'Rat', 1: 'Wolf' })[index] || null;
+
+    test('a player carries what they did to each monster', () => {
+        const tally = foldEvents(
+            {},
+            [
+                { playerIndex: '0', monsterIndex: '0', amount: 100, action: 'auto', isMiss: false },
+                { playerIndex: '0', monsterIndex: '1', amount: 40, action: 'auto', isMiss: false },
+            ],
+            { nameOf }
+        );
+
+        expect(tally['0'].byEnemy.Rat).toMatchObject({ damage: 100, hits: 1 });
+        expect(tally['0'].byEnemy.Wolf).toMatchObject({ damage: 40, hits: 1 });
+    });
+
+    test('two players fighting different monsters are not merged', () => {
+        // One kiting while another burns the boss is two fights; a party-wide
+        // enemy total averages them into neither
+        const tally = foldEvents(
+            {},
+            [
+                { playerIndex: '0', monsterIndex: '0', amount: 100, action: 'auto', isMiss: false },
+                { playerIndex: '1', monsterIndex: '1', amount: 900, action: 'auto', isMiss: false },
+            ],
+            { nameOf }
+        );
+
+        expect(tally['0'].byEnemy.Wolf).toBeUndefined();
+        expect(tally['1'].byEnemy.Rat).toBeUndefined();
+    });
+
+    test('the split names the ability used against each monster', () => {
+        const tally = foldEvents(
+            {},
+            [{ playerIndex: '0', monsterIndex: '0', amount: 100, action: '/abilities/cleave', isMiss: false }],
+            { nameOf }
+        );
+
+        expect(tally['0'].byEnemy.Rat.byAbility['/abilities/cleave'].damage).toBe(100);
+    });
+
+    test('without a name resolver the player tally is unchanged', () => {
+        // The split is extra; a caller that cannot name monsters still gets its
+        // players, abilities and totals
+        const tally = foldEvents({}, [
+            { playerIndex: '0', monsterIndex: '0', amount: 100, action: 'auto', isMiss: false },
+        ]);
+
+        expect(tally['0'].damage).toBe(100);
+        expect(tally['0'].byEnemy).toEqual({});
+    });
+});

@@ -100,6 +100,17 @@ beforeEach(() => {
                 critRate: 0.2,
                 dps: 3000,
                 abilities: [{ action: 'auto', damage: 900000, hits: 90, crits: 18, misses: 10 }],
+                enemies: [
+                    {
+                        name: 'Rat',
+                        damage: 600000,
+                        hits: 60,
+                        crits: 12,
+                        misses: 6,
+                        dps: 2000,
+                        abilities: [{ action: 'auto', damage: 600000, hits: 60, crits: 12, misses: 6 }],
+                    },
+                ],
             },
         ],
         logging: 400,
@@ -258,14 +269,21 @@ describe('what the panels add over their tiles', () => {
         state.filtering = true;
     });
 
-    test('the enemies get their own rows', () => {
-        // The player table says who is doing the damage; this says to what, and
-        // a slow run is often one tanky monster rather than a rotation problem
-        dpsPanel.show();
-        const text = dpsPanel.panel.textContent;
+    test('the enemies sit under the player who fought them', () => {
+        // Collapsing a player takes their enemies with them, as DPs does it:
+        // one player kiting while another burns the boss is two fights, and a
+        // party-wide enemy row averages them into neither
+        // Asserted on the row rather than the panel text: the enemy-HP card
+        // below names the same monsters, and that card is party-level on purpose
+        const ratRow = () =>
+            [...dpsPanel.panel.querySelectorAll('div')].find((el) => /^[\u25b6\u25bc]\s+Rat/.test(el.textContent));
 
-        expect(text).toContain('Rat');
-        expect(text).toContain('Wolf');
+        dpsPanel.show();
+        collapseDpsRows();
+        expect(ratRow()).toBeUndefined();
+
+        dpsPlayerRow().click();
+        expect(ratRow()).toBeTruthy();
     });
 
     test('the health bars give a second reading the attribution cannot drift from', () => {
@@ -291,20 +309,15 @@ describe('what the panels add over their tiles', () => {
     test('an enemy row opens to what was used against it', () => {
         // The question an enemy row raises: is it tanky, or is the wrong thing
         // being pointed at it
-        state.breakdown = {
-            ...state.breakdown,
-            enemies: state.breakdown.enemies.map((enemy) => ({
-                ...enemy,
-                abilities: [{ action: 'auto', damage: enemy.damage, hits: enemy.hits, crits: 0, misses: 0 }],
-            })),
-        };
         dpsPanel.show();
         collapseDpsRows();
+        dpsPlayerRow().click();
 
         const rat = [...dpsPanel.panel.querySelectorAll('div')].find((el) => el.textContent.startsWith('▶  Rat'));
         rat.click();
 
-        expect(dpsPanel.panel.textContent).toContain('Auto attack');
+        // The player's own ability row and the one used against the rat
+        expect(dpsPanel.panel.textContent.match(/Auto attack/g).length).toBeGreaterThan(1);
         collapseDpsRows();
     });
 

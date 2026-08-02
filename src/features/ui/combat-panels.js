@@ -739,60 +739,65 @@ export const dpsPanel = new CombatPanel({
                     )
                 );
             }
-        }
 
-        for (const enemy of breakdown.enemies) {
-            const key = `enemy:${enemy.name}`;
-            const open = expandedRows.has(key);
-            const swings = enemy.hits + enemy.misses;
-            const share = partyDamage > 0 ? (enemy.damage / partyDamage) * 100 : 0;
+            // Under the player who fought them, as DPs nests them: collapsing a
+            // player takes their enemies with them. A party's enemy rows at the
+            // top level would average two people's fights into neither.
+            for (const enemy of player.enemies || []) {
+                const enemyKey = `enemy:${player.index}:${enemy.name}`;
+                const enemyOpen = expandedRows.has(enemyKey);
+                const enemySwings = enemy.hits + enemy.misses;
+                const enemyShare = player.damage > 0 ? (enemy.damage / player.damage) * 100 : 0;
 
-            const row = dpsRow([
-                { text: `${open ? '▼' : '▶'}  ${enemy.name}`, color: ROW_COLORS.bad, bold: true },
-                { text: Number.isFinite(enemy.dps) ? enemy.dps.toFixed(1) : '—', color: ROW_COLORS.good },
-                { text: `${formatKMB(enemy.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
-                { text: formatWithSeparator(swings) },
-                { text: countAndShare(enemy.hits, swings), color: ROW_COLORS.good },
-                { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
-                { text: countAndShare(enemy.misses, swings), color: ROW_COLORS.bad },
-            ]);
-            row.style.cursor = 'pointer';
-            row.title = 'Click for what was used against it.';
-            row.addEventListener('click', () => {
-                if (open) expandedRows.delete(key);
-                else expandedRows.add(key);
-                dpsPanel.refresh();
-            });
-            body.appendChild(row);
-
-            if (!open) continue;
-
-            // Which abilities went into this one, which is the question an
-            // enemy row raises: a monster taking a long time is either tanky or
-            // the wrong thing is being pointed at it
-            for (const ability of enemy.abilities || []) {
-                const attempts = ability.hits + ability.misses;
-                const abilityShare = enemy.damage > 0 ? (ability.damage / enemy.damage) * 100 : 0;
-                body.appendChild(
-                    dpsRow(
-                        [
-                            { text: `• ${actionLabel(ability.action)}` },
-                            {
-                                text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
-                                color: ROW_COLORS.good,
-                            },
-                            {
-                                text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
-                                color: ROW_COLORS.good,
-                            },
-                            { text: formatWithSeparator(attempts) },
-                            { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
-                            { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
-                            { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
-                        ],
-                        { dim: true, indent: 14 }
-                    )
+                const enemyRow = dpsRow(
+                    [
+                        { text: `${enemyOpen ? '▼' : '▶'}  ${enemy.name}`, color: ROW_COLORS.bad, bold: true },
+                        { text: Number.isFinite(enemy.dps) ? enemy.dps.toFixed(1) : '—', color: ROW_COLORS.good },
+                        { text: `${formatKMB(enemy.damage)} (${enemyShare.toFixed(1)}%)`, color: ROW_COLORS.good },
+                        { text: formatWithSeparator(enemySwings) },
+                        { text: countAndShare(enemy.hits, enemySwings), color: ROW_COLORS.good },
+                        { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
+                        { text: countAndShare(enemy.misses, enemySwings), color: ROW_COLORS.bad },
+                    ],
+                    { indent: 10 }
                 );
+                enemyRow.style.cursor = 'pointer';
+                enemyRow.title = 'Click for what was used against it.';
+                enemyRow.addEventListener('click', () => {
+                    if (enemyOpen) expandedRows.delete(enemyKey);
+                    else expandedRows.add(enemyKey);
+                    dpsPanel.refresh();
+                });
+                body.appendChild(enemyRow);
+
+                if (!enemyOpen) continue;
+
+                // The question an enemy row raises: is it tanky, or is the
+                // wrong thing being pointed at it
+                for (const ability of enemy.abilities || []) {
+                    const attempts = ability.hits + ability.misses;
+                    const abilityShare = enemy.damage > 0 ? (ability.damage / enemy.damage) * 100 : 0;
+                    body.appendChild(
+                        dpsRow(
+                            [
+                                { text: `• ${actionLabel(ability.action)}` },
+                                {
+                                    text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
+                                    color: ROW_COLORS.good,
+                                },
+                                {
+                                    text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
+                                    color: ROW_COLORS.good,
+                                },
+                                { text: formatWithSeparator(attempts) },
+                                { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
+                                { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
+                                { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
+                            ],
+                            { dim: true, indent: 24 }
+                        )
+                    );
+                }
             }
         }
 
