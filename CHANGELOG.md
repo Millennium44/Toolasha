@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Floating and Scrolling Combat Text
+
+- **Damage numbers over the units taking them**, and a **Combat Log** overlay row of the same events. A health bar tells you the state and not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not.
+- **Both off by default**, and each can be turned on alone. With both off nothing subscribes to the websocket at all, so the feature costs nothing when unused.
+- **The game sends no events.** It sends every unit's health every tick, and a hit is the difference between two of those. `utils/combat-events.js` derives it, with the three ways to get it wrong pinned by tests: health going **up** is a heal rather than negative damage, or a healer cancels the party's output; a unit seen for the **first** time has not been hit for its entire health bar; and a unit that has **gone** did not take its remaining health as damage, because it died or the wave ended and the state cannot tell those apart.
+- The floating text draws the largest event per unit per tick. A tick carries a dozen events and ticks come several a second, and a number per event is a great deal of DOM for something nobody can read.
+
 ### MAna and QCharm
 
 - **Mana/fight.** Mana is the constraint nobody watches — damage is in the combat log, mana shows up only as the moment an ability does not fire, by which point the fight has gone differently. The row reports mana and casts **per fight** rather than the running total, because a total only says how long you have been playing.
