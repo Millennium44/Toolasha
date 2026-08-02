@@ -359,7 +359,11 @@ class BudgetCalculator {
     _createUI(panel) {
         const wrapper = document.createElement('div');
         wrapper.id = UI_ID;
-        wrapper.style.cssText = 'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;';
+        wrapper.style.cssText =
+            'display:flex; align-items:center; gap:6px; margin: 4px 0 8px 0; padding: 0 0;' +
+            // The row may not outgrow the column it sits in; the Calculate
+            // button was hanging past the edge of the action panel
+            'box-sizing:border-box; max-width:100%;';
 
         const input = document.createElement('input');
         input.type = 'text';

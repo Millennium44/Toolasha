@@ -81,27 +81,16 @@ describe('the action panel layout', () => {
         expect(css).toContain('overflow-x: hidden');
     });
 
-    test('the scrollbar rules reach the whole modal, not only the panel', () => {
-        // Styling the panel alone left the bars the game's blue, because the
-        // element that overflows is not always the one made to scroll
+    test('the scrollbar is left as the game draws it', () => {
+        // Recolouring it was chasing the wrong thing: the horizontal bar was a
+        // width problem, and it is fixed where the oversized blocks are built
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();
+
         const css = styleEl().textContent;
-
-        const thumbRules = css
-            .split('}')
-            .map((block) => block.split('{')[0].trim())
-            .filter((selector) => selector.includes('scrollbar-thumb'));
-
-        expect(thumbRules.some((selector) => selector.includes('Modal_modal'))).toBe(true);
-        // Descendants too, not just the modal itself
-        expect(css).toContain(') ::-webkit-scrollbar-thumb');
-    });
-
-    test('horizontal scrollbars are removed rather than recoloured', () => {
-        settings.values.actionPanelLayout = true;
-        actionPanelLayout.initialize();
-        expect(styleEl().textContent).toContain('height: 0');
+        expect(css).not.toContain('::-webkit-scrollbar');
+        expect(css).not.toContain('scrollbar-width:');
+        expect(css).not.toContain('scrollbar-color:');
     });
 
     test('the pinned strip is painted a dark literal, not a themed variable', () => {
