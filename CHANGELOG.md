@@ -6,11 +6,27 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The combat simulator is its own bundle, and the combat bundle stops scraping its ceiling
+
+The engine under `features/combat-sim/` is a megabyte of source and the largest thing in the script by a wide margin. Four features across three bundles reach into it — the labyrinth clear-rate model, task profit, the build score, and the simulator's own interface — and because it was never declared shared, **it was copied into each of them**. Both the combat and the UI bundle carried their own `class Monster` while sitting a few kilobytes under the 2 MB ceiling.
+
+It is now `toolasha-sim.js`, loaded once and referenced.
+
+| Bundle | Before    | After         |
+| ------ | --------- | ------------- |
+| combat | 2,090,702 | **1,068,270** |
+| ui     | 2,064,758 | **1,795,494** |
+| sim    | —         | 1,394,937     |
+
+- Combat has a megabyte of headroom instead of six kilobytes, which is what the per-player luck work needs.
+- The new bundle loads after utils and before market, because market declares the engine external too. CI's size gate globs `dist/libraries/*.js`, so it covers the new one without being told.
+- One subtlety worth recording: a **default** import of an external compiles to the global value itself, so `Toolasha.Sim.monster` has to _be_ the class. Wrapping it in a namespace would have handed a `{default}` object to every `new Monster(...)` in the script — and only at runtime.
+
 ### Equipment Savings — the gear you are saving for, and when you will have it
 
 MCS's EWatch, ported. Wanting a piece of equipment is a savings problem and the game helps with none of it: the price is on one screen, your coins on another, and what you earn per day nowhere. So the question people actually ask — "can I afford it yet, and if not, when" — gets answered by opening the market and subtracting in your head, several times a day, for weeks.
 
-It is a new tile and panel. **Toolasha's own Equipment Watch tile is untouched** — that one shows an enhancement run in progress, which is a different thing wearing a similar name.
+It takes over the **Equipment Watch** tile, which is what that tile was named for. The enhancement-run readout that was sitting there keeps working under its own name, **Enhancement Run** — it is a different thing that had borrowed the name.
 
 - **What an upgrade costs is not what it is priced at.** You sell the piece it replaces, so the cost is the target's ask **less the bid on what you are wearing** — for a late-game slot that is most of the price, and reading the ask alone can double the figure. Finding the piece it replaces means turning the target's **equipment type** into an **item location**, two different strings that look interchangeable; getting it wrong throws nothing and silently charges full price for everything.
 - **Keep old gear** turns the trade-in off, for a piece you are keeping for a second loadout.

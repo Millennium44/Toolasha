@@ -353,8 +353,8 @@ function statusText(target) {
  * The gear you are saving for.
  */
 export const equipmentSavingsPanel = createPanel({
-    id: 'equipmentSavings',
-    title: 'Equipment Savings',
+    id: 'equipmentWatch',
+    title: 'Equipment Watch',
     size: { width: 420, height: 420 },
     accent: '#6495ed',
     draw: (body) => {
@@ -502,8 +502,9 @@ export default {
 };
 
 registerRow({
-    key: 'equipmentSavings',
-    name: 'Equipment Savings',
+    // EWatch's own tile. One tile, not a second one beside the old name.
+    key: 'equipmentWatch',
+    name: 'Equipment Watch',
     defaultSize: { width: 230, height: 30 },
     render: (container) => {
         const plan = everything();
