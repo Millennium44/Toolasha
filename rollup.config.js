@@ -101,6 +101,7 @@ const utilsExternalGlobals = new Map([
     // whichever saves last wipes the other's entry
     [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
     [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
+    [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
 ]);
 
 // Combat feature modules imported cross-library (by ui)

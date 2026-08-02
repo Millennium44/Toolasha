@@ -27,6 +27,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { newManaTally, recordCast, recordFight, manaSummary } from '../../utils/mana-spend.js';
 
@@ -98,6 +99,83 @@ export default {
     },
 };
 
+/**
+ * What the run has cost in mana, ability by ability.
+ *
+ * The tile carries one figure; the question behind it is which ability is
+ * spending it, because that is the one a rotation change moves.
+ */
+export const manaPanel = createPanel({
+    id: 'manaPanel',
+    title: 'Mana',
+    size: { width: 380, height: 320 },
+    accent: '#8fd6ff',
+    draw: (body) => {
+        const summary = manaSpend();
+
+        const run = panelCard(body, 'This run', '#8fd6ff');
+        run.append(
+            panelLine('Fights', formatWithSeparator(summary.fights)),
+            panelLine('Mana spent', formatWithSeparator(Math.round(summary.mana)), ROW_COLORS.accent),
+            panelLine(
+                'Per fight',
+                summary.manaPerFight === null ? 'measuring…' : formatWithSeparator(Math.round(summary.manaPerFight)),
+                summary.manaPerFight === null ? 'rgba(232, 236, 245, 0.5)' : ROW_COLORS.accent
+            ),
+            panelLine('Casts per fight', summary.castsPerFight === null ? '—' : summary.castsPerFight.toFixed(2))
+        );
+
+        const reset = document.createElement('button');
+        reset.textContent = 'Reset';
+        reset.dataset.resetMana = 'true';
+        Object.assign(reset.style, {
+            background: 'rgba(255, 255, 255, 0.08)',
+            border: '1px solid rgba(255, 255, 255, 0.10)',
+            borderRadius: '3px',
+            color: '#e8ecf5',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 10px',
+            marginTop: '4px',
+            alignSelf: 'flex-start',
+        });
+        reset.addEventListener('click', () => {
+            resetManaTally();
+            manaPanel.render();
+        });
+        run.appendChild(reset);
+
+        if (!summary.abilities.length) {
+            body.appendChild(panelNote('Nothing cast yet. Mana is counted from the game announcing a cast.'));
+            return;
+        }
+
+        const byAbility = panelCard(body, 'Where it goes', '#8fd6ff');
+        for (const ability of summary.abilities) {
+            const share = summary.mana > 0 ? (ability.mana / summary.mana) * 100 : 0;
+            byAbility.appendChild(
+                panelLine(
+                    abilityLabel(ability.abilityHrid),
+                    `${formatWithSeparator(Math.round(ability.mana))}  ·  ${share.toFixed(0)}%`,
+                    ability.unknownCost ? ROW_COLORS.bad : ROW_COLORS.gold,
+                    ability.unknownCost
+                        ? 'The game states no mana cost for this ability, so its casts are counted and its mana is not.'
+                        : `${formatWithSeparator(ability.casts)} casts` +
+                              (ability.perFight === null ? '' : `, ${ability.perFight.toFixed(2)} per fight`)
+                )
+            );
+        }
+
+        if (summary.incomplete) {
+            body.appendChild(
+                panelNote(
+                    'Some abilities have no stated mana cost, so the total is a lower bound rather than a figure.'
+                )
+            );
+        }
+    },
+});
+
 registerRow({
     key: 'manaPerFight',
     name: 'Mana/fight',
@@ -119,6 +197,8 @@ registerRow({
         container.title =
             `${formatWithSeparator(Math.round(summary.mana))} mana over ${summary.fights} fights.` +
             (worst ? `\nMost of it on ${abilityLabel(worst.abilityHrid)}.` : '') +
-            (summary.incomplete ? '\nSome abilities have no stated mana cost, so the total is a lower bound.' : '');
+            (summary.incomplete ? '\nSome abilities have no stated mana cost, so the total is a lower bound.' : '') +
+            '\nDouble-click for the breakdown by ability.';
     },
+    onOpen: () => manaPanel.toggle(),
 });

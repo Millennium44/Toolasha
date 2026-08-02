@@ -48,6 +48,7 @@ import * as abilityBooks from '../utils/ability-books.js';
 import * as damageAttribution from '../utils/damage-attribution.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
 import * as choiceDialog from '../utils/choice-dialog.js';
+import * as simplePanel from '../utils/simple-panel.js';
 import * as dropLuck from '../utils/drop-luck.js';
 import * as complexFft from '../utils/complex-fft.js';
 import * as combatDropModel from '../utils/combat-drop-model.js';
@@ -117,6 +118,7 @@ toolashaRoot.Utils = {
     damageAttribution,
     panelGeometry,
     choiceDialog,
+    simplePanel,
     dropLuck,
     complexFft,
     combatDropModel,

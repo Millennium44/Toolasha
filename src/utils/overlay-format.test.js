@@ -1,5 +1,7 @@
+/** @vitest-environment happy-dom */
+
 import { describe, test, expect } from 'vitest';
-import { signedPercent, shortDuration, ROW_COLORS } from './overlay-format.js';
+import { signedPercent, shortDuration, drawLine, ROW_COLORS } from './overlay-format.js';
 
 describe('signedPercent', () => {
     test('signs both directions', () => {
@@ -40,5 +42,32 @@ describe('shortDuration', () => {
         expect(shortDuration(Infinity)).toBe('—');
         expect(shortDuration(NaN)).toBe('—');
         expect(shortDuration(-5)).toBe('—');
+    });
+});
+
+describe('drawLine', () => {
+    test('skips nulls so a segment can be conditional', () => {
+        const host = document.createElement('div');
+        drawLine(host, [{ text: 'a' }, null, { text: 'b' }]);
+        expect(host.children).toHaveLength(2);
+    });
+
+    test('an icon segment draws an element rather than its hrid as text', () => {
+        const host = document.createElement('div');
+        drawLine(host, [{ icon: '/items/smack_book', size: 18 }, { text: '43' }]);
+
+        // Without the game's sprite sheet loaded this is a spacer, but the point
+        // stands either way: the hrid must never end up as visible text
+        expect(host.children).toHaveLength(2);
+        expect(host.textContent).toBe('43');
+    });
+
+    test('only the ellipsis segment is allowed to shrink', () => {
+        // A truncated number is not a smaller number, it is a wrong one
+        const host = document.createElement('div');
+        drawLine(host, [{ text: 'Penetrating Strike', ellipsis: true }, { text: '12.0M' }]);
+
+        expect(host.children[0].style.textOverflow).toBe('ellipsis');
+        expect(host.children[1].style.flex).toBe('0 0 auto');
     });
 });
