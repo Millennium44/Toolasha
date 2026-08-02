@@ -19,6 +19,7 @@ const game = vi.hoisted(() => ({
     prices: {},
     actions: {},
     shops: {},
+    artisan: 0,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -50,6 +51,9 @@ vi.mock('../../api/marketplace.js', () => ({ default: { getDataAge: () => 60_000
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
 }));
+// The real one resolves a loadout and parses teas; what this file cares about
+// is that the saving reaches the recipe, whatever produced it
+vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => game.artisan }));
 
 const {
     equipmentSavingsPanel,
@@ -100,6 +104,7 @@ beforeEach(() => {
         '/items/shard:0': { ask: 1_000_000, bid: 900_000 },
     };
     game.shops = {};
+    game.artisan = 0;
     resetEquipmentSavings();
 });
 
@@ -511,6 +516,40 @@ describe('crafting rather than buying', () => {
 
         // 30M of shards plus the 300M spear, less the 40M trade-in
         expect(watchedTargets()[0].cost).toBe(330_000_000 - 40_000_000);
+    });
+
+    test('the tea takes its cut off the materials', () => {
+        // The game's own panel says 88.9 shards where the recipe says 100.
+        // Pricing the printed 100 is an eleven per cent overcharge on every
+        // craft this card quotes.
+        game.artisan = 0.111;
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+
+        // 30 shards less 11.1%, at 1M each, plus the 300M spear, less the 40M
+        // trade-in
+        const shards = 30 * (1 - 0.111) * 1_000_000;
+        expect(watchedTargets()[0].cost).toBeCloseTo(shards + 300_000_000 - 40_000_000, 0);
+    });
+
+    test('the saving is shown, not just applied', () => {
+        // A count that quietly disagrees with the game's panel reads as a bug
+        game.artisan = 0.111;
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('26.7 × Shard');
+        expect(text()).toContain('Artisan tea');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a craft offers to open the marketplace on what it is short of', () => {
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Missing Mats Marketplace');
     });
 
     test('an unpriced ingredient leaves the craft unpriced rather than cheap', () => {

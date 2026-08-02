@@ -40,6 +40,7 @@ import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePrice } from '../../utils/token-valuation.js';
+import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -395,17 +396,47 @@ export function spendable() {
 export function recipeFor(itemHrid) {
     const actions = dataManager.getInitClientData?.()?.actionDetailMap || {};
 
-    for (const action of Object.values(actions)) {
+    for (const [actionHrid, action] of Object.entries(actions)) {
         const output = action?.outputItems?.find((entry) => entry.itemHrid === itemHrid);
         if (!output) continue;
 
+        // Artisan tea takes a fraction off every input, so a recipe priced at
+        // its printed cost is priced for somebody else's tea. The game's own
+        // panel says 88.9 shards where the recipe says 100; quoting the 100 is
+        // an eleven per cent overcharge on every craft this card prices.
+        const saved = artisanBonus(action);
+
         return {
-            inputItems: action.inputItems || [],
+            actionHrid,
+            artisan: saved,
+            inputItems: (action.inputItems || []).map((input) => ({
+                ...input,
+                count: (input.count || 0) * (1 - saved),
+            })),
             upgradeItemHrid: action.upgradeItemHrid || null,
             outputCount: output.count || 1,
         };
     }
     return null;
+}
+
+/**
+ * What fraction of a recipe's inputs the tea saves.
+ *
+ * Through the shared calculator, which resolves the loadout for the action's
+ * own skill — so it is the tea you would be brewing under, not whatever is in
+ * the slots while you are out fighting.
+ *
+ * @param {Object} action - The action detail
+ * @returns {number} 0 to 1
+ */
+function artisanBonus(action) {
+    try {
+        return calculateArtisanBonus(action) || 0;
+    } catch (error) {
+        console.error('[EquipmentSavings] Reading the artisan bonus failed:', error);
+        return 0;
+    }
 }
 
 /**
@@ -1284,8 +1315,10 @@ function targetCard(target) {
                 'rgba(232, 236, 245, 0.55)'
             )
         );
-    } else if (target.crafted) card.appendChild(recipeLines(target));
-    else if (target.ask > 0) {
+    } else if (target.crafted) {
+        card.appendChild(recipeLines(target));
+        if (target.recipe?.actionHrid) card.appendChild(missingMatsButton(target.recipe.actionHrid));
+    } else if (target.ask > 0) {
         card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
         // What it costs after the trade-in, which is the figure the bar fills
         // against — the ask alone is not what you have to find
@@ -1326,6 +1359,51 @@ function targetCard(target) {
 }
 
 /**
+ * Open the marketplace on what this craft is short of.
+ *
+ * The same button the action panel carries, on the card that is saving towards
+ * the craft — which is where the question "what am I actually missing" gets
+ * asked. It calls the action feature's own handler through the global rather
+ * than rebuilding the marketplace tabs here, so the two cannot drift apart.
+ *
+ * @param {string} actionHrid - The craft
+ * @returns {HTMLElement}
+ */
+function missingMatsButton(actionHrid) {
+    const button = document.createElement('button');
+    button.textContent = 'Missing Mats Marketplace';
+    Object.assign(button.style, {
+        background: 'linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%)',
+        border: '1px solid rgba(91, 141, 239, 0.4)',
+        borderRadius: '5px',
+        color: '#e8ecf5',
+        cursor: 'pointer',
+        fontSize: '11px',
+        fontWeight: 'bold',
+        marginTop: '4px',
+        padding: '4px 8px',
+        width: '100%',
+    });
+    button.title = 'Open the marketplace on the materials this craft is short of.';
+
+    button.addEventListener('click', async () => {
+        const open = window.Toolasha?.Actions?.missingMaterialsButton?.openMissingMaterials;
+        if (!open) {
+            button.textContent = 'The action panel feature is off';
+            return;
+        }
+        button.textContent = 'Opening…';
+        try {
+            await open(actionHrid, 1);
+        } catch (error) {
+            console.error('[EquipmentSavings] Opening the missing materials failed:', error);
+            button.textContent = 'Could not open the marketplace';
+        }
+    });
+    return button;
+}
+
+/**
  * What a craft is made of, and what each ingredient comes to.
  *
  * Itemised rather than totalled, because the whole reason to craft is that one
@@ -1347,11 +1425,26 @@ function recipeLines(target) {
 
     for (const input of recipe.inputItems) {
         const price = getItemPrices(input.itemHrid, 0)?.ask || 0;
+        const count = input.count || 0;
+        // One decimal once the tea has taken its cut, because the saving is
+        // fractional and 88.9 rounded to 89 hides the very thing being shown
+        const shown = Number.isInteger(count) ? formatWithSeparator(count) : count.toFixed(1);
         wrap.appendChild(
             priceLine(
-                `${formatWithSeparator(input.count || 0)} × ${nameOf(input.itemHrid)}`,
-                price > 0 ? formatWithSeparator(Math.round(price * (input.count || 0))) : 'no price',
+                `${shown} × ${nameOf(input.itemHrid)}`,
+                price > 0 ? formatWithSeparator(Math.round(price * count)) : 'no price',
                 price > 0 ? ROW_COLORS.gold : ROW_COLORS.bad
+            )
+        );
+    }
+
+    if (recipe.artisan > 0) {
+        wrap.appendChild(
+            priceLine(
+                'Artisan tea',
+                `−${(recipe.artisan * 100).toFixed(1)}% materials`,
+                ROW_COLORS.good,
+                'From the loadout for this skill, not from whatever is in the slots right now.'
             )
         );
     }
@@ -1389,9 +1482,10 @@ function recipeLines(target) {
  * @param {string} color - Ink for the figure
  * @returns {HTMLElement}
  */
-function priceLine(label, value, color) {
+function priceLine(label, value, color, title = '') {
     const line = document.createElement('div');
     Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '11px' });
+    if (title) line.title = title;
 
     const name = document.createElement('span');
     name.textContent = label;

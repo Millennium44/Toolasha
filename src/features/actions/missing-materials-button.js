@@ -1134,7 +1134,24 @@ function handleMarketplaceCleanup() {
     autofillManager.clearQuantity();
 }
 
+/**
+ * Open the marketplace on the materials an action is short of.
+ *
+ * The same thing the button in the action panel does, reachable from anywhere.
+ * Equipment Watch wants it for a craft it is saving towards, and that card is
+ * in another bundle — so this is the seam rather than a second implementation
+ * of the tab-building, which is where the two would drift apart.
+ *
+ * @param {string} actionHrid - The action whose inputs are wanted
+ * @param {number} [numActions] - How many of it
+ * @returns {Promise<void>}
+ */
+export async function openMissingMaterials(actionHrid, numActions = 1) {
+    await handleMissingMaterialsClick(actionHrid, numActions);
+}
+
 export default {
     initialize,
     cleanup,
+    openMissingMaterials,
 };
