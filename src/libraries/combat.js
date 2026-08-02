@@ -39,6 +39,7 @@ import * as combatStatsCalculator from '../features/combat-stats/combat-stats-ca
 
 // Abilities
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
+import manaTracker from '../features/combat/mana-tracker.js';
 import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
 
 // Profile (combat score)
@@ -81,6 +82,7 @@ toolashaRoot.Combat = {
     combatStatsDataCollector,
     combatStatsCalculator,
     abilityBookCalculator,
+    manaTracker,
     abilityDictionaryButton,
     combatScore,
     characterCardButton,

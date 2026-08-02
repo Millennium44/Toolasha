@@ -385,6 +385,13 @@ function registerFeatures() {
     // Combat Features
     const combatFeatures = [
         {
+            key: 'manaTracker',
+            name: 'Mana Tracker',
+            category: 'Combat',
+            module: Combat.manaTracker,
+            async: false,
+        },
+        {
             key: 'abilityBookCalculator',
             name: 'Ability Book Calculator',
             category: 'Combat',
