@@ -40,15 +40,8 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
 }));
 
-const {
-    equipmentSavingsPanel,
-    watchTarget,
-    watchedTargets,
-    everything,
-    coinsHeld,
-    setKeepOldGear,
-    resetEquipmentSavings,
-} = await import('./equipment-savings-row.js');
+const { equipmentSavingsPanel, watchTarget, watchedTargets, everything, coinsHeld, setNoSell, resetEquipmentSavings } =
+    await import('./equipment-savings-row.js');
 
 beforeEach(() => {
     game.inventory = [{ itemHrid: '/items/coin', count: 60_000_000 }];
@@ -91,9 +84,9 @@ describe('costing a target', () => {
         expect(watchedTargets()[0].cost).toBe(5_000_000);
     });
 
-    test('keeping the old gear pays the full ask', () => {
+    test('no-sell pays the full ask', () => {
         watchTarget('/items/holy_sword');
-        setKeepOldGear(true);
+        setNoSell(true);
         expect(watchedTargets()[0].cost).toBe(100_000_000);
     });
 
@@ -159,15 +152,38 @@ describe('the panel renders', () => {
         expect(text()).toContain('Affordable');
     });
 
-    test('the Keep old gear switch re-costs the list', () => {
+    test('the No Sell switch re-costs the list', () => {
         watchTarget('/items/holy_sword');
         equipmentSavingsPanel.show();
 
-        const box = equipmentSavingsPanel.panel.querySelector('[data-keep-old]');
-        box.checked = true;
-        box.dispatchEvent(new Event('change'));
+        equipmentSavingsPanel.panel.querySelector('[data-toggle="No Sell"]').click();
 
         expect(watchedTargets()[0].cost).toBe(100_000_000);
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the eye moves which target the header carries', () => {
+        watchTarget('/items/holy_sword');
+        watchTarget('/items/rough_boots');
+        equipmentSavingsPanel.show();
+
+        equipmentSavingsPanel.panel.querySelector('[data-watch-eye="/items/rough_boots"]').click();
+        // The headline is the first thing in the body, so the watched one leads
+        expect(equipmentSavingsPanel.panel.textContent.indexOf('Rough Boots')).toBeLessThan(
+            equipmentSavingsPanel.panel.textContent.indexOf('Holy Sword')
+        );
+    });
+
+    test('market orders count towards what you can spend, until they do not', () => {
+        watchTarget('/items/holy_sword');
+        const withOrders = everything().needed;
+
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-toggle="Market Value"]').click();
+
+        // No orders in the fixture, so the figure holds either way — what is
+        // being pinned is that the switch does not throw and does re-cost
+        expect(everything().needed).toBe(withOrders);
         expect(text()).not.toContain(FAILED);
     });
 

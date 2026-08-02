@@ -1,0 +1,244 @@
+/**
+ * Party Luck panel
+ *
+ * LYuck: every drop the run produced, against what it owed, per player.
+ *
+ * The Drop Luck tile carries one figure and the panel behind it carries the run
+ * in coins. Neither answers the question that actually gets asked after a long
+ * session, which is **which drop is the reason** — a run reads as unlucky
+ * because one rare did not come, and no total can say that.
+ *
+ * ## What each panel is for
+ *
+ * - **Session Statistics** — the run itself: battles, party, and what the model
+ *   was built from. Every figure below depends on these being right, so they are
+ *   visible rather than assumed.
+ * - **Revenue** — expected against actual per player and for the party, which is
+ *   the headline and the only place the party total appears.
+ * - **Per player** — the item table. Quantity, value, what was owed, and how far
+ *   off it landed, biggest haul first.
+ *
+ * MCS draws these as separate draggable panes. They are sections of one panel
+ * here, because six panes that each have to be positioned is six panes that end
+ * up overlapping, and the reason this script has a panel shell at all is that
+ * per-panel geometry was where the bugs were.
+ *
+ * The arithmetic is in `party-luck.js`, and the model under it is the same one
+ * the Drop Luck tile uses — so the two cannot disagree about a session.
+ *
+ * The model is LYuck's, from MWI Combat Suite by Frotty (MIT) — see
+ * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
+ * Toolasha's own.
+ */
+
+import dataManager from '../../core/data-manager.js';
+import combatDropLuck from './combat-drop-luck.js';
+import { partyLuck } from './party-luck.js';
+import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { itemIcon, linkToMarketplace, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+
+const ACCENT = '#7fd6a3';
+
+/** How many item rows a player's table shows before it is more list than answer */
+const MAX_ITEMS = 25;
+
+/**
+ * An item's name, or something readable when the game has not said.
+ * @param {string} itemHrid - The item
+ * @returns {string}
+ */
+function nameOf(itemHrid) {
+    return (
+        dataManager.getItemDetails?.(itemHrid)?.name ||
+        String(itemHrid || '')
+            .split('/')
+            .pop()
+            .replace(/_/g, ' ')
+    );
+}
+
+/** One row of the item table's grid */
+function itemRow() {
+    const line = document.createElement('div');
+    Object.assign(line.style, {
+        display: 'grid',
+        gridTemplateColumns: '20px minmax(0, 1fr) 46px 60px 54px 56px',
+        gap: '5px',
+        alignItems: 'center',
+        padding: '1px 0',
+    });
+    return line;
+}
+
+/**
+ * @param {string} text - What it says
+ * @param {string} [color] - Ink
+ * @returns {HTMLElement}
+ */
+function cell(text, color) {
+    const span = document.createElement('span');
+    span.textContent = text;
+    Object.assign(span.style, { textAlign: 'right', whiteSpace: 'nowrap' });
+    if (color) span.style.color = color;
+    return span;
+}
+
+/**
+ * The run itself, which every figure below depends on.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} party - From `partyLuck`
+ */
+function drawSessionStats(body, party) {
+    const context = combatDropLuck.context;
+    const card = panelCard(body, 'Session Statistics', ACCENT);
+
+    card.append(
+        panelLine('Battles', formatWithSeparator(party.battles)),
+        panelLine('Party', String(party.players.length)),
+        panelLine(
+            'Zone',
+            nameOf(context?.actionHrid) || '—',
+            ROW_COLORS.neutral,
+            'The zone the expectation was built from.'
+        ),
+        panelLine('Difficulty tier', String(context?.difficultyTier ?? 0))
+    );
+}
+
+/**
+ * Expected against actual, per player and for the party.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} party - From `partyLuck`
+ */
+function drawRevenue(body, party) {
+    const card = panelCard(body, 'Revenue', ACCENT);
+
+    for (const player of party.players) {
+        const verdict = signedPercent(player.percent ?? 0);
+        card.appendChild(
+            panelLine(
+                player.name,
+                `${formatKMB(player.actualValue)} of ${formatKMB(player.expectedValue)}   ` +
+                    `${player.percent === null ? '—' : verdict.text}`,
+                player.percent === null ? ROW_COLORS.dim : verdict.color,
+                `Against what ${player.name}'s own drop gear was owed over ${formatWithSeparator(party.battles)} battles.\n` +
+                    `Drop rate +${((player.bonuses.combatDropRate || 0) * 100).toFixed(1)}%, ` +
+                    `rare find +${((player.bonuses.combatRareFind || 0) * 100).toFixed(1)}%, ` +
+                    `quantity +${((player.bonuses.combatDropQuantity || 0) * 100).toFixed(1)}%.`
+            )
+        );
+    }
+
+    if (party.total) {
+        const total = signedPercent(party.total.percent ?? 0);
+        const line = panelLine(
+            'TOTAL',
+            `${formatKMB(party.total.actualValue)} of ${formatKMB(party.total.expectedValue)}   ` +
+                `${party.total.percent === null ? '—' : total.text}`,
+            party.total.percent === null ? ROW_COLORS.dim : total.color,
+            'The party against the party, not an average of the percentages.'
+        );
+        line.style.borderTop = '1px solid rgba(255, 255, 255, 0.10)';
+        line.style.paddingTop = '3px';
+        line.style.fontWeight = 'bold';
+        card.appendChild(line);
+    }
+}
+
+/**
+ * One player's drops: what came, what it was worth, what was owed.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} player - From `partyLuck`
+ */
+function drawPlayerTable(body, player) {
+    const card = panelCard(body, player.name, player.isCurrentPlayer ? ROW_COLORS.gold : ACCENT);
+
+    const heading = itemRow();
+    Object.assign(heading.style, {
+        color: 'rgba(232, 236, 245, 0.5)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.10)',
+        paddingBottom: '3px',
+    });
+    const name = cell('Item');
+    name.style.textAlign = 'left';
+    heading.append(document.createElement('span'), name, cell('Qty'), cell('Value'), cell('Owed'), cell('%'));
+    card.appendChild(heading);
+
+    if (!player.items.length) {
+        card.appendChild(panelNote('Nothing dropped yet.'));
+        return;
+    }
+
+    for (const item of player.items.slice(0, MAX_ITEMS)) {
+        const line = itemRow();
+
+        const icon = itemIcon(item.itemHrid, 16);
+        linkToMarketplace(icon, item.itemHrid, navigateToMarketplace);
+
+        const label = document.createElement('span');
+        label.textContent = nameOf(item.itemHrid);
+        Object.assign(label.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        linkToMarketplace(label, item.itemHrid, navigateToMarketplace);
+
+        const verdict = signedPercent(item.percent ?? 0);
+        line.append(
+            icon,
+            label,
+            cell(formatWithSeparator(item.count)),
+            cell(formatKMB(item.value), ROW_COLORS.gold),
+            // The count it was owed, not the coins: a drop that came twice when
+            // it was owed once is the interesting row, whatever it sells for
+            cell(item.expected >= 10 ? formatKMB(item.expected) : item.expected.toFixed(2), ROW_COLORS.dim),
+            cell(item.percent === null ? '—' : verdict.text, item.percent === null ? ROW_COLORS.dim : verdict.color)
+        );
+        line.title =
+            `${formatWithSeparator(item.count)} dropped, ${item.expected.toFixed(3)} owed.` +
+            (item.percent === null ? '\nNothing was owed, so there is nothing to be over or under.' : '');
+        card.appendChild(line);
+    }
+
+    if (player.items.length > MAX_ITEMS) {
+        card.appendChild(panelNote(`${player.items.length - MAX_ITEMS} more, smallest hauls, not shown.`));
+    }
+}
+
+/**
+ * Every drop the run produced, against what it owed.
+ */
+export const partyLuckPanel = createPanel({
+    id: 'partyLuck',
+    title: 'Party Luck',
+    size: { width: 480, height: 560 },
+    accent: ACCENT,
+    refreshMs: 5000,
+    draw: (body) => {
+        const party = partyLuck(combatDropLuck.context);
+
+        if (!party.players.length) {
+            body.appendChild(panelNote('No run measured yet.'));
+            body.appendChild(
+                panelNote(
+                    'The zone and the battle count are only on the wire during combat, so this fills in once a run ' +
+                        'is under way.'
+                )
+            );
+            return;
+        }
+
+        drawSessionStats(body, party);
+        drawRevenue(body, party);
+        for (const player of party.players) drawPlayerTable(body, player);
+
+        body.appendChild(
+            panelNote(
+                'Each player is measured against what their own drop gear was owed. Somebody with no drop gear is ' +
+                    'owed less, so par for them is a smaller haul — this answers "am I unlucky", not "am I carrying".'
+            )
+        );
+    },
+});

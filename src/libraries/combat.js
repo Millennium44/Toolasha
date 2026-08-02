@@ -17,6 +17,7 @@ import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-ch
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
 import combatDropLuck from '../features/combat/combat-drop-luck.js';
+import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
 // Side-effect import: registers the Build Score overlay row
 import '../features/profile/build-score-row.js';
@@ -67,6 +68,7 @@ toolashaRoot.Combat = {
     combatSummary,
     combatBattleCounter,
     combatDropLuck,
+    partyLuckPanel,
     combatDPS,
     labyrinthTracker,
     labyrinthBestLevel,

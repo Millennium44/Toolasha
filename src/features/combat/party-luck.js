@@ -93,15 +93,23 @@ function playerLuck({ player, actionDetail, monsterDetailMap, battles, difficult
     const expectedValue = sessionMean(session);
     const actualValue = lootValue(player.loot || {}, priceOf);
 
+    // The loot map is keyed by the game's own slot key, not by item hrid, so it
+    // has to be resolved through each entry before anything is matched against
+    // the expectation — keyed on the raw key, an item that both dropped and was
+    // owed came out as two rows, one of them permanently at -100%
+    const looted = new Map();
+    for (const entry of Object.values(player.loot || {})) {
+        if (!entry?.itemHrid) continue;
+        looted.set(entry.itemHrid, (looted.get(entry.itemHrid) || 0) + (entry.count || 0));
+    }
+
     // Every item either side has seen, so a drop that came and was not owed is a
     // row rather than a silence — those are the interesting ones
     const items = [];
-    const hrids = new Set([...Object.keys(player.loot || {}), ...Object.keys(expectedCounts)]);
+    const hrids = new Set([...looted.keys(), ...Object.keys(expectedCounts)]);
 
-    for (const key of hrids) {
-        const entry = player.loot?.[key];
-        const itemHrid = entry?.itemHrid || key;
-        const count = entry?.count || 0;
+    for (const itemHrid of hrids) {
+        const count = looted.get(itemHrid) || 0;
         const expected = expectedCounts[itemHrid] || 0;
         const price = priceOf(itemHrid) || 0;
 
