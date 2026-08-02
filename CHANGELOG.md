@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Charms panel kept unfolding sections you folded away
+
+- Each section's fold lived in the DOM, and the panel rebuilds its whole body every few seconds — so every refresh put all three sections back to the shape they open in. Collapse the upgrades, watch them reappear three seconds later, over and over. The folds are held outside the draw now, so a redraw finds what you chose rather than the default.
+- Remembered under a stable key rather than under the heading, because the headings carry the equipped bonus and change when you swap charms.
+
 ### Fixed: the charm slot was read with the wrong kind of key, and the panel is QCharm's
 
 - **It asked the equipment map for `/equipment_types/charm`.** The map is keyed by **item locations** — `/item_locations/charm` — so every lookup returned undefined, the panel reported an empty charm slot with a Grandmaster Melee Charm sitting in it, and "over what you are wearing" was computed against nothing. Nothing threw; the wrong key is simply a miss. A panel test now states the key the game actually uses, because no arithmetic test can catch this.
