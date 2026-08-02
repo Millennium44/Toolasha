@@ -255,9 +255,20 @@ export function incomePerDay() {
     const player = data?.players?.find((entry) => entry.isCurrentPlayer);
     if (!player) return null;
 
-    const seconds = (data.endTime || Date.now()) / 1000 - (data.startTime || Date.now()) / 1000;
+    // `durationSeconds` is the field the collector publishes. Reaching for
+    // `startTime`/`endTime` — which it does not have — made this
+    // `Date.now() - Date.now()`, so every run was zero seconds long, every rate
+    // divided by nothing, and the panel said "No income data" forever.
+    const seconds = data.durationSeconds || 0;
+    if (!(seconds > 0)) return null;
+
+    // `dailyProfit` is `{ask, bid}`, not a number — the two sides of the book,
+    // which is the same Lazy/Mid distinction the Combat Profit panel draws.
+    // Compared as a number it is NaN, so this returned null however long the run
+    // had been, on top of the duration being read from a field that is not there.
     const stats = combat?.combatStatsCalculator?.calculatePlayerStats?.(player, seconds);
-    return stats?.dailyProfit > 0 ? stats.dailyProfit : null;
+    const profit = state.noSell ? stats?.dailyProfit?.ask : stats?.dailyProfit?.bid;
+    return profit > 0 ? profit : null;
 }
 
 /**
@@ -661,6 +672,51 @@ function headline(target) {
 }
 
 /**
+ * EWatch's own eye, open or crossed out.
+ *
+ * The open one is the emoji; the closed one is drawn, because there is no
+ * crossed-out-eye emoji that renders the same on every platform — the nearest
+ * candidates are sunglasses and a monkey covering its face, both of which say
+ * something else entirely. A stroked path says one thing everywhere.
+ *
+ * @param {boolean} watching - Whether this is the pinned one
+ * @returns {Node}
+ */
+function eyeIcon(watching) {
+    if (watching) return document.createTextNode('\u{1F441}\uFE0F');
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', '#999');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.style.flex = '0 0 auto';
+
+    for (const d of [
+        'M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94',
+        'M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19',
+        'M14.12 14.12a3 3 0 1 1-4.24-4.24',
+    ]) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+    }
+
+    const slash = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    slash.setAttribute('x1', '1');
+    slash.setAttribute('y1', '1');
+    slash.setAttribute('x2', '23');
+    slash.setAttribute('y2', '23');
+    svg.appendChild(slash);
+
+    return svg;
+}
+
+/**
  * A bar reading coins saved against coins needed.
  * @param {number|null} fraction - Saved ÷ needed
  * @returns {HTMLElement}
@@ -716,15 +772,17 @@ function targetCard(target) {
     // EWatch's eye: which of several targets the header carries. Open on the one
     // being watched, closed on the rest.
     const eye = document.createElement('button');
-    eye.textContent = watching ? '\u{1F441}' : '\u{1F576}';
     eye.dataset.watchEye = target.itemHrid;
+    eye.replaceChildren(eyeIcon(watching));
     Object.assign(eye.style, {
-        background: 'none',
-        border: 'none',
+        background: watching ? 'rgba(100, 149, 237, 0.30)' : 'rgba(100, 100, 100, 0.20)',
+        border: `1px solid ${watching ? '#6495ed' : '#666'}`,
+        borderRadius: '3px',
         cursor: 'pointer',
-        fontSize: '12px',
-        padding: '0',
-        opacity: watching ? '1' : '0.45',
+        display: 'flex',
+        alignItems: 'center',
+        lineHeight: '1',
+        padding: '3px 5px',
     });
     eye.title = watching ? 'Shown at the top of the panel.' : 'Show this one at the top of the panel.';
     eye.addEventListener('click', () => {
@@ -946,7 +1004,8 @@ function emptySlotRow(slot) {
         textAlign: 'center',
     });
     row.dataset.watchSlot = slot;
-    row.textContent = '\u{1F576} Click to watch';
+    row.replaceChildren(eyeIcon(false), document.createTextNode(' Click to watch'));
+    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' });
     row.title = 'Open the picker with this slot in mind.';
     row.addEventListener('click', () => {
         // Clicking the slot whose picker is open closes it, so the invitation
@@ -1009,13 +1068,15 @@ export const equipmentSavingsPanel = createPanel({
 
         const perDay = incomePerDay();
         const income = document.createElement('span');
-        income.textContent = perDay === null ? 'No income data' : `${formatKMB(perDay)}/day`;
         income.style.color = perDay === null ? 'rgba(232, 236, 245, 0.5)' : ROW_COLORS.good;
         income.style.flex = '1';
+        income.textContent =
+            perDay === null ? 'No income data' : `${state.noSell ? 'Mid' : 'Lazy'}: ${formatKMB(perDay)}/day`;
         income.title =
             perDay === null
                 ? 'Combat has not run long enough to measure an income, so no arrival time can be given.'
-                : 'Daily profit from the combat session, which is what the countdowns divide by.';
+                : 'Daily profit from the combat session, which is what the countdowns divide by.\n' +
+                  'Lazy sells into the bids; Mid waits at the asks, which No Sell also assumes.';
 
         purse.append(coins, listed, income);
 
@@ -1248,21 +1309,36 @@ registerRow({
         row(container, [
             shown.itemHrid ? { icon: shown.itemHrid, size: 18 } : { text: '🎯', color: ROW_COLORS.dim },
             {
-                text: next ? next.name : 'All affordable',
+                // With the enhancement, because a Plate Body and a Plate Body +10
+                // are different purchases at very different prices, and the tile
+                // naming only the first is naming the wrong one
+                text: next
+                    ? `${next.name}${next.enhancementLevel ? ` +${next.enhancementLevel}` : ''}`
+                    : 'All affordable',
                 color: next ? ROW_COLORS.dim : ROW_COLORS.good,
                 ellipsis: true,
             },
-            next
-                ? { text: formatKMB(next.needed), color: ROW_COLORS.gold, push: true }
-                : { text: formatKMB(plan.cost), color: ROW_COLORS.good, push: true },
-            next && next.seconds !== null ? { text: shortDuration(next.seconds), color: ROW_COLORS.accent } : null,
+            // A pinned target you can already afford shows "0" and "0s" if it is
+            // treated like one you are still saving for, which reads as broken
+            // rather than as done
+            next?.affordable
+                ? { text: 'Affordable', color: ROW_COLORS.good, push: true }
+                : next
+                  ? { text: formatKMB(next.needed), color: ROW_COLORS.gold, push: true }
+                  : { text: formatKMB(plan.cost), color: ROW_COLORS.good, push: true },
+            next && !next.affordable && next.seconds !== null
+                ? { text: shortDuration(next.seconds), color: ROW_COLORS.accent }
+                : null,
         ]);
 
         container.title =
             (next
-                ? `${next.name} ${pinned ? 'is pinned' : 'is the nearest'}: ` +
-                  `${formatWithSeparator(Math.round(next.needed))} to go of ` +
-                  `${formatWithSeparator(Math.round(next.cost))}.`
+                ? `${next.name}${next.enhancementLevel ? ` +${next.enhancementLevel}` : ''} ` +
+                  `${pinned ? 'is pinned' : 'is the nearest'}: ` +
+                  (next.affordable
+                      ? `affordable now at ${formatWithSeparator(Math.round(next.cost))}.`
+                      : `${formatWithSeparator(Math.round(next.needed))} to go of ` +
+                        `${formatWithSeparator(Math.round(next.cost))}.`)
                 : 'Everything on the list is affordable now.') +
             `\n${plan.targets.length} pieces, ${formatKMB(plan.cost)} altogether.` +
             (plan.unpriced ? `\n${plan.unpriced} of them have no market price.` : '') +

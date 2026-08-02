@@ -52,6 +52,7 @@ const {
     coinsHeld,
     setNoSell,
     selectTarget,
+    incomePerDay,
     resetEquipmentSavings,
 } = await import('./equipment-savings-row.js');
 
@@ -418,5 +419,47 @@ describe('the pin', () => {
 
         equipmentSavingsPanel.show();
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('income per day', () => {
+    /** A collector reading of the shape the real one publishes */
+    const withCombat = (durationSeconds, dailyProfit) => {
+        window.Toolasha = {
+            Combat: {
+                combatStatsDataCollector: {
+                    getLatestData: () => ({ durationSeconds, players: [{ isCurrentPlayer: true, loot: {} }] }),
+                },
+                combatStatsCalculator: { calculatePlayerStats: () => ({ dailyProfit }) },
+            },
+        };
+    };
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('it reads the duration field the collector actually publishes', () => {
+        // Reaching for startTime/endTime, which the collector does not have,
+        // made every run zero seconds long and every rate unmeasurable
+        withCombat(3600, { ask: 90_000_000, bid: 65_000_000 });
+        expect(incomePerDay()).toBe(65_000_000);
+    });
+
+    test('daily profit is two figures, not one', () => {
+        // Compared as a number it is NaN, so this returned null however long
+        // the run had been
+        withCombat(3600, { ask: 90_000_000, bid: 65_000_000 });
+        setNoSell(true);
+        expect(incomePerDay()).toBe(90_000_000);
+    });
+
+    test('a run of no length is unmeasurable rather than zero', () => {
+        withCombat(0, { ask: 90_000_000, bid: 65_000_000 });
+        expect(incomePerDay()).toBeNull();
+    });
+
+    test('no combat at all is nothing rather than a crash', () => {
+        expect(incomePerDay()).toBeNull();
     });
 });
