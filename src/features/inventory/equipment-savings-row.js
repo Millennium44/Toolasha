@@ -39,6 +39,7 @@ import marketAPI from '../../api/marketplace.js';
 import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
+import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -521,21 +522,44 @@ function cheapestProtection(itemHrid, priceOf) {
 }
 
 /**
- * Whether the market will sell a piece at all.
+ * The best enhancement of a piece already in hand, if any.
  *
- * Untradable gear has no ask at any level, so a target that cannot be bought is
- * one the enhancement path has to answer for.
+ * The inventory covers worn pieces too, which is the case that matters: the
+ * cape you are enhancing is the one on your back. Null rather than zero when
+ * none is owned, because "have a +0" and "have none" are different starting
+ * points for a run.
  *
  * @param {string} itemHrid - The piece
- * @returns {boolean}
+ * @returns {number|null} Its enhancement level, or null when none is held
  */
-function isTradable(itemHrid) {
-    const details = dataManager.getItemDetails?.(itemHrid);
-    // The game says so directly where it can; otherwise a listing at any level
-    // is proof enough
-    if (details?.isTradable === false) return false;
-    if (getItemPrices(itemHrid, 0)?.ask > 0) return true;
-    return details?.isTradable !== false;
+function highestOwnedLevel(itemHrid) {
+    let best = null;
+    for (const item of dataManager.getInventory?.() || []) {
+        if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+        const level = item.enhancementLevel || 0;
+        if (best === null || level > best) best = level;
+    }
+    return best;
+}
+
+/**
+ * What a +0 of something costs, from wherever it can actually be got.
+ *
+ * The market first, then the shops. Capes are drops and shop lines and are
+ * never listed, so a market-only reading reports that a cape cannot be bought
+ * at any price — which would make "buy a base and enhance it" look impossible
+ * for exactly the pieces that path exists to serve.
+ *
+ * @param {string} itemHrid - The piece
+ * @returns {number} Coins, or 0 when nowhere sells it
+ */
+function basePrice(itemHrid) {
+    const ask = getItemPrices(itemHrid, 0)?.ask || 0;
+    if (ask > 0) return ask;
+
+    const data = dataManager.getInitClientData?.() || {};
+    const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
+    return shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
 }
 
 /**
@@ -551,14 +575,35 @@ function costOf(itemHrid, enhancementLevel) {
     const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
     const noSell = targetNoSell(itemHrid);
 
-    // A piece the market will not sell at all is not a purchase: the only way to
-    // a +7 cape is the anvil, so what it costs is the run rather than an ask
-    // that does not exist
-    if (!ask && !isTradable(itemHrid)) {
-        const held = worn?.itemHrid === itemHrid ? worn.enhancementLevel || 0 : 0;
-        const run = enhancementCost(itemHrid, enhancementLevel, held);
-        if (run !== null) {
-            return { cost: run, ask: 0, crafted: false, enhancing: true, fromLevel: held, recipe: null };
+    // Nobody is selling this one at this level — which is usually not a piece
+    // you cannot have, but a piece you enhance to. Capes are the plain case:
+    // the market carries +0s and nothing above, so "save for a +7" is a run at
+    // the anvil starting from the one already on your back, not a purchase at a
+    // price that does not exist. Gating this on the item being untradable was
+    // wrong — a cape is perfectly tradable at +0, and the target still has no
+    // ask, which is why the whole path never fired.
+    if (!ask) {
+        const held = highestOwnedLevel(itemHrid);
+        // Buying a base to enhance is only a path when a base can be bought at
+        // all — and for a cape that is the token shop rather than the market
+        const baseAsk = held === null ? basePrice(itemHrid) : 0;
+
+        if (held !== null || baseAsk > 0) {
+            const run = enhancementCost(itemHrid, enhancementLevel, held ?? 0);
+            if (run !== null) {
+                // Enhancing the piece you are wearing has nothing to trade in:
+                // it is the same piece, and it goes on your back either way
+                const tradeIn = worn?.itemHrid === itemHrid || noSell ? 0 : wornBid;
+                return {
+                    cost: Math.max(0, run + baseAsk - tradeIn),
+                    ask: 0,
+                    crafted: false,
+                    enhancing: true,
+                    fromLevel: held ?? 0,
+                    ownsBase: held !== null,
+                    recipe: null,
+                };
+            }
         }
     }
 
@@ -651,7 +696,15 @@ export function watchedTargets() {
 
     const targets = Object.entries(state.targets).map(([itemHrid, target]) => {
         const enhancementLevel = target.enhancementLevel || 0;
-        const { cost, ask, crafted, recipe, enhancing, fromLevel } = costOf(itemHrid, enhancementLevel);
+        const {
+            cost,
+            ask,
+            crafted,
+            recipe,
+            enhancing,
+            fromLevel,
+            ownsBase: holdsBase,
+        } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
@@ -664,6 +717,7 @@ export function watchedTargets() {
             ask,
             crafted,
             enhancing: Boolean(enhancing),
+            ownsBase: Boolean(holdsBase),
             fromLevel: fromLevel || 0,
             recipe,
             noSell: targetNoSell(itemHrid),
@@ -856,7 +910,9 @@ function enhancementButtons() {
             fontWeight: chosen ? 'bold' : 'normal',
             padding: '2px 6px',
         });
-        button.title = sold ? `${formatWithSeparator(Math.round(ask))} to buy.` : 'Nobody is selling this one.';
+        button.title = sold
+            ? `${formatWithSeparator(Math.round(ask))} to buy.`
+            : 'Nobody is selling this one — it would have to be enhanced up to.';
         button.addEventListener('click', () => {
             editing.enhancementLevel = level;
             equipmentSavingsPanel.render();
@@ -874,10 +930,12 @@ function enhancementButtons() {
  * @returns {HTMLElement}
  */
 function costPreview(itemHrid, enhancementLevel) {
-    const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
-    const worn = wornRivalOf(itemHrid);
-    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
-    const cost = upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell: state.noSell });
+    // The same costing the watched cards use, rather than a second reading of
+    // the ask. Pricing the preview separately meant it could only ever offer a
+    // purchase — a +7 cape previewed as "nobody is selling this one" and then
+    // watched perfectly well, which is a preview saying the opposite of what
+    // the panel was about to do.
+    const { cost, ask, crafted, enhancing, fromLevel } = costOf(itemHrid, enhancementLevel);
     const progress = savingsProgress(cost, spendable());
     const seconds = timeToAffordSeconds(progress.needed, incomePerDay());
 
@@ -893,13 +951,19 @@ function costPreview(itemHrid, enhancementLevel) {
 
     if (cost === null) {
         const none = document.createElement('div');
-        none.textContent = 'Nobody is selling this one, so there is nothing to save towards yet.';
+        none.textContent = 'Nobody is selling this one, and it cannot be reached at the anvil either.';
         none.style.color = 'rgba(232, 236, 245, 0.5)';
         wrap.appendChild(none);
         return wrap;
     }
 
-    wrap.appendChild(priceLine('Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold));
+    if (enhancing) {
+        wrap.appendChild(priceLine(`Enhance +${fromLevel} → +${enhancementLevel}`, 'expected cost', ROW_COLORS.gold));
+    } else {
+        wrap.appendChild(
+            priceLine(crafted ? 'Materials:' : 'Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold)
+        );
+    }
     wrap.appendChild(
         priceLine(
             'Difference:',
@@ -1207,7 +1271,13 @@ function targetCard(target) {
                 target.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold
             )
         );
-        card.appendChild(priceLine('Untradable', 'expected cost at the anvil', 'rgba(232, 236, 245, 0.55)'));
+        card.appendChild(
+            priceLine(
+                target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
+                'expected cost at the anvil',
+                'rgba(232, 236, 245, 0.55)'
+            )
+        );
     } else if (target.crafted) card.appendChild(recipeLines(target));
     else if (target.ask > 0) {
         card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));

@@ -12,7 +12,14 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ inventory: [], equipment: new Map(), details: {}, prices: {}, actions: {} }));
+const game = vi.hoisted(() => ({
+    inventory: [],
+    equipment: new Map(),
+    details: {},
+    prices: {},
+    actions: {},
+    shops: {},
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -21,7 +28,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.details[hrid],
         // The picker builds its list from the whole item map, which is the same
         // fixture the per-item lookups read
-        getInitClientData: () => ({ itemDetailMap: game.details, actionDetailMap: game.actions }),
+        getInitClientData: () => ({ itemDetailMap: game.details, actionDetailMap: game.actions, ...game.shops }),
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -92,6 +99,7 @@ beforeEach(() => {
         '/items/plain_spear:0': { ask: 300_000_000, bid: 250_000_000 },
         '/items/shard:0': { ask: 1_000_000, bid: 900_000 },
     };
+    game.shops = {};
     resetEquipmentSavings();
 });
 
@@ -582,15 +590,29 @@ describe('the order of the list', () => {
     });
 });
 
-describe('untradable targets', () => {
+describe('targets nobody is selling at that level', () => {
     beforeEach(() => {
+        // Deliberately tradable, with an ask at +0 and nothing above — which is
+        // what a cape actually looks like, and what gating this on
+        // `isTradable` got wrong: the item is perfectly tradable and the
+        // target still has no price
         game.details['/items/sinister_cape'] = {
             name: 'Sinister Cape',
-            isTradable: false,
             itemLevel: 70,
             enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
             equipmentDetail: { type: '/equipment_types/back' },
         };
+        game.prices['/items/sinister_cape:0'] = { ask: 50_000_000, bid: 45_000_000 };
+        // One already on your back. The inventory covers worn pieces, which is
+        // how the run knows what level to start from.
+        game.inventory.push({
+            itemHrid: '/items/sinister_cape',
+            itemLocationHrid: '/item_locations/back',
+            count: 1,
+            enhancementLevel: 5,
+        });
+        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
+
         window.Toolasha = {
             Utils: {
                 enhancementCalculator: {
@@ -625,6 +647,57 @@ describe('untradable targets', () => {
         expect(watchedTargets()[0].cost).toBe(40 * 2 * 1_000_000 + 5 * 2_000_000);
     });
 
+    test('it counts from the level already on your back', () => {
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].enhancing).toBe(true);
+        expect(watchedTargets()[0].fromLevel).toBe(5);
+    });
+
+    test('the piece being enhanced is not also traded in', () => {
+        // It is the same cape. Subtracting what it would fetch would have you
+        // sell the thing you are about to enhance.
+        watchTarget('/items/sinister_cape', 7);
+        expect(watchedTargets()[0].cost).toBe(40 * 2 * 1_000_000 + 5 * 2_000_000);
+    });
+
+    test('with none owned, it buys a base and enhances that', () => {
+        game.inventory = game.inventory.filter((item) => item.itemHrid !== '/items/sinister_cape');
+        game.equipment.delete('/item_locations/back');
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].fromLevel).toBe(0);
+        expect(watchedTargets()[0].cost).toBe(50_000_000 + 40 * 2 * 1_000_000 + 5 * 2_000_000);
+    });
+
+    test('a base nobody lists is still priced through the shop that sells it', () => {
+        // Capes are drops and shop lines; they are never listed. Reading the
+        // market alone says a cape cannot be bought at any price.
+        game.inventory = game.inventory.filter((item) => item.itemHrid !== '/items/sinister_cape');
+        game.equipment.delete('/item_locations/back');
+        game.prices['/items/sinister_cape:0'] = null;
+        game.shops.shopItemDetailMap = {
+            cape: { itemHrid: '/items/sinister_cape', costs: [{ itemHrid: '/items/token', count: 10 }] },
+            // What the token is worth: the best coins any line in this shop
+            // converts one into
+            sword: { itemHrid: '/items/holy_sword', costs: [{ itemHrid: '/items/token', count: 20 }] },
+        };
+        watchTarget('/items/sinister_cape', 7);
+
+        // 100M for the sword over 20 tokens is 5M a token, so a 10-token cape
+        // is 50M
+        expect(watchedTargets()[0].cost).toBe(50_000_000 + 40 * 2 * 1_000_000 + 5 * 2_000_000);
+    });
+
+    test('with none owned and nowhere selling one there is nothing to model', () => {
+        game.inventory = game.inventory.filter((item) => item.itemHrid !== '/items/sinister_cape');
+        game.equipment.delete('/item_locations/back');
+        game.prices['/items/sinister_cape:0'] = null;
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].cost).toBeNull();
+    });
+
     test('with nothing to protect with, it quotes the run that has no protection', () => {
         // Offering a protected run at a protection nobody sells would price a
         // run that cannot be made
@@ -635,20 +708,12 @@ describe('untradable targets', () => {
         expect(watchedTargets()[0].cost).toBe(200 * 2 * 1_000_000);
     });
 
-    test('it counts from the level you already have', () => {
-        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
-        watchTarget('/items/sinister_cape', 7);
-
-        expect(watchedTargets()[0].enhancing).toBe(true);
-        expect(watchedTargets()[0].fromLevel).toBe(5);
-    });
-
     test('the card says it is an anvil run rather than a purchase', () => {
         watchTarget('/items/sinister_cape', 7);
         equipmentSavingsPanel.show();
 
-        expect(text()).toContain('Untradable');
-        expect(text()).toContain('Enhance');
+        expect(text()).toContain('Not sold at this level');
+        expect(text()).toContain('Enhance +5');
         expect(text()).not.toContain(FAILED);
     });
 

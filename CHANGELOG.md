@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the cape costing never fired, a layout came back rearranged, and the game drew over the panel
+
+- **The anvil path was gated on the wrong question.** It asked whether the item was untradable, and a cape is not — capes are perfectly tradable, they are simply never listed above +0. So the check never passed and a +7 cape read "nobody is selling this one" exactly as before. It now asks the question that actually matters: is anybody selling **this level**. If not, and you own one, the cost is the run from the level you already hold.
+- **The picker was pricing the choice separately from the panel.** It read the ask directly rather than going through the same costing the watched cards use, so a cape previewed as unbuyable and then watched perfectly well — a preview contradicting the thing it was previewing.
+- **A cape is priced through the shop that sells it.** Capes drop or are bought with tokens and never appear on the market, so a market-only reading says one cannot be had at any price — which made "buy a base and enhance it" impossible for the pieces that path exists for. A token is worth the best line its own shop converts to, the same rule the scrolls already use.
+- **Enhancing the piece you are wearing no longer trades it in.** It is the same cape; subtracting what it would fetch has you sell the thing you are about to enhance.
+- **An exported layout re-imported on the same character came back rearranged.** Import grew every tile to fit and then repacked the columns — right for an OPanel file, whose sizes measure OPanel's rendering, and wrong for one of ours, which already holds this overlay's own coordinates. Correcting what needed no correcting moved tiles that were exactly where they had been put. Our own files are now applied as written, frame included; OPanel's still get refitted.
+- **The panel rises while it is being arranged.** It sits below the game's interface on purpose — it is always up, and a permanent readout covering the tabs is worse than one occasionally covered. But that is a readout's rule, not a workbench's, and the ability cooldowns counting down through the tile you are dragging made the settings unusable. It now lifts above while the settings are open or the layout is unlocked, and drops back when you are done.
+
 ### Capes are priced at the anvil, crafts go through the planner, and a layout survives the trip between characters
 
 - **A cape has no ask, so it was unpriced forever.** Capes, quivers and the rest of the untradable gear cannot be bought at any enhancement level, so "save up for a +7 cape" is not a purchase — it is a run at the anvil, and reading it at a market price that does not exist reported nothing at all. Untradable targets are now costed through Toolasha's own enhancing calculator: expected attempts × materials, plus the protections the run expects to burn, counted from the level you are already wearing rather than from +0. The card says **Untradable** and names the run — `Enhance +5 → +7` — so nobody reads it as a price tag.
