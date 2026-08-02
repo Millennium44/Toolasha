@@ -19,6 +19,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => game.inventory,
         getEquipment: () => game.equipment,
         getItemDetails: (hrid) => game.details[hrid],
+        // The picker builds its list from the whole item map, which is the same
+        // fixture the per-item lookups read
+        getInitClientData: () => ({ itemDetailMap: game.details }),
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -201,5 +204,68 @@ describe('the panel renders', () => {
         equipmentSavingsPanel.show();
 
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('the item picker', () => {
+    /** Open Edit and hand back the picker's select */
+    const openPicker = () => {
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-edit-toggle]').click();
+        return equipmentSavingsPanel.panel.querySelector('[data-pick-item]');
+    };
+
+    test('every piece of equipment the game has is offerable', () => {
+        // The item menu can only offer what you are holding, which is exactly
+        // the wrong set — what you are saving for is what you do not have
+        const select = openPicker();
+        const values = [...select.querySelectorAll('option')].map((option) => option.value);
+
+        expect(values).toContain('/items/holy_sword');
+        expect(values).toContain('/items/rough_boots');
+        // Not equipment, so not a thing to save for
+        expect(values).not.toContain('/items/cheese');
+    });
+
+    test('pieces are grouped by the slot they fill', () => {
+        const select = openPicker();
+        const groups = [...select.querySelectorAll('optgroup')].map((group) => group.label);
+
+        expect(groups).toContain('main hand');
+        expect(groups).toContain('feet');
+    });
+
+    test('picking a piece offers its enhancement levels and prices the choice', () => {
+        const select = openPicker();
+        select.value = '/items/holy_sword';
+        select.dispatchEvent(new Event('change'));
+
+        const levels = equipmentSavingsPanel.panel.querySelectorAll('[data-pick-level]');
+        expect(levels).toHaveLength(21);
+        // 100M to buy less 40M for the sword being worn
+        expect(text()).toContain('Cheese Sword');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('watching it adds it at the enhancement that was chosen', () => {
+        const select = openPicker();
+        select.value = '/items/holy_sword';
+        select.dispatchEvent(new Event('change'));
+
+        equipmentSavingsPanel.panel.querySelector('[data-pick-level="5"]').click();
+        equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
+
+        const [target] = watchedTargets();
+        expect(target.itemHrid).toBe('/items/holy_sword');
+        expect(target.enhancementLevel).toBe(5);
+    });
+
+    test('the picker clears itself once it has been used', () => {
+        const select = openPicker();
+        select.value = '/items/holy_sword';
+        select.dispatchEvent(new Event('change'));
+        equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]').value).toBe('');
     });
 });

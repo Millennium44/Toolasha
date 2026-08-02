@@ -99,3 +99,56 @@ export function calculateDungeonTokenValue(
 
     return bestValuePerToken > 0 ? bestValuePerToken : null;
 }
+
+/**
+ * The best coins a labyrinth token can be turned into.
+ *
+ * Labyrinth rewards are bought with tokens, and a token is worth whatever the
+ * most valuable thing in its shop converts to. Only tradable shop lines count —
+ * a shop line nobody can sell prices a token at nothing, which would then price
+ * every reward at nothing.
+ *
+ * @param {Object} shopMap - The game's `labyrinthShopItemDetailMap`
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @returns {number} Coins per token, or 0 when nothing in the shop is priced
+ */
+export function labyrinthTokenValue(shopMap, priceOf) {
+    let best = 0;
+
+    for (const line of Object.values(shopMap || {})) {
+        const cost = line?.cost?.count || 0;
+        if (!(cost > 0)) continue;
+
+        const price = priceOf(line.itemHrid);
+        if (!(price > 0)) continue;
+
+        // One token can buy several of something, and the shop says so
+        const perToken = (price * (line.outputCount || 1)) / cost;
+        if (perToken > best) best = perToken;
+    }
+    return best;
+}
+
+/**
+ * What a labyrinth reward is worth, through the tokens it costs.
+ *
+ * Scrolls and seals never appear on the market — they are bought from the
+ * labyrinth shop and used — so a market-only reading prices them at nothing and
+ * leaves them out of a chest's contents entirely. They cost tokens, and tokens
+ * have a value, so they have one.
+ *
+ * @param {string} itemHrid - The reward
+ * @param {Object} shopMap - The game's `labyrinthShopItemDetailMap`
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @returns {number|null} Coins, or null when it is not a labyrinth reward
+ */
+export function labyrinthRewardValue(itemHrid, shopMap, priceOf) {
+    const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === itemHrid);
+    const cost = line?.cost?.count || 0;
+    if (!(cost > 0)) return null;
+
+    const perToken = labyrinthTokenValue(shopMap, priceOf);
+    if (!(perToken > 0)) return null;
+
+    return (perToken * cost) / (line.outputCount || 1);
+}
