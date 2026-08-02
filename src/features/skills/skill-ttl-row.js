@@ -30,6 +30,7 @@ import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { experiencePerHour, timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
+import { combatLevelPanel } from '../ui/combat-level-panel.js';
 
 /** How far back the rate is measured over */
 const WINDOW_MS = 10 * 60 * 1000;
@@ -126,6 +127,10 @@ registerRow({
         ]);
         container.title =
             `${Math.round(training.xpPerHour).toLocaleString()} xp/hr over the last ten minutes.\n` +
-            (training.seconds === null ? 'No next level — this skill is at the cap.' : 'Time to the next level.');
+            (training.seconds === null ? 'No next level — this skill is at the cap.' : 'Time to the next level.') +
+            '\nDouble-click for every skill, with targets.';
     },
+    // One line about the skill going up fastest; the panel behind it is the
+    // same question asked of all of them, with targets you can move
+    onOpen: () => combatLevelPanel.toggle(),
 });

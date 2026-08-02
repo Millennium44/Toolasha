@@ -200,6 +200,45 @@ export function cheapestRouteToNextCombat(levels) {
 }
 
 /**
+ * How far through its current level a skill is, as a fraction.
+ *
+ * Which matters here rather than only cosmetically: fed back into the formula,
+ * it turns the combat level from a step function into the continuous figure it
+ * really is. A character at Combat 126.300 with Melee 81.7% of the way to 135 is
+ * not 30% of the way to Combat 127 — it is 79%, because most of the Melee level
+ * that carries the doubled term is already earned. The whole-number formula
+ * cannot see that, and it is the difference between "a third of the way" and
+ * "nearly there".
+ *
+ * @param {number} experience - Cumulative experience in the skill
+ * @param {number} level - Current level
+ * @param {number[]} table - The game's cumulative `levelExperienceTable`
+ * @returns {number} 0 to 1; zero at the cap, where there is nothing to be part of
+ */
+export function levelFraction(experience, level, table) {
+    const floor = table?.[level];
+    const ceiling = table?.[level + 1];
+    if (floor === undefined || ceiling === undefined || !(ceiling > floor)) return 0;
+
+    return Math.min(1, Math.max(0, ((Number(experience) || 0) - floor) / (ceiling - floor)));
+}
+
+/**
+ * Levels with their part-finished fractions included.
+ *
+ * @param {Array<{name: string, level: number, experience: number}>} skills - Combat skills
+ * @param {number[]} table - The game's cumulative experience table
+ * @returns {Object<string, number>} Skill name → fractional level
+ */
+export function fractionalLevels(skills, table) {
+    const levels = {};
+    for (const skill of skills || []) {
+        levels[skill.name] = skill.level + levelFraction(skill.experience, skill.level, table);
+    }
+    return levels;
+}
+
+/**
  * Experience between two levels.
  *
  * @param {number} from - Starting level

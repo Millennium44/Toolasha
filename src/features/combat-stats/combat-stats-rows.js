@@ -113,7 +113,12 @@ registerRow({
         row(container, [
             { text: `${formatWithSeparator(Math.round(stats.expPerHour))} exp/hr`, color: ROW_COLORS.good },
         ]);
+        container.title = 'Combat experience per hour.\nDouble-click for the per-skill breakdown and combat level.';
     },
+    // The panel lives in the UI bundle, so it is reached through the global
+    // rather than imported — a direct import here would put a second copy of it
+    // in this bundle, with its own session clock
+    onOpen: () => window.Toolasha?.UI?.combatLevelPanel?.toggle(),
 });
 
 registerRow({
