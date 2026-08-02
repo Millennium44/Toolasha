@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: changing a dropdown appeared to do nothing
+
+- **The refresh guard was blocking the redraws the user asked for.** The panel skips its five-second redraw while a field has focus, so a half-typed level is not swept away — but `change` fires on a dropdown while that dropdown still has focus, so the redraw it asked for was skipped too. The new figures then turned up whenever focus next moved and the clock came round, which is what "takes ages to show the new exp rate" was.
+- The two are now separate: the periodic redraw still leaves a field alone, and a redraw the user asked for always happens. **The control also keeps its focus across it**, so changing Focus twice in a row does not mean clicking back into the dropdown between.
+- **The Target Selector reads the same rates as the table below it.** It used the measured rate while the table used the projected one, so choosing a skill you are not training answered `—` with the answer two inches beneath it. Both now come from one `projectedRates`, which also fixes the case nobody had hit: pointing Primary and Focus at the same skill gave it one share and silently dropped the other.
+
+### Combat Revenue reads like MCS's
+
+- One decimal and a plain hyphen: `95.1M - 13.2M = 82.0M/day`. Three numbers and two operators on one tile is already tight, and the second decimal buys nothing when the figure moves by millions a minute.
+
 ### Panels can now be tested, and testing this one found two more bugs
 
 - **`happy-dom` is a dev dependency, opted into per file** with `/** @vitest-environment happy-dom */`. Everything else stays in `node`, which is right — most of what is worth testing here is arithmetic, and the DOM environment costs setup time on every file that takes it. `AGENTS.md` documents the pattern.

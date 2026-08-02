@@ -86,13 +86,17 @@ registerRow({
         const costs = stats.dailyConsumableCosts + stats.dailyKeyCosts;
         const profit = stats.dailyProfit.bid;
 
+        // One decimal and a plain hyphen, as MCS draws it. Three numbers and two
+        // operators on one tile is already tight, and the second decimal buys
+        // nothing here — 95.1M against 95.14M is not a distinction anybody acts
+        // on when the figure moves by millions a minute.
         row(container, [
-            { text: formatLargeNumber(Math.round(income)), color: ROW_COLORS.good },
-            { text: '−', color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(costs)), color: ROW_COLORS.bad },
+            { text: formatLargeNumber(Math.round(income), 1), color: ROW_COLORS.good },
+            { text: '-', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(costs), 1), color: ROW_COLORS.bad },
             { text: '=', color: ROW_COLORS.dim },
             {
-                text: `${formatLargeNumber(Math.round(profit))}/day`,
+                text: `${formatLargeNumber(Math.round(profit), 1)}/day`,
                 color: profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
                 bold: true,
             },
