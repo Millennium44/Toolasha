@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({ dps: {}, luck: null, stats: null }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({
     default: {
         get dps() {
@@ -61,7 +62,9 @@ beforeEach(() => {
         durationSeconds: 3600,
         totalEncounters: 400,
         players: [
+            { name: 'Ally', deathCount: 2 },
             {
+                name: 'You',
                 isCurrentPlayer: true,
                 deathCount: 4,
                 dailyIncome: { ask: 100, bid: 80 },
@@ -117,7 +120,7 @@ describe('every panel draws', () => {
             players: [
                 {
                     isCurrentPlayer: true,
-                    get deathCount() {
+                    get name() {
                         throw new Error('deliberate');
                     },
                 },
@@ -140,17 +143,38 @@ describe('what the panels add over their tiles', () => {
         expect(dpsPanel.panel.textContent).toContain('2,000/s');
     });
 
-    test('Deaths says how long a death is worth', () => {
-        // Four deaths in an hour is one every fifteen minutes
+    test('Deaths breaks the party down by player, as IHurt does', () => {
+        // A party figure says the group is dying and not who, and "who" is the
+        // whole question when one member is under-geared for the zone
         deathsPanel.show();
-        expect(deathsPanel.panel.textContent).toContain('15m');
-        expect(deathsPanel.panel.textContent).toContain('100');
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Ally');
+        expect(text).toContain('You');
+        // Two plus four across an hour
+        expect(text).toContain('6');
     });
 
-    test('no deaths is rated as nothing rather than as infinity', () => {
-        state.stats.players[0].deathCount = 0;
+    test('and does not claim to know what killed anybody', () => {
         deathsPanel.show();
-        expect(deathsPanel.panel.textContent).toContain('No deaths this run');
+        expect(deathsPanel.panel.textContent).toContain('counts rather than causes');
+    });
+
+    test('Profit names the three cases HWhat names', () => {
+        profitPanel.show();
+        const text = profitPanel.panel.textContent;
+
+        expect(text).toContain('Lazy Profit');
+        expect(text).toContain('Mid Profit');
+        expect(text).toContain('Revenue (Bid) - Cost (Ask)');
+    });
+
+    test('and costs the weekly tax in cowbell bags', () => {
+        profitPanel.show();
+        const text = profitPanel.panel.textContent;
+
+        expect(text).toContain('Pay the Tax');
+        expect(text).toContain('25 bags');
     });
 
     test('Drop Luck says how many coins the verdict is about', () => {
@@ -165,15 +189,8 @@ describe('what the panels add over their tiles', () => {
         expect(dropLuckPanel.panel.textContent).toContain('-1.0M');
     });
 
-    test('Profit shows both sides, since the gap is often the whole profit', () => {
+    test('Profit shows what patience is worth', () => {
         profitPanel.show();
-        expect(profitPanel.panel.textContent).toContain('At ask (patient)');
-        expect(profitPanel.panel.textContent).toContain('At bid (immediate)');
-    });
-
-    test('and splits the costs it is subtracting', () => {
-        profitPanel.show();
-        expect(profitPanel.panel.textContent).toContain('Consumables/day');
-        expect(profitPanel.panel.textContent).toContain('Keys/day');
+        expect(profitPanel.panel.textContent).toContain('Patient over lazy');
     });
 });

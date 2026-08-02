@@ -33,6 +33,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { getItemPrices } from '../../utils/market-data.js';
 
 const REFRESH_MS = 2000;
 
@@ -51,17 +52,25 @@ const COLORS = {
  * The current player's slice of the combat statistics.
  * @returns {Object|null}
  */
+function runSeconds(data) {
+    let duration = data?.durationSeconds || 0;
+    if (data?.combatStartTime) {
+        const elapsed = Date.now() / 1000 - new Date(data.combatStartTime).getTime() / 1000;
+        if (elapsed > 0) duration = elapsed;
+    }
+    return duration;
+}
+
+/**
+ * The current player's slice of the combat statistics.
+ * @returns {Object|null}
+ */
 function playerStats() {
     const data = combatStatsDataCollector.getLatestData?.();
     const player = data?.players?.find((entry) => entry.isCurrentPlayer);
     if (!player) return null;
 
-    let duration = data.durationSeconds || 0;
-    if (data.combatStartTime) {
-        const elapsed = Date.now() / 1000 - new Date(data.combatStartTime).getTime() / 1000;
-        if (elapsed > 0) duration = elapsed;
-    }
-    return { ...player, duration, encounters: data.totalEncounters || 0 };
+    return { ...player, duration: runSeconds(data), encounters: data.totalEncounters || 0 };
 }
 
 /**
@@ -335,40 +344,48 @@ export const dpsPanel = new CombatPanel({
 export const deathsPanel = new CombatPanel({
     id: 'deathsPanel',
     title: 'Deaths',
-    size: { width: 360, height: 280 },
+    size: { width: 380, height: 300 },
     draw: (body) => {
-        const stats = playerStats();
-        if (!stats) {
+        const data = combatStatsDataCollector.getLatestData?.();
+        const players = data?.players || [];
+        if (!players.length) {
             body.appendChild(note('No combat data yet.'));
             return;
         }
 
-        const deaths = stats.deathCount || 0;
-        const perHour = stats.duration > 0 ? (deaths / stats.duration) * 3600 : 0;
+        const duration = runSeconds(data);
+        const total = players.reduce((sum, player) => sum + (player.deathCount || 0), 0);
 
-        const summary = card(body, 'This run');
+        const summary = card(body, 'Session');
         summary.append(
-            line('Deaths', formatWithSeparator(deaths), deaths ? ROW_COLORS.bad : ROW_COLORS.good),
-            line('Per hour', perHour ? perHour.toFixed(2) : '0', deaths ? ROW_COLORS.bad : ROW_COLORS.good),
-            line('Run length', timeReadable(Math.round(stats.duration)), COLORS.text),
-            line('Encounters', formatWithSeparator(stats.encounters), COLORS.text)
+            line('Elapsed', timeReadable(Math.round(duration)), COLORS.text),
+            line('Party deaths', formatWithSeparator(total), total ? ROW_COLORS.bad : ROW_COLORS.good),
+            line(
+                'Party deaths/hr',
+                duration > 0 ? ((total / duration) * 3600).toFixed(1) : '0.0',
+                total ? ROW_COLORS.bad : ROW_COLORS.good
+            )
         );
 
-        const rate = card(body, 'What that means');
-        if (deaths > 0 && perHour > 0) {
-            rate.append(
-                line('One death every', timeReadable(Math.round(3600 / perHour)), ROW_COLORS.accent),
+        // Per player, which is what IHurt is for: a party figure says the group
+        // is dying and not who, and "who" is the whole question when one member
+        // is under-geared for the zone
+        const perPlayer = card(body, 'Per player');
+        for (const player of players) {
+            const deaths = player.deathCount || 0;
+            const perHour = duration > 0 ? (deaths / duration) * 3600 : 0;
+            perPlayer.appendChild(
                 line(
-                    'Encounters per death',
-                    stats.encounters ? formatWithSeparator(Math.round(stats.encounters / deaths)) : '—',
-                    COLORS.text
+                    player.name || player.characterName || 'Unknown',
+                    `${formatWithSeparator(deaths)}  ·  ${perHour.toFixed(1)}/hr`,
+                    deaths ? ROW_COLORS.bad : ROW_COLORS.good,
+                    player.isCurrentPlayer ? 'You' : ''
                 )
             );
-        } else {
-            rate.appendChild(note('No deaths this run — nothing to rate.'));
         }
-        rate.appendChild(
-            note('The game does not say what killed you, so this counts deaths rather than attributing them.')
+
+        perPlayer.appendChild(
+            note('The game reports that a death happened, not what caused it, so these are counts rather than causes.')
         );
     },
 });
@@ -417,7 +434,7 @@ export const dropLuckPanel = new CombatPanel({
 export const profitPanel = new CombatPanel({
     id: 'profitPanel',
     title: 'Combat Profit',
-    size: { width: 420, height: 380 },
+    size: { width: 440, height: 420 },
     draw: (body) => {
         const stats = playerStats();
         if (!stats) {
@@ -425,31 +442,105 @@ export const profitPanel = new CombatPanel({
             return;
         }
 
-        // Both sides, because which one is honest depends on whether you intend
-        // to sell into the bids or wait at the asks — and the gap between them
-        // is frequently the whole profit
-        for (const side of ['ask', 'bid']) {
-            const block = card(body, side === 'ask' ? 'At ask (patient)' : 'At bid (immediate)');
-            const income = stats.dailyIncome?.[side] ?? 0;
-            const profit = stats.dailyProfit?.[side] ?? 0;
-            const costs = income - profit;
+        const revenue = { ask: stats.dailyIncome?.ask ?? 0, bid: stats.dailyIncome?.bid ?? 0 };
+        const cost = {
+            ask:
+                (stats.dailyConsumableCosts?.ask ?? stats.dailyConsumableCosts ?? 0) +
+                (stats.dailyKeyCosts?.ask ?? stats.dailyKeyCosts ?? 0),
+            bid:
+                (stats.dailyConsumableCosts?.bid ?? stats.dailyConsumableCosts ?? 0) +
+                (stats.dailyKeyCosts?.bid ?? stats.dailyKeyCosts ?? 0),
+        };
 
+        // The three cases HWhat names, which are not the same as "at ask" and
+        // "at bid": each mixes a revenue side with a cost side, because you sell
+        // and buy on opposite sides of the book
+        const cases = [
+            {
+                title: 'Lazy Profit',
+                colour: ROW_COLORS.good,
+                equation: 'Revenue (Bid) - Cost (Ask)',
+                value: revenue.bid - cost.ask,
+            },
+            {
+                title: 'Mid Profit',
+                colour: ROW_COLORS.accent,
+                equation: 'Revenue (Bid) - Cost (Bid)',
+                value: revenue.bid - cost.bid,
+            },
+            {
+                title: 'Patient Profit',
+                colour: ROW_COLORS.gold,
+                equation: 'Revenue (Ask) - Cost (Bid)',
+                value: revenue.ask - cost.bid,
+            },
+        ];
+
+        for (const scenario of cases) {
+            const block = card(body, scenario.title);
             block.append(
-                line('Income/day', formatKMB(income), ROW_COLORS.good),
-                line('Costs/day', formatKMB(costs), ROW_COLORS.bad),
-                line('Profit/day', formatKMB(profit), profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad),
-                line('Profit/hour', formatKMB(profit / 24), profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad)
+                line('Per day', formatKMB(scenario.value), scenario.value >= 0 ? scenario.colour : ROW_COLORS.bad),
+                line('Per hour', formatKMB(scenario.value / 24), scenario.value >= 0 ? scenario.colour : ROW_COLORS.bad)
             );
+            block.appendChild(note(scenario.equation));
         }
 
-        const breakdown = card(body, 'What the costs are');
-        breakdown.append(
-            line('Consumables/day', formatKMB(stats.dailyConsumableCosts ?? 0), ROW_COLORS.bad),
-            line('Keys/day', formatKMB(stats.dailyKeyCosts ?? 0), ROW_COLORS.bad),
+        const spread = card(body, 'Difference');
+        const best = cases[cases.length - 1].value;
+        const worst = cases[0].value;
+        spread.append(
+            line('Patient over lazy', formatKMB(best - worst), ROW_COLORS.gold),
+            line('Consumables/day', formatKMB(cost.ask), ROW_COLORS.bad),
             line('Run length', timeReadable(Math.round(stats.duration)), COLORS.text)
         );
-        breakdown.appendChild(
-            note('Daily figures are this run extrapolated, so a short run extrapolates its own noise.')
+        spread.appendChild(
+            note('How much the same run is worth for being patient with the order book rather than taking the spread.')
         );
+
+        body.appendChild(taxCard(stats));
     },
 });
+
+/** A week of membership, in bags of ten cowbells, as the game charges it */
+const BAGS_PER_WEEK = 25;
+const COWBELL_BAG = '/items/bag_of_10_cowbells';
+
+/**
+ * What the tax costs, and whether this run pays it.
+ *
+ * The figure worth having is not the price of a bag but whether the run covers
+ * it: a profit that does not clear the weekly tax is not profit, it is a slower
+ * way of running down.
+ *
+ * @param {Object} stats - From `playerStats`
+ * @returns {HTMLElement}
+ */
+function taxCard(stats) {
+    const holder = document.createElement('div');
+    const block = card(holder, 'Pay the Tax');
+
+    const bagPrice = getItemPrices(COWBELL_BAG)?.ask || 0;
+    if (!bagPrice) {
+        block.appendChild(note('No market price for a Bag of 10 Cowbells yet.'));
+        return holder;
+    }
+
+    const perWeek = bagPrice * BAGS_PER_WEEK;
+    const perDay = perWeek / 7;
+    const profit = stats.dailyProfit?.bid ?? 0;
+
+    block.append(
+        line('Per week', `${formatKMB(perWeek)}  (${BAGS_PER_WEEK} bags)`, ROW_COLORS.bad),
+        line('Per day', formatKMB(perDay), ROW_COLORS.bad),
+        line(
+            'This run covers it',
+            profit >= perDay ? 'yes' : 'no',
+            profit >= perDay ? ROW_COLORS.good : ROW_COLORS.bad,
+            'Daily profit at bid against the daily cost of the weekly tax.'
+        )
+    );
+    if (profit > 0) {
+        block.appendChild(line('Days of profit per week of tax', (perWeek / profit).toFixed(1), ROW_COLORS.accent));
+    }
+    return holder;
+}
