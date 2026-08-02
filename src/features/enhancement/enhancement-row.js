@@ -18,9 +18,12 @@
  * because "this has taken twice what it should" is exactly the thing you want it
  * to be able to say.
  *
- * The row is Equipment Watch's, from MWI Combat Suite by Frotty (MIT) — see
- * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
- * Toolasha's own.
+ * ## Not MCS's EWatch, despite the similar name
+ *
+ * This is Toolasha's own Equipment Watch tile and shows an enhancement run in
+ * progress. MCS's EWatch is a different tool — what you are **saving up for** —
+ * and is ported separately as Equipment Savings, in
+ * `features/inventory/equipment-savings-row.js`.
  */
 
 import { registerRow } from '../../utils/overlay-rows.js';

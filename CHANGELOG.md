@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Equipment Savings — the gear you are saving for, and when you will have it
+
+MCS's EWatch, ported. Wanting a piece of equipment is a savings problem and the game helps with none of it: the price is on one screen, your coins on another, and what you earn per day nowhere. So the question people actually ask — "can I afford it yet, and if not, when" — gets answered by opening the market and subtracting in your head, several times a day, for weeks.
+
+It is a new tile and panel. **Toolasha's own Equipment Watch tile is untouched** — that one shows an enhancement run in progress, which is a different thing wearing a similar name.
+
+- **What an upgrade costs is not what it is priced at.** You sell the piece it replaces, so the cost is the target's ask **less the bid on what you are wearing** — for a late-game slot that is most of the price, and reading the ask alone can double the figure. Finding the piece it replaces means turning the target's **equipment type** into an **item location**, two different strings that look interchangeable; getting it wrong throws nothing and silently charges full price for everything.
+- **Keep old gear** turns the trade-in off, for a piece you are keeping for a second loadout.
+- **A progress bar per target**, with what is still to find and how long that takes at your measured daily profit. **Everything** does the same for the whole list, because one slot at a time answers the wrong question when you want three pieces.
+- **No income measured means no arrival time**, not "never" — a figure there would be a claim about the future. Likewise an unpriced target is unknown rather than free: costing it at nothing would report it as already bought, which is the most misleading thing this could say.
+- Targets are added with a **Save for** button on the game's item menu, off by default like the Watchlist's, since it changes a menu you use for other things. Equipment only — saving up for a cheese is not a plan.
+- Coins are read off the character rather than out of net worth, which is recalculated on a schedule: a savings bar has to move when you spend, not when a worker next runs.
+
 ### Fixed: the Drop Luck panel said `[object Object]`
 
 - `describeLuck` returns `{text, tone}` and the whole object was handed to the line, so the verdict rendered as `[object Object]` where the words should be. It reads the text now, and takes the colour from the tone — lucky green, unlucky red — which is what the tone was there for.
