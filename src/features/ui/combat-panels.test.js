@@ -66,6 +66,9 @@ vi.mock('../../features/combat/damage-tracker.js', () => ({
     setFilterNonDamaging: (value) => {
         state.filtering = value;
     },
+    resetDamageTracker: () => {
+        state.reset = true;
+    },
 }));
 
 const { dpsPanel, deathsPanel, profitPanel, combatProfitView } = await import('./combat-panels.js');
@@ -169,6 +172,19 @@ describe('every panel draws', () => {
     });
 });
 
+/** The first player row, whichever way its arrow is pointing */
+const dpsPlayerRow = () =>
+    [...dpsPanel.panel.querySelectorAll('div')].find((el) => /^[\u25b6\u25bc]/.test(el.textContent));
+
+/** Shut every open row — the panel remembers them between openings, as it should */
+function collapseDpsRows() {
+    for (let guard = 0; guard < 10; guard += 1) {
+        const open = [...dpsPanel.panel.querySelectorAll('div')].find((el) => el.textContent.startsWith('\u25bc'));
+        if (!open) return;
+        open.click();
+    }
+}
+
 describe('what the panels add over their tiles', () => {
     test('Damage says whether you are winning the exchange', () => {
         // 4,000 dealt against 500 taken
@@ -176,24 +192,58 @@ describe('what the panels add over their tiles', () => {
         expect(dpsPanel.panel.textContent).toContain('8.0× in your favour');
     });
 
-    test('Damage attributes to a player and an ability, as DPs does', () => {
+    test('DPs lays it out as a table, with the columns it uses', () => {
         dpsPanel.show();
         const text = dpsPanel.panel.textContent;
 
+        expect(text).toContain('Character / Ability');
+        expect(text).toContain('Atks');
+        expect(text).toContain('Crit');
         expect(text).toContain('You');
-        expect(text).toContain('Auto attack');
-        // Ninety hits against ten misses
-        expect(text).toContain('90.0%');
-        expect(text).toContain('20.0%');
+        // Ninety hits against ten misses, written as DPs writes it
+        expect(text).toContain('90 (90.0%)');
     });
 
-    test('and carries the non-damaging filter DPs has', () => {
+    test('the abilities are behind the row rather than always on it', () => {
+        // A table that lists every ability of every player at once is a wall,
+        // which is why DPs makes the player row the thing you open
         dpsPanel.show();
-        const toggle = dpsPanel.panel.querySelector('[data-filter-toggle]');
-        expect(toggle.textContent).toContain('on');
+        collapseDpsRows();
+        expect(dpsPanel.panel.textContent).not.toContain('Auto attack');
+
+        dpsPlayerRow().click();
+        expect(dpsPanel.panel.textContent).toContain('Auto attack');
+    });
+
+    test('an opened row stays open when the panel repaints', () => {
+        // It repaints every couple of seconds; a row that shuts itself while
+        // you are reading it is worse than one that never opened
+        dpsPanel.show();
+        collapseDpsRows();
+        dpsPlayerRow().click();
+
+        dpsPanel.refresh();
+        expect(dpsPanel.panel.textContent).toContain('Auto attack');
+    });
+
+    test('and carries the non-damaging filter DPs has, in the header', () => {
+        dpsPanel.show();
+        const toggle = [...dpsPanel.panel.querySelectorAll('button')].find((b) =>
+            b.textContent.startsWith('Filter Nondamage')
+        );
+        expect(toggle.textContent).toContain('Enabled');
 
         toggle.click();
         expect(state.filtering).toBe(false);
+        state.filtering = true;
+    });
+
+    test('and a Reset, as DPs has', () => {
+        state.reset = false;
+        dpsPanel.show();
+        [...dpsPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Reset').click();
+
+        expect(state.reset).toBe(true);
     });
 
     test('with nothing attributed it says why rather than showing zeroes', () => {

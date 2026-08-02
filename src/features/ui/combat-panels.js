@@ -35,6 +35,7 @@ import {
     actionLabel,
     isFilteringNonDamaging,
     setFilterNonDamaging,
+    resetDamageTracker,
 } from '../../features/combat/damage-tracker.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -332,53 +333,118 @@ function card(body, title) {
     return element;
 }
 
+/**
+ * Which rows are open, kept between redraws.
+ *
+ * In the DOM it would be lost every two seconds when the panel repaints, which
+ * is a row that closes itself while you are reading it.
+ */
+const expandedRows = new Set();
+
+/** MCS's column widths, in the order it lists them */
+const DPS_COLUMNS = 'minmax(0, 1fr) 58px 76px 46px 74px 66px 64px';
+
+/**
+ * One line of the damage table.
+ *
+ * A grid rather than a flex row: the columns have to line up between the player
+ * row and the ability rows underneath it, and a table that does not line up is
+ * a table you read one cell at a time.
+ *
+ * @param {Array<{text: string, color?: string, bold?: boolean, align?: string}>} cells - Seven of them
+ * @param {Object} [options] - `{dim, indent}`
+ * @returns {HTMLElement}
+ */
+function dpsRow(cells, { dim = false, indent = 0 } = {}) {
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+        display: 'grid',
+        gridTemplateColumns: DPS_COLUMNS,
+        gap: '6px',
+        alignItems: 'center',
+        padding: '2px 0',
+        fontSize: dim ? '11px' : '12px',
+    });
+
+    cells.forEach((cell, index) => {
+        const span = document.createElement('span');
+        span.textContent = cell.text;
+        Object.assign(span.style, {
+            color: cell.color || (dim ? COLORS.textDim : COLORS.text),
+            fontWeight: cell.bold ? 'bold' : 'normal',
+            textAlign: index === 0 ? 'left' : 'right',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            paddingLeft: index === 0 ? `${indent}px` : '0',
+        });
+        row.appendChild(span);
+    });
+    return row;
+}
+
+/**
+ * A count with its share of the attempts, as MCS writes them: `193 (78.8%)`.
+ *
+ * The bare count says nothing without the attempts it came from, and the bare
+ * percentage hides how few swings it was computed over.
+ *
+ * @param {number} count - How many
+ * @param {number} outOf - Of how many
+ * @returns {string}
+ */
+function countAndShare(count, outOf) {
+    if (!(outOf > 0)) return formatWithSeparator(count);
+    return `${formatWithSeparator(count)} (${((count / outOf) * 100).toFixed(1)}%)`;
+}
+
 export const dpsPanel = new CombatPanel({
     id: 'dpsPanel',
-    title: 'Damage',
-    size: { width: 440, height: 400 },
+    title: 'DPs',
+    size: { width: 620, height: 420 },
+    controls: (bar) => {
+        // The two buttons DPs carries in its header, where it carries them
+        bar.appendChild(
+            toggleButton(
+                `Filter Nondamage: ${isFilteringNonDamaging() ? 'Enabled' : 'Off'}`,
+                isFilteringNonDamaging(),
+                () => {
+                    setFilterNonDamaging(!isFilteringNonDamaging());
+                    dpsPanel.refresh();
+                }
+            )
+        );
+        bar.appendChild(
+            toggleButton('Reset', false, () => {
+                resetDamageTracker();
+                dpsPanel.refresh();
+            })
+        );
+    },
     draw: (body) => {
         const breakdown = damageBreakdown();
+        const partyDamage = breakdown.players.reduce((sum, player) => sum + player.damage, 0);
 
-        const totals = card(body, 'Party');
-        totals.append(
-            line(
-                'Per second',
-                combatDPS.dps === null ? 'measuring…' : formatWithSeparator(Math.round(combatDPS.dps)),
-                ROW_COLORS.good
-            ),
-            line('Taken per second', formatWithSeparator(Math.round(combatDPS.dtps ?? 0)), ROW_COLORS.bad),
-            // The ratio a health bar cannot give you: whether you are winning
-            // the exchange or merely surviving it
-            line(
-                'Exchange',
-                combatDPS.dtps > 0 ? `${(combatDPS.dps / combatDPS.dtps).toFixed(1)}× in your favour` : 'untouched',
-                ROW_COLORS.gold
-            ),
-            line('Time fighting', timeReadable(Math.round(combatDPS.seconds)), COLORS.text)
+        // The header line DPs leads with: the one figure, and what it was
+        // computed from, before any of the breakdown
+        const heading = document.createElement('div');
+        Object.assign(heading.style, {
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'baseline',
+            flexWrap: 'wrap',
+            paddingBottom: '4px',
+            borderBottom: `1px solid ${COLORS.hairline}`,
+        });
+        const dpsFigure = document.createElement('span');
+        dpsFigure.textContent = `DPS ${combatDPS.dps === null ? '—' : Math.round(combatDPS.dps)}`;
+        Object.assign(dpsFigure.style, { color: ROW_COLORS.gold, fontWeight: 'bold', fontSize: '14px' });
+        heading.append(
+            dpsFigure,
+            piece(`Total Damage: ${formatKMB(partyDamage)}`, COLORS.textDim),
+            piece(timeReadable(Math.round(breakdown.seconds)), COLORS.textDim)
         );
-
-        // The filter MCS has, and for its reason: a hit landing while nobody is
-        // casting is usually a lingering effect, and counting it inflates
-        // whatever is next in the rotation
-        const toggle = document.createElement('button');
-        toggle.textContent = `Filter non-damaging: ${isFilteringNonDamaging() ? 'on' : 'off'}`;
-        toggle.dataset.filterToggle = 'true';
-        Object.assign(toggle.style, {
-            background: 'rgba(255, 255, 255, 0.08)',
-            border: `1px solid ${COLORS.hairline}`,
-            borderRadius: '3px',
-            color: COLORS.text,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '2px 8px',
-            marginTop: '4px',
-            alignSelf: 'flex-start',
-        });
-        toggle.addEventListener('click', () => {
-            setFilterNonDamaging(!isFilteringNonDamaging());
-            dpsPanel._render();
-        });
-        totals.appendChild(toggle);
+        body.appendChild(heading);
 
         if (!breakdown.players.length) {
             body.appendChild(
@@ -387,43 +453,92 @@ export const dpsPanel = new CombatPanel({
             return;
         }
 
+        const header = dpsRow(
+            [
+                { text: 'Character / Ability' },
+                { text: 'DPS' },
+                { text: 'Damage' },
+                { text: 'Atks' },
+                { text: 'Hit' },
+                { text: 'Crit' },
+                { text: 'Miss' },
+            ],
+            { dim: true }
+        );
+        header.style.borderBottom = `1px solid ${COLORS.hairline}`;
+        header.style.color = COLORS.textDim;
+        body.appendChild(header);
+
         for (const player of breakdown.players) {
-            const block = card(body, player.name);
-            block.append(
-                line('Damage', formatKMB(player.damage), ROW_COLORS.gold),
-                line(
-                    'Per second',
-                    player.dps === null ? 'measuring…' : formatWithSeparator(Math.round(player.dps)),
-                    player.dps === null ? COLORS.textDim : ROW_COLORS.good
-                ),
-                // Null rather than zero: no swings is not a 0% hit rate
-                line(
-                    'Accuracy',
-                    player.accuracy === null ? '—' : `${(player.accuracy * 100).toFixed(1)}%`,
-                    COLORS.text,
-                    `${formatWithSeparator(player.hits)} hits, ${formatWithSeparator(player.misses)} misses.`
-                ),
-                line(
-                    'Crit rate',
-                    player.critRate === null ? '—' : `${(player.critRate * 100).toFixed(1)}%`,
-                    ROW_COLORS.accent,
-                    `${formatWithSeparator(player.crits)} crits.`
-                )
-            );
+            const open = expandedRows.has(player.index);
+            const swings = player.hits + player.misses;
+            const share = partyDamage > 0 ? (player.damage / partyDamage) * 100 : 0;
+
+            const row = dpsRow([
+                { text: `${open ? '▼' : '▶'}  ${player.name}`, color: ROW_COLORS.accent, bold: true },
+                {
+                    text: player.dps === null ? '—' : String(Math.round(player.dps)),
+                    color: ROW_COLORS.good,
+                    bold: true,
+                },
+                { text: `${formatKMB(player.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
+                { text: formatWithSeparator(swings) },
+                { text: countAndShare(player.hits, swings), color: ROW_COLORS.good },
+                { text: countAndShare(player.crits, player.hits), color: ROW_COLORS.gold },
+                { text: countAndShare(player.misses, swings), color: ROW_COLORS.bad },
+            ]);
+            row.style.cursor = 'pointer';
+            row.title = 'Click for the per-ability breakdown.';
+            row.addEventListener('click', () => {
+                if (open) expandedRows.delete(player.index);
+                else expandedRows.add(player.index);
+                dpsPanel.refresh();
+            });
+            body.appendChild(row);
+
+            if (!open) continue;
 
             for (const ability of player.abilities) {
-                const share = player.damage > 0 ? (ability.damage / player.damage) * 100 : 0;
-                block.appendChild(
-                    line(
-                        `  ${actionLabel(ability.action)}`,
-                        `${formatKMB(ability.damage)}  ·  ${share.toFixed(0)}%`,
-                        COLORS.textDim,
-                        `${formatWithSeparator(ability.hits)} hits, ${formatWithSeparator(ability.crits)} crits, ` +
-                            `${formatWithSeparator(ability.misses)} misses.`
+                const attempts = ability.hits + ability.misses;
+                const abilityShare = player.damage > 0 ? (ability.damage / player.damage) * 100 : 0;
+                body.appendChild(
+                    dpsRow(
+                        [
+                            { text: `• ${actionLabel(ability.action)}` },
+                            {
+                                text:
+                                    breakdown.seconds > 0
+                                        ? String(Math.round(ability.damage / breakdown.seconds))
+                                        : '—',
+                                color: ROW_COLORS.good,
+                            },
+                            {
+                                text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
+                                color: ROW_COLORS.good,
+                            },
+                            { text: formatWithSeparator(attempts) },
+                            { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
+                            { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
+                            { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
+                        ],
+                        { dim: true, indent: 14 }
                     )
                 );
             }
         }
+
+        // The exchange, which the table cannot show: a party doing well on
+        // paper is still losing if it is taking more than it deals
+        const exchange = card(body, 'Party');
+        exchange.append(
+            line('Taken per second', formatWithSeparator(Math.round(combatDPS.dtps ?? 0)), ROW_COLORS.bad),
+            line(
+                'Exchange',
+                combatDPS.dtps > 0 ? `${(combatDPS.dps / combatDPS.dtps).toFixed(1)}× in your favour` : 'untouched',
+                ROW_COLORS.gold
+            ),
+            line('Time fighting', timeReadable(Math.round(combatDPS.seconds)), COLORS.text)
+        );
 
         body.appendChild(
             note(

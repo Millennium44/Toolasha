@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Damage panel is DPs' table
+
+It was a stack of cards — a Party card, then a card per player with the abilities as lines underneath. That reads fine for one player and badly for a party, because nothing lines up: comparing two players' crit rates meant reading two cards and holding one in your head.
+
+- **A table with DPs' own columns** — Character / Ability, DPS, Damage, Atks, Hit, Crit, Miss — so a party reads down a column instead of across a stack. Counts are written as DPs writes them, `193 (78.8%)`, because the bare count says nothing without the attempts behind it and the bare percentage hides how few swings it came from.
+- **Abilities are behind the player row.** Every ability of every player at once is a wall; the row opens to show its own. An open row stays open when the panel repaints, which it does every couple of seconds — a row that shuts while you are reading it is worse than one that never opened.
+- **The header carries the run and the two buttons**, where DPs has them: the DPS figure, the total damage it came from, the elapsed time, and **Filter Nondamage** and **Reset**.
+- **The exchange stays**, below the table. A party doing well on paper is still losing if it takes more than it deals, and no per-ability column can say that.
+
+Not yet matched: DPs' per-enemy rows and its "DPS based off enemy HPs" card. Both need damage tracked per monster and kills counted per monster type, which this script does not collect — the tracker attributes hits to players and abilities and stops there. That is a change to the tracker rather than to the panel.
+
 ### Fixed: the blue box around Queue and Start
 
 The box was never a border. It was the pinned strip's own background, painted with one of the game's themed colour variables — the one whose name reads like a dark background is not one; that scale is a set of visible tints. So the strip painted itself blue, and the blue showing above and below the buttons was the box. Two earlier attempts went looking for a border and a scrollbar instead.
