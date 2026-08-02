@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Rebuilt the combat panels against the actual source
+
+The four panels shipped a moment ago were my own design wearing MCS's names — I did not open the vendored script for any of them. Read properly, three were wrong in shape.
+
+- **Deaths is a party breakdown**, as IHurt is (line 11614): session deaths and deaths/hr **per player**, plus the party totals and the session clock. A party figure says the group is dying and not who, and "who" is the whole question when one member is under-geared for the zone. My previous version was solo-only and invented _one death every X_ and _encounters per death_, neither of which IHurt has. It also no longer implies it knows what killed anybody — the third-party notes said "broken down by what killed you" and the code does no such thing.
+- **Profit names the three cases HWhat names** (line 29211), which are not "at ask" and "at bid": each mixes a revenue side with a cost side, because you sell and buy on opposite sides of the book. **Lazy** is `Revenue (Bid) − Cost (Ask)`, **Mid** is `Revenue (Bid) − Cost (Bid)`, **Patient** is `Revenue (Ask) − Cost (Bid)`, and the Difference block prices what patience is worth. It also gains HWhat's **tax section** — 25 Bags of 10 Cowbells a week, costed from the market — and says whether the run covers it, because a profit that does not clear the weekly tax is a slower way of running down.
+- **Damage is unchanged and still does not match.** DPs attributes damage per player per ability from `dmgCounter`, `critCounter` and the casting player, and has a Filter Nondamage toggle. Toolasha's collector only diffs total health per side, so matching it needs the **collector** extended, not the panel redrawn. Left as it is rather than faked.
+
 ### Panels behind DPs, IHurt, LYuck and HWhat
 
 Four tiles that were one number each now open on double-click. Each panel reads the collector its tile already reads and computes nothing of its own — if a panel and its tile ever disagree, the disagreement is in the collector.
