@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Panels behind DPs, IHurt, LYuck and HWhat
+
+Four tiles that were one number each now open on double-click. Each panel reads the collector its tile already reads and computes nothing of its own — if a panel and its tile ever disagree, the disagreement is in the collector.
+
+- **Damage.** Dealt and taken, each per second and in total, and the **exchange ratio** between them — which is the thing a DPS figure alone cannot tell you: whether you are winning the fight or merely surviving it. Party size and your own share, marked as the estimate it is, since the game does not attribute hits.
+- **Deaths.** Deaths, per hour, run length and encounters — plus **one death every `X`** and encounters per death, because a rate of 0.7/hr is not a thing anybody pictures. No deaths is rated as nothing rather than as infinity. The game does not say what killed you, and the panel says so instead of implying it knows.
+- **Drop Luck.** The percentile, and then **how many coins the verdict is about** — income against expected, and the difference. A percentile alone cannot distinguish a fortune from a rounding error. It says when drop-rate bonuses were folded into the expectation, since that changes what the number means.
+- **Combat Profit.** Both pricing sides, because which is honest depends on whether you sell into the bids or wait at the asks, and the gap between them is frequently the whole profit. Costs split into consumables and keys rather than presented as one figure to subtract.
+
+All four panels share one shell — header, drag, resize, remembered position — so a panel cannot open somewhere unreachable in one place and not another. 13 tests build them, including with nothing loaded, which is the state every one of them is in for the first minute of a session.
+
+`combat-dps.js` and `combat-drop-luck.js` are now declared shared: they are stateful singletons fed by the websocket, so a second copy in the UI bundle would have sat there receiving nothing and reporting zeroes.
+
 ### Floating and Scrolling Combat Text
 
 - **Damage numbers over the units taking them**, and a **Combat Log** overlay row of the same events. A health bar tells you the state and not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not.

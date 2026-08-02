@@ -20,6 +20,7 @@ import overlayPanel from '../features/ui/overlay-panel.js';
 import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
 import combatText from '../features/ui/combat-text.js';
+import { dpsPanel, deathsPanel, dropLuckPanel, profitPanel } from '../features/ui/combat-panels.js';
 
 // Navigation features
 import altClickNavigation from '../features/navigation/alt-click-navigation.js';
@@ -171,6 +172,10 @@ toolashaRoot.UI = {
     consumablesPanel,
     combatLevelPanel,
     combatText,
+    dpsPanel,
+    deathsPanel,
+    dropLuckPanel,
+    profitPanel,
 };
 
 console.log('[Toolasha] UI library loaded');

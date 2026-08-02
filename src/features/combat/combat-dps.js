@@ -179,6 +179,9 @@ registerRow({
             'Overkill is not counted — a hit that takes a monster from 40 to dead counts 40.\n' +
             (solo ? '' : 'In a party this is the whole party\u2019s damage; nothing on the wire says who struck.');
     },
+    // The panel behind it: a DPS figure alone cannot say whether you are
+    // winning the exchange or merely surviving it
+    onOpen: () => window.Toolasha?.UI?.dpsPanel?.toggle(),
 });
 
 export default combatDPS;
