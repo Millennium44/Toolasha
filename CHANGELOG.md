@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Crafts are priced with your tea, and open the marketplace on what they are short of
+
+- **Artisan tea was not being counted.** The card priced a craft at the recipe's printed cost, so a Corsair Helmet read 100 Pirate Refinement Shards where the game's own panel said 88.9 — an eleven per cent overcharge on every craft the panel quoted, and worse the better your tea. It goes through the same artisan calculation the action panel uses, which resolves the loadout for that skill, so it is the tea you would actually be brewing under rather than whatever is in the slots while you are out fighting.
+- **The saving is shown rather than silently applied.** The ingredient line carries one decimal once the tea has taken its cut — `26.7 × Shard` — because rounding it back to a whole number hides the very thing that changed, and a count that quietly disagrees with the game's panel reads as a bug. An **Artisan tea −11.1% materials** line names where the difference came from.
+- **Missing Mats Marketplace, on the card.** The button the action panel carries, on the card that is saving towards the craft — which is where "what am I actually missing" gets asked. It calls the action feature's own handler rather than rebuilding the marketplace tabs, so the two cannot drift apart, and says so plainly if that feature is switched off.
+
 ### The revenue tile reads profit the way the panel does
 
 - **The tile follows the case you picked.** It was hard-wired to bid revenue less every cost — one of four readings, and not the one somebody who has chosen Patient in the panel is thinking in. A tile that disagrees with the panel behind it is a tile nobody trusts, so the panel now says which reading is on screen and the tile draws that one. Its tooltip names the case.
