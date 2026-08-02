@@ -92,7 +92,10 @@ export function findCaster(pMap, state) {
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newAttributionState`, mutated
- * @returns {Array<Object>} `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`
+ * @returns {Array<Object>} Hits as
+ *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`, and
+ *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
+ *   bleed can land the killing blow on a tick where no counter moved
  */
 export function attributeTick(tick, state) {
     const { mMap, pMap } = tick || {};
@@ -116,6 +119,15 @@ export function attributeTick(tick, state) {
 
         // First sighting of a monster is not a hit for its entire health bar
         if (beforeHealth === undefined) continue;
+
+        // A death is its own event, separate from the hit that caused it.
+        // Merging the two would lose every kill landed by a bleed — the health
+        // reaches zero on a tick where no counter moved — and a kill counted
+        // only when a hit lands undercounts exactly the fights that take
+        // longest, which are the ones worth measuring.
+        if (beforeHealth > 0 && health <= 0) {
+            events.push({ monsterIndex: index, isKill: true });
+        }
 
         // A hit is the counter rising. Health falling on its own is a bleed or
         // a tick of something, and crediting it to whoever last cast would
@@ -163,6 +175,10 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
  */
 export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging } = {}) {
     for (const event of events || []) {
+        // A death is not a swing, and counting it as one would add a phantom
+        // hit to whoever happened to be casting
+        if (event.isKill) continue;
+
         const player = (tally[event.playerIndex] = tally[event.playerIndex] || {
             damage: 0,
             hits: 0,
@@ -193,6 +209,45 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
             ability.damage += event.amount;
             ability.hits++;
             if (event.isCrit) ability.crits++;
+        }
+    }
+    return tally;
+}
+
+/**
+ * Fold events into a per-monster tally.
+ *
+ * The player table answers "who is doing the damage". This answers "to what",
+ * which is the other half of a fight: a run that looks slow is often one zone's
+ * worth of a single tanky monster rather than a rotation problem, and no
+ * per-ability figure can say so.
+ *
+ * Keyed by name rather than by index, because an index is one spawn — a zone
+ * cycles through dozens of them and the question is about the kind of monster,
+ * not this particular rat.
+ *
+ * @param {Object} tally - `{}` or a previous return, mutated
+ * @param {Array<Object>} events - From `attributeTick`
+ * @param {Function} nameOf - `(monsterIndex) => string|null`
+ * @returns {Object} Monster name → `{damage, hits, crits, misses, kills}`
+ */
+export function foldEnemies(tally, events, nameOf) {
+    for (const event of events || []) {
+        const name = nameOf(event.monsterIndex);
+        if (!name) continue;
+
+        const enemy = (tally[name] = tally[name] || { damage: 0, hits: 0, crits: 0, misses: 0, kills: 0 });
+
+        if (event.isKill) {
+            enemy.kills++;
+            continue;
+        }
+
+        if (event.isMiss) enemy.misses++;
+        else if (!event.isHeal) {
+            enemy.damage += event.amount;
+            enemy.hits++;
+            if (event.isCrit) enemy.crits++;
         }
     }
     return tally;

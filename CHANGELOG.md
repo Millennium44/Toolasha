@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Per-enemy tracking, and DPs' second reading of the run
+
+The tracker attributed hits to players and abilities and stopped there — it never recorded which monster took the hit, and nothing counted kills. Both now exist, which is what the last two pieces of DPs needed.
+
+- **An enemy row per monster.** The player table answers "who is doing the damage"; this answers "to what". A run that reads as slow is often one zone's worth of a single tanky monster rather than a rotation problem, and no per-ability figure can say so. Keyed by the kind of monster rather than by the spawn, since a zone cycles through dozens of them.
+- **A death is its own event, separate from the hit that caused it.** Merging them would lose every kill landed by a bleed — the health reaches zero on a tick where no counter moved — and that undercounts exactly the long fights worth measuring. It is also not a swing, so it adds no phantom hit to whoever happened to be casting.
+- **DPS based off enemy HPs.** The same run measured a second way: not from attributed hits but from full health bars emptied. Attribution has holes — a bleed, a tick before the counters were known, two people casting together — and a corpse does not: the monster is dead, and its bar was worth what it was worth. Where the two figures disagree, the difference is what attribution could not see.
+- **Quoted against battle time and against total time**, as DPs quotes it. The first says how hard the party hits, the second says what the run actually produced, and the gap between them is time spent walking rather than fighting — which no rotation fixes and a shorter respawn does.
+- **A kill is priced at the largest health bar that monster has been seen with**, since a weakened spawn would understate what killing one is worth.
+
 ### The Damage panel is DPs' table
 
 It was a stack of cards — a Party card, then a card per player with the abilities as lines underneath. That reads fine for one player and badly for a party, because nothing lines up: comparing two players' crit rates meant reading two cards and holding one in your head.

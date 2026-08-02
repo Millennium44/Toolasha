@@ -32,7 +32,13 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
+import {
+    newAttributionState,
+    noteActions,
+    attributeTick,
+    foldEvents,
+    foldEnemies,
+} from '../../utils/damage-attribution.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -42,6 +48,21 @@ let tally = {};
 
 /** Player index → display name, from `new_battle` */
 let names = {};
+
+/** Monster name → damage, hits, crits, misses and kills */
+let enemyTally = {};
+
+/**
+ * Monster index → `{name, maxHP}`, from `new_battle`.
+ *
+ * Rebuilt every battle, because an index is a slot in this fight rather than an
+ * identity — slot 0 is a rat now and a wolf in ninety seconds, and a stale map
+ * credits one monster's damage to the other.
+ */
+let monsters = {};
+
+/** Monster name → its full health bar, which is what a kill is worth */
+let monsterHealth = {};
 
 let startedAt = 0;
 let lastTickAt = 0;
@@ -79,6 +100,7 @@ export function setFilterNonDamaging(value) {
 export function resetDamageTracker() {
     state = newAttributionState();
     tally = {};
+    enemyTally = {};
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
@@ -115,7 +137,56 @@ export function damageBreakdown() {
         };
     });
 
-    return { seconds, startedAt, players: players.sort((a, b) => b.damage - a.damage) };
+    const enemies = Object.entries(enemyTally).map(([name, entry]) => {
+        const swings = entry.hits + entry.misses;
+        return {
+            name,
+            damage: entry.damage,
+            hits: entry.hits,
+            crits: entry.crits,
+            misses: entry.misses,
+            kills: entry.kills,
+            // What a kill is worth: the health bar it took to empty. Null when
+            // the monster has never been seen alive this session, because a
+            // guess here would be a claim about how hard the fight was.
+            maxHP: monsterHealth[name] ?? null,
+            accuracy: swings > 0 ? entry.hits / swings : null,
+            critRate: entry.hits > 0 ? entry.crits / entry.hits : null,
+            dps: measurable ? entry.damage / seconds : null,
+        };
+    });
+
+    // Wall clock against time actually swinging. The gap between them is what
+    // walking between fights costs, which is the figure DPs leads its enemy
+    // card with — a rotation cannot fix it and a zone change can.
+    const logging = startedAt ? (Date.now() - startedAt) / 1000 : 0;
+
+    return {
+        seconds,
+        startedAt,
+        logging,
+        players: players.sort((a, b) => b.damage - a.damage),
+        enemies: enemies.sort((a, b) => b.damage - a.damage),
+    };
+}
+
+/**
+ * A monster's readable name.
+ *
+ * The payload carries an hrid and sometimes a name; the hrid is the reliable
+ * one, so it is what the fallback derives from.
+ *
+ * @param {Object} monster - From `new_battle`
+ * @returns {string|null}
+ */
+function monsterName(monster) {
+    const hrid = monster?.combatMonsterHrid || monster?.monsterHrid;
+    if (hrid) {
+        const detail = dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid];
+        if (detail?.name) return detail.name;
+        return String(hrid).split('/').pop().replace(/_/g, ' ');
+    }
+    return monster?.name || null;
 }
 
 /**
@@ -147,6 +218,20 @@ export default {
                 for (const [index, player] of Object.entries(players)) {
                     names[index] = player?.name || player?.character?.name || names[index];
                 }
+
+                // Rebuilt rather than merged: an index is a slot in this fight,
+                // and last fight's slot 0 was a different monster
+                monsters = {};
+                for (const [index, monster] of Object.entries(data?.monsters || {})) {
+                    const name = monsterName(monster);
+                    if (!name) continue;
+
+                    const maxHP = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
+                    monsters[index] = { name };
+                    // The largest seen, since a weakened spawn would understate
+                    // what killing one is worth
+                    if (Number.isFinite(maxHP) && maxHP > (monsterHealth[name] || 0)) monsterHealth[name] = maxHP;
+                }
             } catch (error) {
                 console.error('[DamageTracker] Reading a new battle failed:', error);
             }
@@ -165,7 +250,9 @@ export default {
                     state.critCounter = {};
                 }
 
-                foldEvents(tally, attributeTick(data, state), { filterNonDamaging });
+                const events = attributeTick(data, state);
+                foldEvents(tally, events, { filterNonDamaging });
+                foldEnemies(enemyTally, events, (index) => monsters[index]?.name || null);
 
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none
@@ -186,6 +273,8 @@ export default {
         onNewBattle = null;
         onBattleUpdated = null;
         names = {};
+        monsters = {};
+        monsterHealth = {};
         resetDamageTracker();
     },
 };
