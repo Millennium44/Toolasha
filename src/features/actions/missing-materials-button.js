@@ -494,6 +494,7 @@ function createEnhancementMissingMaterialsButton(
     button.disabled = disabled;
     button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);
@@ -617,6 +618,7 @@ function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, 
     button.title = disabled && numActions <= 0 ? 'Enter a quantity to check missing materials' : '';
     button.style.cssText = `
         width: 100%;
+        box-sizing: border-box;
         padding: 10px 16px;
         margin: 8px 0 16px 0;
         background: linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%);

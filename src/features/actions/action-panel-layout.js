@@ -59,55 +59,20 @@ const CSS = `
     /* The panel is the scroller. Contained overscroll so reaching the bottom of
        it does not then start scrolling the page behind the modal.
 
-       Hiding horizontal overflow rather than leaving it: turning an element into a
-       vertical scroller makes it a horizontal one too, and the vertical bar
-       takes ten pixels of the width that everything inside was already sized
-       against. The result is a few pixels of horizontal overflow and a full-
-       width scrollbar across the bottom of the panel, which is not a divider
-       and reads as one. */
+       Horizontal overflow is hidden as a backstop only. The real cause was
+       blocks built without box-sizing — a full-width card plus fourteen pixels
+       of padding a side is a card wider than its column — and those are fixed
+       where they are built rather than clipped here. */
     [class*="SkillActionDetail_skillActionDetail"] {
         max-height: calc(100vh - ${CHROME_PX}px);
         overflow-y: auto;
         overflow-x: hidden;
         overscroll-behavior: contain;
-        scrollbar-width: thin;
     }
 
-    /* Scrollbars for the whole modal, not just the panel.
-
-       The first attempt styled the panel alone and the bars stayed the game's
-       blue — because the element that overflows is not always the one made to
-       scroll. Rather than guess which ancestor owns a given bar, every
-       scrollable thing inside an action modal is styled: grey, because a blue
-       line above the buttons and a blue line below them is a frame around the
-       buttons, which is not what a scrollbar is for.
-
-       Horizontal bars are removed outright. Making an element a vertical
-       scroller makes it a horizontal one too, and the vertical bar costs ten
-       pixels of a width everything inside was already sized against — so a few
-       pixels of overflow appear and draw a full-width bar. The content is not
-       meaningfully wider than the panel; the bar is an artefact. */
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) {
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
-    }
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar,
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])::-webkit-scrollbar {
-        width: 10px;
-        height: 0;
-    }
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-track,
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-corner {
-        background: transparent;
-    }
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-thumb,
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.16);
-        border-radius: 5px;
-    }
-    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.28);
-    }
+    /* The scrollbar is left as the game draws it. Recolouring it was chasing
+       the wrong thing anyway: the horizontal bar was never a styling problem
+       but a width one, fixed where the oversized blocks are built. */
 
     /* The containers between the modal and the panel scroll nothing of their
        own — the panel is the scroller — so any bar they show is the same

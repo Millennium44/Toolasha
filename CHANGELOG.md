@@ -11,8 +11,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 The box was never a border. It was the pinned strip's own background, painted with one of the game's themed colour variables — the one whose name reads like a dark background is not one; that scale is a set of visible tints. So the strip painted itself blue, and the blue showing above and below the buttons was the box. Two earlier attempts went looking for a border and a scrollbar instead.
 
 - **The strip is painted a dark literal**, so it reads as the panel continuing behind the buttons rather than as a coloured band around them.
-- **The horizontal scrollbar is gone.** The buttons container measures a fraction of a pixel wider than the panel holding it — 321.883 against 320 — and that is all a horizontal scrollbar needs. Nothing directly inside the panel may now be wider than the panel: it is a column of rows, and a row wider than its column is always a bug rather than an intent. Chasing them one at a time is a game with no end.
-- **Scrollbars across the whole modal are neutral**, and the divider is a plain hairline with no drop shadow, so the row reads as the edge of the content sliding underneath.
+- **The horizontal scrollbar is gone, at its source.** Three of this script's own blocks — the Cost Summary card, the budget row and the Missing Mats button — were built full-width with padding and a border and no `box-sizing`, so each rendered about thirty pixels wider than the column holding it. That is what pushed the Calculate button past the edge and put a scrollbar under the whole panel. They are sized correctly now, which fixes them everywhere they appear rather than only inside a clipped panel.
+- **The scrollbar is the game's own again.** Recolouring it was chasing the wrong thing: the bar was a width problem, not a styling one.
+- **The divider is a plain hairline with no drop shadow**, so the row reads as the edge of the content sliding underneath.
 
 ### The action panel fits on the screen again
 
