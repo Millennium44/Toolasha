@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: EWatch never had income data, and its tile omitted the enhancement
+
+- **"No income data", always.** Two bugs stacked. The duration was read from `startTime`/`endTime`, which the collector does not publish — it publishes `durationSeconds` — so the sum was `Date.now() − Date.now()` and every run was zero seconds long. And `dailyProfit` is `{ask, bid}`, two figures rather than one, so comparing it as a number was NaN and would have failed even with a correct duration. Both fixed; the bar now reads **Lazy** or **Mid** for which side of the book it is using, as HWhat's does, and No Sell switches it to the ask side since that is the assumption No Sell already makes.
+- **The tile names the enhancement**, because a Plate Body and a Plate Body +10 are different purchases at very different prices, and naming only the first names the wrong one.
+- **A pinned target you can already afford says "Affordable"** rather than `0` and `0s`, which read as broken rather than as done.
+- **MCS's own eye glyphs.** The open one is the emoji it uses; the closed one is drawn as a path, because there is no crossed-out-eye emoji that renders the same everywhere — the nearest candidates are sunglasses and a monkey covering its face, and the sunglasses is what was showing.
+
 ### Fixed: EWatch counted coins it could not spend, and hid the slots by default
 
 - **The coin figure was reading every coin row the game holds, not the one in your inventory.** `getInventory` returns every character item — equipped pieces, listings, all of it — and coins appear under more than one, so an unfiltered lookup reported fifty-one trillion where the character had two hundred and sixty-eight million. Everything was affordable, every bar sat at 100%. It filters to `/item_locations/inventory` now, which is what every other reader of that list already did.
