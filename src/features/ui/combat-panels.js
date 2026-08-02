@@ -25,6 +25,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import combatDPS from '../../features/combat/combat-dps.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../../features/combat-stats/combat-stats-calculator.js';
@@ -493,6 +494,9 @@ let profitMode = 'mid';
 /** Whether costs are subtracted at all, as HWhat's Costs On does */
 let costsOn = true;
 
+/** Whether the weekly MooPass tax is subtracted too, as HWhat's tax toggle does */
+let taxOn = false;
+
 /**
  * A profit box in HWhat's shape: the case, the figure, the rule, the sum.
  *
@@ -505,15 +509,15 @@ let costsOn = true;
  * @param {Object} scenario - `{title, colour, equation, revenue, cost}`
  * @returns {HTMLElement}
  */
-function profitBox(body, scenario) {
-    const value = scenario.revenue - (costsOn ? scenario.cost : 0);
+function profitBox(body, scenario, tax = 0) {
+    const value = scenario.revenue - (costsOn ? scenario.cost : 0) - tax;
     const colour = value >= 0 ? scenario.colour : ROW_COLORS.bad;
 
     const block = card(body);
     block.style.borderLeft = `3px solid ${colour}`;
 
     const heading = document.createElement('div');
-    heading.textContent = scenario.title;
+    heading.textContent = scenario.shorthand ? `${scenario.title}  (${scenario.shorthand})` : scenario.title;
     Object.assign(heading.style, { color: colour, fontWeight: 'bold' });
 
     const figure = document.createElement('div');
@@ -521,13 +525,15 @@ function profitBox(body, scenario) {
     Object.assign(figure.style, { color: colour, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.3' });
 
     const rule = document.createElement('div');
-    rule.textContent = costsOn ? scenario.equation : scenario.equation.split(' - ')[0];
+    rule.textContent = (costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - Tax' : '');
     Object.assign(rule.style, { color: COLORS.textDim, fontSize: '11px' });
 
+    const terms = [formatKMB(scenario.revenue)];
+    if (costsOn) terms.push(formatKMB(scenario.cost));
+    if (tax) terms.push(formatKMB(tax));
+
     const sum = document.createElement('div');
-    sum.textContent = costsOn
-        ? `${formatKMB(scenario.revenue)} - ${formatKMB(scenario.cost)} = ${formatKMB(value)}`
-        : `${formatKMB(scenario.revenue)}`;
+    sum.textContent = terms.length > 1 ? `${terms.join(' - ')} = ${formatKMB(value)}` : terms[0];
     Object.assign(sum.style, {
         color: colour,
         opacity: '0.75',
@@ -588,10 +594,15 @@ function profitCases(stats) {
             (stats.dailyKeyCosts?.bid ?? stats.dailyKeyCosts ?? 0),
     };
 
+    // All four ways round the book, each once. Lazy, Mid and Patient are the
+    // three worth a name; Ask - Ask is the fourth corner — everything at the
+    // asking price, which is the optimistic reading and the one HWhat shows
+    // last.
     return [
         {
             key: 'lazy',
             title: 'Lazy Profit',
+            shorthand: 'Bid - Ask',
             colour: ROW_COLORS.good,
             equation: 'Revenue (Bid) - Cost (Ask)',
             revenue: revenue.bid,
@@ -600,6 +611,7 @@ function profitCases(stats) {
         {
             key: 'mid',
             title: 'Mid Profit',
+            shorthand: 'Bid - Bid',
             colour: ROW_COLORS.accent,
             equation: 'Revenue (Bid) - Cost (Bid)',
             revenue: revenue.bid,
@@ -608,10 +620,20 @@ function profitCases(stats) {
         {
             key: 'patient',
             title: 'Patient Profit',
+            shorthand: 'Ask - Bid',
             colour: ROW_COLORS.gold,
             equation: 'Revenue (Ask) - Cost (Bid)',
             revenue: revenue.ask,
             cost: cost.bid,
+        },
+        {
+            key: 'askask',
+            title: 'Ask - Ask',
+            shorthand: '',
+            colour: '#c79ae8',
+            equation: 'Revenue (Ask) - Cost (Ask)',
+            revenue: revenue.ask,
+            cost: cost.ask,
         },
     ];
 }
@@ -627,6 +649,15 @@ export const profitPanel = new CombatPanel({
         bar.appendChild(
             toggleButton(costsOn ? 'Costs On' : 'Costs Off', costsOn, () => {
                 costsOn = !costsOn;
+                profitPanel.refresh();
+            })
+        );
+
+        // The MooPass is a real weekly cost, and a profit figure that ignores it
+        // is a profit figure that has not paid the rent
+        bar.appendChild(
+            toggleButton(taxOn ? 'Tax On' : 'Tax Off', taxOn, () => {
+                taxOn = !taxOn;
                 profitPanel.refresh();
             })
         );
@@ -654,26 +685,30 @@ export const profitPanel = new CombatPanel({
 
         const cases = profitCases(stats);
         const headline = cases.find((scenario) => scenario.key === profitMode) || cases[1];
+        const tax = taxOn ? cowbellTax().perDay : 0;
 
         // The header sum HWhat carries: revenue, cost and what is left, in one
         // line, so the panel answers its own question before it is scrolled
         const summary = card(body);
         summary.style.borderLeft = `3px solid ${headline.colour}`;
-        const total = headline.revenue - (costsOn ? headline.cost : 0);
+        const total = headline.revenue - (costsOn ? headline.cost : 0) - tax;
         const equation = document.createElement('div');
         Object.assign(equation.style, { fontSize: '14px', fontWeight: 'bold' });
-        equation.append(
-            piece(formatKMB(headline.revenue), ROW_COLORS.good),
-            piece(costsOn ? ' - ' : ' ', COLORS.textDim),
-            piece(costsOn ? formatKMB(headline.cost) : '', ROW_COLORS.bad),
-            piece(costsOn ? ' = ' : '', COLORS.textDim),
-            piece(`${formatKMB(total)}/day`, ROW_COLORS.gold)
-        );
+        equation.appendChild(piece(formatKMB(headline.revenue), ROW_COLORS.good));
+        if (tax) {
+            equation.append(piece(' - ', COLORS.textDim), piece(formatKMB(tax), '#e8b4d8'));
+        }
+        if (costsOn) {
+            equation.append(piece(' - ', COLORS.textDim), piece(formatKMB(headline.cost), ROW_COLORS.bad));
+        }
+        if (tax || costsOn) equation.appendChild(piece(' = ', COLORS.textDim));
+        equation.appendChild(piece(`${formatKMB(total)}/day`, ROW_COLORS.gold));
         summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
 
-        for (const scenario of cases) profitBox(body, scenario);
+        for (const scenario of cases) profitBox(body, scenario, tax);
 
         const spread = card(body, 'Difference');
+        // Patient against lazy: the tax is in both, so it cancels
         const best = cases[2].revenue - (costsOn ? cases[2].cost : 0);
         const worst = cases[0].revenue - (costsOn ? cases[0].cost : 0);
         spread.append(
@@ -705,6 +740,35 @@ function piece(text, color) {
 /** A week of membership, in bags of ten cowbells, as the game charges it */
 const BAGS_PER_WEEK = 25;
 const COWBELL_BAG = '/items/bag_of_10_cowbells';
+const COWBELL = '/items/cowbell';
+const COWBELLS_PER_BAG = 10;
+
+/**
+ * What the weekly tax still costs, given what is already in the bag.
+ *
+ * Not the price of twenty-five bags. Cowbells accumulate — from dailies, from
+ * drops, from bags bought and not yet spent — and a figure that ignores the
+ * hundred and twenty you are already holding overstates the tax by half and
+ * makes a run look like it is not covering something it comfortably covers.
+ * Loose cowbells and bagged ones are the same thing at ten to one.
+ *
+ * @returns {{perWeek: number, perDay: number, bagsNeeded: number, bagPrice: number}}
+ */
+function cowbellTax() {
+    const bagPrice = getItemPrices(COWBELL_BAG)?.ask || 0;
+
+    let held = 0;
+    for (const item of dataManager.getInventory?.() || []) {
+        if (item.itemHrid === COWBELL) held += item.count || 0;
+        else if (item.itemHrid === COWBELL_BAG) held += (item.count || 0) * COWBELLS_PER_BAG;
+    }
+
+    const owed = Math.max(0, BAGS_PER_WEEK * COWBELLS_PER_BAG - held);
+    const bagsNeeded = Math.ceil(owed / COWBELLS_PER_BAG);
+    const perWeek = bagPrice * bagsNeeded;
+
+    return { perWeek, perDay: perWeek / 7, bagsNeeded, bagPrice };
+}
 
 /**
  * What the tax costs, and whether this run pays it.
@@ -718,30 +782,36 @@ const COWBELL_BAG = '/items/bag_of_10_cowbells';
  */
 function taxCard(stats) {
     const holder = document.createElement('div');
-    const block = card(holder, 'Pay the Tax');
+    const block = card(holder, taxOn ? 'Paying the Tax' : 'Pay the Tax');
 
-    const bagPrice = getItemPrices(COWBELL_BAG)?.ask || 0;
-    if (!bagPrice) {
+    const tax = cowbellTax();
+    if (!tax.bagPrice) {
         block.appendChild(note('No market price for a Bag of 10 Cowbells yet.'));
         return holder;
     }
 
-    const perWeek = bagPrice * BAGS_PER_WEEK;
-    const perDay = perWeek / 7;
     const profit = stats.dailyProfit?.bid ?? 0;
 
     block.append(
-        line('Per week', `${formatKMB(perWeek)}  (${BAGS_PER_WEEK} bags)`, ROW_COLORS.bad),
-        line('Per day', formatKMB(perDay), ROW_COLORS.bad),
+        line(
+            'Per week',
+            `${formatKMB(tax.perWeek)}  (${tax.bagsNeeded} of ${BAGS_PER_WEEK} bags)`,
+            ROW_COLORS.bad,
+            'Twenty-five bags a week, less the cowbells you are already holding.'
+        ),
+        line('Per day', formatKMB(tax.perDay), ROW_COLORS.bad),
         line(
             'This run covers it',
-            profit >= perDay ? 'yes' : 'no',
-            profit >= perDay ? ROW_COLORS.good : ROW_COLORS.bad,
+            profit >= tax.perDay ? 'yes' : 'no',
+            profit >= tax.perDay ? ROW_COLORS.good : ROW_COLORS.bad,
             'Daily profit at bid against the daily cost of the weekly tax.'
         )
     );
     if (profit > 0) {
-        block.appendChild(line('Days of profit per week of tax', (perWeek / profit).toFixed(1), ROW_COLORS.accent));
+        block.appendChild(line('Days of profit per week of tax', (tax.perWeek / profit).toFixed(1), ROW_COLORS.accent));
+    }
+    if (!taxOn) {
+        block.appendChild(note('Not counted against the figures above — press Tax in the header to include it.'));
     }
     return holder;
 }
