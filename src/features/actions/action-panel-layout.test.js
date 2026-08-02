@@ -118,6 +118,21 @@ describe('the action panel layout', () => {
         expect(css).toMatch(/SkillActionDetail_skillActionDetail"\] \*\s*\{/);
     });
 
+    test('the grid items are allowed to shrink', () => {
+        // The panel's body is a two-column grid, and a grid item defaults to a
+        // minimum width of auto — it refuses to be narrower than its longest
+        // unbreakable content. So the value column takes whatever the widest
+        // label asks for and the grid outgrows the panel. Every block inside
+        // measures exactly the column width, which is why they all looked
+        // innocent: correctly sized, to a column that was too wide.
+        settings.values.actionPanelLayout = true;
+        actionPanelLayout.initialize();
+        const css = styleEl().textContent;
+
+        expect(css).toContain('min-width: 0');
+        expect(css).toContain('SkillActionDetail_value');
+    });
+
     test('the scrollbar gutter is reserved', () => {
         // The vertical bar otherwise appears after the layout is decided and
         // takes its width out of the column, making every full-width row wider

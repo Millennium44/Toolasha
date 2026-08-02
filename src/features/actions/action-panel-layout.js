@@ -94,7 +94,7 @@ const CSS = `
     /* Nothing inside the panel may be wider than the panel — at any depth, not
        just the rows sitting directly in it. The Cost Summary card is inserted
        beside the item requirements rather than at the top level, so a rule for
-       direct children walked straight past the widest thing in the panel.
+       direct children walked straight past it.
 
        The panel is a column of rows. A row wider than its column is always the
        bug rather than the intent, so this is safe to state once for everything
@@ -102,6 +102,27 @@ const CSS = `
     [class*="SkillActionDetail_skillActionDetail"] * {
         max-width: 100%;
         box-sizing: border-box;
+    }
+
+    /* The actual overflow, and it was never one of the blocks.
+
+       The panel's body is a two-column grid — a label like "Requires" beside a
+       value — and everything this script adds goes into the value column. A
+       grid item defaults to a minimum width of auto, which means it refuses to be
+       narrower than its own longest unbreakable content. So the column takes
+       whatever "Missing Mats Marketplace" and "Direct recipe cost   5.7M" ask
+       for, the grid becomes wider than the panel, and the panel scrolls
+       sideways. Every block inside measures exactly the column's width, which
+       is why they all looked innocent: they were sized correctly, to a column
+       that was itself too wide.
+
+       Allowing those items to shrink is what lets the grid fit its panel. */
+    [class*="SkillActionDetail_skillActionDetail"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_info"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_value"],
+    [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_content"],
+    [class*="SkillActionDetail_skillActionDetail"] > * {
+        min-width: 0;
     }
 
     /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
