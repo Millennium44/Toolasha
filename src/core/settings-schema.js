@@ -2066,6 +2066,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Automatically sorts tasks by skill type when you open the task panel',
             },
+            taskSorter_sortAfterRead: {
+                id: 'taskSorter_sortAfterRead',
+                label: 'Sort tasks after reading new ones',
+                type: 'checkbox',
+                default: false,
+                help: 'Sorts the board again once you press Read, since new tasks always arrive at the end',
+            },
             taskSorter_hideButton: {
                 id: 'taskSorter_hideButton',
                 label: 'Hide Sort Tasks button',
