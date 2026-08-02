@@ -275,10 +275,10 @@ describe('what the panels add over their tiles', () => {
         const text = dpsPanel.panel.textContent;
 
         expect(text).toContain('DPS based off enemy HPs');
-        expect(text).toContain('307'); // 92,000 / 300
-        expect(text).toContain('230'); // 92,000 / 400
+        expect(text).toContain('306.7'); // 92,000 / 300
+        expect(text).toContain('230.0'); // 92,000 / 400
         expect(text).toContain('25'); // enemies killed
-        expect(text).toContain('20 × 2.4K');
+        expect(text).toContain('20 kills × 2.4K HP = 48.0K');
     });
 
     test('with nothing dead it says so rather than dividing by nothing', () => {
@@ -286,6 +286,26 @@ describe('what the panels add over their tiles', () => {
         dpsPanel.show();
 
         expect(dpsPanel.panel.textContent).toContain('no health bars to count');
+    });
+
+    test('an enemy row opens to what was used against it', () => {
+        // The question an enemy row raises: is it tanky, or is the wrong thing
+        // being pointed at it
+        state.breakdown = {
+            ...state.breakdown,
+            enemies: state.breakdown.enemies.map((enemy) => ({
+                ...enemy,
+                abilities: [{ action: 'auto', damage: enemy.damage, hits: enemy.hits, crits: 0, misses: 0 }],
+            })),
+        };
+        dpsPanel.show();
+        collapseDpsRows();
+
+        const rat = [...dpsPanel.panel.querySelectorAll('div')].find((el) => el.textContent.startsWith('▶  Rat'));
+        rat.click();
+
+        expect(dpsPanel.panel.textContent).toContain('Auto attack');
+        collapseDpsRows();
     });
 
     test('a width remembered from before the table is widened to fit it', () => {

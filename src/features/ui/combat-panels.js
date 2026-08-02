@@ -442,11 +442,24 @@ function countAndShare(count, outOf) {
  */
 function enemyHealthCard(breakdown) {
     const holder = document.createElement('div');
+    Object.assign(holder.style, {
+        border: `1px solid ${ROW_COLORS.gold}`,
+        borderRadius: '6px',
+        padding: '8px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        background: 'rgba(255, 214, 102, 0.04)',
+    });
+
     const killed = breakdown.enemies.filter((enemy) => enemy.kills > 0 && enemy.maxHP > 0);
 
-    const block = card(holder, 'DPS based off enemy HPs');
+    const title = document.createElement('div');
+    title.textContent = 'DPS based off enemy HPs';
+    Object.assign(title.style, { color: ROW_COLORS.gold, fontWeight: 'bold' });
+
     if (!killed.length) {
-        block.appendChild(note('Nothing has died yet, so there are no health bars to count.'));
+        holder.append(title, note('Nothing has died yet, so there are no health bars to count.'));
         return holder;
     }
 
@@ -458,50 +471,145 @@ function enemyHealthCard(breakdown) {
     const totalDPS = totalTime > 0 ? health / totalTime : null;
     const battleDPS = battleTime > 0 ? health / battleTime : null;
 
-    block.append(
-        line(
-            'Total time DPS',
-            totalDPS === null ? '—' : formatWithSeparator(Math.round(totalDPS)),
-            ROW_COLORS.gold,
-            'Every health bar emptied, over the whole time this has been logging.'
-        ),
-        line(
-            'Battle time DPS',
-            battleDPS === null ? '—' : formatWithSeparator(Math.round(battleDPS)),
-            ROW_COLORS.gold,
-            'The same, over the time actually spent swinging.'
-        ),
-        line(
+    // Title on the left, the three figures on the right, as DPs arranges them —
+    // the caption under each is what makes three similar numbers legible
+    const heading = document.createElement('div');
+    Object.assign(heading.style, {
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        gap: '10px',
+        flexWrap: 'wrap',
+    });
+    const figures = document.createElement('div');
+    Object.assign(figures.style, { display: 'flex', gap: '14px', marginLeft: 'auto' });
+    figures.append(
+        bigFigure(totalDPS, 'total time DPS', ROW_COLORS.gold),
+        bigFigure(battleDPS, 'battle time DPS', ROW_COLORS.gold),
+        bigFigure(
+            totalDPS === null || battleDPS === null ? null : battleDPS - totalDPS,
             'DPS loss between battles',
-            totalDPS === null || battleDPS === null ? '—' : formatWithSeparator(Math.round(battleDPS - totalDPS)),
-            ROW_COLORS.bad,
-            'What walking between fights costs. A rotation cannot fix this; a zone change can.'
-        ),
-        line('Time logging', timeReadable(Math.round(totalTime)), COLORS.text),
-        line('Time in battle', timeReadable(Math.round(battleTime)), COLORS.text),
-        line('Total health destroyed', formatKMB(health), ROW_COLORS.good),
-        line('Enemies killed', formatWithSeparator(kills), COLORS.text)
+            ROW_COLORS.bad
+        )
     );
+    heading.append(title, figures);
+    holder.appendChild(heading);
+    holder.appendChild(note('Based on enemy max HP only.'));
 
-    // Named per monster, because "fifty kills" is a different run depending on
-    // whether they were rats or bosses
-    for (const enemy of killed) {
-        block.appendChild(
-            line(
-                `  ${enemy.name}`,
-                `${formatWithSeparator(enemy.kills)} × ${formatKMB(enemy.maxHP)} = ${formatKMB(enemy.kills * enemy.maxHP)}`,
-                COLORS.textDim
-            )
-        );
-    }
+    // One strip rather than four rows: they are the inputs to the figures
+    // above, and a column of labels reads as if they were findings themselves
+    const strip = document.createElement('div');
+    Object.assign(strip.style, {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px 16px',
+        fontSize: '11px',
+        color: COLORS.textDim,
+        borderTop: `1px solid ${COLORS.hairline}`,
+        paddingTop: '5px',
+    });
+    strip.append(
+        statPair('Time logging', timeReadable(Math.round(totalTime)), ROW_COLORS.good),
+        statPair('Time in battle', timeReadable(Math.round(battleTime)), ROW_COLORS.good),
+        statPair('Total health destroyed', formatKMB(health), ROW_COLORS.good),
+        statPair('Total enemies killed', formatWithSeparator(kills), COLORS.text)
+    );
+    holder.appendChild(strip);
 
-    block.appendChild(
+    // Two to a row, each its own tile, as DPs draws them. A flat list of four
+    // similar sentences is read one at a time; a grid is read at a glance.
+    const grid = document.createElement('div');
+    Object.assign(grid.style, {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+        gap: '6px',
+    });
+    for (const enemy of killed) grid.appendChild(enemyTile(enemy));
+    holder.appendChild(grid);
+
+    holder.appendChild(
         note(
             'Counted from full health bars rather than from attributed hits, so it does not drift where ' +
                 'attribution cannot see — a bleed, or a tick before the counters were known.'
         )
     );
     return holder;
+}
+
+/**
+ * One of the three headline figures, with the caption that tells them apart.
+ *
+ * @param {number|null} value - The figure
+ * @param {string} caption - What it is
+ * @param {string} color - Ink
+ * @returns {HTMLElement}
+ */
+function bigFigure(value, caption, color) {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, { textAlign: 'right' });
+
+    const figure = document.createElement('div');
+    figure.textContent = value === null ? '—' : value.toFixed(1);
+    Object.assign(figure.style, { color, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.2' });
+
+    const label = document.createElement('div');
+    label.textContent = caption;
+    Object.assign(label.style, { color: COLORS.textDim, fontSize: '10px', fontStyle: 'italic' });
+
+    wrap.append(figure, label);
+    return wrap;
+}
+
+/**
+ * A label and its figure, side by side, for the strip under the headline.
+ *
+ * @param {string} label - What it is
+ * @param {string} value - The figure
+ * @param {string} color - Ink for the figure
+ * @returns {HTMLElement}
+ */
+function statPair(label, value, color) {
+    const wrap = document.createElement('span');
+    const name = document.createElement('span');
+    name.textContent = `${label}: `;
+    const figure = document.createElement('span');
+    figure.textContent = value;
+    figure.style.color = color;
+    figure.style.fontWeight = 'bold';
+    wrap.append(name, figure);
+    return wrap;
+}
+
+/**
+ * What one kind of monster contributed, as its own tile.
+ *
+ * Named and priced, because "fifty kills" is a different run depending on
+ * whether they were rats or bosses.
+ *
+ * @param {Object} enemy - From `damageBreakdown`
+ * @returns {HTMLElement}
+ */
+function enemyTile(enemy) {
+    const tile = document.createElement('div');
+    Object.assign(tile.style, {
+        borderLeft: `3px solid ${ROW_COLORS.bad}`,
+        borderRadius: '4px',
+        background: 'rgba(248, 113, 113, 0.08)',
+        padding: '4px 8px',
+    });
+
+    const name = document.createElement('div');
+    name.textContent = enemy.name;
+    Object.assign(name.style, { color: ROW_COLORS.bad, fontWeight: 'bold', fontSize: '11.5px' });
+
+    const sum = document.createElement('div');
+    sum.textContent =
+        `${formatWithSeparator(enemy.kills)} kills × ${formatKMB(enemy.maxHP)} HP = ` +
+        `${formatKMB(enemy.kills * enemy.maxHP)}`;
+    Object.assign(sum.style, { color: COLORS.textDim, fontSize: '10.5px' });
+
+    tile.append(name, sum);
+    return tile;
 }
 
 export const dpsPanel = new CombatPanel({
@@ -544,7 +652,7 @@ export const dpsPanel = new CombatPanel({
             borderBottom: `1px solid ${COLORS.hairline}`,
         });
         const dpsFigure = document.createElement('span');
-        dpsFigure.textContent = `DPS ${combatDPS.dps === null ? '—' : Math.round(combatDPS.dps)}`;
+        dpsFigure.textContent = `DPS ${Number.isFinite(combatDPS.dps) ? combatDPS.dps.toFixed(1) : '—'}`;
         Object.assign(dpsFigure.style, { color: ROW_COLORS.gold, fontWeight: 'bold', fontSize: '14px' });
         heading.append(
             dpsFigure,
@@ -615,10 +723,7 @@ export const dpsPanel = new CombatPanel({
                         [
                             { text: `• ${actionLabel(ability.action)}` },
                             {
-                                text:
-                                    breakdown.seconds > 0
-                                        ? String(Math.round(ability.damage / breakdown.seconds))
-                                        : '—',
+                                text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
                                 color: ROW_COLORS.good,
                             },
                             {
@@ -637,20 +742,58 @@ export const dpsPanel = new CombatPanel({
         }
 
         for (const enemy of breakdown.enemies) {
+            const key = `enemy:${enemy.name}`;
+            const open = expandedRows.has(key);
             const swings = enemy.hits + enemy.misses;
             const share = partyDamage > 0 ? (enemy.damage / partyDamage) * 100 : 0;
 
-            body.appendChild(
-                dpsRow([
-                    { text: enemy.name, color: ROW_COLORS.bad, bold: true },
-                    { text: enemy.dps === null ? '—' : String(Math.round(enemy.dps)), color: ROW_COLORS.good },
-                    { text: `${formatKMB(enemy.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
-                    { text: formatWithSeparator(swings) },
-                    { text: countAndShare(enemy.hits, swings), color: ROW_COLORS.good },
-                    { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
-                    { text: countAndShare(enemy.misses, swings), color: ROW_COLORS.bad },
-                ])
-            );
+            const row = dpsRow([
+                { text: `${open ? '▼' : '▶'}  ${enemy.name}`, color: ROW_COLORS.bad, bold: true },
+                { text: Number.isFinite(enemy.dps) ? enemy.dps.toFixed(1) : '—', color: ROW_COLORS.good },
+                { text: `${formatKMB(enemy.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
+                { text: formatWithSeparator(swings) },
+                { text: countAndShare(enemy.hits, swings), color: ROW_COLORS.good },
+                { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
+                { text: countAndShare(enemy.misses, swings), color: ROW_COLORS.bad },
+            ]);
+            row.style.cursor = 'pointer';
+            row.title = 'Click for what was used against it.';
+            row.addEventListener('click', () => {
+                if (open) expandedRows.delete(key);
+                else expandedRows.add(key);
+                dpsPanel.refresh();
+            });
+            body.appendChild(row);
+
+            if (!open) continue;
+
+            // Which abilities went into this one, which is the question an
+            // enemy row raises: a monster taking a long time is either tanky or
+            // the wrong thing is being pointed at it
+            for (const ability of enemy.abilities || []) {
+                const attempts = ability.hits + ability.misses;
+                const abilityShare = enemy.damage > 0 ? (ability.damage / enemy.damage) * 100 : 0;
+                body.appendChild(
+                    dpsRow(
+                        [
+                            { text: `• ${actionLabel(ability.action)}` },
+                            {
+                                text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
+                                color: ROW_COLORS.good,
+                            },
+                            {
+                                text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
+                                color: ROW_COLORS.good,
+                            },
+                            { text: formatWithSeparator(attempts) },
+                            { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
+                            { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
+                            { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
+                        ],
+                        { dim: true, indent: 14 }
+                    )
+                );
+            }
         }
 
         body.appendChild(enemyHealthCard(breakdown));
