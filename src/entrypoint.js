@@ -281,6 +281,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'actionPanelLayout',
+            name: 'Action Panel Layout',
+            category: 'Actions',
+            module: Actions.actionPanelLayout,
+            async: false,
+        },
+        {
             key: 'quickInputButtons',
             name: 'Quick Input Buttons',
             category: 'Actions',

@@ -415,6 +415,13 @@ export const settingsGroups = {
         title: 'Missing Materials & Crafting Plan',
         icon: '🛒',
         settings: {
+            actionPanelLayout: {
+                id: 'actionPanelLayout',
+                label: 'Keep the action panel on screen',
+                type: 'checkbox',
+                default: true,
+                help: 'Stops the action detail panel growing past the window: it scrolls instead, and the Queue and Start buttons stay pinned to the bottom rather than falling off it. Also tightens the spacing of the added sections.',
+            },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
                 label: 'Show "Missing Mats Marketplace" button on production panels',

@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The action panel fits on the screen again
+
+The game's panel was built for the game's contents — a name, the inputs, the outputs, two buttons. This script adds most of a second panel on top of that, and the modal grows to hold all of it. Past a certain recipe it grows taller than the window, and the first thing to fall off the bottom is **Start Now**, which is the one thing the panel exists to press.
+
+- **The modal stops growing at the height of the window**, and the panel scrolls instead of the page. The title and the close button stay where they are rather than drifting off the top.
+- **Queue and Start are pinned to the bottom.** They are the panel's verbs, and having to scroll to reach a verb is the failure everything else here is downstream of. A hairline and the panel's own background separate them from the content sliding underneath.
+- **Overscroll is contained**, so reaching the bottom of the panel stops there instead of handing the scroll to the page behind the modal — which was most of what made the scrolling feel wrong.
+- **A scrollbar you can actually grab**, and the added sections are tightened: eight pixels above and below seven collapsible sections is over a hundred pixels of nothing.
+- All of it is CSS, scoped with `:has()` to modals that actually contain an action panel — the marketplace and the settings dialogs share the same class names and want none of it. Under Missing Materials & Crafting Plan, on by default; turning it off restores the panel exactly as it was.
+
 ### Sort the task board after reading new tasks
 
 - **A new option: sort again once you press Read.** Reading is the one moment the board is guaranteed to come apart — new tasks arrive at the end however the rest was arranged. Auto-sort-on-open does not cover it, because the panel is already open, so a sorted board falls out of order every few hours and has to be sorted by hand again. Off by default, under Tasks.
