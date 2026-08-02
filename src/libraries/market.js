@@ -38,6 +38,7 @@ import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 import networthFeature from '../features/networth/index.js';
 // Side-effect import: registers the coins, listings, inventory and books overlay rows
 import '../features/networth/networth-rows.js';
+import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
 
 // Inventory features
 import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';
@@ -89,6 +90,7 @@ toolashaRoot.Market = {
     inventoryBadgePrices,
     dungeonTokenTooltips,
     treasureTracker,
+    abilityBookPanel,
     watchlist,
     watchlistPanel,
     autoAllButton,

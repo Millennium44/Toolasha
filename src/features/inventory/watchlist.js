@@ -52,6 +52,7 @@ import {
     valueWatchlist,
     watchlistTotals,
     sortRows,
+    listedCounts,
 } from '../../utils/watchlist.js';
 import { combatZones, zoneDrops, openableItems, openableDrops } from '../../utils/drop-sources.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -202,10 +203,17 @@ function vendorPriceOf(itemHrid) {
  * @returns {Array<Object>} From `valueWatchlist`, sorted
  */
 export function watchlistRows() {
+    // Built once per pass rather than per row: it is a walk of every listing,
+    // and there are more rows than listings
+    const listed = listedCounts(
+        dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
+    );
+
     const rows = valueWatchlist(state.entries, {
         quantityOf: heldCount,
         pricesFor: (hrid) => getItemPrices(hrid),
         vendorOf: vendorPriceOf,
+        listedOf: (hrid) => listed[hrid],
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
@@ -576,6 +584,16 @@ class WatchlistPanel {
 
         const held = this._cell(item.quantity ? formatWithSeparator(item.quantity) : '—');
         held.style.color = item.quantity ? COLORS.text : COLORS.textDim;
+        // Where they are matters: on the market is "wait", in the bag is "done",
+        // and a single number cannot tell you which
+        if (item.listed || item.unclaimed) {
+            held.style.color = ROW_COLORS.accent;
+            const parts = [`${formatWithSeparator(item.held)} in the bag`];
+            if (item.listed) parts.push(`${formatWithSeparator(item.listed)} listed for sale`);
+            if (item.unclaimed) parts.push(`${formatWithSeparator(item.unclaimed)} unclaimed on the market`);
+            held.title = parts.join(', ');
+            held.textContent = `${formatWithSeparator(item.quantity)}*`;
+        }
 
         const unit = this._cell(this._unitText(item));
         unit.style.color = item.flag ? ROW_COLORS.bad : COLORS.textDim;

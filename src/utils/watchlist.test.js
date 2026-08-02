@@ -5,6 +5,7 @@ import {
     removeSource,
     vendorFloor,
     valueWatchlist,
+    listedCounts,
     watchlistTotals,
     sortRows,
 } from './watchlist.js';
@@ -150,6 +151,9 @@ describe('valueWatchlist', () => {
             hrid: '/items/a',
             name: 'A',
             source: 'aqua',
+            held: 10,
+            listed: 0,
+            unclaimed: 0,
             quantity: 10,
             ask: 100,
             bid: 90,
@@ -173,6 +177,64 @@ describe('valueWatchlist', () => {
         });
         expect(row.totalAsk).toBe(0);
         expect(row.totalBid).toBe(0);
+    });
+});
+
+describe('listedCounts', () => {
+    test('a sell order is holding items you still own', () => {
+        // A checklist that counts only the bag says you have none of something
+        // you have two hundred of, which is the difference between "go farm
+        // this" and "wait"
+        const counts = listedCounts([{ itemHrid: '/items/a', isSell: true, orderQuantity: 200, filledQuantity: 40 }]);
+        expect(counts['/items/a']).toEqual({ listed: 160, unclaimed: 0 });
+    });
+
+    test('a buy order is holding coin, not items', () => {
+        expect(listedCounts([{ itemHrid: '/items/a', isSell: false, orderQuantity: 200, filledQuantity: 0 }])).toEqual(
+            {}
+        );
+    });
+
+    test('unclaimed items are yours whichever way the order went', () => {
+        const counts = listedCounts([
+            { itemHrid: '/items/a', isSell: false, orderQuantity: 5, filledQuantity: 5, unclaimedItemCount: 5 },
+        ]);
+        expect(counts['/items/a']).toEqual({ listed: 0, unclaimed: 5 });
+    });
+
+    test('several orders for one item add up', () => {
+        const counts = listedCounts([
+            { itemHrid: '/items/a', isSell: true, orderQuantity: 10, filledQuantity: 0 },
+            { itemHrid: '/items/a', isSell: true, orderQuantity: 7, filledQuantity: 2 },
+        ]);
+        expect(counts['/items/a'].listed).toBe(15);
+    });
+
+    test('nothing listed is nothing counted', () => {
+        expect(listedCounts(null)).toEqual({});
+    });
+});
+
+describe('valueWatchlist counts what is on the market', () => {
+    const entries = [{ hrid: '/items/a', name: 'A' }];
+
+    test('listed and unclaimed count towards what you own', () => {
+        const [row] = valueWatchlist(entries, {
+            quantityOf: () => 3,
+            pricesFor: () => ({ ask: 100, bid: 100 }),
+            listedOf: () => ({ listed: 160, unclaimed: 5 }),
+        });
+
+        expect(row.held).toBe(3);
+        expect(row.quantity).toBe(168);
+        // And the value follows everything you own, not only the bag
+        expect(row.totalAsk).toBe(16800);
+    });
+
+    test('with no listings it is what the bag says', () => {
+        const [row] = valueWatchlist(entries, { quantityOf: () => 3, pricesFor: () => ({ ask: 100, bid: 100 }) });
+        expect(row.quantity).toBe(3);
+        expect(row.listed).toBe(0);
     });
 });
 
