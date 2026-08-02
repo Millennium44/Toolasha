@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the blue box around Queue and Start
+
+That box was mine, and it was two mistakes stacked.
+
+- **A scrollbar was being paid for with another scrollbar.** Making the panel a vertical scroller makes it a horizontal one too, and the vertical bar takes ten pixels of a width everything inside had already been sized against. The few pixels of overflow that leaves produced a full-width horizontal scrollbar sitting directly under the pinned buttons — which is not a divider and read as one. Horizontal overflow is hidden now, and the horizontal bar is switched off outright.
+- **The divider was tinted, and so was the scrollbar.** A blue hairline above the buttons and a blue bar below them frame the buttons; the same two lines in grey read as what they are, the edge of the content sliding underneath. Both are neutral now, and the drop shadow that thickened the top edge is gone.
+
 ### The action panel fits on the screen again
 
 The game's panel was built for the game's contents — a name, the inputs, the outputs, two buttons. This script adds most of a second panel on top of that, and the modal grows to hold all of it. Past a certain recipe it grows taller than the window, and the first thing to fall off the bottom is **Start Now**, which is the one thing the panel exists to press.

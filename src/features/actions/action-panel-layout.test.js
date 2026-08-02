@@ -69,6 +69,18 @@ describe('the action panel layout', () => {
         expect(css).toContain('position: sticky');
     });
 
+    test('it does not add a horizontal scrollbar to pay for the vertical one', () => {
+        // Making an element a vertical scroller makes it a horizontal one too,
+        // and the vertical bar eats ten pixels of a width everything inside was
+        // already sized against. The full-width bar that produces sits right
+        // under the pinned buttons and reads as a box around them.
+        settings.values.actionPanelLayout = true;
+        actionPanelLayout.initialize();
+        const css = styleEl().textContent;
+
+        expect(css).toContain('overflow-x: hidden');
+    });
+
     test('cleanup is as thorough as disable', () => {
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();
