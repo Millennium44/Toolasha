@@ -62,6 +62,18 @@ describe('drawLine', () => {
         expect(host.textContent).toBe('43');
     });
 
+    test('a line with an icon centres, and one without keeps its baseline', () => {
+        // An icon is a box with no baseline. Against baselined text it sits low
+        // and the phrase reads as two things at different heights.
+        const withIcon = document.createElement('div');
+        drawLine(withIcon, [{ icon: '/items/smack_book' }, { text: '43' }]);
+        expect(withIcon.style.alignItems).toBe('center');
+
+        const textOnly = document.createElement('div');
+        drawLine(textOnly, [{ text: '43' }, { text: 'books' }]);
+        expect(textOnly.style.alignItems).toBe('baseline');
+    });
+
     test('only the ellipsis segment is allowed to shrink', () => {
         // A truncated number is not a smaller number, it is a wrong one
         const host = document.createElement('div');

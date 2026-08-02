@@ -43,7 +43,7 @@ import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../
 
 const PANEL_ID = 'toolasha-ability-book-panel';
 const GEOMETRY_KEY = 'abilityBookPanel';
-const DEFAULT_PANEL = { width: 560, height: 560 };
+const DEFAULT_PANEL = { width: 500, height: 420 };
 const REFRESH_MS = 5000;
 
 const COLORS = {
@@ -55,6 +55,9 @@ const COLORS = {
     text: '#e8ecf5',
     textDim: 'rgba(232, 236, 245, 0.5)',
     accent: '#b9a4ff',
+    // Its own orange rather than the palette's gold, because books and cost sit
+    // side by side and two figures in one colour read as one figure
+    books: '#ffa657',
 };
 
 /** The level every ability is being aimed at, when one is set */
@@ -462,22 +465,11 @@ class AbilityBookPanel {
      */
     _table(plans) {
         const card = this._card();
-
-        const heading = this._row();
-        heading.style.color = COLORS.textDim;
-        heading.style.borderBottom = `1px solid ${COLORS.hairline}`;
-        heading.style.paddingBottom = '3px';
-        heading.append(
-            this._cell('Lvl'),
-            document.createElement('span'),
-            this._left('Ability'),
-            this._cell('XP to go'),
-            this._cell('Time'),
-            this._cell('Books'),
-            this._cell('Cost'),
-            this._cell('To')
-        );
-        card.appendChild(heading);
+        // No heading row. Five rows of six figures do not need labelling twice
+        // over, and the labels were the widest thing in three of the columns —
+        // the panel spent a line and a third of its type size saying "Books"
+        // above a column of book counts. Each cell carries its own tooltip.
+        card.title = 'Level · book · experience to go and the rate · time · books · cost · the level being aimed at.';
 
         if (!plans.length) {
             card.appendChild(this._note('No abilities learned yet.'));
@@ -494,7 +486,7 @@ class AbilityBookPanel {
      */
     _planRow(plan) {
         const line = this._row();
-        line.style.padding = '2px 0';
+        line.style.padding = '7px 0';
 
         // Every figure to the right of the level answers "to the target", and
         // the target is the next level until you say otherwise
@@ -504,26 +496,35 @@ class AbilityBookPanel {
         const owed = aimed ? plan.experienceToTarget : plan.experienceToNext;
 
         const level = this._cell(plan.level === 0 ? '—' : String(plan.level));
-        Object.assign(level.style, { color: ROW_COLORS.gold, fontWeight: 'bold', textAlign: 'center' });
+        Object.assign(level.style, {
+            color: ROW_COLORS.gold,
+            fontWeight: 'bold',
+            fontSize: '17px',
+            textAlign: 'center',
+        });
+        level.title = plan.level === 0 ? 'Not learned yet.' : `${plan.name} is level ${plan.level}.`;
 
-        const icon = itemIcon(plan.itemHrid, 20);
+        // The icon is the name. An ability's book is its picture and a column of
+        // pictures is read faster than a column of words — and the words were
+        // ellipsed to "Pen…" at any width that left room for the figures.
+        const icon = itemIcon(plan.itemHrid, 28);
+        icon.style.justifySelf = 'center';
         linkToMarketplace(icon, plan.itemHrid, navigateToMarketplace);
-
-        const name = document.createElement('span');
-        name.textContent = plan.name;
-        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-        linkToMarketplace(name, plan.itemHrid, navigateToMarketplace);
+        icon.style.opacity = plan.level === 0 ? '0.55' : '1';
         // An ability never learned reads differently from one at level 1, since
         // its first book buys the ability rather than a level
-        if (plan.level === 0) {
-            name.style.color = COLORS.textDim;
-            name.title = 'Not learned — the first book teaches the ability rather than levelling it.';
-        }
+        icon.setAttribute(
+            'title',
+            plan.level === 0
+                ? `${plan.name} — not learned. The first book teaches the ability rather than levelling it.`
+                : plan.name
+        );
 
-        line.append(level, icon, name, this._experienceCell(plan, owed), this._timeCell(plan, owed));
+        line.append(level, icon, this._experienceCell(plan, owed), this._timeCell(plan, owed));
 
         const booksCell = this._cell(books === null ? '—' : formatWithSeparator(books));
-        booksCell.style.color = ROW_COLORS.good;
+        Object.assign(booksCell.style, { color: COLORS.books, fontWeight: 'bold', fontSize: '17px' });
+        booksCell.title = `${plan.name}: ${books === null ? 'no' : formatWithSeparator(books)} books at ${formatWithSeparator(plan.perBookExperience)} experience each.`;
 
         const costCell = this._cell(cost === null ? 'no price' : formatKMB(cost));
         costCell.style.color = cost === null ? ROW_COLORS.bad : ROW_COLORS.gold;
@@ -549,11 +550,12 @@ class AbilityBookPanel {
      */
     _experienceCell(plan, owed) {
         const cell = document.createElement('span');
-        Object.assign(cell.style, { textAlign: 'right', whiteSpace: 'nowrap', lineHeight: '1.25' });
+        Object.assign(cell.style, { whiteSpace: 'nowrap', lineHeight: '1.2', minWidth: '0' });
 
         const remaining = document.createElement('div');
         remaining.textContent = owed === null ? '—' : formatWithSeparator(Math.ceil(owed));
-        remaining.style.color = ROW_COLORS.good;
+        Object.assign(remaining.style, { color: ROW_COLORS.good, fontSize: '14px' });
+        remaining.title = 'Experience still owed to the level this row is aimed at.';
 
         const rate = document.createElement('div');
         rate.textContent = plan.experiencePerHour ? `${formatKMB(plan.experiencePerHour)}/hr` : '—/hr';
@@ -576,7 +578,10 @@ class AbilityBookPanel {
         // no arrival time, and "never" would be a claim about the future
         const seconds = plan.experiencePerHour && owed !== null ? (owed / plan.experiencePerHour) * 3600 : null;
         const cell = this._cell(seconds === null ? '—' : shortDuration(seconds));
-        cell.style.color = seconds === null ? COLORS.textDim : ROW_COLORS.accent;
+        Object.assign(cell.style, {
+            color: seconds === null ? COLORS.textDim : ROW_COLORS.accent,
+            textAlign: 'center',
+        });
         cell.title = seconds === null ? 'Needs a measured experience rate for this ability.' : 'At the current rate.';
         return cell;
     }
@@ -634,7 +639,7 @@ class AbilityBookPanel {
         const line = document.createElement('div');
         Object.assign(line.style, {
             display: 'grid',
-            gridTemplateColumns: '32px 22px minmax(0, 1fr) 76px 62px 56px 74px 60px',
+            gridTemplateColumns: '40px 34px minmax(0, 1fr) 84px 62px 78px 62px',
             gap: '6px',
             alignItems: 'center',
         });
