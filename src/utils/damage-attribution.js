@@ -229,25 +229,46 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
  * @param {Function} nameOf - `(monsterIndex) => string|null`
- * @returns {Object} Monster name → `{damage, hits, crits, misses, kills}`
+ * @returns {Object} Monster name → `{damage, hits, crits, misses, kills, byAbility}`
  */
 export function foldEnemies(tally, events, nameOf) {
     for (const event of events || []) {
         const name = nameOf(event.monsterIndex);
         if (!name) continue;
 
-        const enemy = (tally[name] = tally[name] || { damage: 0, hits: 0, crits: 0, misses: 0, kills: 0 });
+        const enemy = (tally[name] = tally[name] || {
+            damage: 0,
+            hits: 0,
+            crits: 0,
+            misses: 0,
+            kills: 0,
+            byAbility: {},
+        });
 
         if (event.isKill) {
             enemy.kills++;
             continue;
         }
 
-        if (event.isMiss) enemy.misses++;
-        else if (!event.isHeal) {
+        const ability = (enemy.byAbility[event.action] = enemy.byAbility[event.action] || {
+            damage: 0,
+            hits: 0,
+            crits: 0,
+            misses: 0,
+        });
+
+        if (event.isMiss) {
+            enemy.misses++;
+            ability.misses++;
+        } else if (!event.isHeal) {
             enemy.damage += event.amount;
             enemy.hits++;
-            if (event.isCrit) enemy.crits++;
+            ability.damage += event.amount;
+            ability.hits++;
+            if (event.isCrit) {
+                enemy.crits++;
+                ability.crits++;
+            }
         }
     }
     return tally;

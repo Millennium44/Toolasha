@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The enemy-HP card, laid out as DPs lays it out
+
+- **The three figures are the headline**, side by side above the detail with the caption that tells them apart underneath each — total time, battle time, and the loss between them. As a column of labelled rows they read as three findings of equal weight; they are one finding read three ways.
+- **The inputs are a strip, not four more rows.** Time logging, time in battle, health destroyed and enemies killed are what the figures were computed from, and stacking them under the figures made them look like findings themselves.
+- **A tile per kind of monster, two to a row.** `7 kills × 2.40K HP = 16.77K` four times in a flat list is read one line at a time; as a grid it is read at a glance.
+- **DPS carries its accuracy**, as DPs pairs them — the figure and how much of it landed — and every DPS reads to one decimal rather than rounded to nothing.
+- **Enemy rows open too.** A monster taking a long time is either tanky or the wrong thing is being pointed at it, and only the per-ability breakdown behind that row can say which.
+
 ### The damage table reads at any width
 
 - **Proportional columns instead of fixed pixels.** Fixed widths add up to more than a panel somebody has narrowed, and the column that pays for it is the first — so the name, the one cell you cannot infer from the others, became "Mi…". Proportions share the squeeze out, and each column has a floor it cannot collapse past.

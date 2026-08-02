@@ -153,6 +153,9 @@ export function damageBreakdown() {
             accuracy: swings > 0 ? entry.hits / swings : null,
             critRate: entry.hits > 0 ? entry.crits / entry.hits : null,
             dps: measurable ? entry.damage / seconds : null,
+            abilities: Object.entries(entry.byAbility || {})
+                .map(([action, stats]) => ({ action, ...stats }))
+                .sort((a, b) => b.damage - a.damage),
         };
     });
 
