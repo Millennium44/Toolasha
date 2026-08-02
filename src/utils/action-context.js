@@ -20,13 +20,30 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../features/combat/loadout-snapshot.js';
+
+/**
+ * The loadout store that actually has the loadouts in it.
+ *
+ * In the multi-bundle build every bundle that imports this file gets its own
+ * copy of the snapshot singleton, and only the Combat one has `initialize`
+ * called on it — the others never read storage, so they answer "no loadout" to
+ * everything and every caller quietly falls back to whatever is worn right now.
+ * The global is the initialized one. The bundled copy is the dev build, where
+ * there is only ever one.
+ *
+ * @returns {Object} The snapshot store
+ */
+function loadouts() {
+    return (typeof window !== 'undefined' && window.Toolasha?.Combat?.loadoutSnapshot) || bundledLoadoutSnapshot;
+}
 
 /**
  * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
  * @returns {{equipment: Map, drinks: Array}}
  */
 export function resolveActionContext(actionTypeHrid) {
+    const loadoutSnapshot = loadouts();
     const rawDrinks =
         loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 

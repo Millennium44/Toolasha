@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Enhancement costs follow your enhancing loadout, and Combat Profit shows its working
+
+- **It was reading whatever is on your character right now.** A cape costed while you are in combat kit is costed off a battleaxe — no enhancer, no philosopher's anything — which quotes a run nobody would make. It goes through the loadout resolver now, so it uses the gear you would auto-equip to enhance: skill-specific default first, then the all-skills default, then any saved enhancing loadout, then what is worn. Same order the profit calculators already use.
+- **The loadout resolver was answering "no loadout" in most bundles.** Each bundle that imports it gets its own copy of the snapshot store, and only the Combat one ever has `initialize` called — so the others never read storage and every caller quietly fell back to currently-equipped gear. It reaches for the shared instance first now, which fixes this everywhere it is used, not only in enhancing.
+- **Combat Profit is laid out like HWhat.** Each case is a box with the figure large, the rule under it, and the arithmetic beneath that — `67.6M - 12.0M = 55.6M`. The conclusion alone cannot say whether a bad number is a revenue problem or a cost problem; the sum can.
+- **A header line and two buttons, also HWhat's.** The sum across the top reads revenue, cost and what is left in the case you have chosen. **Costs On** drops the cost side entirely rather than zeroing it, and the mode button cycles Lazy → Mid → Patient for which case the header reads. Both are remembered.
+
 ### The enhancement cost is your bench, and one luck panel instead of two
 
 - **It was costing the run at somebody else's bench.** The parameters came from `getEnhancingParams`, which hands back the enhancement simulator's _manual_ settings unless auto-detect happens to be switched on — and those default to a fully kitted enhancer: celestial tool at +13, every accessory at +10. So the quote was what a fully geared player would pay, which is not a number you can save towards. It reads the character's own gear, skill, house and teas now.

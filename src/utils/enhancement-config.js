@@ -14,6 +14,7 @@ import {
     getEnhancingTeaSpeedBonus,
 } from './enhancement-gear-detector.js';
 import { getEnhancementMultiplier } from './enhancement-multipliers.js';
+import { resolveActionContext } from './action-context.js';
 
 /**
  * Get enhancing parameters (auto-detected or manual)
@@ -34,10 +35,13 @@ export function getEnhancingParams() {
  * @returns {Object} Auto-detected parameters
  */
 export function getAutoDetectedParams() {
-    // Get character data
-    const equipment = dataManager.getEquipment();
+    // The gear the character would be wearing to enhance, not whatever is on
+    // them at this instant. Somebody in combat kit reading their enhancing
+    // costs off a battleaxe gets a run nobody would ever make; the loadout is
+    // what they actually enhance in. Skill-specific default first, then the
+    // all-skills default, then anything saved, then what is worn.
+    const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
     const skills = dataManager.getSkills();
-    const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
     // Detect gear from equipped items only
@@ -202,9 +206,8 @@ export function getAutoDetectedParams() {
  * @returns {Object} Map of settingId → detected value
  */
 export function getDetectedGearSettings() {
-    const equipment = dataManager.getEquipment();
+    const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
     const skills = dataManager.getSkills();
-    const drinkSlots = dataManager.getActionDrinkSlots('/action_types/enhancing');
 
     const result = {};
 
