@@ -3,24 +3,31 @@
 Notes on **MWI Combat Suite v0.9.36235** by **Frotty**, MIT licensed — the script Toolasha's
 drop-luck, expected-spawn and chest-ledger code was ported from.
 
+- `mwi-combat-suite-0.9.36235.user.js` — the script itself
 - `LICENSE.md` — its terms, which the ports are used under
 
-**The script itself is not in this repository.** It is roughly 2 MB and 42,155 lines, and
-carrying that in the history costs every clone for a file nothing builds against. It was
-vendored here while the ports were being written and has been removed from the branch history
-since.
+## Why the script is kept here
+
+It is roughly 2 MB and 42,155 lines, and carrying that costs every clone for a file nothing
+builds against. It was removed once for that reason and restored, because the cost of not
+having it turned out to be higher: every question about what a panel actually does had to be
+answered from screenshots and guesswork, and at least one port went in wrong as a result.
+
+**It is here for as long as the port is in progress**, and can go once nothing is being read
+out of it. Nothing builds against it, and nothing in the toolchain reads it — `eslint` and the
+test runner only look at `src/`, `prettier` is scoped to `src`, `*.config.js` and `**/*.md`,
+and the CI size check only measures `dist/`.
 
 ## Identifying what was ported from
 
 Attribution needs to name something checkable — "adapted from a version of Frotty's script" is
-not attribution if nobody can say which version. Since the script is not kept here, the
-identifiers are:
+not attribution if nobody can say which version. The identifiers are:
 
 - **the version, `0.9.36235`**, from the userscript header
 - **the line numbers below**, which refer to that exact version
 
-To verify a claim or diff against a newer release, fetch that version of the script and compare
-against the sections named below. Line numbers are only valid for `0.9.36235`.
+Line numbers are only valid for `0.9.36235`. To diff against a newer release, fetch that
+version and compare against the sections named below.
 
 ## What is in it
 
