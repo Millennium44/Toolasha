@@ -95,6 +95,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/skill-progress.js')), 'Toolasha.Utils.skillProgress'],
     [normalize(join(__dirname, 'src/utils/experience-parser.js')), 'Toolasha.Utils.experienceParser'],
     [normalize(join(__dirname, 'src/utils/ability-books.js')), 'Toolasha.Utils.abilityBooks'],
+    [normalize(join(__dirname, 'src/utils/damage-attribution.js')), 'Toolasha.Utils.damageAttribution'],
     // Shared above all for its cache: a private copy per bundle means the overlay
     // and the Treasure panel each hold a stale map of every panel's geometry, and
     // whichever saves last wipes the other's entry
@@ -121,6 +122,7 @@ const combatFeatureExternals = new Map([
     // another bundle would sit there receiving nothing and report zeroes
     [normalize(join(__dirname, 'src/features/combat/combat-dps.js')), 'Toolasha.Combat.combatDPS'],
     [normalize(join(__dirname, 'src/features/combat/combat-drop-luck.js')), 'Toolasha.Combat.combatDropLuck'],
+    [normalize(join(__dirname, 'src/features/combat/damage-tracker.js')), 'Toolasha.Combat.damageTracker'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

@@ -28,6 +28,12 @@ import config from '../../core/config.js';
 import combatDPS from '../../features/combat/combat-dps.js';
 import combatDropLuck, { formatOrdinal, describeLuck } from '../../features/combat/combat-drop-luck.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
+import {
+    damageBreakdown,
+    actionLabel,
+    isFilteringNonDamaging,
+    setFilterNonDamaging,
+} from '../../features/combat/damage-tracker.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -295,48 +301,101 @@ function card(body, title) {
 export const dpsPanel = new CombatPanel({
     id: 'dpsPanel',
     title: 'Damage',
-    size: { width: 380, height: 320 },
+    size: { width: 440, height: 400 },
     draw: (body) => {
-        if (combatDPS.dps === null) {
-            body.appendChild(note('Not enough of a fight measured yet.'));
-            return;
-        }
+        const breakdown = damageBreakdown();
 
-        const dealt = card(body, 'Dealt');
-        dealt.append(
-            line('Per second', formatWithSeparator(Math.round(combatDPS.dps)), ROW_COLORS.good),
-            line('Total', formatKMB(combatDPS.damage), COLORS.text),
-            line('Party size', String(combatDPS.partySize), COLORS.text),
-            // Your own share is what a build change moves; the party's total is
-            // mostly a statement about who else is in the party
+        const totals = card(body, 'Party');
+        totals.append(
             line(
-                'Your share',
-                combatDPS.partySize > 1
-                    ? `${formatWithSeparator(Math.round(combatDPS.dps / combatDPS.partySize))}/s`
-                    : 'all of it',
-                ROW_COLORS.accent,
-                'Damage divided evenly by party size — an estimate, since the game does not attribute hits.'
-            )
-        );
-
-        const taken = card(body, 'Taken');
-        taken.append(
-            line('Per second', formatWithSeparator(Math.round(combatDPS.dtps ?? 0)), ROW_COLORS.bad),
-            line('Total', formatKMB(combatDPS.taken), COLORS.text),
-            // The ratio is the thing a health bar cannot tell you: whether you
-            // are winning the exchange or merely surviving it
+                'Per second',
+                combatDPS.dps === null ? 'measuring…' : formatWithSeparator(Math.round(combatDPS.dps)),
+                ROW_COLORS.good
+            ),
+            line('Taken per second', formatWithSeparator(Math.round(combatDPS.dtps ?? 0)), ROW_COLORS.bad),
+            // The ratio a health bar cannot give you: whether you are winning
+            // the exchange or merely surviving it
             line(
                 'Exchange',
                 combatDPS.dtps > 0 ? `${(combatDPS.dps / combatDPS.dtps).toFixed(1)}× in your favour` : 'untouched',
-                ROW_COLORS.gold,
-                'Damage dealt for every point taken.'
-            )
+                ROW_COLORS.gold
+            ),
+            line('Time fighting', timeReadable(Math.round(combatDPS.seconds)), COLORS.text)
         );
 
-        const run = card(body, 'Run');
-        run.append(line('Time fighting', timeReadable(Math.round(combatDPS.seconds)), COLORS.text));
-        run.appendChild(
-            note('Time fighting counts only the gaps between ticks of one fight, so idle time is not in it.')
+        // The filter MCS has, and for its reason: a hit landing while nobody is
+        // casting is usually a lingering effect, and counting it inflates
+        // whatever is next in the rotation
+        const toggle = document.createElement('button');
+        toggle.textContent = `Filter non-damaging: ${isFilteringNonDamaging() ? 'on' : 'off'}`;
+        toggle.dataset.filterToggle = 'true';
+        Object.assign(toggle.style, {
+            background: 'rgba(255, 255, 255, 0.08)',
+            border: `1px solid ${COLORS.hairline}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 8px',
+            marginTop: '4px',
+            alignSelf: 'flex-start',
+        });
+        toggle.addEventListener('click', () => {
+            setFilterNonDamaging(!isFilteringNonDamaging());
+            dpsPanel._render();
+        });
+        totals.appendChild(toggle);
+
+        if (!breakdown.players.length) {
+            body.appendChild(
+                note('No attributed hits yet. Damage is credited by whose mana fell, so it needs a cast to start.')
+            );
+            return;
+        }
+
+        for (const player of breakdown.players) {
+            const block = card(body, player.name);
+            block.append(
+                line('Damage', formatKMB(player.damage), ROW_COLORS.gold),
+                line(
+                    'Per second',
+                    player.dps === null ? 'measuring…' : formatWithSeparator(Math.round(player.dps)),
+                    player.dps === null ? COLORS.textDim : ROW_COLORS.good
+                ),
+                // Null rather than zero: no swings is not a 0% hit rate
+                line(
+                    'Accuracy',
+                    player.accuracy === null ? '—' : `${(player.accuracy * 100).toFixed(1)}%`,
+                    COLORS.text,
+                    `${formatWithSeparator(player.hits)} hits, ${formatWithSeparator(player.misses)} misses.`
+                ),
+                line(
+                    'Crit rate',
+                    player.critRate === null ? '—' : `${(player.critRate * 100).toFixed(1)}%`,
+                    ROW_COLORS.accent,
+                    `${formatWithSeparator(player.crits)} crits.`
+                )
+            );
+
+            for (const ability of player.abilities) {
+                const share = player.damage > 0 ? (ability.damage / player.damage) * 100 : 0;
+                block.appendChild(
+                    line(
+                        `  ${actionLabel(ability.action)}`,
+                        `${formatKMB(ability.damage)}  ·  ${share.toFixed(0)}%`,
+                        COLORS.textDim,
+                        `${formatWithSeparator(ability.hits)} hits, ${formatWithSeparator(ability.crits)} crits, ` +
+                            `${formatWithSeparator(ability.misses)} misses.`
+                    )
+                );
+            }
+        }
+
+        body.appendChild(
+            note(
+                'Attribution comes from whose mana fell on each tick, which is the only join the game offers. ' +
+                    'A tick where two players cast at once credits the last one seen.'
+            )
         );
     },
 });

@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Damage attribution — DPs properly, and the combat text with it
+
+The gap behind three half-ports closed at once. The game attributes nothing, and MCS's trick is that **it does not need it to**: only the casting player's mana falls on a cast, so whoever's `cMP` went down this tick is who acted. That one join is what DPs, the floating text and a party mana tally were all missing.
+
+- **`utils/damage-attribution.js`**, 23 tests. The caster from the mana drop; a hit from `dmgCounter` **rising** rather than health falling, so a bleed is not credited to whatever was mid-cast; a crit from `critCounter`; and the case a health diff can never express — a counter rising with health unchanged is a **miss**, not a non-event. Solo skips the mana check entirely, or an auto-attacking character would never register a hit at all.
+- **The Damage panel is DPs now**: per player, per ability, with damage, share, DPS, **accuracy** and **crit rate**, and the **Filter non-damaging** toggle. Accuracy with no swings is `—` rather than 0%, which is not the same claim.
+- **Floating text gained what it was missing**: a colour per **attacker** so a party's numbers are separable, **misses** drawn as `miss` where the game's own bar cannot show them at all, and crits drawn larger — the thing you want to notice without reading.
+- **`combat-dps.js` is untouched and still feeds the tile.** The two measure different things and would disagree: it counts every point of health a side lost including bleeds nobody cast, this counts only attributable hits. The tile's total is the honest "output"; the panel is honest for "who and what". Merging them would force one to be wrong.
+
+`damage-attribution.js` is declared shared — it was being copied into both bundles, which took combat to 7 KB under its ceiling.
+
+**Unverified against the live game.** The field names come from MCS v0.9.36235 (`cMP`, `dmgCounter`, `critCounter`, `preparingAbilityHrid`, `isPreparingAutoAttack`) and have not been seen on a real payload.
+
 ### Rebuilt the combat panels against the actual source
 
 The four panels shipped a moment ago were my own design wearing MCS's names — I did not open the vendored script for any of them. Read properly, three were wrong in shape.

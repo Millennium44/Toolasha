@@ -545,6 +545,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Adds a Combat Log overlay row with the last few hits, for anything that went past too fast to read',
             },
+            damageTracker: {
+                id: 'damageTracker',
+                label: 'Damage Tracker: Attribute damage per player and per ability',
+                type: 'checkbox',
+                default: true,
+                help: 'The game attributes nothing, so the caster is worked out from whose mana fell each tick. Feeds the Damage panel behind the DPS tile',
+            },
             manaTracker: {
                 id: 'manaTracker',
                 label: 'Mana Tracker: Count what your abilities cost per fight',
