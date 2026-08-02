@@ -142,6 +142,15 @@ describe('with a target chosen in the panel', () => {
         expect(container.title).toContain('Nothing is pointed at this skill');
     });
 
+    test('the combat level is a target like any other', () => {
+        train('melee', 1000000);
+        select({ skill: 'combat', level: 130, focus: 'melee' });
+
+        const drawn = draw();
+        expect(drawn).toContain('Combat → 130');
+        expect(drawn).not.toContain('Melee');
+    });
+
     test('clearing the choice hands the row back its own question', () => {
         train('melee', 1000000);
         select({ skill: 'defense', level: 121 });

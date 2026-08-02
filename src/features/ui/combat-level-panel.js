@@ -63,6 +63,7 @@ import {
     fractionalLevels,
     experienceBetween,
     timeToTargetLevel,
+    timeToCombatLevel,
 } from '../../utils/combat-level.js';
 import { beginSession, sessionProgress, sessionIsStale } from '../../utils/exp-session.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
@@ -198,6 +199,15 @@ export function combatSkillState() {
 const selection = { skill: null, level: null, primary: null, focus: null };
 const SELECTION_KEY = 'combatLevelSelection';
 
+/**
+ * What the Target Selector holds when it is pointed at the combat level itself.
+ *
+ * Not a skill, and deliberately not spelled like one: combat level has no
+ * experience of its own, so anything that treats it as a skill and looks it up
+ * in the table gets nothing rather than something wrong.
+ */
+const COMBAT_TARGET = 'combat';
+
 // Fire and forget: the panel opens on today's defaults and settles a moment
 // later, which is the same trade `restoreGeometry` makes for the same reason
 storage
@@ -243,11 +253,50 @@ export function selectedTarget() {
     if (!selection.skill) return null;
 
     sample();
-    const state = combatSkillState();
-    const skill = state?.skills.find((entry) => entry.name === selection.skill);
+    return resolveTarget(combatSkillState(), selection.skill, selection.level);
+}
+
+/**
+ * The answer for one choice of skill and level.
+ *
+ * Shared with the panel's own Target Selector, which asks the same question of
+ * whatever is currently picked rather than of what has been committed — so the
+ * two cannot give different answers to the same choice.
+ *
+ * @param {Object} state - From `combatSkillState`
+ * @param {string} what - A combat skill name, or `COMBAT_TARGET`
+ * @param {number|null} level - Target level, or null for the next one
+ * @returns {{name: string, hrid: string, level: number, target: number,
+ *   perHour: number|undefined, seconds: number|null}|null}
+ */
+export function resolveTarget(state, what, level) {
+    if (!state?.skills.length) return null;
+
+    // Combat level has no experience table of its own — it moves because the
+    // skills underneath it do, at different rates and different weights — so it
+    // is answered by running the clock forward rather than by dividing
+    if (what === COMBAT_TARGET) {
+        const now = combatProgress(state).partial.exact;
+        const target = level ?? Math.floor(now) + 1;
+        return {
+            name: 'Combat',
+            hrid: COMBAT_TARGET,
+            level: Math.floor(now),
+            target,
+            perHour: state.totalPerHour || undefined,
+            seconds: timeToCombatLevel({
+                skills: state.skills,
+                table: state.table,
+                rates: projectedRates(state, selection).rates,
+                target,
+            }),
+        };
+    }
+
+    const skill = state.skills.find((entry) => entry.name === what);
     if (!skill) return null;
 
-    const target = selection.level ?? skill.level + 1;
+    const target = level ?? skill.level + 1;
     const perHour = projectedRates(state, selection).rates[skill.name];
 
     return {
@@ -562,7 +611,7 @@ class CombatLevelPanel {
 
         const sections = [
             () => this._sessionBar(state),
-            () => this._targetSelector(state, projected),
+            () => this._targetSelector(state),
             () => this._combatBlock(state, next),
             ...state.skills.filter((entry) => entry.perHour).map((skill) => () => this._skillBlock(skill, state)),
             () => this._timeToLevel(state, projected),
@@ -641,25 +690,36 @@ class CombatLevelPanel {
     /**
      * Any skill, any level, how long.
      *
+     * The rates it uses come from `resolveTarget`, which reads the same
+     * projection the table below does — so the two cannot disagree about what a
+     * skill would be gaining.
+     *
      * @param {Object} state - From `combatSkillState`
-     * @param {Object} projected - From `projectedRates`
      * @returns {HTMLElement}
      */
-    _targetSelector(state, projected) {
+    _targetSelector(state) {
         const card = this._card('Target Selector');
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
         const chosen = selection.skill ?? busiest(state)?.name ?? state.skills[0].name;
-        const skill = state.skills.find((entry) => entry.name === chosen) || state.skills[0];
-        const target = selection.level ?? skill.level + 1;
+        const answering = resolveTarget(state, chosen, selection.level) || { target: 1, seconds: null };
+        const target = answering.target;
 
-        const picker = this._select(state, chosen, 'ttl-skill', (value) => {
-            // The level was for the old skill, so it is not carried across —
-            // "level 135" means something different for a skill at 106
-            select({ skill: value, level: null });
-            this._render();
-        });
+        // The only selector that offers Combat: Primary and Focus are shares of
+        // experience, and combat level does not receive experience
+        const picker = this._select(
+            state,
+            chosen,
+            'ttl-skill',
+            (value) => {
+                // The level was for the old skill, so it is not carried across —
+                // "level 135" means something different for a skill at 106
+                select({ skill: value, level: null });
+                this._render();
+            },
+            true
+        );
         picker.style.width = '128px';
 
         const level = this._number(target, 'ttl-level', (value) => {
@@ -668,16 +728,15 @@ class CombatLevelPanel {
         });
         level.style.width = '68px';
 
-        // The projected rate rather than the measured one, so this agrees with
-        // the table below it. Picking a skill you are not training and being
-        // told "—" is not an answer when the table two inches down has one.
-        const perHour = projected.rates[skill.name];
-        const seconds = timeToTargetLevel({ experience: skill.experience, target, table: state.table, perHour });
-
+        const seconds = answering.seconds;
         const answer = this._value(seconds === null ? '—' : shortDuration(seconds), COLORS.accent);
-        answer.title = perHour
-            ? `At ${formatWithSeparator(Math.round(perHour))} exp/hr.`
-            : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
+        answer.title =
+            chosen === COMBAT_TARGET
+                ? 'Combat level has no experience table of its own — this runs the clock forward at the rates ' +
+                  'below and asks the formula when it crosses.'
+                : answering.perHour
+                  ? `At ${formatWithSeparator(Math.round(answering.perHour))} exp/hr.`
+                  : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
 
         line.append(picker, level, answer);
         card.appendChild(line);
@@ -1349,9 +1408,10 @@ class CombatLevelPanel {
      * @param {string|null} chosen - Which is selected
      * @param {string} control - Stable id, so focus survives the redraw
      * @param {Function} onChange - Called with the new skill name
+     * @param {boolean} [withCombat] - Offer the combat level as well as the skills
      * @returns {HTMLElement}
      */
-    _select(state, chosen, control, onChange) {
+    _select(state, chosen, control, onChange, withCombat = false) {
         const select = document.createElement('select');
         select.dataset.control = control;
         Object.assign(select.style, {
@@ -1363,12 +1423,23 @@ class CombatLevelPanel {
             padding: '2px 4px',
         });
 
-        for (const skill of state.skills) {
+        const entries = [
+            ...state.skills.map((skill) => ({ value: skill.name, label: `${skillName(skill.hrid)} ${skill.level}` })),
+        ];
+        if (withCombat) {
+            // First, because it is the question the panel is named after
+            entries.unshift({
+                value: COMBAT_TARGET,
+                label: `Combat ${combatLevel(state.levels).level}`,
+            });
+        }
+
+        for (const entry of entries) {
             const option = document.createElement('option');
-            option.value = skill.name;
-            option.textContent = `${skillName(skill.hrid)} ${skill.level}`;
+            option.value = entry.value;
+            option.textContent = entry.label;
             option.style.background = COLORS.background;
-            if (skill.name === chosen) option.selected = true;
+            if (entry.value === chosen) option.selected = true;
             select.appendChild(option);
         }
         select.addEventListener('change', () => onChange(select.value));

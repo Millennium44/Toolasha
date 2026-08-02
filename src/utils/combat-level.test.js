@@ -8,6 +8,8 @@ import {
     cheapestRouteToNextCombat,
     levelFraction,
     fractionalLevels,
+    fractionalLevelOf,
+    timeToCombatLevel,
     experienceBetween,
     timeToTargetLevel,
 } from './combat-level.js';
@@ -185,6 +187,116 @@ describe('fractional levels change what the progress bar should say', () => {
         // Level 3 spans 3000 to 4000, so 3500 is halfway
         const skills = [{ name: 'melee', level: 3, experience: 3500 }];
         expect(fractionalLevels(skills, table)).toEqual({ melee: 3.5 });
+    });
+});
+
+describe('fractionalLevelOf', () => {
+    const table = [0, 0, 100, 300, 700];
+
+    test('is the level plus how far into it the experience sits', () => {
+        expect(fractionalLevelOf(200, table)).toBeCloseTo(2.5, 6);
+        expect(fractionalLevelOf(100, table)).toBeCloseTo(2, 6);
+    });
+
+    test('a new character is level 1, not level 0', () => {
+        expect(fractionalLevelOf(0, table)).toBe(1);
+    });
+
+    test('at or past the cap it is the cap, since there is no next threshold', () => {
+        expect(fractionalLevelOf(700, table)).toBe(4);
+        expect(fractionalLevelOf(99999, table)).toBe(4);
+    });
+
+    test('without a table there is no answer to give', () => {
+        expect(fractionalLevelOf(100, null)).toBeNull();
+    });
+
+    test('it inverts the table it was built from, at every level', () => {
+        // The binary search is the part that can be subtly wrong, and wrong in
+        // a way that looks right for the levels anybody checks by hand
+        const big = [0, 0];
+        for (let level = 2; level <= 150; level++) big[level] = big[level - 1] + level * 1000;
+
+        for (let level = 1; level < 150; level++) {
+            expect(fractionalLevelOf(big[level], big)).toBeCloseTo(level, 6);
+            const half = (big[level] + big[level + 1]) / 2;
+            expect(fractionalLevelOf(half, big)).toBeCloseTo(level + 0.5, 6);
+        }
+    });
+});
+
+describe('timeToCombatLevel', () => {
+    const table = [0, 0];
+    for (let level = 2; level <= 200; level++) table[level] = table[level - 1] + level * 1000;
+
+    const skills = (levels) => Object.entries(levels).map(([name, level]) => ({ name, experience: table[level] }));
+
+    test('already there is no time at all', () => {
+        expect(timeToCombatLevel({ skills: skills(build), table, rates: { melee: 100 }, target: 100 })).toBe(0);
+    });
+
+    test('nothing moving has no answer rather than infinity', () => {
+        expect(timeToCombatLevel({ skills: skills(build), table, rates: {}, target: 127 })).toBeNull();
+    });
+
+    test('the time it lands is the time the formula crosses the target', () => {
+        const rates = { melee: 1000000, attack: 400000 };
+        const seconds = timeToCombatLevel({ skills: skills(build), table, rates, target: 127 });
+
+        // Checked by replaying it: a moment before, still short; at it, there
+        const at = (elapsed) => {
+            const levels = {};
+            for (const skill of skills(build)) {
+                levels[skill.name] = fractionalLevelOf(
+                    skill.experience + (rates[skill.name] || 0) * (elapsed / 3600),
+                    table
+                );
+            }
+            return combatLevel(levels).exact;
+        };
+        expect(at(seconds)).toBeCloseTo(127, 3);
+        expect(at(seconds - 60)).toBeLessThan(127);
+    });
+
+    test('two skills moving get there sooner than one of them alone', () => {
+        const both = timeToCombatLevel({
+            skills: skills(build),
+            table,
+            rates: { melee: 1000000, attack: 400000 },
+            target: 127,
+        });
+        const one = timeToCombatLevel({ skills: skills(build), table, rates: { melee: 1000000 }, target: 127 });
+
+        // Attack is worth 0.1 a level against Melee's 0.6, so it helps a little
+        expect(both).toBeLessThan(one);
+    });
+
+    test('a target nothing can reach declines rather than guessing', () => {
+        // Everything caps out at 200, so combat cannot pass 0.1 x 1000 + 0.5 x 200
+        expect(timeToCombatLevel({ skills: skills(build), table, rates: { melee: 1e9 }, target: 250 })).toBeNull();
+    });
+
+    test('a skill that overtakes another is priced correctly through the crossover', () => {
+        // Magic starts behind Melee and passes it, so what a level of it is
+        // worth changes partway through — the reason this is searched rather
+        // than divided
+        const behind = {
+            stamina: 100,
+            intelligence: 100,
+            attack: 100,
+            defense: 100,
+            melee: 120,
+            ranged: 1,
+            magic: 110,
+        };
+        const seconds = timeToCombatLevel({
+            skills: skills(behind),
+            table,
+            rates: { magic: 5000000 },
+            target: 121,
+        });
+        expect(seconds).toBeGreaterThan(0);
+        expect(Number.isFinite(seconds)).toBe(true);
     });
 });
 
