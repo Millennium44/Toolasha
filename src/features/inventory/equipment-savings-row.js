@@ -35,6 +35,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
+import marketAPI from '../../api/marketplace.js';
 import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
@@ -89,10 +90,10 @@ const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) =>
  * `targets` is keyed by item hrid rather than by slot: you can be saving for two
  * rings, and a slot-keyed list would silently drop one.
  */
-const state = { targets: {}, noSell: false, marketValue: true, selected: null };
+const state = { targets: {}, noSell: false, marketValue: true, selected: null, locked: true };
 
 /** The picker's own state, which is not worth persisting — it is a form */
-const editing = { open: false, itemHrid: '', enhancementLevel: 0, slot: '' };
+const editing = { itemHrid: '', enhancementLevel: 0, slot: '' };
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
@@ -154,7 +155,53 @@ export function setCountingMarketOrders(counting) {
     persist();
 }
 
-/** @param {string|null} itemHrid - Which target the header watches */
+/**
+ * Whether a price fetch is in flight.
+ *
+ * Shown rather than hidden: a Refresh button that does nothing visible for a
+ * second is a button people press four times.
+ */
+let refreshing = false;
+
+/** Fetch prices again, and redraw when they land */
+async function refreshMarket() {
+    if (refreshing) return;
+    refreshing = true;
+    equipmentSavingsPanel.render();
+
+    try {
+        await marketAPI.fetch(true);
+    } catch (error) {
+        console.error('[EquipmentSavings] Refreshing the market failed:', error);
+    } finally {
+        refreshing = false;
+        equipmentSavingsPanel.render();
+    }
+}
+
+/** Whether the panel is read-only, which is what it is most of the time */
+export function isLocked() {
+    return state.locked;
+}
+
+/** @param {boolean} locked - Lock the panel back to its reading shape */
+export function setLocked(locked) {
+    state.locked = Boolean(locked);
+    // A picker left open under a slot that is about to disappear
+    editing.slot = '';
+    editing.itemHrid = '';
+    persist();
+}
+
+/**
+ * Pin which target the tile and the header carry.
+ *
+ * Pinned rather than derived, because the tile's own answer is "the nearest
+ * one", and the thing somebody is actually saving for is often not the cheapest
+ * — the eye is how you say so.
+ *
+ * @param {string|null} itemHrid - Which target
+ */
 export function selectTarget(itemHrid) {
     state.selected = state.selected === itemHrid ? null : itemHrid;
     persist();
@@ -162,7 +209,6 @@ export function selectTarget(itemHrid) {
 
 /** Forget everything, for a test that must not inherit the last one */
 export function resetEquipmentSavings() {
-    editing.open = false;
     editing.itemHrid = '';
     editing.enhancementLevel = 0;
     editing.slot = '';
@@ -170,6 +216,7 @@ export function resetEquipmentSavings() {
     state.noSell = false;
     state.marketValue = true;
     state.selected = null;
+    state.locked = true;
 }
 
 /**
@@ -340,146 +387,145 @@ export function equipmentBySlot() {
 }
 
 /**
- * EWatch's own item picker: pick a piece, pick an enhancement, watch it.
+ * EWatch's picker, opened under the slot it belongs to.
  *
  * The item menu can only offer what you are holding, which is exactly the wrong
  * set — the thing you are saving for is by definition something you do not have.
- * So the panel needs a way in of its own.
+ * So the panel needs a way in of its own, and it belongs under the slot rather
+ * than at the top: the question is "what is going in this slot", and a picker
+ * somewhere else makes you carry the slot in your head.
  *
- * @param {HTMLElement} body - Where it goes
+ * A list box rather than a dropdown, as EWatch uses. A dropdown over three
+ * hundred items is a scroll you cannot see the shape of, and it closes every
+ * time anything redraws.
+ *
+ * @param {string} slot - The slot being filled
+ * @returns {HTMLElement}
  */
-function drawPicker(body) {
-    const card = panelCard(
-        body,
-        editing.slot ? `Compare with (${slotLabel(editing.slot)})` : 'Compare with',
-        '#6495ed'
-    );
-
-    if (editing.slot) {
-        const all = document.createElement('button');
-        all.textContent = 'Show every slot';
-        all.dataset.pickAllSlots = 'true';
-        Object.assign(all.style, {
-            background: 'none',
-            border: 'none',
-            color: '#6495ed',
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '0 0 3px',
-            textAlign: 'left',
-        });
-        all.addEventListener('click', () => {
-            editing.slot = '';
-            equipmentSavingsPanel.render();
-        });
-        card.appendChild(all);
-    }
-
-    const select = document.createElement('select');
-    select.dataset.pickItem = 'true';
-    Object.assign(select.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        border: '1px solid rgba(255, 255, 255, 0.10)',
+function slotPicker(slot) {
+    const card = document.createElement('div');
+    Object.assign(card.style, {
+        borderLeft: '2px solid #6495ed',
+        background: 'rgba(255, 255, 255, 0.03)',
         borderRadius: '3px',
-        color: '#e8ecf5',
-        fontSize: '11px',
-        padding: '3px',
-        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '5px',
+        padding: '7px',
     });
 
-    const blank = document.createElement('option');
-    blank.value = '';
-    blank.textContent = '— pick a piece —';
-    select.appendChild(blank);
+    const heading = document.createElement('div');
+    Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
-    // Narrowed to the slot that invited the picker, since scrolling past every
-    // charm in the game to reach a helmet is the thing the invitation avoided
-    const groups = editing.slot
-        ? equipmentBySlot().filter((group) => group.type.split('/').pop() === editing.slot)
-        : equipmentBySlot();
+    const label = document.createElement('span');
+    label.textContent = 'Compare with:';
+    Object.assign(label.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
 
-    for (const group of groups) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = group.label;
-        for (const item of group.items) {
-            const option = document.createElement('option');
-            option.value = item.itemHrid;
-            option.textContent = item.name;
-            option.selected = item.itemHrid === editing.itemHrid;
-            optgroup.appendChild(option);
-        }
-        select.appendChild(optgroup);
-    }
-    select.addEventListener('change', () => {
-        editing.itemHrid = select.value;
-        equipmentSavingsPanel.render();
-    });
-    // A keystroke in a dropdown should not also be a game hotkey
-    select.addEventListener('keydown', (event) => event.stopPropagation());
-    card.appendChild(select);
-
-    if (!editing.itemHrid) {
-        card.appendChild(panelNote('Enhancement levels appear once a piece is chosen.'));
-        return;
-    }
-
-    const levels = document.createElement('div');
-    Object.assign(levels.style, { display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '5px' });
-
-    for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
-        const ask = getItemPrices(editing.itemHrid, level)?.ask || 0;
-        const chosen = level === editing.enhancementLevel;
-
-        const button = document.createElement('button');
-        button.textContent = `+${level}`;
-        button.dataset.pickLevel = String(level);
-        Object.assign(button.style, {
-            background: chosen ? 'rgba(100, 149, 237, 0.35)' : 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${chosen ? '#6495ed' : 'rgba(255, 255, 255, 0.10)'}`,
-            borderRadius: '3px',
-            // A level nobody is selling can still be watched — the listing may
-            // come back — but it is worth knowing there is no price behind it
-            color: ask > 0 ? '#e8ecf5' : 'rgba(232, 236, 245, 0.35)',
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '2px 5px',
-        });
-        button.title = ask > 0 ? `${formatWithSeparator(Math.round(ask))} to buy.` : 'Nobody is selling this one.';
-        button.addEventListener('click', () => {
-            editing.enhancementLevel = level;
-            equipmentSavingsPanel.render();
-        });
-        levels.appendChild(button);
-    }
-    card.appendChild(levels);
-
-    const ask = getItemPrices(editing.itemHrid, editing.enhancementLevel)?.ask || 0;
-    const preview = costPreview(editing.itemHrid, editing.enhancementLevel, ask);
-    card.appendChild(preview);
-
-    const add = document.createElement('button');
-    add.textContent = isTargeted(editing.itemHrid) ? 'Already watching' : '\u{1F441} Watch';
-    add.dataset.pickAdd = 'true';
-    Object.assign(add.style, {
-        background: 'rgba(100, 149, 237, 0.25)',
-        border: '1px solid #6495ed',
+    const watch = document.createElement('button');
+    watch.textContent = '\u{1F441} Watch';
+    watch.dataset.pickAdd = 'true';
+    Object.assign(watch.style, {
+        background: 'rgba(255, 207, 92, 0.18)',
+        border: '1px solid #ffcf5c',
         borderRadius: '3px',
-        color: '#e8ecf5',
+        color: '#ffcf5c',
         cursor: 'pointer',
         fontSize: '11px',
-        marginTop: '5px',
-        padding: '3px 10px',
-        alignSelf: 'flex-start',
+        padding: '2px 10px',
     });
-    add.disabled = isTargeted(editing.itemHrid);
-    add.addEventListener('click', () => {
+    watch.disabled = !editing.itemHrid;
+    watch.style.opacity = editing.itemHrid ? '1' : '0.4';
+    watch.addEventListener('click', () => {
+        if (!editing.itemHrid) return;
         watchTarget(editing.itemHrid, editing.enhancementLevel);
         editing.itemHrid = '';
         editing.enhancementLevel = 0;
         editing.slot = '';
         equipmentSavingsPanel.render();
     });
-    card.appendChild(add);
+
+    heading.append(label, watch);
+    card.appendChild(heading);
+
+    const list = document.createElement('select');
+    list.dataset.pickItem = 'true';
+    // A list box, not a dropdown: the shape of the list is visible and nothing
+    // can close it
+    list.size = 10;
+    Object.assign(list.style, {
+        background: 'rgba(0, 0, 0, 0.35)',
+        border: '1px solid rgba(255, 255, 255, 0.12)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '2px',
+        width: '100%',
+    });
+
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '-- Select Item --';
+    list.appendChild(blank);
+
+    const group = equipmentBySlot().find((entry) => entry.type.split('/').pop() === slot);
+    for (const item of group?.items || []) {
+        const option = document.createElement('option');
+        option.value = item.itemHrid;
+        option.textContent = item.name;
+        option.selected = item.itemHrid === editing.itemHrid;
+        list.appendChild(option);
+    }
+    list.addEventListener('change', () => {
+        editing.itemHrid = list.value;
+        equipmentSavingsPanel.render();
+    });
+    // A keystroke in a list should not also be a game hotkey
+    list.addEventListener('keydown', (event) => event.stopPropagation());
+    card.appendChild(list);
+
+    card.appendChild(enhancementButtons());
+    if (editing.itemHrid) card.appendChild(costPreview(editing.itemHrid, editing.enhancementLevel));
+    return card;
+}
+
+/**
+ * A button per enhancement level, tinted where the market has one.
+ *
+ * The tint is the useful part: most levels of most items have never been listed,
+ * and knowing which ones exist is half of choosing a target.
+ *
+ * @returns {HTMLElement}
+ */
+function enhancementButtons() {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, { display: 'flex', flexWrap: 'wrap', gap: '3px' });
+
+    for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+        const ask = editing.itemHrid ? getItemPrices(editing.itemHrid, level)?.ask || 0 : 0;
+        const sold = ask > 0;
+        const chosen = level === editing.enhancementLevel && Boolean(editing.itemHrid);
+
+        const button = document.createElement('button');
+        button.textContent = `+${level}`;
+        button.dataset.pickLevel = String(level);
+        Object.assign(button.style, {
+            background: sold ? 'rgba(74, 222, 128, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+            border: `1px solid ${chosen ? '#e8ecf5' : sold ? '#4ade80' : 'rgba(255, 255, 255, 0.10)'}`,
+            borderRadius: '3px',
+            color: sold ? '#e8ecf5' : 'rgba(232, 236, 245, 0.35)',
+            cursor: 'pointer',
+            fontSize: '10px',
+            fontWeight: chosen ? 'bold' : 'normal',
+            padding: '2px 6px',
+        });
+        button.title = sold ? `${formatWithSeparator(Math.round(ask))} to buy.` : 'Nobody is selling this one.';
+        button.addEventListener('click', () => {
+            editing.enhancementLevel = level;
+            equipmentSavingsPanel.render();
+        });
+        wrap.appendChild(button);
+    }
+    return wrap;
 }
 
 /**
@@ -487,22 +533,50 @@ function drawPicker(body) {
  *
  * @param {string} itemHrid - The piece
  * @param {number} enhancementLevel - Which enhancement
- * @param {number} ask - Its asking price
  * @returns {HTMLElement}
  */
-function costPreview(itemHrid, enhancementLevel, ask) {
+function costPreview(itemHrid, enhancementLevel) {
+    const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
     const worn = wornRivalOf(itemHrid);
     const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
     const cost = upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell: state.noSell });
+    const progress = savingsProgress(cost, spendable());
+    const seconds = timeToAffordSeconds(progress.needed, incomePerDay());
 
-    const line = document.createElement('div');
-    Object.assign(line.style, { color: 'rgba(232, 236, 245, 0.7)', fontSize: '11px', marginTop: '5px' });
-    line.textContent =
-        cost === null
-            ? 'No price for that enhancement, so there is nothing to save towards yet.'
-            : `${formatKMB(ask)} to buy` +
-              (worn ? `, less ${formatKMB(wornBid)} for your ${worn.name} \u2192 ${formatKMB(cost)}` : '');
-    return line;
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px' });
+
+    const title = document.createElement('div');
+    title.textContent =
+        `${nameOf(itemHrid)}${enhancementLevel ? ` +${enhancementLevel}` : ''}` +
+        (cost === null ? '' : `  ${formatKMB(cost)} needed`);
+    Object.assign(title.style, { color: ROW_COLORS.gold, fontWeight: 'bold' });
+    wrap.appendChild(title);
+
+    if (cost === null) {
+        const none = document.createElement('div');
+        none.textContent = 'Nobody is selling this one, so there is nothing to save towards yet.';
+        none.style.color = 'rgba(232, 236, 245, 0.5)';
+        wrap.appendChild(none);
+        return wrap;
+    }
+
+    wrap.appendChild(priceLine('Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold));
+    wrap.appendChild(
+        priceLine(
+            'Difference:',
+            `+${formatWithSeparator(Math.round(cost))}`,
+            cost > 0 ? ROW_COLORS.bad : ROW_COLORS.good
+        )
+    );
+    wrap.appendChild(
+        priceLine(
+            'Time:',
+            progress.affordable ? 'Affordable' : seconds === null ? '--' : shortDuration(seconds),
+            ROW_COLORS.accent
+        )
+    );
+    return wrap;
 }
 
 /**
@@ -834,13 +908,15 @@ function slotSection(slot, targets) {
     heading.append(label, name, bid);
     wrap.appendChild(heading);
 
-    const mine = targets.filter((target) => slotOf(target.itemHrid) === slot);
-    if (!mine.length) {
-        wrap.appendChild(emptySlotRow(slot));
-        return wrap;
+    for (const target of targets.filter((entry) => slotOf(entry.itemHrid) === slot)) {
+        wrap.appendChild(targetCard(target));
     }
 
-    for (const target of mine) wrap.appendChild(targetCard(target));
+    // The invitation stays whether or not something is already watched: two
+    // rings and two earrings are a real plan, and a slot that stops offering
+    // once it has one target cannot express it
+    wrap.appendChild(emptySlotRow(slot));
+    if (editing.slot === slot) wrap.appendChild(slotPicker(slot));
     return wrap;
 }
 
@@ -866,8 +942,11 @@ function emptySlotRow(slot) {
     row.textContent = '\u{1F576} Click to watch';
     row.title = 'Open the picker with this slot in mind.';
     row.addEventListener('click', () => {
-        editing.open = true;
-        editing.slot = slot;
+        // Clicking the slot whose picker is open closes it, so the invitation
+        // is a switch rather than a one-way door
+        editing.slot = editing.slot === slot ? '' : slot;
+        editing.itemHrid = '';
+        editing.enhancementLevel = 0;
         equipmentSavingsPanel.render();
     });
     return row;
@@ -897,7 +976,12 @@ export const equipmentSavingsPanel = createPanel({
         // The one the header watches, as EWatch's eye picks it: with several
         // things on the list the one you are actually saving for is the only
         // figure you want at a glance
-        const watched = plan.targets.find((target) => target.itemHrid === state.selected) || plan.targets[0];
+        const watched =
+            plan.targets.find((target) => target.itemHrid === state.selected) ||
+            plan.targets
+                .filter((target) => target.cost !== null && !target.affordable)
+                .sort((a, b) => a.needed - b.needed)[0] ||
+            plan.targets[0];
         if (watched) body.appendChild(headline(watched));
 
         const purse = panelCard(body, undefined, '#6495ed');
@@ -927,6 +1011,35 @@ export const equipmentSavingsPanel = createPanel({
                 : 'Daily profit from the combat session, which is what the countdowns divide by.';
 
         purse.append(coins, listed, income);
+
+        // Every figure in the panel is only as current as the prices behind it,
+        // and a saving that has not moved in a day is usually a price that has
+        // not moved rather than a run of bad luck
+        const market = panelCard(body, undefined, '#6495ed');
+        Object.assign(market.style, { flexDirection: 'row', alignItems: 'center', gap: '8px' });
+
+        const age = marketAPI.getDataAge?.();
+        const stamp = document.createElement('span');
+        stamp.textContent = age === null ? 'Market Data: never' : `Market Data: ${shortDuration(age / 1000)} old`;
+        Object.assign(stamp.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
+
+        const refresh = document.createElement('button');
+        refresh.textContent = refreshing ? 'Refreshing…' : '\u{1F504} Refresh';
+        refresh.dataset.marketRefresh = 'true';
+        Object.assign(refresh.style, {
+            background: 'rgba(100, 149, 237, 0.22)',
+            border: '1px solid #6495ed',
+            borderRadius: '3px',
+            color: '#6495ed',
+            cursor: refreshing ? 'default' : 'pointer',
+            fontSize: '11px',
+            padding: '2px 9px',
+        });
+        refresh.disabled = refreshing;
+        refresh.title = 'Fetch prices again rather than waiting for the next scheduled fetch.';
+        refresh.addEventListener('click', refreshMarket);
+
+        market.append(stamp, refresh);
 
         // EWatch's two switches, each changing what the figures below mean
         const switches = panelCard(body, undefined, '#6495ed');
@@ -958,44 +1071,50 @@ export const equipmentSavingsPanel = createPanel({
             )
         );
 
-        // The way in that the item menu cannot be: what you are saving for is by
-        // definition something you do not have, so it is not in your inventory
-        const edit = document.createElement('button');
-        edit.textContent = editing.open ? 'Done' : 'Edit';
-        edit.dataset.editToggle = 'true';
-        Object.assign(edit.style, {
-            background: editing.open ? 'rgba(74, 222, 128, 0.18)' : 'rgba(255, 255, 255, 0.08)',
-            border: `1px solid ${editing.open ? '#4ade80' : 'rgba(255, 255, 255, 0.10)'}`,
+        // Locked reads, unlocked edits. The button names what pressing it does.
+        const lock = document.createElement('button');
+        lock.textContent = state.locked ? 'Edit' : 'Lock';
+        lock.dataset.lockToggle = 'true';
+        Object.assign(lock.style, {
+            background: state.locked ? 'rgba(74, 222, 128, 0.18)' : 'rgba(100, 149, 237, 0.22)',
+            border: `1px solid ${state.locked ? '#4ade80' : '#6495ed'}`,
             borderRadius: '3px',
-            color: editing.open ? '#4ade80' : '#e8ecf5',
+            color: state.locked ? '#4ade80' : '#6495ed',
             cursor: 'pointer',
             fontSize: '11px',
             padding: '2px 9px',
         });
-        edit.title = 'Pick a piece of equipment to save for.';
-        edit.addEventListener('click', () => {
-            editing.open = !editing.open;
+        lock.title = state.locked
+            ? 'Open every slot so targets can be added and removed.'
+            : 'Put the panel back to the list of what you are saving for.';
+        lock.addEventListener('click', () => {
+            setLocked(!state.locked);
             equipmentSavingsPanel.render();
         });
-        switches.appendChild(edit);
+        switches.appendChild(lock);
 
-        if (editing.open) drawPicker(body);
-
-        // A section per slot, watched or not, which is EWatch's shape. A slot
-        // with nothing on it still says what is in it and invites a target;
-        // a list of only what you are saving for cannot do that.
+        // Two shapes, one switch. Locked is a reading list — what you are saving
+        // for and how far along — which is what the panel is for almost all of
+        // the time. Unlocked opens every slot up so targets can be changed, and
+        // is a great deal longer, which is why it is not the resting state.
         const list = panelCard(body, undefined, '#6495ed');
-        for (const slot of SLOTS) list.appendChild(slotSection(slot, plan.targets));
 
-        // Anything watched whose slot is not in the list above — a slot the game
-        // added, or a piece whose type this does not know. Better an odd section
-        // than a target that silently disappears.
-        const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
-        for (const target of stray) list.appendChild(targetCard(target));
+        if (state.locked) {
+            if (!plan.targets.length) {
+                body.appendChild(panelNote('Nothing being saved for yet — press Edit and click a slot.'));
+                return;
+            }
+            for (const target of plan.targets) list.appendChild(targetCard(target));
+        } else {
+            for (const slot of SLOTS) list.appendChild(slotSection(slot, plan.targets));
 
-        if (!plan.targets.length) {
-            body.appendChild(panelNote('Nothing being saved for yet — click a slot above, or press Edit.'));
-            return;
+            // Anything watched whose slot is not in the list above — a slot the
+            // game added, or a piece whose type this does not know. Better an
+            // odd section than a target that silently disappears.
+            const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
+            for (const target of stray) list.appendChild(targetCard(target));
+
+            if (!plan.targets.length) return;
         }
 
         // One at a time answers the wrong question when you want three pieces
@@ -1105,11 +1224,16 @@ registerRow({
         const plan = everything();
         if (!plan.targets.length) return blank(container);
 
-        // The nearest one, because that is the next thing that happens — a total
-        // that is months away says nothing about today
-        const next = plan.targets
-            .filter((target) => target.cost !== null && !target.affordable)
-            .sort((a, b) => a.needed - b.needed)[0];
+        // The pinned one if the eye has picked one, and otherwise the nearest,
+        // because that is the next thing that happens. The pin matters: the
+        // thing somebody is saving for is often not the cheapest, and a tile
+        // that always shows the cheapest cannot be told otherwise.
+        const pinned = plan.targets.find((target) => target.itemHrid === state.selected && target.cost !== null);
+        const next =
+            pinned ||
+            plan.targets
+                .filter((target) => target.cost !== null && !target.affordable)
+                .sort((a, b) => a.needed - b.needed)[0];
         const shown = next || plan;
 
         row(container, [
@@ -1127,7 +1251,8 @@ registerRow({
 
         container.title =
             (next
-                ? `${next.name} is the nearest: ${formatWithSeparator(Math.round(next.needed))} to go of ` +
+                ? `${next.name} ${pinned ? 'is pinned' : 'is the nearest'}: ` +
+                  `${formatWithSeparator(Math.round(next.needed))} to go of ` +
                   `${formatWithSeparator(Math.round(next.cost))}.`
                 : 'Everything on the list is affordable now.') +
             `\n${plan.targets.length} pieces, ${formatKMB(plan.cost)} altogether.` +
