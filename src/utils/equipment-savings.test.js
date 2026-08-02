@@ -1,5 +1,12 @@
 import { describe, test, expect } from 'vitest';
-import { upgradeCost, savingsProgress, timeToAffordSeconds, totalSavings } from './equipment-savings.js';
+import {
+    upgradeCost,
+    craftCost,
+    savingsProgress,
+    timeToAffordSeconds,
+    totalSavings,
+    orderTargets,
+} from './equipment-savings.js';
 
 describe('upgradeCost', () => {
     test('the ask less what the old piece fetches', () => {
@@ -81,5 +88,69 @@ describe('totalSavings', () => {
 
     test('nothing watched is zero rather than nothing', () => {
         expect(totalSavings([])).toEqual({ cost: 0, unpriced: 0 });
+    });
+});
+
+describe('craftCost', () => {
+    const priceOf = (hrid) => ({ '/items/shard': 1000, '/items/base': 500_000, '/items/rare': 0 })[hrid] ?? null;
+
+    test('materials only, for a base piece you already own', () => {
+        // The usual reason to craft rather than buy: a spear you already hold
+        // becomes a refined one for the price of the shards
+        const cost = craftCost({ inputItems: [{ itemHrid: '/items/shard', count: 30 }], priceOf });
+        expect(cost).toBe(30_000);
+    });
+
+    test('the base piece is a cost when it has to be bought', () => {
+        const cost = craftCost({
+            inputItems: [{ itemHrid: '/items/shard', count: 30 }],
+            priceOf,
+            haveBase: false,
+            upgradeAsk: 500_000,
+        });
+        expect(cost).toBe(530_000);
+    });
+
+    test('a recipe that makes several splits the cost between them', () => {
+        const cost = craftCost({ inputItems: [{ itemHrid: '/items/shard', count: 30 }], priceOf, outputCount: 3 });
+        expect(cost).toBe(10_000);
+    });
+
+    test('one unpriced ingredient makes the whole recipe unpriced', () => {
+        // Totalling only what it can price reports a cheaper craft than is
+        // possible, which is worse than saying nothing
+        const cost = craftCost({
+            inputItems: [
+                { itemHrid: '/items/shard', count: 30 },
+                { itemHrid: '/items/rare', count: 1 },
+            ],
+            priceOf,
+        });
+        expect(cost).toBeNull();
+    });
+
+    test('no recipe is not a craft', () => {
+        expect(craftCost({ inputItems: [], priceOf })).toBeNull();
+        expect(craftCost({ priceOf })).toBeNull();
+    });
+});
+
+describe('orderTargets', () => {
+    const targets = [
+        { name: 'far', cost: 100, fraction: 0.1, affordable: false },
+        { name: 'near', cost: 100, fraction: 0.9, affordable: false },
+        { name: 'unpriced', cost: null, fraction: null, affordable: false },
+        { name: 'done', cost: 100, fraction: 1, affordable: true },
+    ];
+
+    test('affordable first, then nearest to done, then unpriced', () => {
+        // Insertion order says nothing; cost order buries the piece you are two
+        // days from behind one you are two months from
+        expect(orderTargets(targets).map((target) => target.name)).toEqual(['done', 'near', 'far', 'unpriced']);
+    });
+
+    test('it does not modify the array it was given', () => {
+        orderTargets(targets);
+        expect(targets[0].name).toBe('far');
     });
 });
