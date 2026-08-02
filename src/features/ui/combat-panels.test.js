@@ -232,6 +232,43 @@ describe('what the panels add over their tiles', () => {
         expect(text).toContain('25 bags');
     });
 
+    test('each case shows its working, not just its conclusion', () => {
+        // "55.6M/day" is a conclusion. The sum beneath it is the same
+        // conclusion with the revenue and the cost visible, which is what says
+        // whether a bad number is a revenue problem or a cost problem.
+        profitPanel.show();
+        const text = profitPanel.panel.textContent;
+
+        expect(text).toContain('coin/day');
+        expect(text).toMatch(/[\d.]+[KMB]? - [\d.]+[KMB]? = [\d.]+[KMB]?/);
+    });
+
+    test('Costs Off drops the cost side rather than zeroing it', () => {
+        profitPanel.show();
+        const button = [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Costs On');
+        expect(button).toBeTruthy();
+
+        button.click();
+        const text = profitPanel.panel.textContent;
+        expect(text).toContain('Costs Off');
+        expect(text).not.toContain('Cost (Ask)');
+
+        // Put it back, since the panel remembers between openings
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Costs Off').click();
+    });
+
+    test('the mode button cycles the headline through the three cases', () => {
+        profitPanel.show();
+        const mode = () =>
+            [...profitPanel.panel.querySelectorAll('button')].find((b) =>
+                ['Lazy', 'Mid', 'Patient'].includes(b.textContent)
+            );
+
+        const first = mode().textContent;
+        mode().click();
+        expect(mode().textContent).not.toBe(first);
+    });
+
     test('Profit shows what patience is worth', () => {
         profitPanel.show();
         expect(profitPanel.panel.textContent).toContain('Patient over lazy');

@@ -100,12 +100,15 @@ class CombatPanel {
      * @param {string} definition.title - Header text
      * @param {{width: number, height: number}} definition.size - Opening size
      * @param {Function} definition.draw - `(body) => void`, called on every refresh
+     * @param {Function} [definition.controls] - `(bar) => void`, header buttons,
+     *   redrawn with the body so a toggle shows the state it is actually in
      */
-    constructor({ id, title, size, draw }) {
+    constructor({ id, title, size, draw, controls }) {
         this.id = id;
         this.title = title;
         this.size = size;
         this.draw = draw;
+        this.controls = controls;
         this.panel = null;
         this.refreshId = null;
     }
@@ -191,7 +194,14 @@ class CombatPanel {
             event.stopPropagation();
             this.hide();
         });
-        header.append(title, close);
+        // Between the title and the close button, as HWhat has them
+        this.controlsEl = document.createElement('div');
+        Object.assign(this.controlsEl.style, { display: 'flex', gap: '4px', marginRight: '6px' });
+        // The bar is part of the header, which drags — a button that drags the
+        // panel instead of pressing is a button that reads as broken
+        this.controlsEl.addEventListener('mousedown', (event) => event.stopPropagation());
+
+        header.append(title, this.controlsEl, close);
         this.panel.appendChild(header);
 
         this.bodyEl = document.createElement('div');
@@ -223,9 +233,23 @@ class CombatPanel {
         this.refreshId = setInterval(() => this._render(), REFRESH_MS);
     }
 
+    /** Redraw now rather than on the next tick, after a control is pressed */
+    refresh() {
+        this._render();
+    }
+
     _render() {
         if (!this.bodyEl) return;
         this.bodyEl.replaceChildren();
+
+        if (this.controls && this.controlsEl) {
+            this.controlsEl.replaceChildren();
+            try {
+                this.controls(this.controlsEl);
+            } catch (error) {
+                console.error(`[CombatPanels] ${this.title} controls could not be drawn:`, error);
+            }
+        }
 
         // One panel that cannot be drawn says so rather than showing an empty
         // box, which reads as a feature that has nothing to report
@@ -457,10 +481,170 @@ export const deathsPanel = new CombatPanel({
     },
 });
 
+/**
+ * Which case the headline reads as, remembered between openings.
+ *
+ * HWhat keeps one too, because the three cases are not equally interesting to
+ * everybody: somebody who sells into bids and buys from asks is always reading
+ * the Lazy line and never the other two.
+ */
+let profitMode = 'mid';
+
+/** Whether costs are subtracted at all, as HWhat's Costs On does */
+let costsOn = true;
+
+/**
+ * A profit box in HWhat's shape: the case, the figure, the rule, the sum.
+ *
+ * The arithmetic line is the part worth copying. "55.6M/day" is a conclusion,
+ * and `67.6M - 12.0M = 55.6M` is the same conclusion with its working shown —
+ * which is what tells you whether a bad number is a revenue problem or a cost
+ * problem without opening anything else.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} scenario - `{title, colour, equation, revenue, cost}`
+ * @returns {HTMLElement}
+ */
+function profitBox(body, scenario) {
+    const value = scenario.revenue - (costsOn ? scenario.cost : 0);
+    const colour = value >= 0 ? scenario.colour : ROW_COLORS.bad;
+
+    const block = card(body);
+    block.style.borderLeft = `3px solid ${colour}`;
+
+    const heading = document.createElement('div');
+    heading.textContent = scenario.title;
+    Object.assign(heading.style, { color: colour, fontWeight: 'bold' });
+
+    const figure = document.createElement('div');
+    figure.textContent = `${formatKMB(value)} coin/day`;
+    Object.assign(figure.style, { color: colour, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.3' });
+
+    const rule = document.createElement('div');
+    rule.textContent = costsOn ? scenario.equation : scenario.equation.split(' - ')[0];
+    Object.assign(rule.style, { color: COLORS.textDim, fontSize: '11px' });
+
+    const sum = document.createElement('div');
+    sum.textContent = costsOn
+        ? `${formatKMB(scenario.revenue)} - ${formatKMB(scenario.cost)} = ${formatKMB(value)}`
+        : `${formatKMB(scenario.revenue)}`;
+    Object.assign(sum.style, {
+        color: colour,
+        opacity: '0.75',
+        fontSize: '11px',
+        fontFamily: 'monospace',
+        marginTop: '2px',
+    });
+
+    block.append(heading, figure, rule, sum);
+    return block;
+}
+
+/**
+ * A header toggle, in HWhat's pill shape.
+ *
+ * @param {string} label - What it says
+ * @param {boolean} on - Whether it reads as engaged
+ * @param {Function} onClick - What pressing it does
+ * @returns {HTMLElement}
+ */
+function toggleButton(label, on, onClick) {
+    const button = document.createElement('button');
+    button.textContent = label;
+    Object.assign(button.style, {
+        background: on ? 'rgba(143, 180, 255, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+        border: `1px solid ${on ? COLORS.accent : COLORS.hairline}`,
+        borderRadius: '4px',
+        color: on ? COLORS.accent : COLORS.textDim,
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 8px',
+        whiteSpace: 'nowrap',
+    });
+    button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onClick();
+    });
+    return button;
+}
+
+/**
+ * The three cases, each a revenue side and a cost side.
+ *
+ * They are not "at ask" and "at bid": you sell and buy on opposite sides of the
+ * book, so each case mixes one side of each.
+ *
+ * @param {Object} stats - From `playerStats`
+ * @returns {Array<Object>}
+ */
+function profitCases(stats) {
+    const revenue = { ask: stats.dailyIncome?.ask ?? 0, bid: stats.dailyIncome?.bid ?? 0 };
+    const cost = {
+        ask:
+            (stats.dailyConsumableCosts?.ask ?? stats.dailyConsumableCosts ?? 0) +
+            (stats.dailyKeyCosts?.ask ?? stats.dailyKeyCosts ?? 0),
+        bid:
+            (stats.dailyConsumableCosts?.bid ?? stats.dailyConsumableCosts ?? 0) +
+            (stats.dailyKeyCosts?.bid ?? stats.dailyKeyCosts ?? 0),
+    };
+
+    return [
+        {
+            key: 'lazy',
+            title: 'Lazy Profit',
+            colour: ROW_COLORS.good,
+            equation: 'Revenue (Bid) - Cost (Ask)',
+            revenue: revenue.bid,
+            cost: cost.ask,
+        },
+        {
+            key: 'mid',
+            title: 'Mid Profit',
+            colour: ROW_COLORS.accent,
+            equation: 'Revenue (Bid) - Cost (Bid)',
+            revenue: revenue.bid,
+            cost: cost.bid,
+        },
+        {
+            key: 'patient',
+            title: 'Patient Profit',
+            colour: ROW_COLORS.gold,
+            equation: 'Revenue (Ask) - Cost (Bid)',
+            revenue: revenue.ask,
+            cost: cost.bid,
+        },
+    ];
+}
+
 export const profitPanel = new CombatPanel({
     id: 'profitPanel',
     title: 'Combat Profit',
-    size: { width: 440, height: 420 },
+    size: { width: 440, height: 470 },
+    controls: (bar) => {
+        const stats = playerStats();
+        if (!stats) return;
+
+        bar.appendChild(
+            toggleButton(costsOn ? 'Costs On' : 'Costs Off', costsOn, () => {
+                costsOn = !costsOn;
+                profitPanel.refresh();
+            })
+        );
+
+        // Cycles rather than three buttons: the header is narrow and the three
+        // cases are an order, not a set
+        const cases = profitCases(stats);
+        const index = Math.max(
+            0,
+            cases.findIndex((scenario) => scenario.key === profitMode)
+        );
+        bar.appendChild(
+            toggleButton(cases[index].title.split(' ')[0], true, () => {
+                profitMode = cases[(index + 1) % cases.length].key;
+                profitPanel.refresh();
+            })
+        );
+    },
     draw: (body) => {
         const stats = playerStats();
         if (!stats) {
@@ -468,55 +652,33 @@ export const profitPanel = new CombatPanel({
             return;
         }
 
-        const revenue = { ask: stats.dailyIncome?.ask ?? 0, bid: stats.dailyIncome?.bid ?? 0 };
-        const cost = {
-            ask:
-                (stats.dailyConsumableCosts?.ask ?? stats.dailyConsumableCosts ?? 0) +
-                (stats.dailyKeyCosts?.ask ?? stats.dailyKeyCosts ?? 0),
-            bid:
-                (stats.dailyConsumableCosts?.bid ?? stats.dailyConsumableCosts ?? 0) +
-                (stats.dailyKeyCosts?.bid ?? stats.dailyKeyCosts ?? 0),
-        };
+        const cases = profitCases(stats);
+        const headline = cases.find((scenario) => scenario.key === profitMode) || cases[1];
 
-        // The three cases HWhat names, which are not the same as "at ask" and
-        // "at bid": each mixes a revenue side with a cost side, because you sell
-        // and buy on opposite sides of the book
-        const cases = [
-            {
-                title: 'Lazy Profit',
-                colour: ROW_COLORS.good,
-                equation: 'Revenue (Bid) - Cost (Ask)',
-                value: revenue.bid - cost.ask,
-            },
-            {
-                title: 'Mid Profit',
-                colour: ROW_COLORS.accent,
-                equation: 'Revenue (Bid) - Cost (Bid)',
-                value: revenue.bid - cost.bid,
-            },
-            {
-                title: 'Patient Profit',
-                colour: ROW_COLORS.gold,
-                equation: 'Revenue (Ask) - Cost (Bid)',
-                value: revenue.ask - cost.bid,
-            },
-        ];
+        // The header sum HWhat carries: revenue, cost and what is left, in one
+        // line, so the panel answers its own question before it is scrolled
+        const summary = card(body);
+        summary.style.borderLeft = `3px solid ${headline.colour}`;
+        const total = headline.revenue - (costsOn ? headline.cost : 0);
+        const equation = document.createElement('div');
+        Object.assign(equation.style, { fontSize: '14px', fontWeight: 'bold' });
+        equation.append(
+            piece(formatKMB(headline.revenue), ROW_COLORS.good),
+            piece(costsOn ? ' - ' : ' ', COLORS.textDim),
+            piece(costsOn ? formatKMB(headline.cost) : '', ROW_COLORS.bad),
+            piece(costsOn ? ' = ' : '', COLORS.textDim),
+            piece(`${formatKMB(total)}/day`, ROW_COLORS.gold)
+        );
+        summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
 
-        for (const scenario of cases) {
-            const block = card(body, scenario.title);
-            block.append(
-                line('Per day', formatKMB(scenario.value), scenario.value >= 0 ? scenario.colour : ROW_COLORS.bad),
-                line('Per hour', formatKMB(scenario.value / 24), scenario.value >= 0 ? scenario.colour : ROW_COLORS.bad)
-            );
-            block.appendChild(note(scenario.equation));
-        }
+        for (const scenario of cases) profitBox(body, scenario);
 
         const spread = card(body, 'Difference');
-        const best = cases[cases.length - 1].value;
-        const worst = cases[0].value;
+        const best = cases[2].revenue - (costsOn ? cases[2].cost : 0);
+        const worst = cases[0].revenue - (costsOn ? cases[0].cost : 0);
         spread.append(
             line('Patient over lazy', formatKMB(best - worst), ROW_COLORS.gold),
-            line('Consumables/day', formatKMB(cost.ask), ROW_COLORS.bad),
+            line('Consumables/day', formatKMB(cases[0].cost), ROW_COLORS.bad),
             line('Run length', timeReadable(Math.round(stats.duration)), COLORS.text)
         );
         spread.appendChild(
@@ -526,6 +688,19 @@ export const profitPanel = new CombatPanel({
         body.appendChild(taxCard(stats));
     },
 });
+
+/**
+ * One coloured span of the header sum.
+ * @param {string} text - What it says
+ * @param {string} color - Ink
+ * @returns {HTMLElement}
+ */
+function piece(text, color) {
+    const span = document.createElement('span');
+    span.textContent = text;
+    span.style.color = color;
+    return span;
+}
 
 /** A week of membership, in bags of ten cowbells, as the game charges it */
 const BAGS_PER_WEEK = 25;
