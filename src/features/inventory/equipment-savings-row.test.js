@@ -39,12 +39,21 @@ vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, sav
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
+vi.mock('../../api/marketplace.js', () => ({ default: { getDataAge: () => 60_000, fetch: async () => {} } }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
 }));
 
-const { equipmentSavingsPanel, watchTarget, watchedTargets, everything, coinsHeld, setNoSell, resetEquipmentSavings } =
-    await import('./equipment-savings-row.js');
+const {
+    equipmentSavingsPanel,
+    watchTarget,
+    watchedTargets,
+    everything,
+    coinsHeld,
+    setNoSell,
+    selectTarget,
+    resetEquipmentSavings,
+} = await import('./equipment-savings-row.js');
 
 beforeEach(() => {
     game.inventory = [{ itemHrid: '/items/coin', count: 60_000_000 }];
@@ -207,50 +216,134 @@ describe('the panel renders', () => {
     });
 });
 
-describe('the item picker', () => {
-    /** Open Edit and hand back the picker's select */
-    const openPicker = () => {
+/** Unlock the panel, which is what every slot interaction needs first */
+const unlock = () => {
+    equipmentSavingsPanel.show();
+    equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
+};
+
+/** Unlock, open the picker under a slot, and hand back its list */
+const openPicker = (slot = 'main_hand') => {
+    unlock();
+    equipmentSavingsPanel.panel.querySelector(`[data-watch-slot="${slot}"]`).click();
+    return equipmentSavingsPanel.panel.querySelector('[data-pick-item]');
+};
+
+describe('lock and edit', () => {
+    test('locked lists only what is being saved for', () => {
+        // Which is what the panel is for almost all of the time; the slots are a
+        // great deal longer and only needed while changing targets
+        watchTarget('/items/holy_sword');
         equipmentSavingsPanel.show();
-        equipmentSavingsPanel.panel.querySelector('[data-edit-toggle]').click();
-        return equipmentSavingsPanel.panel.querySelector('[data-pick-item]');
-    };
 
-    test('every piece of equipment the game has is offerable', () => {
-        // The item menu can only offer what you are holding, which is exactly
-        // the wrong set — what you are saving for is what you do not have
-        const select = openPicker();
-        const values = [...select.querySelectorAll('option')].map((option) => option.value);
-
-        expect(values).toContain('/items/holy_sword');
-        expect(values).toContain('/items/rough_boots');
-        // Not equipment, so not a thing to save for
-        expect(values).not.toContain('/items/cheese');
+        expect(text()).toContain('Holy Sword');
+        expect(text()).not.toContain('Main Hand:');
+        expect(text()).toContain('Everything');
     });
 
-    test('pieces are grouped by the slot they fill', () => {
-        const select = openPicker();
-        const groups = [...select.querySelectorAll('optgroup')].map((group) => group.label);
+    test('the button names what pressing it does', () => {
+        equipmentSavingsPanel.show();
+        const button = () => equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]');
 
-        expect(groups).toContain('main hand');
-        expect(groups).toContain('feet');
+        expect(button().textContent).toBe('Edit');
+        button().click();
+        expect(button().textContent).toBe('Lock');
+    });
+
+    test('locking closes any picker that was open', () => {
+        openPicker('feet');
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
+    });
+});
+
+describe('the slot layout', () => {
+    test('every slot gets a section, watched or not', () => {
+        // A slot with nothing on it still says what is in it and invites a
+        // target, which a list of only your targets cannot do
+        unlock();
+
+        expect(text()).toContain('Main Hand:');
+        expect(text()).toContain('Charm:');
+        expect(text()).toContain('Cheese Sword');
+    });
+
+    test('an empty slot reads as empty rather than as missing', () => {
+        unlock();
+        expect(text()).toContain('Empty');
+    });
+
+    test('a watched target sits under the slot it would fill', () => {
+        watchTarget('/items/holy_sword');
+        unlock();
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-slot="main_hand"]').textContent).toContain(
+            'Holy Sword'
+        );
+        expect(equipmentSavingsPanel.panel.querySelector('[data-slot="feet"]').textContent).not.toContain('Holy Sword');
+    });
+
+    test('a watched target shows its ask and what the swap actually costs', () => {
+        watchTarget('/items/holy_sword');
+        unlock();
+
+        expect(text()).toContain('Ask Price:');
+        expect(text()).toContain('Difference:');
+        expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('the item picker', () => {
+    test('it opens under the slot that asked for it', () => {
+        // Not at the top of the panel: the question is "what goes in this slot",
+        // and a picker somewhere else makes you carry the slot in your head
+        openPicker('feet');
+
+        const feet = equipmentSavingsPanel.panel.querySelector('[data-slot="feet"]');
+        expect(feet.querySelector('[data-pick-item]')).toBeTruthy();
+        expect(
+            equipmentSavingsPanel.panel.querySelector('[data-slot="main_hand"]').querySelector('[data-pick-item]')
+        ).toBeNull();
+    });
+
+    test('it offers only the pieces that fill that slot', () => {
+        openPicker('feet');
+
+        const values = [...equipmentSavingsPanel.panel.querySelectorAll('[data-pick-item] option')].map(
+            (option) => option.value
+        );
+        expect(values).toContain('/items/rough_boots');
+        expect(values).not.toContain('/items/holy_sword');
+    });
+
+    test('it is a list box rather than a dropdown', () => {
+        // A dropdown over three hundred items is a scroll you cannot see the
+        // shape of, and it closes every time anything redraws
+        expect(openPicker().size).toBe(10);
+    });
+
+    test('clicking the same slot again closes it', () => {
+        openPicker('feet');
+        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
     });
 
     test('picking a piece offers its enhancement levels and prices the choice', () => {
-        const select = openPicker();
-        select.value = '/items/holy_sword';
-        select.dispatchEvent(new Event('change'));
+        const list = openPicker();
+        list.value = '/items/holy_sword';
+        list.dispatchEvent(new Event('change'));
 
-        const levels = equipmentSavingsPanel.panel.querySelectorAll('[data-pick-level]');
-        expect(levels).toHaveLength(21);
-        // 100M to buy less 40M for the sword being worn
-        expect(text()).toContain('Cheese Sword');
+        expect(equipmentSavingsPanel.panel.querySelectorAll('[data-pick-level]')).toHaveLength(21);
+        expect(text()).toContain('Lowest Ask:');
         expect(text()).not.toContain(FAILED);
     });
 
     test('watching it adds it at the enhancement that was chosen', () => {
-        const select = openPicker();
-        select.value = '/items/holy_sword';
-        select.dispatchEvent(new Event('change'));
+        const list = openPicker();
+        list.value = '/items/holy_sword';
+        list.dispatchEvent(new Event('change'));
 
         equipmentSavingsPanel.panel.querySelector('[data-pick-level="5"]').click();
         equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
@@ -260,66 +353,45 @@ describe('the item picker', () => {
         expect(target.enhancementLevel).toBe(5);
     });
 
-    test('the picker clears itself once it has been used', () => {
-        const select = openPicker();
-        select.value = '/items/holy_sword';
-        select.dispatchEvent(new Event('change'));
+    test('the picker closes once it has been used', () => {
+        const list = openPicker();
+        list.value = '/items/holy_sword';
+        list.dispatchEvent(new Event('change'));
         equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
 
-        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]').value).toBe('');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
+    });
+
+    test('nothing picked means nothing to watch', () => {
+        expect(openPicker().value).toBe('');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(true);
     });
 });
 
-describe('the slot layout', () => {
-    test('every slot gets a section, watched or not', () => {
-        // A slot with nothing on it still says what is in it and invites a
-        // target, which a list of only your targets cannot do
-        equipmentSavingsPanel.show();
-
-        expect(text()).toContain('Main Hand:');
-        expect(text()).toContain('Charm:');
-        expect(text()).toContain('Cheese Sword');
-    });
-
-    test('an empty slot reads as empty rather than as missing', () => {
-        equipmentSavingsPanel.show();
-        expect(text()).toContain('Empty');
-    });
-
-    test('a watched target sits under the slot it would fill', () => {
+describe('the pin', () => {
+    test('the tile follows the eye rather than always the cheapest', () => {
+        // The thing somebody is saving for is often not the cheapest, and a tile
+        // that always shows the cheapest cannot be told otherwise
         watchTarget('/items/holy_sword');
+        watchTarget('/items/rough_boots');
+
+        const container = document.createElement('div');
+        selectTarget('/items/holy_sword');
         equipmentSavingsPanel.show();
 
-        const mainHand = equipmentSavingsPanel.panel.querySelector('[data-slot="main_hand"]');
-        expect(mainHand.textContent).toContain('Holy Sword');
-        expect(equipmentSavingsPanel.panel.querySelector('[data-slot="feet"]').textContent).not.toContain('Holy Sword');
+        expect(everything().targets).toHaveLength(2);
+        expect(container).toBeTruthy();
+        expect(equipmentSavingsPanel.panel.textContent.indexOf('Holy Sword')).toBeLessThan(
+            equipmentSavingsPanel.panel.textContent.indexOf('Rough Boots')
+        );
     });
 
-    test('clicking an empty slot opens the picker on that slot alone', () => {
-        // Scrolling past every charm in the game to reach a helmet is the thing
-        // the invitation is there to avoid
-        equipmentSavingsPanel.show();
-        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
-
-        const groups = [...equipmentSavingsPanel.panel.querySelectorAll('optgroup')].map((group) => group.label);
-        expect(groups).toEqual(['feet']);
-    });
-
-    test('the picker can be widened back to every slot', () => {
-        equipmentSavingsPanel.show();
-        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
-        equipmentSavingsPanel.panel.querySelector('[data-pick-all-slots]').click();
-
-        const groups = [...equipmentSavingsPanel.panel.querySelectorAll('optgroup')].map((group) => group.label);
-        expect(groups.length).toBeGreaterThan(1);
-    });
-
-    test('a watched target shows its ask and what the swap actually costs', () => {
+    test('pressing the eye again unpins it', () => {
         watchTarget('/items/holy_sword');
-        equipmentSavingsPanel.show();
+        selectTarget('/items/holy_sword');
+        selectTarget('/items/holy_sword');
 
-        expect(text()).toContain('Ask Price:');
-        expect(text()).toContain('Difference:');
+        equipmentSavingsPanel.show();
         expect(text()).not.toContain(FAILED);
     });
 });

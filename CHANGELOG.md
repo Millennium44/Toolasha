@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### EWatch gains Lock, Refresh, and the picker where it belongs
+
+- **Lock and Edit are the panel's two shapes.** Locked is a reading list — what you are saving for, how far along, and the Everything row — which is what the panel is for almost all of the time. Edit opens every slot so targets can be changed. Locked is the resting state because the editing view is several times longer and only wanted while changing something.
+- **The picker opens under the slot that asked for it**, not at the top of the panel. The question is "what is going in this slot", and a picker somewhere else makes you carry the slot in your head. Clicking the same slot again closes it. It offers only pieces that fill that slot, so reaching a helmet never means scrolling past every charm in the game.
+- **A list box rather than a dropdown**, as EWatch uses. A dropdown over three hundred items is a scroll whose shape you cannot see — and it was the thing closing under the pointer on every redraw.
+- **Enhancement buttons are tinted where the market has one.** Most levels of most items have never been listed, and knowing which exist is half of choosing a target. Picking one previews the whole thing before it is committed to: lowest ask, the difference after the trade-in, and how long that takes.
+- **Refresh, with the age of the prices beside it.** Every figure in the panel is only as current as the prices behind it, and a saving that has not moved in a day is usually a price that has not moved rather than a run of bad luck. It says "Refreshing…" while the fetch is in flight, because a button that does nothing visible for a second is a button people press four times.
+- **The eye pins the tile.** Not just the panel header — the overlay tile's own answer is "the nearest one", and the thing somebody is actually saving for is often not the cheapest. The eye is how you say so; pressing it again gives the tile its own judgement back.
+
 ### Fixed: an unpriced drop is a row, and a dropdown stops closing under you
 
 - **Anything a chest drops now gets a row**, priced or not. Valuing the scrolls through the labyrinth shop was the wrong half of the fix — the rule underneath it was that an item with no price contributes to neither side of a chest's verdict _and gets no row_, so anything the script cannot value simply vanished and read as a chest that never contained it. Unpriced rows show the count with a dash and `no price`, sort last so they cannot lead the verdict, and still count towards nothing. A zero would have been a different and wrong claim: that the chest gave you something worthless.
