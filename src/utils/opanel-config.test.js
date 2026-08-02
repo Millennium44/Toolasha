@@ -134,3 +134,76 @@ describe('ROW_KEY_MAP', () => {
         expect(new Set(ours).size).toBe(ours.length);
     });
 });
+
+describe('a round trip through our own section', () => {
+    /** A layout with rows OPanel has never heard of, which is every real one */
+    const settings = {
+        order: ['coins', 'watchlist', 'charmValue', 'manaPerFight', 'dps'],
+        visible: { coins: true, watchlist: true, charmValue: false, manaPerFight: true, dps: true },
+        positions: {
+            coins: { x: 0, y: 0 },
+            watchlist: { x: 200, y: 0 },
+            charmValue: { x: 0, y: 30 },
+            manaPerFight: { x: 200, y: 30 },
+            dps: { x: 0, y: 60 },
+        },
+        sizes: {
+            coins: { width: 160, height: 30 },
+            watchlist: { width: 220, height: 40 },
+            charmValue: { width: 230, height: 30 },
+            manaPerFight: { width: 200, height: 30 },
+            dps: { width: 200, height: 46 },
+        },
+        zoom: { watchlist: 0.9 },
+        snapToGrid: false,
+        locked: false,
+        separators: false,
+        textScale: 0.8,
+    };
+
+    test('every row survives, not only the twenty OPanel names', () => {
+        // Rows that arrive without a position get laid out wherever the packer
+        // puts them, which is what made an imported layout a jumble
+        const read = fromOPanelConfig(toOPanelConfig(settings, null));
+
+        expect(read.settings.order).toEqual(settings.order);
+        expect(Object.keys(read.settings.positions).sort()).toEqual(Object.keys(settings.positions).sort());
+        expect(read.settings.sizes.watchlist).toEqual({ width: 220, height: 40 });
+    });
+
+    test('the switches survive too', () => {
+        const read = fromOPanelConfig(toOPanelConfig(settings, null));
+
+        expect(read.settings.snapToGrid).toBe(false);
+        expect(read.settings.locked).toBe(false);
+        expect(read.settings.separators).toBe(false);
+        expect(read.settings.textScale).toBe(0.8);
+    });
+
+    test('nothing is reported missing, because nothing is', () => {
+        expect(fromOPanelConfig(toOPanelConfig(settings, null)).unknown).toEqual([]);
+    });
+
+    test('the file is still readable by MCS', () => {
+        // Our section is extra, not a replacement: the OPanel half still carries
+        // every row OPanel has a name for
+        const file = toOPanelConfig(settings, null);
+
+        expect(file.config.order).toContain('ewatchCoins');
+        expect(file.config.order).toContain('dps');
+        expect(file.config.sizes.ewatchCoins).toEqual({ width: 160, height: 30 });
+    });
+
+    test('an MCS file with no section of ours is still read', () => {
+        const theirs = { config: { order: ['ewatchCoins'], sizes: {}, positions: {} } };
+        expect(fromOPanelConfig(theirs).settings.order).toEqual(['coins']);
+    });
+
+    test('a truncated section of ours falls back to the OPanel half', () => {
+        // Worse, but not wrong — which is the right way round
+        const file = toOPanelConfig(settings, null);
+        file.toolasha.settings.order = [];
+
+        expect(fromOPanelConfig(file).settings.order).toEqual(['coins', 'dps']);
+    });
+});

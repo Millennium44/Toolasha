@@ -581,3 +581,81 @@ describe('the order of the list', () => {
         expect(names[names.length - 1]).toBe('Holy Sword');
     });
 });
+
+describe('untradable targets', () => {
+    beforeEach(() => {
+        game.details['/items/sinister_cape'] = {
+            name: 'Sinister Cape',
+            isTradable: false,
+            itemLevel: 70,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+            equipmentDetail: { type: '/equipment_types/back' },
+        };
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: {
+                    // Protecting costs protections and saves attempts, which is
+                    // the whole reason there is a strategy to pick
+                    calculateEnhancement: ({ protectFrom }) =>
+                        protectFrom > 0 ? { attempts: 40, protectionCount: 5 } : { attempts: 200, protectionCount: 0 },
+                },
+                enhancementConfig: {
+                    getEnhancingParams: () => ({
+                        enhancingLevel: 100,
+                        toolBonus: 10,
+                        teas: { blessed: false },
+                        guzzlingBonus: 1,
+                    }),
+                },
+            },
+        };
+        game.details['/items/mirror_of_protection'] = { name: 'Mirror of Protection', sellPrice: 2_000_000 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 2_000_000, bid: 1_800_000 };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('a cape is priced at the run, not at an ask that does not exist', () => {
+        // Protected: 40 attempts × 2 shards at 1M, plus 5 protections at 2M —
+        // cheaper than the 400M the unprotected run costs, so that is the one
+        // to quote
+        watchTarget('/items/sinister_cape', 7);
+        expect(watchedTargets()[0].cost).toBe(40 * 2 * 1_000_000 + 5 * 2_000_000);
+    });
+
+    test('with nothing to protect with, it quotes the run that has no protection', () => {
+        // Offering a protected run at a protection nobody sells would price a
+        // run that cannot be made
+        game.prices['/items/mirror_of_protection:0'] = null;
+        delete game.details['/items/mirror_of_protection'];
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].cost).toBe(200 * 2 * 1_000_000);
+    });
+
+    test('it counts from the level you already have', () => {
+        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].enhancing).toBe(true);
+        expect(watchedTargets()[0].fromLevel).toBe(5);
+    });
+
+    test('the card says it is an anvil run rather than a purchase', () => {
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Untradable');
+        expect(text()).toContain('Enhance');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('without the calculator it is unpriced rather than wrong', () => {
+        delete window.Toolasha;
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(watchedTargets()[0].cost).toBeNull();
+    });
+});

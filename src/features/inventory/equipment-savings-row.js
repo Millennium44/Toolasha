@@ -422,6 +422,123 @@ function ownsBase(itemHrid) {
 }
 
 /**
+ * What taking a piece you already own from one enhancement level to another costs.
+ *
+ * Capes, quivers and the rest of the untradable gear cannot be bought at any
+ * level, so "save up for a +7 cape" is not a purchase at all — it is a run at
+ * the anvil, and what it costs is the expected materials and protections that
+ * run consumes. Pricing it at a market ask reports nothing, because there is no
+ * ask, which is why an untradable target read as unpriced forever.
+ *
+ * Expected rather than typical: the Markov model gives the mean attempts to
+ * reach a level, which is the only figure a savings bar can honestly fill
+ * against. A particular run will cost more or less and there is nothing to be
+ * done about that.
+ *
+ * @param {string} itemHrid - The piece
+ * @param {number} targetLevel - Enhancement level being aimed at
+ * @param {number} startLevel - What it is now
+ * @returns {number|null} Coins, or null when the run cannot be modelled
+ */
+export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
+    if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
+
+    const calculator = window.Toolasha?.Utils?.enhancementCalculator?.calculateEnhancement;
+    const params = window.Toolasha?.Utils?.enhancementConfig?.getEnhancingParams?.();
+    const details = dataManager.getItemDetails?.(itemHrid);
+    if (!calculator || !params || !details) return null;
+
+    // Priced at the ask, falling back to what the vendor pays for anything the
+    // market has no answer for
+    const priceOf = (hrid) =>
+        hrid === '/items/coin' ? 1 : getItemPrices(hrid, 0)?.ask || dataManager.getItemDetails?.(hrid)?.sellPrice || 0;
+
+    let materials = 0;
+    for (const cost of details.enhancementCosts || []) {
+        materials += (cost.count || 0) * priceOf(cost.itemHrid);
+    }
+    if (!(materials > 0)) return null;
+
+    const protection = cheapestProtection(itemHrid, priceOf);
+
+    try {
+        // Falling all the way back to +0 on every failure is what "no
+        // protection" means, and past about +5 it is ruinous — nobody enhances
+        // that way, so costing it that way would report a number no player
+        // would ever pay. The run to price is the cheapest of the protect-from
+        // choices, which is the same search the enhancement display makes.
+        const strategies = [0];
+        if (protection.price > 0) {
+            for (let from = Math.max(2, startLevel); from <= targetLevel; from++) strategies.push(from);
+        }
+
+        let best = null;
+        for (const protectFrom of strategies) {
+            const run = calculator({
+                enhancingLevel: params.enhancingLevel || 0,
+                toolBonus: params.toolBonus || 0,
+                speedBonus: params.speedBonus || 0,
+                itemLevel: details.itemLevel || 0,
+                targetLevel,
+                startLevel,
+                protectFrom,
+                blessedTea: Boolean(params.teas?.blessed),
+                guzzlingBonus: params.guzzlingBonus || 1,
+            });
+
+            const total = run.attempts * materials + (run.protectionCount || 0) * protection.price;
+            if (best === null || total < best) best = total;
+        }
+
+        return best > 0 ? best : null;
+    } catch (error) {
+        console.error('[EquipmentSavings] Costing an enhancement run failed:', error);
+        return null;
+    }
+}
+
+/**
+ * The cheapest thing that will absorb a failed enhancement.
+ *
+ * The Mirror of Protection works on anything; some pieces name their own
+ * protections. The piece itself protects too, but a target the market will not
+ * sell has no second copy to buy, which is precisely the case this exists for.
+ *
+ * @param {string} itemHrid - The piece being enhanced
+ * @param {Function} priceOf - Prices one item hrid
+ * @returns {{itemHrid: string|null, price: number}}
+ */
+function cheapestProtection(itemHrid, priceOf) {
+    const details = dataManager.getItemDetails?.(itemHrid);
+    const options = ['/items/mirror_of_protection', ...(details?.protectionItemHrids || [])];
+
+    let best = { itemHrid: null, price: 0 };
+    for (const hrid of options) {
+        const price = priceOf(hrid);
+        if (price > 0 && (!best.price || price < best.price)) best = { itemHrid: hrid, price };
+    }
+    return best;
+}
+
+/**
+ * Whether the market will sell a piece at all.
+ *
+ * Untradable gear has no ask at any level, so a target that cannot be bought is
+ * one the enhancement path has to answer for.
+ *
+ * @param {string} itemHrid - The piece
+ * @returns {boolean}
+ */
+function isTradable(itemHrid) {
+    const details = dataManager.getItemDetails?.(itemHrid);
+    // The game says so directly where it can; otherwise a listing at any level
+    // is proof enough
+    if (details?.isTradable === false) return false;
+    if (getItemPrices(itemHrid, 0)?.ask > 0) return true;
+    return details?.isTradable !== false;
+}
+
+/**
  * What one target costs, bought or crafted.
  *
  * @param {string} itemHrid - The target
@@ -433,6 +550,17 @@ function costOf(itemHrid, enhancementLevel) {
     const worn = wornRivalOf(itemHrid);
     const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
     const noSell = targetNoSell(itemHrid);
+
+    // A piece the market will not sell at all is not a purchase: the only way to
+    // a +7 cape is the anvil, so what it costs is the run rather than an ask
+    // that does not exist
+    if (!ask && !isTradable(itemHrid)) {
+        const held = worn?.itemHrid === itemHrid ? worn.enhancementLevel || 0 : 0;
+        const run = enhancementCost(itemHrid, enhancementLevel, held);
+        if (run !== null) {
+            return { cost: run, ask: 0, crafted: false, enhancing: true, fromLevel: held, recipe: null };
+        }
+    }
 
     if (!isCrafting(itemHrid)) {
         return {
@@ -447,13 +575,7 @@ function costOf(itemHrid, enhancementLevel) {
     // upgrade you already hold the base of is a completely different figure —
     // a Furious Spear you own becomes a Refined one for the price of the shards
     const recipe = recipeFor(itemHrid);
-    const materials = craftCost({
-        inputItems: recipe?.inputItems,
-        priceOf: (hrid) => getItemPrices(hrid, 0)?.ask || 0,
-        outputCount: recipe?.outputCount,
-        haveBase: ownsBase(recipe?.upgradeItemHrid),
-        upgradeAsk: recipe?.upgradeItemHrid ? getItemPrices(recipe.upgradeItemHrid, 0)?.ask || 0 : 0,
-    });
+    const materials = craftMaterialsCost(itemHrid, recipe);
 
     if (materials === null) return { cost: null, ask, crafted: true, recipe };
     // The trade-in still applies: crafting the replacement does not stop you
@@ -467,6 +589,58 @@ function costOf(itemHrid, enhancementLevel) {
 }
 
 /**
+ * What making one costs, through the crafting planner where it is available.
+ *
+ * The planner is the better answer by a distance: it costs each ingredient at
+ * whichever of buying and making it is cheaper, recursively, which is what
+ * anybody actually does. Pricing the inputs at their asks assumes every one is
+ * bought, and for a chain of refinements that overstates the total badly.
+ *
+ * It lives in the actions bundle, so it is reached through the global rather
+ * than imported — importing it would copy the whole model into this bundle. When
+ * it is not there, the flat reading of the recipe is used instead and says so.
+ *
+ * @param {string} itemHrid - The finished piece
+ * @param {Object|null} recipe - From `recipeFor`
+ * @returns {number|null} Coins for one, or null when it cannot be priced
+ */
+function craftMaterialsCost(itemHrid, recipe) {
+    const planner = window.Toolasha?.Actions?.craftingPlanCalculator?.computeBestCraftingPlan;
+
+    if (planner && recipe?.inputItems?.length) {
+        try {
+            // The base piece is not a cost when it is already in the bag, and the
+            // planner has no way to know that — so it is priced without it and
+            // the plan for the inputs alone is what is asked for
+            let total = 0;
+            for (const input of recipe.inputItems) {
+                const plan = planner(input.itemHrid, input.count || 0, 'ask');
+                if (!plan || !Number.isFinite(plan.totalCost)) return null;
+                total += plan.totalCost;
+            }
+
+            if (recipe.upgradeItemHrid && !ownsBase(recipe.upgradeItemHrid)) {
+                const base = planner(recipe.upgradeItemHrid, 1, 'ask');
+                if (!base || !Number.isFinite(base.totalCost)) return null;
+                total += base.totalCost;
+            }
+
+            return total / (recipe.outputCount > 0 ? recipe.outputCount : 1);
+        } catch (error) {
+            console.error('[EquipmentSavings] The crafting planner failed, falling back to material asks:', error);
+        }
+    }
+
+    return craftCost({
+        inputItems: recipe?.inputItems,
+        priceOf: (hrid) => getItemPrices(hrid, 0)?.ask || 0,
+        outputCount: recipe?.outputCount,
+        haveBase: ownsBase(recipe?.upgradeItemHrid),
+        upgradeAsk: recipe?.upgradeItemHrid ? getItemPrices(recipe.upgradeItemHrid, 0)?.ask || 0 : 0,
+    });
+}
+
+/**
  * Every target, costed against what you are wearing and what you have.
  *
  * @returns {Array<Object>} `{itemHrid, name, enhancementLevel, ask, cost, ...}`
@@ -477,7 +651,7 @@ export function watchedTargets() {
 
     const targets = Object.entries(state.targets).map(([itemHrid, target]) => {
         const enhancementLevel = target.enhancementLevel || 0;
-        const { cost, ask, crafted, recipe } = costOf(itemHrid, enhancementLevel);
+        const { cost, ask, crafted, recipe, enhancing, fromLevel } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
@@ -489,6 +663,8 @@ export function watchedTargets() {
             enhancementLevel,
             ask,
             crafted,
+            enhancing: Boolean(enhancing),
+            fromLevel: fromLevel || 0,
             recipe,
             noSell: targetNoSell(itemHrid),
             ownNoSell: target.noSell !== undefined,
@@ -1023,7 +1199,16 @@ function targetCard(target) {
     }
     card.appendChild(perTarget);
 
-    if (target.crafted) card.appendChild(recipeLines(target));
+    if (target.enhancing) {
+        card.appendChild(
+            priceLine(
+                `Enhance +${target.fromLevel} \u2192 +${target.enhancementLevel}`,
+                target.cost === null ? 'cannot model' : formatWithSeparator(Math.round(target.cost)),
+                target.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold
+            )
+        );
+        card.appendChild(priceLine('Untradable', 'expected cost at the anvil', 'rgba(232, 236, 245, 0.55)'));
+    } else if (target.crafted) card.appendChild(recipeLines(target));
     else if (target.ask > 0) {
         card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
         // What it costs after the trade-in, which is the figure the bar fills
