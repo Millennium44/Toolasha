@@ -68,6 +68,12 @@ const CSS = `
         overflow-y: auto;
         overflow-x: hidden;
         overscroll-behavior: contain;
+        /* Reserve the gutter whether or not the bar is showing. Without it the
+           vertical scrollbar appears *after* the layout has been worked out and
+           takes its width out of the column, so every row that was exactly as
+           wide as the column is now wider than it — which is a horizontal
+           scrollbar, caused by the vertical one. */
+        scrollbar-gutter: stable;
     }
 
     /* The scrollbar is left as the game draws it. Recolouring it was chasing
@@ -85,11 +91,15 @@ const CSS = `
         overflow-x: hidden;
     }
 
-    /* Nothing inside the panel may be wider than the panel. One fractionally
-       oversized child is all a horizontal scrollbar needs, and hunting them one
-       at a time is a game with no end — the panel is a column of rows, and a
-       row wider than its column is always the bug rather than the intent. */
-    [class*="SkillActionDetail_skillActionDetail"] > * {
+    /* Nothing inside the panel may be wider than the panel — at any depth, not
+       just the rows sitting directly in it. The Cost Summary card is inserted
+       beside the item requirements rather than at the top level, so a rule for
+       direct children walked straight past the widest thing in the panel.
+
+       The panel is a column of rows. A row wider than its column is always the
+       bug rather than the intent, so this is safe to state once for everything
+       rather than hunted one element at a time. */
+    [class*="SkillActionDetail_skillActionDetail"] * {
         max-width: 100%;
         box-sizing: border-box;
     }
