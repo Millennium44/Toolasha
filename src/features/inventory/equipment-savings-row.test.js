@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ inventory: [], equipment: new Map(), details: {}, prices: {} }));
+const game = vi.hoisted(() => ({ inventory: [], equipment: new Map(), details: {}, prices: {}, actions: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -21,7 +21,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.details[hrid],
         // The picker builds its list from the whole item map, which is the same
         // fixture the per-item lookups read
-        getInitClientData: () => ({ itemDetailMap: game.details }),
+        getInitClientData: () => ({ itemDetailMap: game.details, actionDetailMap: game.actions }),
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -53,6 +53,8 @@ const {
     setNoSell,
     selectTarget,
     incomePerDay,
+    toggleCrafting,
+    cycleTargetNoSell,
     resetEquipmentSavings,
 } = await import('./equipment-savings-row.js');
 
@@ -63,7 +65,18 @@ beforeEach(() => {
         // money you can spend
         { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/market_listing', count: 51_000_000_000_000 },
     ];
+    game.actions = {
+        // An upgrade: shards plus the spear you already hold
+        '/actions/refine': {
+            outputItems: [{ itemHrid: '/items/refined_spear', count: 1 }],
+            inputItems: [{ itemHrid: '/items/shard', count: 30 }],
+            upgradeItemHrid: '/items/plain_spear',
+        },
+    };
     game.details = {
+        '/items/refined_spear': { name: 'Refined Spear', equipmentDetail: { type: '/equipment_types/main_hand' } },
+        '/items/plain_spear': { name: 'Plain Spear', equipmentDetail: { type: '/equipment_types/main_hand' } },
+        '/items/shard': { name: 'Shard' },
         '/items/cheese_sword': { name: 'Cheese Sword', equipmentDetail: { type: '/equipment_types/main_hand' } },
         '/items/holy_sword': { name: 'Holy Sword', equipmentDetail: { type: '/equipment_types/main_hand' } },
         '/items/rough_boots': { name: 'Rough Boots', equipmentDetail: { type: '/equipment_types/feet' } },
@@ -75,6 +88,9 @@ beforeEach(() => {
         '/items/holy_sword:0': { ask: 100_000_000, bid: 90_000_000 },
         '/items/cheese_sword:0': { ask: 45_000_000, bid: 40_000_000 },
         '/items/rough_boots:0': { ask: 5_000_000, bid: 4_000_000 },
+        '/items/refined_spear:0': { ask: 900_000_000, bid: 800_000_000 },
+        '/items/plain_spear:0': { ask: 300_000_000, bid: 250_000_000 },
+        '/items/shard:0': { ask: 1_000_000, bid: 900_000 },
     };
     resetEquipmentSavings();
 });
@@ -461,5 +477,107 @@ describe('income per day', () => {
 
     test('no combat at all is nothing rather than a crash', () => {
         expect(incomePerDay()).toBeNull();
+    });
+});
+
+describe('crafting rather than buying', () => {
+    test('a craft is priced at its materials, not the finished piece', () => {
+        // A spear you already hold becomes a refined one for the price of the
+        // shards — 30M against a 900M ask, which is a different decision
+        game.inventory.push({
+            itemHrid: '/items/plain_spear',
+            itemLocationHrid: '/item_locations/inventory',
+            count: 1,
+        });
+        watchTarget('/items/refined_spear');
+        expect(watchedTargets()[0].cost).toBe(900_000_000 - 40_000_000);
+
+        toggleCrafting('/items/refined_spear');
+        // 30 shards at 1M, less the 40M for the sword being replaced
+        expect(watchedTargets()[0].cost).toBe(30_000_000 - 40_000_000 > 0 ? 30_000_000 - 40_000_000 : 0);
+    });
+
+    test('a base piece you do not own is counted into the craft', () => {
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+
+        // 30M of shards plus the 300M spear, less the 40M trade-in
+        expect(watchedTargets()[0].cost).toBe(330_000_000 - 40_000_000);
+    });
+
+    test('an unpriced ingredient leaves the craft unpriced rather than cheap', () => {
+        game.prices['/items/shard:0'] = null;
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+
+        expect(watchedTargets()[0].cost).toBeNull();
+    });
+
+    test('a piece with no recipe offers no craft switch', () => {
+        watchTarget('/items/holy_sword');
+        equipmentSavingsPanel.show();
+
+        expect(equipmentSavingsPanel.panel.querySelector('[data-target-craft="/items/holy_sword"]')).toBeNull();
+    });
+
+    test('the recipe is itemised, since one ingredient is usually the expensive one', () => {
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Shard');
+        expect(text()).toContain('Plain Spear');
+        expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('selling per target', () => {
+    test('a target follows the panel until it is told otherwise', () => {
+        watchTarget('/items/holy_sword');
+        expect(watchedTargets()[0].cost).toBe(60_000_000);
+
+        setNoSell(true);
+        expect(watchedTargets()[0].cost).toBe(100_000_000);
+    });
+
+    test('and then keeps its own answer whatever the panel says', () => {
+        // The sword being replaced gets sold; the second ring replaces nothing
+        watchTarget('/items/holy_sword');
+        cycleTargetNoSell('/items/holy_sword'); // always sells
+
+        setNoSell(true);
+        expect(watchedTargets()[0].cost).toBe(60_000_000);
+    });
+
+    test('cycling three times hands it back to the panel', () => {
+        watchTarget('/items/holy_sword');
+        cycleTargetNoSell('/items/holy_sword');
+        cycleTargetNoSell('/items/holy_sword');
+        cycleTargetNoSell('/items/holy_sword');
+
+        setNoSell(true);
+        expect(watchedTargets()[0].cost).toBe(100_000_000);
+    });
+});
+
+describe('the order of the list', () => {
+    test('nearest to done leads, and affordable leads that', () => {
+        // The sword needs 300M of the 60M held; the spear needs more again.
+        // Boots are affordable outright, so they come first.
+        game.prices['/items/holy_sword:0'] = { ask: 340_000_000, bid: 300_000_000 };
+        watchTarget('/items/holy_sword');
+        watchTarget('/items/refined_spear');
+        watchTarget('/items/rough_boots');
+
+        expect(watchedTargets().map((target) => target.name)).toEqual(['Rough Boots', 'Holy Sword', 'Refined Spear']);
+    });
+
+    test('unpriced targets go last, since they have no progress to sort by', () => {
+        game.prices['/items/holy_sword:0'] = null;
+        watchTarget('/items/holy_sword');
+        watchTarget('/items/rough_boots');
+
+        const names = watchedTargets().map((target) => target.name);
+        expect(names[names.length - 1]).toBe('Holy Sword');
     });
 });

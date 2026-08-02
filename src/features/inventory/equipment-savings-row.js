@@ -40,11 +40,18 @@ import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
-import { itemIcon, linkToMarketplace, row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, drawLine, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { upgradeCost, savingsProgress, timeToAffordSeconds, totalSavings } from '../../utils/equipment-savings.js';
+import {
+    upgradeCost,
+    craftCost,
+    savingsProgress,
+    timeToAffordSeconds,
+    totalSavings,
+    orderTargets,
+} from '../../utils/equipment-savings.js';
 
 const STORAGE_KEY = 'equipmentSavings';
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
@@ -123,7 +130,54 @@ export function isTargeted(itemHrid) {
  */
 export function watchTarget(itemHrid, enhancementLevel = 0) {
     if (!itemHrid) return;
+    // `noSell` and `craft` start unset rather than false, so a target follows
+    // the panel's switch until it is told otherwise — one of them differing is
+    // the exception, not the rule
     state.targets[itemHrid] = { enhancementLevel: Number(enhancementLevel) || 0 };
+    persist();
+}
+
+/**
+ * Whether one target trades in the piece it replaces.
+ *
+ * Per target because it genuinely differs: the sword you are replacing gets
+ * sold, and the second ring you are buying replaces nothing you would part
+ * with. Unset means "whatever the panel says", which is what most of them want.
+ *
+ * @param {string} itemHrid - The target
+ * @returns {boolean}
+ */
+export function targetNoSell(itemHrid) {
+    return state.targets[itemHrid]?.noSell ?? state.noSell;
+}
+
+/**
+ * Cycle one target between following the panel, selling, and not selling.
+ * @param {string} itemHrid - The target
+ */
+export function cycleTargetNoSell(itemHrid) {
+    const target = state.targets[itemHrid];
+    if (!target) return;
+
+    // Follows → sells → keeps → follows
+    if (target.noSell === undefined) target.noSell = false;
+    else if (target.noSell === false) target.noSell = true;
+    else delete target.noSell;
+    persist();
+}
+
+/** @param {string} itemHrid - Whether this target is being crafted rather than bought */
+export function isCrafting(itemHrid) {
+    return Boolean(state.targets[itemHrid]?.craft);
+}
+
+/** @param {string} itemHrid - Craft it rather than buy it, or stop */
+export function toggleCrafting(itemHrid) {
+    const target = state.targets[itemHrid];
+    if (!target) return;
+
+    if (target.craft) delete target.craft;
+    else target.craft = true;
     persist();
 }
 
@@ -329,6 +383,90 @@ export function spendable() {
 }
 
 /**
+ * The recipe that makes a piece, if the game has one.
+ *
+ * Found by looking for the action that outputs it rather than from a table, so a
+ * recipe added by an update is priced rather than missed.
+ *
+ * @param {string} itemHrid - The finished piece
+ * @returns {Object|null} `{inputItems, upgradeItemHrid, outputCount}`
+ */
+export function recipeFor(itemHrid) {
+    const actions = dataManager.getInitClientData?.()?.actionDetailMap || {};
+
+    for (const action of Object.values(actions)) {
+        const output = action?.outputItems?.find((entry) => entry.itemHrid === itemHrid);
+        if (!output) continue;
+
+        return {
+            inputItems: action.inputItems || [],
+            upgradeItemHrid: action.upgradeItemHrid || null,
+            outputCount: output.count || 1,
+        };
+    }
+    return null;
+}
+
+/**
+ * Whether the piece a recipe upgrades is already in hand.
+ *
+ * Worn counts as owned — an upgrade consumes the piece you are wearing just as
+ * happily as one in the bag, and that is the usual case here.
+ *
+ * @param {string} itemHrid - The piece the recipe consumes
+ * @returns {boolean}
+ */
+function ownsBase(itemHrid) {
+    if (!itemHrid) return true;
+    return (dataManager.getInventory?.() || []).some((item) => item.itemHrid === itemHrid && (item.count || 0) > 0);
+}
+
+/**
+ * What one target costs, bought or crafted.
+ *
+ * @param {string} itemHrid - The target
+ * @param {number} enhancementLevel - Which enhancement
+ * @returns {{cost: number|null, ask: number, crafted: boolean, recipe: Object|null}}
+ */
+function costOf(itemHrid, enhancementLevel) {
+    const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
+    const worn = wornRivalOf(itemHrid);
+    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+    const noSell = targetNoSell(itemHrid);
+
+    if (!isCrafting(itemHrid)) {
+        return {
+            cost: upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
+            ask,
+            crafted: false,
+            recipe: null,
+        };
+    }
+
+    // Crafting prices the materials instead of the finished piece, which for an
+    // upgrade you already hold the base of is a completely different figure —
+    // a Furious Spear you own becomes a Refined one for the price of the shards
+    const recipe = recipeFor(itemHrid);
+    const materials = craftCost({
+        inputItems: recipe?.inputItems,
+        priceOf: (hrid) => getItemPrices(hrid, 0)?.ask || 0,
+        outputCount: recipe?.outputCount,
+        haveBase: ownsBase(recipe?.upgradeItemHrid),
+        upgradeAsk: recipe?.upgradeItemHrid ? getItemPrices(recipe.upgradeItemHrid, 0)?.ask || 0 : 0,
+    });
+
+    if (materials === null) return { cost: null, ask, crafted: true, recipe };
+    // The trade-in still applies: crafting the replacement does not stop you
+    // selling the piece it replaces
+    return {
+        cost: noSell ? materials : Math.max(0, materials - wornBid),
+        ask,
+        crafted: true,
+        recipe,
+    };
+}
+
+/**
  * Every target, costed against what you are wearing and what you have.
  *
  * @returns {Array<Object>} `{itemHrid, name, enhancementLevel, ask, cost, ...}`
@@ -337,14 +475,12 @@ export function watchedTargets() {
     const coins = spendable();
     const perDay = incomePerDay();
 
-    return Object.entries(state.targets).map(([itemHrid, target]) => {
+    const targets = Object.entries(state.targets).map(([itemHrid, target]) => {
         const enhancementLevel = target.enhancementLevel || 0;
-        const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
+        const { cost, ask, crafted, recipe } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
-
-        const cost = upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell: state.noSell });
         const progress = savingsProgress(cost, coins);
 
         return {
@@ -352,12 +488,20 @@ export function watchedTargets() {
             name: nameOf(itemHrid),
             enhancementLevel,
             ask,
+            crafted,
+            recipe,
+            noSell: targetNoSell(itemHrid),
+            ownNoSell: target.noSell !== undefined,
             worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
             cost,
             ...progress,
             seconds: timeToAffordSeconds(progress.needed, perDay),
         };
     });
+
+    // Nearest to done first: that is the next thing that happens, and the only
+    // entry you might act on today
+    return orderTargets(targets);
 }
 
 /** @returns {Object} The whole list against your coins */
@@ -828,7 +972,59 @@ function targetCard(target) {
     heading.append(eye, icon, name, cost, remove);
     card.appendChild(heading);
 
-    if (target.ask > 0) {
+    // Per-target switches, because both genuinely differ per piece: the sword
+    // being replaced gets sold and the second ring replaces nothing, and one
+    // upgrade is worth crafting while another is cheaper to buy outright
+    const perTarget = document.createElement('div');
+    Object.assign(perTarget.style, { display: 'flex', gap: '5px', flexWrap: 'wrap' });
+
+    const sell = document.createElement('button');
+    sell.textContent = target.ownNoSell ? (target.noSell ? 'Keeping' : 'Selling') : 'Follows panel';
+    sell.dataset.targetSell = target.itemHrid;
+    Object.assign(sell.style, {
+        background: 'rgba(255, 255, 255, 0.06)',
+        border: `1px solid ${target.ownNoSell ? '#6495ed' : 'rgba(255, 255, 255, 0.12)'}`,
+        borderRadius: '3px',
+        color: target.ownNoSell ? '#6495ed' : 'rgba(232, 236, 245, 0.55)',
+        cursor: 'pointer',
+        fontSize: '10px',
+        padding: '1px 7px',
+    });
+    sell.title =
+        'Whether the piece this replaces is sold towards it.\n' +
+        'Cycles: follows the panel switch, always sells, always keeps.';
+    sell.addEventListener('click', () => {
+        cycleTargetNoSell(target.itemHrid);
+        equipmentSavingsPanel.render();
+    });
+    perTarget.appendChild(sell);
+
+    if (recipeFor(target.itemHrid)?.inputItems?.length) {
+        const craft = document.createElement('button');
+        craft.textContent = target.crafted ? 'Crafting' : 'Buying';
+        craft.dataset.targetCraft = target.itemHrid;
+        Object.assign(craft.style, {
+            background: target.crafted ? 'rgba(74, 222, 128, 0.18)' : 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${target.crafted ? '#4ade80' : 'rgba(255, 255, 255, 0.12)'}`,
+            borderRadius: '3px',
+            color: target.crafted ? '#4ade80' : 'rgba(232, 236, 245, 0.55)',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '1px 7px',
+        });
+        craft.title =
+            'Price the materials rather than the finished piece.\n' +
+            'For an upgrade whose base you already hold, that is only the ingredients.';
+        craft.addEventListener('click', () => {
+            toggleCrafting(target.itemHrid);
+            equipmentSavingsPanel.render();
+        });
+        perTarget.appendChild(craft);
+    }
+    card.appendChild(perTarget);
+
+    if (target.crafted) card.appendChild(recipeLines(target));
+    else if (target.ask > 0) {
         card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
         // What it costs after the trade-in, which is the figure the bar fills
         // against — the ask alone is not what you have to find
@@ -866,6 +1062,62 @@ function targetCard(target) {
         card.appendChild(eta);
     }
     return card;
+}
+
+/**
+ * What a craft is made of, and what each ingredient comes to.
+ *
+ * Itemised rather than totalled, because the whole reason to craft is that one
+ * ingredient is the expensive one — a total hides which, and that is the thing
+ * worth knowing before committing to it.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function recipeLines(target) {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '1px' });
+
+    const recipe = target.recipe;
+    if (!recipe?.inputItems?.length) {
+        wrap.appendChild(priceLine('Materials:', 'no recipe', ROW_COLORS.bad));
+        return wrap;
+    }
+
+    for (const input of recipe.inputItems) {
+        const price = getItemPrices(input.itemHrid, 0)?.ask || 0;
+        wrap.appendChild(
+            priceLine(
+                `${formatWithSeparator(input.count || 0)} × ${nameOf(input.itemHrid)}`,
+                price > 0 ? formatWithSeparator(Math.round(price * (input.count || 0))) : 'no price',
+                price > 0 ? ROW_COLORS.gold : ROW_COLORS.bad
+            )
+        );
+    }
+
+    // Named rather than assumed: whether the base piece is a cost changes the
+    // figure entirely, and it depends on what is in the bag
+    if (recipe.upgradeItemHrid) {
+        const owned = (dataManager.getInventory?.() || []).some(
+            (item) => item.itemHrid === recipe.upgradeItemHrid && (item.count || 0) > 0
+        );
+        wrap.appendChild(
+            priceLine(
+                `Upgrades ${nameOf(recipe.upgradeItemHrid)}`,
+                owned ? 'you have one' : 'not owned, counted in',
+                owned ? ROW_COLORS.good : ROW_COLORS.accent
+            )
+        );
+    }
+
+    wrap.appendChild(
+        priceLine(
+            'Difference:',
+            target.cost === null ? 'no price' : `+${formatWithSeparator(Math.round(target.cost))}`,
+            target.cost === null ? ROW_COLORS.bad : target.affordable ? ROW_COLORS.good : ROW_COLORS.bad
+        )
+    );
+    return wrap;
 }
 
 /**
@@ -1289,7 +1541,7 @@ registerRow({
     // EWatch's own tile. One tile, not a second one beside the old name.
     key: 'equipmentWatch',
     name: 'Equipment Watch',
-    defaultSize: { width: 230, height: 30 },
+    defaultSize: { width: 240, height: 46 },
     render: (container) => {
         const plan = everything();
         if (!plan.targets.length) return blank(container);
@@ -1306,8 +1558,22 @@ registerRow({
                 .sort((a, b) => a.needed - b.needed)[0];
         const shown = next || plan;
 
-        row(container, [
-            shown.itemHrid ? { icon: shown.itemHrid, size: 18 } : { text: '🎯', color: ROW_COLORS.dim },
+        // Two lines: the piece and the figures, then a bar under them. The bar is
+        // what a savings tile is for — a figure says where you are and a bar says
+        // it at a glance, which is all a tile has time for.
+        container.replaceChildren();
+        Object.assign(container.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            gap: '3px',
+            lineHeight: '1.3',
+            overflow: 'hidden',
+        });
+
+        const top = document.createElement('div');
+        drawLine(top, [
+            shown.itemHrid ? { icon: shown.itemHrid, size: 18 } : { text: '\u{1F3AF}', color: ROW_COLORS.dim },
             {
                 // With the enhancement, because a Plate Body and a Plate Body +10
                 // are different purchases at very different prices, and the tile
@@ -1315,7 +1581,8 @@ registerRow({
                 text: next
                     ? `${next.name}${next.enhancementLevel ? ` +${next.enhancementLevel}` : ''}`
                     : 'All affordable',
-                color: next ? ROW_COLORS.dim : ROW_COLORS.good,
+                color: next ? ROW_COLORS.gold : ROW_COLORS.good,
+                bold: true,
                 ellipsis: true,
             },
             // A pinned target you can already afford shows "0" and "0s" if it is
@@ -1324,12 +1591,30 @@ registerRow({
             next?.affordable
                 ? { text: 'Affordable', color: ROW_COLORS.good, push: true }
                 : next
-                  ? { text: formatKMB(next.needed), color: ROW_COLORS.gold, push: true }
+                  ? { text: formatKMB(next.needed), color: ROW_COLORS.neutral, push: true }
                   : { text: formatKMB(plan.cost), color: ROW_COLORS.good, push: true },
             next && !next.affordable && next.seconds !== null
-                ? { text: shortDuration(next.seconds), color: ROW_COLORS.accent }
+                ? { text: shortDuration(next.seconds), color: ROW_COLORS.gold }
                 : null,
         ]);
+        container.appendChild(top);
+
+        const fraction = next ? next.fraction : plan.fraction;
+        if (fraction !== null && fraction !== undefined) {
+            const line = document.createElement('div');
+            Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+            line.appendChild(progressBar(fraction));
+
+            const percent = document.createElement('span');
+            percent.textContent = `${(fraction * 100).toFixed(1)}%`;
+            Object.assign(percent.style, {
+                color: fraction >= 1 ? ROW_COLORS.good : ROW_COLORS.dim,
+                flex: '0 0 auto',
+                fontSize: '90%',
+            });
+            line.appendChild(percent);
+            container.appendChild(line);
+        }
 
         container.title =
             (next

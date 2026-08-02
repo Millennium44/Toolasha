@@ -45,6 +45,48 @@ export function upgradeCost({ targetAsk, equippedBid = 0, noSell = false }) {
 }
 
 /**
+ * What the materials for one craft come to.
+ *
+ * An upgrade recipe has two halves the game keeps apart: the **inputs**, which
+ * are consumed, and the **upgrade item**, which is the piece being upgraded. For
+ * somebody who already owns the base piece — the usual reason to craft rather
+ * than buy — only the inputs are a purchase, and the finished item's ask is
+ * irrelevant. A Furious Spear you already hold becomes a Refined one for the
+ * price of the shards.
+ *
+ * Any unpriced input makes the whole thing unpriced. A recipe totalled from the
+ * ingredients it could price is a lower bound wearing a total's clothes, and
+ * here it would report a cheaper craft than is possible.
+ *
+ * @param {Object} input - What it needs
+ * @param {Array<{itemHrid: string, count: number}>} input.inputItems - The recipe
+ * @param {Function} input.priceOf - `(itemHrid) => number|null`
+ * @param {number} [input.outputCount] - How many one action makes
+ * @param {boolean} [input.haveBase] - Whether the piece being upgraded is already owned
+ * @param {number} [input.upgradeAsk] - What the piece being upgraded costs, if not
+ * @returns {number|null} Coins for one finished item, or null when it cannot be priced
+ */
+export function craftCost({ inputItems, priceOf, outputCount = 1, haveBase = true, upgradeAsk = 0 }) {
+    if (!inputItems?.length) return null;
+
+    let total = 0;
+    for (const input of inputItems) {
+        const price = priceOf(input.itemHrid);
+        if (!(price > 0)) return null;
+        total += price * (input.count || 0);
+    }
+
+    // The base piece is only a cost if it has to be bought
+    if (!haveBase) {
+        if (!(upgradeAsk > 0)) return null;
+        total += upgradeAsk;
+    }
+
+    const made = outputCount > 0 ? outputCount : 1;
+    return total / made;
+}
+
+/**
  * How far along the saving is.
  *
  * @param {number|null} cost - From `upgradeCost`
@@ -101,4 +143,30 @@ export function totalSavings(watches) {
         else cost += watch.cost;
     }
     return { cost, unpriced };
+}
+
+/**
+ * The order a savings list reads best in.
+ *
+ * Nearest to done first, because that is the next thing that happens and the
+ * only entry you might act on today. Insertion order says nothing at all, and
+ * cost order buries the piece you are two days from behind one you are two
+ * months from.
+ *
+ * Affordable ones lead — they are done, and a list that hides its finished
+ * entries at the bottom makes you hunt for good news. Unpriced ones go last:
+ * they have no progress to sort by, and putting them anywhere else implies one.
+ *
+ * @param {Array<Object>} targets - Costed targets
+ * @returns {Array<Object>} A new array
+ */
+export function orderTargets(targets) {
+    const rank = (target) => (target.cost === null ? 2 : target.affordable ? 0 : 1);
+
+    return [...(targets || [])].filter(Boolean).sort((a, b) => {
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if (rank(a) === 2) return (a.name || '').localeCompare(b.name || '');
+        // Within a band, the one furthest along leads
+        return (b.fraction || 0) - (a.fraction || 0);
+    });
 }

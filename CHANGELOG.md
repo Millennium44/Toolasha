@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### EWatch: craft it yourself, sell per piece, and a bar on the tile
+
+- **"I will craft it."** A Furious Spear you already hold becomes a Refined one for the price of the shards, not the nine hundred million the finished one asks — a completely different decision, and the panel could not express it. Any target the game has a recipe for gains a **Buying / Crafting** switch. Crafting prices the **materials**, itemised, because the reason to craft is usually that one ingredient is the expensive one and a total hides which. The piece being upgraded is counted in only when you do not already own it, and the panel says which of those it assumed.
+- **One unpriced ingredient makes the whole craft unpriced.** A recipe totalled from the ingredients it could price reports a cheaper craft than is possible, which is worse than saying nothing.
+- **Selling is per piece now.** The sword being replaced gets sold; the second ring replaces nothing you would part with. Each target cycles between following the panel switch, always selling, and always keeping — starting on "follows", since one differing is the exception.
+- **The list is ordered by how far along it is** — affordable first, then nearest to done, then unpriced. Insertion order said nothing, and ordering by cost buries the piece you are two days from behind one you are two months from.
+- **The tile grows a progress bar and a percentage**, which is what a savings tile is for: a figure says where you are, a bar says it at a glance.
+
 ### Fixed: EWatch never had income data, and its tile omitted the enhancement
 
 - **"No income data", always.** Two bugs stacked. The duration was read from `startTime`/`endTime`, which the collector does not publish — it publishes `durationSeconds` — so the sum was `Date.now() − Date.now()` and every run was zero seconds long. And `dailyProfit` is `{ask, bid}`, two figures rather than one, so comparing it as a number was NaN and would have failed even with a correct duration. Both fixed; the bar now reads **Lazy** or **Mid** for which side of the book it is using, as HWhat's does, and No Sell switches it to the ask side since that is the assumption No Sell already makes.
