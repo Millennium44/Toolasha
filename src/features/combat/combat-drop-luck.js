@@ -357,39 +357,17 @@ registerRow({
         const percent = result.percentile * 100;
         const { tone, text } = describeLuck(result.percentile);
 
-        // A line per player where the party can be told apart, as LYuck does.
-        // The percentile is a property of the session and cannot be split, so
-        // what goes per player is how each did against what each was owed —
-        // which is the comparable figure anyway, since drop gear differs.
+        // Your name on the left and the figure on the right, which is the shape
+        // Lucky's tile has. One row rather than one per player: the percentile
+        // is a property of the session — how unusual this run was against the
+        // zone's own distribution — and there is no honest way to split it
+        // between the people who were in it. What *can* be split is takings
+        // against expectation, and that is the Over Expected tile.
         const party = partyLuck(combatDropLuck.context);
-        if (party.players.length > 1) {
-            const lines = party.players.map((player) => {
-                const verdict = signedPercent(player.percent ?? 0);
-                return [
-                    {
-                        text: player.name,
-                        color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
-                        ellipsis: true,
-                    },
-                    { text: player.percent === null ? '—' : verdict.text, color: verdict.color, push: true },
-                ];
-            });
-
-            const total = signedPercent(party.total?.percent ?? 0);
-            lines.push([
-                { text: 'Luck', color: ROW_COLORS.neutral, bold: true },
-                { text: `${percent.toFixed(1)}%`, bold: true, push: true, color: total.color },
-            ]);
-
-            rows(container, lines);
-            container.title =
-                `${formatOrdinal(result.percentile)} percentile — ${text}\n` +
-                'Per player: takings against what that player\u2019s own drop gear was owed.';
-            return;
-        }
+        const me = party.players.find((player) => player.isCurrentPlayer) || party.players[0];
 
         row(container, [
-            { text: 'Luck', color: ROW_COLORS.dim },
+            { text: me?.name || 'Luck', color: ROW_COLORS.gold, ellipsis: true },
             {
                 text: `${percent.toFixed(1)}%`,
                 bold: true,
@@ -423,49 +401,38 @@ registerRow({
 
         const verdict = signedPercent((result.income / result.expected - 1) * 100);
 
-        // Per player where there is a party to split, then the total — which is
-        // the party's takings against the party's expectation, not an average of
-        // the percentages. An average weights somebody who looted one item the
-        // same as somebody who looted a hundred.
+        // A row per player and then the total, whether or not there is anybody
+        // else in the party — which is the shape Lucky's tile has, and one
+        // fewer layout to keep matching. The coins the percentage came from are
+        // the tooltip: they are what makes the figure meaningful, and they are
+        // also three times as wide as the tile.
         const party = partyLuck(combatDropLuck.context);
-        if (party.players.length > 1) {
-            const lines = party.players.map((player) => {
-                const each = signedPercent(player.percent ?? 0);
-                return [
-                    {
-                        text: player.name,
-                        color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
-                        ellipsis: true,
-                    },
-                    { text: player.percent === null ? '—' : each.text, color: each.color, push: true },
-                ];
-            });
+        const lines = party.players.map((player) => {
+            const each = signedPercent(player.percent ?? 0);
+            return [
+                {
+                    text: player.name,
+                    color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
+                    ellipsis: true,
+                },
+                { text: player.percent === null ? '—' : each.text, color: each.color, push: true },
+            ];
+        });
 
-            const total = signedPercent(party.total?.percent ?? 0);
-            lines.push([
-                { text: 'TOTAL', color: ROW_COLORS.neutral, bold: true },
-                { text: total.text, color: total.color, bold: true, push: true },
-            ]);
-
-            rows(container, lines);
-            container.title =
-                'Each player against what their own drop gear was owed over the same battles.\n' +
-                'A player with no drop gear is owed less, so par for them is a smaller haul.';
-            return;
-        }
-
-        rows(container, [
-            [
-                { text: 'Over expected', color: ROW_COLORS.dim },
-                { text: verdict.text, color: verdict.color, bold: true, push: true },
-            ],
-            [
-                { text: formatLargeNumber(Math.round(result.income)) },
-                { text: `of ${formatLargeNumber(Math.round(result.expected))}`, color: ROW_COLORS.dim, push: true },
-            ],
+        // The party against the party's expectation, not an average of the
+        // percentages — an average weights somebody who looted one item the
+        // same as somebody who looted a hundred
+        const total = party.total ? signedPercent(party.total.percent ?? 0) : verdict;
+        lines.push([
+            { text: 'TOTAL', color: ROW_COLORS.neutral, bold: true },
+            { text: total.text, color: total.color, bold: true, push: true },
         ]);
+
+        rows(container, lines);
         container.title =
-            `${result.battles} battles were owed ${Math.round(result.expected).toLocaleString()} coins on average.\n` +
+            `${formatLargeNumber(Math.round(result.income))} of ` +
+            `${formatLargeNumber(Math.round(result.expected))} expected over ${result.battles} battles.\n` +
+            'Each player against what their own drop gear was owed; a player with no drop gear is owed less.\n' +
             'Drops with no market price are left out of both sides.';
     },
     // Both luck tiles open the same panel. Two panels split one question — a
