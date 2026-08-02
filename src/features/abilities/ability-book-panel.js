@@ -36,9 +36,10 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
-import { itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { abilityPlan, cheapestNextLevel, planTotals, bookItemFor } from '../../utils/ability-books.js';
+import { createSkillHistory } from '../../utils/skill-history.js';
+import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../utils/ability-books.js';
 
 const PANEL_ID = 'toolasha-ability-book-panel';
 const GEOMETRY_KEY = 'abilityBookPanel';
@@ -58,6 +59,41 @@ const COLORS = {
 
 /** The level every ability is being aimed at, when one is set */
 let sharedTarget = null;
+
+/**
+ * A level chosen for one ability, which overrides the shared one.
+ *
+ * Per ability rather than one for all, because the levels are not level: taking
+ * an ability at 41 and one at 70 both to 100 are different purchases, and the
+ * question is usually about one of them.
+ *
+ * @type {Map<string, number>}
+ */
+const abilityTargets = new Map();
+
+/**
+ * How fast each ability is earning experience.
+ *
+ * Same measurement a skill rate uses — abilities have an hrid and an experience
+ * total, which is all it reads. Ten minutes back rather than session start, so a
+ * change of activity shows up rather than being averaged away.
+ */
+const abilityHistory = createSkillHistory();
+
+/**
+ * The target set for one ability.
+ * @param {string} abilityHrid - Which ability
+ * @returns {number|null}
+ */
+function targetFor(abilityHrid) {
+    return abilityTargets.get(abilityHrid) ?? sharedTarget;
+}
+
+/** Put every ability back to its next level */
+export function resetAbilityTargets() {
+    abilityTargets.clear();
+    sharedTarget = null;
+}
 
 /**
  * An ability's readable name.
@@ -81,16 +117,26 @@ function abilityName(abilityHrid) {
  * Exported because the overlay row reads it while the panel is closed, and
  * because a disagreement between the row and the panel would be here.
  *
- * @param {number|null} [targetLevel] - A level beyond the next one
+ * @param {number|null|Function} [target] - A level beyond the next one, or
+ *   `(abilityHrid) => level|null` when each ability has its own
  * @returns {Array<Object>} From `abilityPlan`, cheapest first
  */
-export function abilityPlans(targetLevel = sharedTarget) {
+export function abilityPlans(target = targetFor) {
     const data = dataManager.getInitClientData?.();
     const table = data?.levelExperienceTable;
     if (!table) return [];
 
+    const abilities = equippedAbilities();
+    // The rate the panel's time column divides by. Sampled here rather than in
+    // the panel so the reading is taken whether or not the panel is open — a
+    // rate that only starts measuring when you look at it takes ten minutes to
+    // say anything, every time.
+    abilityHistory.sample(
+        abilities.map((ability) => ({ skillHrid: ability.abilityHrid, experience: ability.experience }))
+    );
+
     const plans = [];
-    for (const ability of equippedAbilities()) {
+    for (const ability of abilities) {
         if (!ability?.abilityHrid) continue;
 
         const itemHrid = bookItemFor(ability.abilityHrid);
@@ -101,9 +147,15 @@ export function abilityPlans(targetLevel = sharedTarget) {
             perBookExperience,
             bookPrice: getItemPrices(itemHrid)?.ask || 0,
             table,
-            targetLevel,
+            targetLevel: typeof target === 'function' ? target(ability.abilityHrid) : target,
         });
-        if (plan) plans.push({ ...plan, name: abilityName(ability.abilityHrid) });
+        if (plan) {
+            plans.push({
+                ...plan,
+                name: abilityName(ability.abilityHrid),
+                experiencePerHour: abilityHistory.rateFor(ability.abilityHrid),
+            });
+        }
     }
 
     // Cheapest first, and the ones with no price last rather than first — they
@@ -249,11 +301,31 @@ class AbilityBookPanel {
         title.style.fontWeight = 'bold';
         title.style.color = COLORS.accent;
 
+        // The same summary the overlay tile carries, so the panel you opened
+        // from it opens showing the figure you opened it for
         this.headerBest = document.createElement('span');
-        this.headerBest.style.color = ROW_COLORS.good;
+        Object.assign(this.headerBest.style, { display: 'flex', alignItems: 'center', gap: '5px' });
 
         const spacer = document.createElement('div');
         spacer.style.flex = '1';
+
+        const reset = document.createElement('button');
+        reset.textContent = 'Reset';
+        Object.assign(reset.style, {
+            background: 'rgba(255, 255, 255, 0.08)',
+            border: `1px solid ${COLORS.hairline}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 9px',
+        });
+        reset.title = 'Put every ability back to its next level.';
+        reset.addEventListener('click', (event) => {
+            event.stopPropagation();
+            resetAbilityTargets();
+            this._render();
+        });
 
         const close = document.createElement('button');
         close.textContent = '✕';
@@ -270,8 +342,28 @@ class AbilityBookPanel {
             this.hide();
         });
 
-        header.append(title, this.headerBest, spacer, close);
+        header.append(title, this.headerBest, spacer, reset, close);
         return header;
+    }
+
+    /**
+     * The cheapest next level, written the way the tile writes it.
+     * @param {Object|null} best - From `cheapestNextLevel`
+     */
+    _drawHeaderBest(best) {
+        this.headerBest.replaceChildren();
+        if (!best) return;
+
+        const icon = itemIcon(best.itemHrid, 18);
+        linkToMarketplace(icon, best.itemHrid, navigateToMarketplace);
+
+        this.headerBest.append(
+            icon,
+            this._value(formatWithSeparator(best.booksToNext), ROW_COLORS.good),
+            this._label('books'),
+            this._value(formatKMB(best.costToNext), ROW_COLORS.gold)
+        );
+        this.headerBest.title = `${best.name} is the cheapest next ability level you could buy right now.`;
     }
 
     /** The periodic redraw, which leaves a field being typed into alone */
@@ -285,9 +377,9 @@ class AbilityBookPanel {
         if (!this.bodyEl) return;
 
         const plans = abilityPlans();
-        const best = cheapestNextLevel(plans);
-        this.headerBest.textContent = best ? `${best.name}: ${formatKMB(best.costToNext)}` : '';
-        this.headerBest.title = 'The cheapest next ability level you could buy right now.';
+        // `costToNext` is there whatever target a row is aimed at, and the next
+        // level is what the header is about — the thing you could go and buy now
+        this._drawHeaderBest(cheapestNextLevel(plans));
 
         this.bodyEl.replaceChildren();
         for (const build of [() => this._targetBar(plans), () => this._table(plans)]) {
@@ -332,6 +424,9 @@ class AbilityBookPanel {
         input.addEventListener('change', () => {
             const parsed = Math.round(Number(input.value));
             sharedTarget = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+            // A level set for everything replaces the ones set one at a time,
+            // or "everything" would quietly mean "everything else"
+            abilityTargets.clear();
             this._render();
         });
         // A level typed here should not also be a game hotkey
@@ -340,8 +435,7 @@ class AbilityBookPanel {
             event.stopPropagation();
         });
 
-        const field = sharedTarget ? 'costToTarget' : 'costToNext';
-        const totals = planTotals(plans, field);
+        const totals = aimedTotals(plans);
 
         const summary = document.createElement('span');
         summary.append(
@@ -349,6 +443,7 @@ class AbilityBookPanel {
             document.createTextNode(' · '),
             this._value(formatKMB(totals.cost), ROW_COLORS.gold)
         );
+        summary.title = 'Every ability taken to the level its own row is aimed at.';
         // A total that quietly excludes rows is a lower bound wearing a total's
         // clothes, so the count of what it could not price is said out loud
         if (totals.unpriced) {
@@ -373,12 +468,14 @@ class AbilityBookPanel {
         heading.style.borderBottom = `1px solid ${COLORS.hairline}`;
         heading.style.paddingBottom = '3px';
         heading.append(
+            this._cell('Lvl'),
             document.createElement('span'),
             this._left('Ability'),
-            this._cell('Level'),
+            this._cell('XP to go'),
+            this._cell('Time'),
             this._cell('Books'),
             this._cell('Cost'),
-            this._cell(sharedTarget ? `To ${sharedTarget}` : '')
+            this._cell('To')
         );
         card.appendChild(heading);
 
@@ -399,6 +496,16 @@ class AbilityBookPanel {
         const line = this._row();
         line.style.padding = '2px 0';
 
+        // Every figure to the right of the level answers "to the target", and
+        // the target is the next level until you say otherwise
+        const aimed = plan.targetLevel !== null;
+        const books = aimed ? plan.booksToTarget : plan.booksToNext;
+        const cost = aimed ? plan.costToTarget : plan.costToNext;
+        const owed = aimed ? plan.experienceToTarget : plan.experienceToNext;
+
+        const level = this._cell(plan.level === 0 ? '—' : String(plan.level));
+        Object.assign(level.style, { color: ROW_COLORS.gold, fontWeight: 'bold', textAlign: 'center' });
+
         const icon = itemIcon(plan.itemHrid, 20);
         linkToMarketplace(icon, plan.itemHrid, navigateToMarketplace);
 
@@ -413,25 +520,103 @@ class AbilityBookPanel {
             name.title = 'Not learned — the first book teaches the ability rather than levelling it.';
         }
 
-        const level = this._cell(plan.level === 0 ? '—' : String(plan.level));
-        const books = this._cell(plan.booksToNext === null ? '—' : formatWithSeparator(plan.booksToNext));
+        line.append(level, icon, name, this._experienceCell(plan, owed), this._timeCell(plan, owed));
 
-        const cost = this._cell(plan.costToNext === null ? 'no price' : formatKMB(plan.costToNext));
-        cost.style.color = plan.costToNext === null ? ROW_COLORS.bad : ROW_COLORS.gold;
-        cost.title =
-            plan.costToNext === null
+        const booksCell = this._cell(books === null ? '—' : formatWithSeparator(books));
+        booksCell.style.color = ROW_COLORS.good;
+
+        const costCell = this._cell(cost === null ? 'no price' : formatKMB(cost));
+        costCell.style.color = cost === null ? ROW_COLORS.bad : ROW_COLORS.gold;
+        costCell.title =
+            cost === null
                 ? 'Nobody is selling this book, so its cost is unknown rather than nothing.'
-                : `${formatWithSeparator(plan.booksToNext)} books at ${formatWithSeparator(plan.bookPrice)} each.`;
+                : `${formatWithSeparator(books)} books at ${formatWithSeparator(plan.bookPrice)} each.`;
 
-        const target = this._cell(
-            plan.booksToTarget === null
-                ? ''
-                : `${formatWithSeparator(plan.booksToTarget)} · ${plan.costToTarget === null ? '—' : formatKMB(plan.costToTarget)}`
-        );
-        target.style.color = COLORS.textDim;
-
-        line.append(icon, name, level, books, cost, target);
+        line.append(booksCell, costCell, this._targetInput(plan));
         return line;
+    }
+
+    /**
+     * Experience still owed, and how fast it is coming in.
+     *
+     * The rate below the figure rather than beside it, because the two are read
+     * together — a number of experience means nothing until you know whether it
+     * is an hour away or a fortnight.
+     *
+     * @param {Object} plan - One ability's plan
+     * @param {number|null} owed - Experience to the target
+     * @returns {HTMLElement}
+     */
+    _experienceCell(plan, owed) {
+        const cell = document.createElement('span');
+        Object.assign(cell.style, { textAlign: 'right', whiteSpace: 'nowrap', lineHeight: '1.25' });
+
+        const remaining = document.createElement('div');
+        remaining.textContent = owed === null ? '—' : formatWithSeparator(Math.ceil(owed));
+        remaining.style.color = ROW_COLORS.good;
+
+        const rate = document.createElement('div');
+        rate.textContent = plan.experiencePerHour ? `${formatKMB(plan.experiencePerHour)}/hr` : '—/hr';
+        Object.assign(rate.style, { color: COLORS.textDim, fontSize: '10px' });
+        rate.title = plan.experiencePerHour
+            ? 'Measured over the last ten minutes of play.'
+            : 'No experience gained yet, so there is no rate to measure.';
+
+        cell.append(remaining, rate);
+        return cell;
+    }
+
+    /**
+     * @param {Object} plan - One ability's plan
+     * @param {number|null} owed - Experience to the target
+     * @returns {HTMLElement}
+     */
+    _timeCell(plan, owed) {
+        // Unmeasurable rather than infinite: an ability you are not training has
+        // no arrival time, and "never" would be a claim about the future
+        const seconds = plan.experiencePerHour && owed !== null ? (owed / plan.experiencePerHour) * 3600 : null;
+        const cell = this._cell(seconds === null ? '—' : shortDuration(seconds));
+        cell.style.color = seconds === null ? COLORS.textDim : ROW_COLORS.accent;
+        cell.title = seconds === null ? 'Needs a measured experience rate for this ability.' : 'At the current rate.';
+        return cell;
+    }
+
+    /**
+     * The level this ability is being taken to.
+     * @param {Object} plan - One ability's plan
+     * @returns {HTMLElement}
+     */
+    _targetInput(plan) {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = String(plan.level + 1);
+        input.max = '200';
+        input.value = String(plan.targetLevel ?? plan.level + 1);
+        input.dataset.ability = plan.abilityHrid;
+        Object.assign(input.style, {
+            width: '100%',
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.hairline}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 3px',
+            textAlign: 'center',
+        });
+        input.addEventListener('change', () => {
+            const parsed = Math.round(Number(input.value));
+            // The next level is the resting state, not a target — storing it
+            // would leave the row stuck at a level it is about to pass
+            if (Number.isFinite(parsed) && parsed > plan.level + 1) abilityTargets.set(plan.abilityHrid, parsed);
+            else abilityTargets.delete(plan.abilityHrid);
+            this._render();
+        });
+        // A level typed here should not also be a game hotkey
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') input.blur();
+            event.stopPropagation();
+        });
+        return input;
     }
 
     _card() {
@@ -449,7 +634,7 @@ class AbilityBookPanel {
         const line = document.createElement('div');
         Object.assign(line.style, {
             display: 'grid',
-            gridTemplateColumns: '22px minmax(0, 1fr) 50px 62px 80px 116px',
+            gridTemplateColumns: '32px 22px minmax(0, 1fr) 76px 62px 56px 74px 60px',
             gap: '6px',
             alignItems: 'center',
         });

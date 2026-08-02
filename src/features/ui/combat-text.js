@@ -29,7 +29,8 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { row, ROW_COLORS } from '../../utils/overlay-format.js';
+import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { healthDeltas, createCombatLog } from '../../utils/combat-events.js';
 import { newAttributionState, noteActions, attributeTick } from '../../utils/damage-attribution.js';
@@ -245,14 +246,70 @@ export default {
     },
 };
 
+/**
+ * The whole log, rather than the six lines a tile holds.
+ *
+ * Two hundred events are kept and the tile can show six of them, which is fine
+ * for a glance and no use at all for "what actually killed me". The panel is the
+ * same list without the ceiling.
+ */
+export const combatLogPanel = createPanel({
+    id: 'combatLog',
+    title: 'Combat Log',
+    size: { width: 320, height: 420 },
+    accent: '#ffd166',
+    refreshMs: 1000,
+    draw: (body) => {
+        if (!config.getSetting(SCROLLING_SETTING)) {
+            body.appendChild(panelNote('Scrolling Combat Text is off, so nothing is being logged.'));
+            body.appendChild(panelNote('Settings › Combat › Scrolling Combat Text.'));
+            return;
+        }
+
+        const entries = combatLog();
+        if (!entries.length) {
+            body.appendChild(panelNote('Nothing seen yet. Hits appear here as they happen.'));
+            return;
+        }
+
+        const card = panelCard(body, `Last ${Math.min(entries.length, 80)} events`, '#ffd166');
+        for (const event of entries.slice(0, 80)) {
+            card.appendChild(
+                panelLine(
+                    event.side === 'ally' ? '🛡 taken' : '⚔ dealt',
+                    event.isMiss
+                        ? 'miss'
+                        : `${event.kind === 'heal' ? '+' : ''}${formatWithSeparator(Math.round(event.amount))}`,
+                    colourFor(event)
+                )
+            );
+        }
+    },
+});
+
 registerRow({
     key: 'combatText',
     name: 'Combat Log',
     defaultSize: { width: 240, height: 90 },
     defaultVisible: false,
     render: (container) => {
+        // The tile is a window onto a log that nothing is writing unless the
+        // setting is on. Blank reads as broken, so it says which switch it wants
+        // rather than leaving you to find out that this tile has a prerequisite.
+        if (!config.getSetting(SCROLLING_SETTING)) {
+            row(container, [{ text: 'Scrolling Combat Text is off', color: ROW_COLORS.dim, ellipsis: true }]);
+            container.title =
+                'This tile shows the log that Scrolling Combat Text keeps.\n' +
+                'Turn it on in Settings › Combat, under Scrolling Combat Text.';
+            return;
+        }
+
         const entries = combatLog();
-        if (!entries.length) return blank(container);
+        if (!entries.length) {
+            row(container, [{ text: 'Waiting for a fight…', color: ROW_COLORS.dim, ellipsis: true }]);
+            container.title = 'Hits appear here as they happen. Nothing has been seen yet this session.';
+            return;
+        }
 
         container.replaceChildren();
         // Only what fits: this row is glanced at, and a hundred lines in a tile
@@ -275,6 +332,9 @@ registerRow({
             ]);
             container.appendChild(line);
         }
-        container.title = 'The last few hits. Damage you dealt in gold, damage taken in red, heals in green.';
+        container.title =
+            'The last few hits. Damage you dealt in gold, damage taken in red, heals in green.' +
+            '\nDouble-click for the whole log.';
     },
+    onOpen: () => combatLogPanel.toggle(),
 });

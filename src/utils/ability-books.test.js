@@ -1,5 +1,13 @@
 import { describe, test, expect } from 'vitest';
-import { bookItemFor, booksToLevel, abilityPlan, cheapestNextLevel, planTotals } from './ability-books.js';
+import {
+    bookItemFor,
+    booksToLevel,
+    experienceOwed,
+    abilityPlan,
+    cheapestNextLevel,
+    planTotals,
+    aimedTotals,
+} from './ability-books.js';
 
 /** A table where each level costs 1,000 more experience than the last */
 const table = [0, 0];
@@ -125,5 +133,43 @@ describe('planTotals', () => {
 
     test('nothing is zero rather than nothing', () => {
         expect(planTotals([])).toEqual({ books: 0, cost: 0, unpriced: 0 });
+    });
+});
+
+describe('experienceOwed', () => {
+    test('what is left to earn', () => {
+        expect(experienceOwed(table, 5, 2500)).toBe(table[5] - 2500);
+    });
+
+    test('past it is nothing left, not a negative amount of experience', () => {
+        expect(experienceOwed(table, 2, 999_999)).toBe(0);
+    });
+
+    test('a level the table does not reach is unknown rather than zero', () => {
+        expect(experienceOwed(table, 500, 0)).toBeNull();
+    });
+});
+
+describe('aimedTotals', () => {
+    // The mixed set is the point: one ability aimed at a level, one left alone
+    const plans = [
+        { targetLevel: 10, booksToNext: 2, costToNext: 600, booksToTarget: 6, costToTarget: 1800 },
+        { targetLevel: null, booksToNext: 1, costToNext: 300, booksToTarget: null, costToTarget: null },
+    ];
+
+    test('each plan counts where it is aimed', () => {
+        // Not 6+1 books at one field or 2+0 at the other — 6 for the aimed one
+        // and 1 for the one still going to its next level
+        expect(aimedTotals(plans)).toEqual({ books: 7, cost: 2100, unpriced: 0 });
+    });
+
+    test('with nothing aimed it is the next levels', () => {
+        const none = plans.map((plan) => ({ ...plan, targetLevel: null }));
+        expect(aimedTotals(none)).toEqual({ books: 3, cost: 900, unpriced: 0 });
+    });
+
+    test('an unpriced target is still counted as unpriced', () => {
+        const unpriced = [{ targetLevel: 10, booksToNext: 2, costToNext: 600, booksToTarget: 6, costToTarget: null }];
+        expect(aimedTotals(unpriced)).toEqual({ books: 6, cost: 0, unpriced: 1 });
     });
 });

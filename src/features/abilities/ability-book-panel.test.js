@@ -25,7 +25,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, sav
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 
-const { abilityBookPanel, abilityPlans } = await import('./ability-book-panel.js');
+const { abilityBookPanel, abilityPlans, resetAbilityTargets } = await import('./ability-book-panel.js');
 
 /** Each level costs 1,000 more experience than the last */
 const table = [0, 0];
@@ -68,6 +68,9 @@ beforeEach(() => {
 
 afterEach(() => {
     abilityBookPanel.hide();
+    // A panel remembers its targets between openings, which is right for a
+    // panel and wrong for the next test
+    resetAbilityTargets();
 });
 
 const text = () => abilityBookPanel.panel.textContent;
@@ -117,9 +120,13 @@ describe('what it puts first', () => {
         expect(abilityPlans()[0].name).toBe('Smack');
     });
 
-    test('the cheapest reaches the header', () => {
+    test('the cheapest reaches the header, written as the tile writes it', () => {
         abilityBookPanel.show();
-        expect(abilityBookPanel.headerBest.textContent).toContain('Smack');
+        // Books and cost rather than a name — the same phrase the overlay tile
+        // carries, so the panel opens showing what you opened it for
+        expect(abilityBookPanel.headerBest.textContent).toContain('books');
+        expect(abilityBookPanel.headerBest.textContent).toContain('2');
+        expect(abilityBookPanel.headerBest.title).toContain('Smack');
     });
 
     test('an unpriced book sorts last and cannot win', () => {
@@ -158,17 +165,22 @@ describe('the rows', () => {
     });
 });
 
+/** The bar's own input, which is the first one in the body */
+const sharedInput = () => abilityBookPanel.panel.querySelector('input[type="number"]');
+
+/** One ability's target spinner */
+const targetInput = (abilityHrid) => abilityBookPanel.panel.querySelector(`input[data-ability="${abilityHrid}"]`);
+
 describe('the shared target', () => {
     test('typing a level costs every ability up to it', () => {
         abilityBookPanel.show();
 
-        const input = abilityBookPanel.panel.querySelector('input[type="number"]');
+        const input = sharedInput();
         input.value = '5';
         input.dispatchEvent(new Event('change'));
 
         // Level 5 is at 4,000; Poke is at 1,000, so six books
         expect(abilityPlans().find((plan) => plan.name === 'Poke').booksToTarget).toBe(6);
-        expect(text()).toContain('To 5');
     });
 
     test('the total says how many it could not price', () => {
@@ -179,7 +191,7 @@ describe('the shared target', () => {
 
     test('clearing it goes back to the next level', () => {
         abilityBookPanel.show();
-        const input = abilityBookPanel.panel.querySelector('input[type="number"]');
+        const input = sharedInput();
 
         input.value = '5';
         input.dispatchEvent(new Event('change'));
@@ -187,5 +199,77 @@ describe('the shared target', () => {
         input.dispatchEvent(new Event('change'));
 
         expect(abilityPlans()[0].booksToTarget).toBeNull();
+    });
+});
+
+describe('a target per ability', () => {
+    test('one ability can be aimed without moving the others', () => {
+        abilityBookPanel.show();
+
+        const input = targetInput('/abilities/poke');
+        input.value = '5';
+        input.dispatchEvent(new Event('change'));
+
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').booksToTarget).toBe(6);
+        expect(abilityPlans().find((plan) => plan.name === 'Smack').booksToTarget).toBeNull();
+    });
+
+    test('the next level is the resting state rather than a target', () => {
+        // Storing it would leave the row stuck at a level it is about to pass
+        abilityBookPanel.show();
+
+        const input = targetInput('/abilities/poke');
+        input.value = '3';
+        input.dispatchEvent(new Event('change'));
+
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').targetLevel).toBeNull();
+    });
+
+    test('the total counts each ability where it is aimed', () => {
+        abilityBookPanel.show();
+
+        targetInput('/abilities/poke').value = '5';
+        targetInput('/abilities/poke').dispatchEvent(new Event('change'));
+
+        // Poke's six books to level 5, plus Smack's two and Rare Move's one to
+        // their next — not everything at one target or everything at none
+        expect(text()).toContain('9 books');
+    });
+
+    test('a level set for everything replaces the ones set one at a time', () => {
+        abilityBookPanel.show();
+
+        targetInput('/abilities/poke').value = '20';
+        targetInput('/abilities/poke').dispatchEvent(new Event('change'));
+
+        const shared = sharedInput();
+        shared.value = '5';
+        shared.dispatchEvent(new Event('change'));
+
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').targetLevel).toBe(5);
+    });
+
+    test('Reset puts everything back', () => {
+        abilityBookPanel.show();
+
+        targetInput('/abilities/poke').value = '20';
+        targetInput('/abilities/poke').dispatchEvent(new Event('change'));
+
+        const reset = [...abilityBookPanel.panel.querySelectorAll('button')].find((button) =>
+            button.textContent.includes('Reset')
+        );
+        reset.click();
+
+        expect(abilityPlans().every((plan) => plan.targetLevel === null)).toBe(true);
+    });
+});
+
+describe('the time column', () => {
+    test('an ability nobody is training has no arrival time rather than never', () => {
+        abilityBookPanel.show();
+        // One reading is not a rate, and "never" would be a claim about the future
+        expect(abilityPlans().every((plan) => plan.experiencePerHour === null)).toBe(true);
+        expect(text()).toContain('—/hr');
+        expect(text()).not.toContain(FAILED);
     });
 });

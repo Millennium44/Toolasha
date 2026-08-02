@@ -56,6 +56,21 @@ export function booksToLevel({ level, experience, targetLevel, perBookExperience
 }
 
 /**
+ * Experience still owed to a level.
+ *
+ * @param {number[]} table - The game's cumulative `levelExperienceTable`
+ * @param {number} targetLevel - Level being aimed at
+ * @param {number} experience - Current ability experience
+ * @returns {number|null} Nothing when the table does not go that far
+ */
+export function experienceOwed(table, targetLevel, experience) {
+    const goal = table?.[targetLevel];
+    if (goal === undefined) return null;
+    // Past it is nothing left to earn, not a negative amount of experience
+    return Math.max(0, goal - (Number(experience) || 0));
+}
+
+/**
  * One ability's plan: what the next level costs, and a chosen target.
  *
  * @param {Object} input - What it needs
@@ -84,6 +99,10 @@ export function abilityPlan({ ability, perBookExperience, bookPrice, table, targ
         experience,
         perBookExperience,
         bookPrice: price,
+        // Experience rather than books, because a rate is measured in experience
+        // and a time to a level cannot be got from a book count
+        experienceToNext: experienceOwed(table, level + 1, experience),
+        experienceToTarget: target === null ? null : experienceOwed(table, target, experience),
         booksToNext: next,
         // Nothing rather than zero when the book has no price: an ability whose
         // book is unpriced is not free to level, it is unknown
@@ -110,6 +129,26 @@ export function cheapestNextLevel(plans) {
         if (!best || plan.costToNext < best.costToNext) best = plan;
     }
     return best;
+}
+
+/**
+ * What a whole set of plans would cost, each aimed where it is aimed.
+ *
+ * A total over a set where some abilities have a target and some do not cannot
+ * come from one field: `costToTarget` is null on the ones with no target, and
+ * `costToNext` ignores the targets that were set. It has to be per plan.
+ *
+ * @param {Array<Object>} plans - From `abilityPlan`
+ * @returns {{books: number, cost: number, unpriced: number}}
+ */
+export function aimedTotals(plans) {
+    return planTotals(
+        (plans || []).map((plan) =>
+            !plan || plan.targetLevel === null
+                ? plan
+                : { ...plan, booksToNext: plan.booksToTarget, costToNext: plan.costToTarget }
+        )
+    );
 }
 
 /**
