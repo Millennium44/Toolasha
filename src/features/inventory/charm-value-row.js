@@ -44,6 +44,7 @@ import {
     experiencePerMillion,
     splitByUpgrade,
     sortCharmRows,
+    shopPrice,
     upgradeValue,
 } from '../../utils/charm-value.js';
 
@@ -114,7 +115,8 @@ export function equippedCharm() {
     if (!worn?.itemHrid) return null;
 
     const enhancementLevel = worn.enhancementLevel || 0;
-    return charmRow(worn.itemHrid, enhancementLevel, getItemPrices(worn.itemHrid, enhancementLevel)?.ask || 0);
+    const ask = getItemPrices(worn.itemHrid, enhancementLevel)?.ask || 0;
+    return charmRow(worn.itemHrid, enhancementLevel, ask || shopPrice(worn.itemHrid, enhancementLevel));
 }
 
 /**
@@ -146,9 +148,10 @@ export function familyRows() {
         }
         // A tier nobody is selling still gets a line: knowing the master charm
         // has no listings is an answer, and a missing row reads as an oversight
-        // rather than as an empty market
+        // rather than as an empty market. The trainee tier is never listed and
+        // is not unpriced either — the shop sells it at a fixed price.
         if (!sold) {
-            const built = charmRow(itemHrid, 0, 0);
+            const built = charmRow(itemHrid, 0, shopPrice(itemHrid, 0));
             if (built) rows.push(built);
         }
     }

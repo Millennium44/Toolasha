@@ -10,6 +10,7 @@ import {
     experiencePerMillion,
     splitByUpgrade,
     sortCharmRows,
+    shopPrice,
     CHARM_TIER_EXPERIENCE,
 } from './charm-value.js';
 
@@ -222,5 +223,23 @@ describe('sortCharmRows', () => {
     test('it does not modify the array it was given', () => {
         sortCharmRows(rows, 'price', 'asc');
         expect(rows[0].tier).toBe('master');
+    });
+});
+
+describe('shopPrice', () => {
+    test('the trainee charm has a price even with no listings', () => {
+        // The vendor stocks it at a fixed price, so it is not unpriced — and it
+        // is the floor every other tier's value per coin is judged against
+        expect(shopPrice('/items/trainee_melee_charm')).toBe(250_000);
+    });
+
+    test('an enhanced trainee is enhancement work, priced by the market', () => {
+        expect(shopPrice('/items/trainee_melee_charm', 5)).toBe(0);
+    });
+
+    test('every other tier with no listings is genuinely unpriced', () => {
+        // Calling it free would put it top of a value-per-coin ranking
+        expect(shopPrice('/items/master_melee_charm')).toBe(0);
+        expect(shopPrice('/items/grandmaster_melee_charm')).toBe(0);
     });
 });
