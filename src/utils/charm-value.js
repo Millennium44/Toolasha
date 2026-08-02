@@ -99,8 +99,36 @@ export function rankCharms(charms) {
     });
 }
 
+/**
+ * What the game's vendor charges for a trainee charm.
+ *
+ * Nobody lists trainee charms on the market — there is no profit in reselling
+ * something the shop stocks at a fixed price — so the market has no ask for one
+ * and a market-only reading of the family shows the bottom tier as unpriced.
+ * It is not unpriced; it costs this, always, and that is the floor every other
+ * tier's value per coin is judged against.
+ *
+ * The shop sells them unenhanced. A trainee charm at +5 is somebody's
+ * enhancement work and is priced by the market like anything else.
+ */
+export const TRAINEE_SHOP_PRICE = 250_000;
+
 /** Charm hrids are `/items/<tier>_<focus>_charm`, and both halves matter */
 const CHARM_HRID = /^\/items\/(trainee|basic|advanced|expert|master|grandmaster)_(.+)_charm$/;
+
+/**
+ * What a charm costs when the market has no ask for it.
+ *
+ * Only the trainee tier has one. Every other tier with no listings is genuinely
+ * unpriced, and saying it costs nothing would put it top of a value ranking.
+ *
+ * @param {string} itemHrid - The charm
+ * @param {number} [enhancementLevel] - How enhanced
+ * @returns {number} The shop price, or 0 for "nobody is selling this"
+ */
+export function shopPrice(itemHrid, enhancementLevel = 0) {
+    return charmTier(itemHrid) === 'trainee' && enhancementLevel === 0 ? TRAINEE_SHOP_PRICE : 0;
+}
 
 /**
  * What a charm focuses on — the part of its name that is not the tier.

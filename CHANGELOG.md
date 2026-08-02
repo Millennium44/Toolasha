@@ -15,7 +15,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **Exp/M**, the bonus per million coins, sortable along with every other column. Per coin the ratio is 0.000000052, which no column can show; per million it is 0.05 against 0.03, the same ordering in a form you can read.
 - **The Charm EXP Guide**, folded away by default: the six tier percentages and the twenty enhancement multipliers. Every figure in the panel comes out of those two tables and neither is visible anywhere in the game.
 - Enhancement scaling is now stated as the charm slot's rather than looked up per item. A lookup that misses does not fail — it returns the 1× default and reports a +20 charm as scaling like a sword.
-- **Not ported: MCS's 250,000 fallback price for trainee charms.** Nobody sells them, so it hardcodes the shop price; an unpriced charm here says "no data" rather than carrying a number the market never quoted.
+- **The trainee tier is priced at the vendor's 250,000**, as QCharm prices it. Nobody lists trainee charms — there is no profit in reselling something the shop stocks at a fixed price — so a market-only reading shows the bottom tier as unpriced, and it is not unpriced. It is the floor every other tier's value per coin is judged against. Only unenhanced: a trainee at +5 is somebody's enhancement work and is priced by the market like anything else. Every other tier with no listings stays genuinely unpriced, since calling one free would put it top of the ranking.
 
 ### Clicking a book fills the buy dialog in
 

@@ -99,6 +99,14 @@ describe('the family', () => {
         expect(advanced.experiencePerMillion).toBeNull();
     });
 
+    test('the trainee tier is never listed and is not unpriced either', () => {
+        // The vendor stocks it at 250,000, which is the floor every other tier's
+        // value per coin is judged against
+        const trainee = familyRows().find((charm) => charm.tier === 'trainee');
+        expect(trainee.price).toBe(250_000);
+        expect(trainee.experiencePerMillion).toBeCloseTo(4, 6);
+    });
+
     test('nothing equipped is no family rather than every charm in the game', () => {
         game.equipment = new Map();
         expect(familyRows()).toEqual([]);
