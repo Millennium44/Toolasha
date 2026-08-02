@@ -16,9 +16,11 @@ const state = vi.hoisted(() => ({
     stats: null,
     breakdown: { seconds: 0, players: [] },
     filtering: true,
+    inventory: [],
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getInventory: () => state.inventory } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({
@@ -73,6 +75,7 @@ const FAILED = 'could not be drawn';
 beforeEach(() => {
     state.dps = { dps: 4000, dtps: 500, damage: 1_000_000, taken: 125_000, seconds: 250, partySize: 2 };
     state.filtering = true;
+    state.inventory = [];
     state.breakdown = {
         seconds: 300,
         players: [
@@ -240,7 +243,7 @@ describe('what the panels add over their tiles', () => {
         const text = profitPanel.panel.textContent;
 
         expect(text).toContain('coin/day');
-        expect(text).toMatch(/[\d.]+[KMB]? - [\d.]+[KMB]? = [\d.]+[KMB]?/);
+        expect(text).toMatch(/-?[\d.]+[KMB]? - -?[\d.]+[KMB]? = -?[\d.]+[KMB]?/);
     });
 
     test('Costs Off drops the cost side rather than zeroing it', () => {
@@ -267,6 +270,47 @@ describe('what the panels add over their tiles', () => {
         const first = mode().textContent;
         mode().click();
         expect(mode().textContent).not.toBe(first);
+    });
+
+    test('the fourth corner of the book is there too', () => {
+        // Bid-Ask, Bid-Bid and Ask-Bid have names; Ask - Ask is the one that
+        // does not, and leaving it out leaves the set incomplete
+        profitPanel.show();
+        const text = profitPanel.panel.textContent;
+
+        expect(text).toContain('Ask - Ask');
+        expect(text).toContain('Revenue (Ask) - Cost (Ask)');
+        // Each named case says which corner it is, so the set reads as a set
+        expect(text).toContain('(Bid - Bid)');
+    });
+
+    test('the tax counts what is already in the bag', () => {
+        // 25 bags a week is the price of a MooPass, not the price of *your*
+        // MooPass — cowbells accumulate, and charging for all 25 overstates it
+        state.inventory = [
+            { itemHrid: '/items/cowbell', count: 50 },
+            { itemHrid: '/items/bag_of_10_cowbells', count: 5 },
+        ];
+        profitPanel.show();
+
+        // 50 loose plus 5 bags is 100 cowbells, so 15 bags are still owed
+        expect(profitPanel.panel.textContent).toContain('15 of 25 bags');
+    });
+
+    test('Tax On subtracts it from every case', () => {
+        profitPanel.show();
+        const before = profitPanel.panel.textContent;
+        expect(before).toContain('Tax Off');
+
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax Off').click();
+        const after = profitPanel.panel.textContent;
+
+        expect(after).toContain('Tax On');
+        expect(after).toContain('Paying the Tax');
+        // Three terms in the sum now, not two
+        expect(after).toMatch(/-?[\d.]+[KMB]? - -?[\d.]+[KMB]? - -?[\d.]+[KMB]? = -?[\d.]+[KMB]?/);
+
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
     });
 
     test('Profit shows what patience is worth', () => {

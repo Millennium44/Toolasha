@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The MooPass is a cost you can count, and the fourth corner of the book
+
+- **Tax On subtracts the MooPass from every case.** A profit figure that ignores a standing weekly bill is a profit figure that has not paid the rent, so it is now a header toggle beside Costs On, and every box and the summary line carry it when it is on. Off by default, and remembered.
+- **It charges for the bags you still need, not twenty-five.** Cowbells accumulate — dailies, drops, bags bought and not yet spent — and the panel was quoting the full 25-bag price regardless, which overstated the tax by whatever you were already holding and made runs look like they were not covering something they covered comfortably. Loose cowbells and bagged ones count the same at ten to one, and the card says "13 of 25 bags" so the credit is visible rather than assumed.
+- **Ask - Ask is back in the set.** There are four ways round the order book and only three of them have names: Lazy is Bid - Ask, Mid is Bid - Bid, Patient is Ask - Bid, and the fourth corner — everything at the asking price — had no box. Each named case now says which corner it is, so the set reads as a set rather than as three unrelated opinions.
+
 ### Enhancement costs follow your enhancing loadout, and Combat Profit shows its working
 
 - **It was reading whatever is on your character right now.** A cape costed while you are in combat kit is costed off a battleaxe — no enhancer, no philosopher's anything — which quotes a run nobody would make. It goes through the loadout resolver now, so it uses the gear you would auto-equip to enhance: skill-specific default first, then the all-skills default, then any saved enhancing loadout, then what is worn. Same order the profit calculators already use.
