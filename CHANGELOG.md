@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Sort the task board after reading new tasks
+
+- **A new option: sort again once you press Read.** Reading is the one moment the board is guaranteed to come apart — new tasks arrive at the end however the rest was arranged. Auto-sort-on-open does not cover it, because the panel is already open, so a sorted board falls out of order every few hours and has to be sorted by hand again. Off by default, under Tasks.
+- **It waits for the tasks to land rather than guessing how long they take.** A fixed delay is a guess about how long the game needs to draw several cards, and on a slower machine the guess fires first — which shows as a board that sorted everything except the tasks that were just read. It sorts what is there immediately, then again as the new cards settle.
+- **The listener is delegated rather than bound to the button.** The card holding Read is drawn and thrown away by the game every time the unread count changes, so anything attached to one instance of it would work once and then silently stop.
+
 ### Crafts are priced with your tea, and open the marketplace on what they are short of
 
 - **Artisan tea was not being counted.** The card priced a craft at the recipe's printed cost, so a Corsair Helmet read 100 Pirate Refinement Shards where the game's own panel said 88.9 — an eleven per cent overcharge on every craft the panel quoted, and worse the better your tea. It goes through the same artisan calculation the action panel uses, which resolves the loadout for that skill, so it is the tea you would actually be brewing under rather than whatever is in the slots while you are out fighting.
