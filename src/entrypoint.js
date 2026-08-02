@@ -200,6 +200,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'watchlist',
+            name: 'Watchlist',
+            category: 'Inventory',
+            module: Market.watchlist,
+            async: false,
+        },
+        {
             key: 'inventorySort',
             name: 'Inventory Sort',
             category: 'Inventory',
