@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The revenue tile reads profit the way the panel does
+
+- **The tile follows the case you picked.** It was hard-wired to bid revenue less every cost — one of four readings, and not the one somebody who has chosen Patient in the panel is thinking in. A tile that disagrees with the panel behind it is a tile nobody trusts, so the panel now says which reading is on screen and the tile draws that one. Its tooltip names the case.
+- **The MooPass shows on the tile when it is being counted**, between revenue and consumables and in its own colour, because it is a standing bill rather than a cost of this run: `68.6M - 2.0M - 12.6M = 54.0M/day`. With Costs Off or Tax Off those terms disappear from the sum rather than showing as zero.
+- **The three settings survive a reload.** They were held for the session only. That was tolerable while they affected one panel; now that the tile follows them, a tile that silently reverts to a different reading of profit on every page load would be worse than one that never followed at all.
+
 ### The MooPass is a cost you can count, and the fourth corner of the book
 
 - **Tax On subtracts the MooPass from every case.** A profit figure that ignores a standing weekly bill is a profit figure that has not paid the rent, so it is now a header toggle beside Costs On, and every box and the summary line carry it when it is on. Off by default, and remembered.
