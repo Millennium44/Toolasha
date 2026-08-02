@@ -132,13 +132,29 @@ let session = null;
  */
 function sample() {
     const now = Date.now();
-    if (now - lastSampleAt < SAMPLE_MS) return;
+
+    // A clock that has gone backwards — a correction, a resume from sleep —
+    // leaves readings stamped in the future. Those cannot be measured against
+    // anything: the window between them is negative, so every rate reads as
+    // unmeasurable until real time catches up with the stale stamps. Starting
+    // again costs one window and is the only answer that recovers.
+    if (now < lastSampleAt) history.clear();
+    else if (now - lastSampleAt < SAMPLE_MS) return;
+
     lastSampleAt = now;
 
     for (const skill of dataManager.getSkills?.() || []) {
         if (!skill?.skillHrid || !Number.isFinite(skill.experience)) continue;
 
-        const readings = history.get(skill.skillHrid) || [];
+        let readings = history.get(skill.skillHrid) || [];
+
+        // Experience does not go down, so a reading below the last one is a
+        // different character — this script's own author plays a test server
+        // alongside a live one. Keeping the old readings would measure the gap
+        // between two characters as a rate, which is a large negative number
+        // dressed up as a measurement.
+        if (readings.length && skill.experience < readings[readings.length - 1].xp) readings = [];
+
         readings.push({ t: now, xp: skill.experience });
         while (readings.length > 2 && readings[1].t < now - WINDOW_MS) readings.shift();
         history.set(skill.skillHrid, readings);
