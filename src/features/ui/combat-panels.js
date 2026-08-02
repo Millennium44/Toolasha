@@ -635,6 +635,31 @@ export const dpsPanel = new CombatPanel({
                 dpsPanel.refresh();
             })
         );
+
+        // Attribution is inferred, and every inference is a place to be wrong.
+        // Two panels disagreeing cannot be settled from two screenshots — both
+        // are summaries of a fight that has already happened. A recording can be
+        // replayed offline until it is understood, and then kept as a fixture.
+        const recorder = window.Toolasha?.Combat?.combatRecorder;
+        if (!recorder) return;
+
+        const status = recorder.recordingStatus();
+        if (recorder.isRecording()) {
+            bar.appendChild(
+                toggleButton(`Recording ${status.ticks}…`, true, () => {
+                    recorder.stopRecording();
+                    recorder.downloadRecording();
+                    dpsPanel.refresh();
+                })
+            );
+        } else {
+            bar.appendChild(
+                toggleButton(status.ticks ? `Record (${status.ticks} kept)` : 'Record', false, () => {
+                    recorder.startRecording();
+                    dpsPanel.refresh();
+                })
+            );
+        }
     },
     draw: (body) => {
         const breakdown = damageBreakdown();

@@ -297,3 +297,66 @@ describe('foldEvents, split by enemy', () => {
         expect(tally['0'].byEnemy).toEqual({});
     });
 });
+
+describe('the acting ability, tick by tick', () => {
+    /**
+     * A tick where the player casts (mana falls) and one monster takes a hit.
+     * @param {number} mana - The player's mana after this tick
+     * @param {number} health - The monster's health after this tick
+     * @param {number} counter - Its damage counter after this tick
+     * @param {Object} preparing - What the player is preparing, in tick spelling
+     * @returns {Object}
+     */
+    const tick = (mana, health, counter, preparing = {}) => ({
+        pMap: { 0: { cMP: mana, ...preparing } },
+        mMap: { 0: { cHP: health, dmgCounter: counter } },
+    });
+
+    test('a tick payload names the ability under its own spelling', () => {
+        // `new_battle` writes preparingAbilityHrid; a tick abbreviates it to
+        // abilityHrid. Reading only the long one leaves the label frozen at
+        // whatever was being prepared when the fight began.
+        const state = newAttributionState();
+        noteActions(state, { 0: { abilityHrid: '/abilities/cleave' } });
+
+        expect(state.actions['0']).toBe('/abilities/cleave');
+    });
+
+    test('an auto-attack is recognised under its own spelling too', () => {
+        const state = newAttributionState();
+        noteActions(state, { 0: { isAutoAtk: true } });
+
+        expect(state.actions['0']).toBe('auto');
+    });
+
+    test('a hit is credited to what was prepared before it, not after', () => {
+        // The ability that lands on this tick was cast before the payload
+        // arrived; by now the player has started the next one. Reading the
+        // label from this tick would credit every hit to its successor.
+        const state = newAttributionState();
+
+        noteActions(state, { 0: { abilityHrid: '/abilities/first' } });
+        attributeTick(tick(100, 1000, 0), state);
+
+        // The hit lands while the player has moved on to the second ability
+        const events = attributeTick(tick(90, 800, 1, { abilityHrid: '/abilities/second' }), state);
+
+        expect(events[0].action).toBe('/abilities/first');
+    });
+
+    test('the label changes as the fight goes on', () => {
+        // Frozen at the first ability, one ability takes the whole fight —
+        // which is the shape of the bug this catches
+        const state = newAttributionState();
+
+        noteActions(state, { 0: { abilityHrid: '/abilities/first' } });
+        attributeTick(tick(100, 1000, 0), state);
+
+        const first = attributeTick(tick(90, 800, 1), state);
+        noteActions(state, { 0: { abilityHrid: '/abilities/second' } });
+        const second = attributeTick(tick(80, 600, 2), state);
+
+        expect(first[0].action).toBe('/abilities/first');
+        expect(second[0].action).toBe('/abilities/second');
+    });
+});

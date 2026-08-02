@@ -268,6 +268,14 @@ export default {
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
 
+                // After attributing, never before: the hit on this tick was cast
+                // by what was prepared before it, and by the time the payload
+                // arrives the player has started the next thing. Reading this
+                // only once at `new_battle` froze the label at whatever was
+                // being prepared when the fight began, which credited the whole
+                // fight to one ability — and to the wrong one.
+                noteActions(state, data?.pMap);
+
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none
                 const gap = now - lastTickAt;
