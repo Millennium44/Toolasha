@@ -45,6 +45,7 @@ import * as combatLevel from '../utils/combat-level.js';
 import * as opanelConfig from '../utils/opanel-config.js';
 import * as skillProgress from '../utils/skill-progress.js';
 import * as abilityBooks from '../utils/ability-books.js';
+import * as damageAttribution from '../utils/damage-attribution.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
 import * as choiceDialog from '../utils/choice-dialog.js';
 import * as dropLuck from '../utils/drop-luck.js';
@@ -113,6 +114,7 @@ toolashaRoot.Utils = {
     opanelConfig,
     skillProgress,
     abilityBooks,
+    damageAttribution,
     panelGeometry,
     choiceDialog,
     dropLuck,

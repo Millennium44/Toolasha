@@ -395,6 +395,13 @@ function registerFeatures() {
     // Combat Features
     const combatFeatures = [
         {
+            key: 'damageTracker',
+            name: 'Damage Tracker',
+            category: 'Combat',
+            module: Combat.damageTracker,
+            async: false,
+        },
+        {
             key: 'manaTracker',
             name: 'Mana Tracker',
             category: 'Combat',

@@ -10,7 +10,13 @@
 
 import { describe, test, expect, afterEach, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ dps: {}, luck: null, stats: null }));
+const state = vi.hoisted(() => ({
+    dps: {},
+    luck: null,
+    stats: null,
+    breakdown: { seconds: 0, players: [] },
+    filtering: true,
+}));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
@@ -49,6 +55,15 @@ vi.mock('../../features/combat/combat-drop-luck.js', () => ({
 vi.mock('../../features/combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => state.stats },
 }));
+vi.mock('../../features/combat/damage-tracker.js', () => ({
+    default: {},
+    damageBreakdown: () => state.breakdown,
+    actionLabel: (action) => (action === 'auto' ? 'Auto attack' : action),
+    isFilteringNonDamaging: () => state.filtering,
+    setFilterNonDamaging: (value) => {
+        state.filtering = value;
+    },
+}));
 
 const { dpsPanel, deathsPanel, dropLuckPanel, profitPanel } = await import('./combat-panels.js');
 
@@ -57,6 +72,24 @@ const FAILED = 'could not be drawn';
 
 beforeEach(() => {
     state.dps = { dps: 4000, dtps: 500, damage: 1_000_000, taken: 125_000, seconds: 250, partySize: 2 };
+    state.filtering = true;
+    state.breakdown = {
+        seconds: 300,
+        players: [
+            {
+                index: '0',
+                name: 'You',
+                damage: 900000,
+                hits: 90,
+                crits: 18,
+                misses: 10,
+                accuracy: 0.9,
+                critRate: 0.2,
+                dps: 3000,
+                abilities: [{ action: 'auto', damage: 900000, hits: 90, crits: 18, misses: 10 }],
+            },
+        ],
+    };
     state.luck = { percentile: 0.51, income: 5_000_000, expected: 4_000_000, battles: 300, hasBonuses: true };
     state.stats = {
         durationSeconds: 3600,
@@ -93,6 +126,7 @@ describe('every panel draws', () => {
         state.dps = {};
         state.luck = null;
         state.stats = null;
+        state.breakdown = { seconds: 0, players: [] };
 
         for (const panel of panels()) {
             panel.show();
@@ -138,9 +172,30 @@ describe('what the panels add over their tiles', () => {
         expect(dpsPanel.panel.textContent).toContain('8.0× in your favour');
     });
 
-    test('and your own share of a party’s output', () => {
+    test('Damage attributes to a player and an ability, as DPs does', () => {
         dpsPanel.show();
-        expect(dpsPanel.panel.textContent).toContain('2,000/s');
+        const text = dpsPanel.panel.textContent;
+
+        expect(text).toContain('You');
+        expect(text).toContain('Auto attack');
+        // Ninety hits against ten misses
+        expect(text).toContain('90.0%');
+        expect(text).toContain('20.0%');
+    });
+
+    test('and carries the non-damaging filter DPs has', () => {
+        dpsPanel.show();
+        const toggle = dpsPanel.panel.querySelector('[data-filter-toggle]');
+        expect(toggle.textContent).toContain('on');
+
+        toggle.click();
+        expect(state.filtering).toBe(false);
+    });
+
+    test('with nothing attributed it says why rather than showing zeroes', () => {
+        state.breakdown = { seconds: 0, players: [] };
+        dpsPanel.show();
+        expect(dpsPanel.panel.textContent).toContain('needs a cast to start');
     });
 
     test('Deaths breaks the party down by player, as IHurt does', () => {
