@@ -57,29 +57,48 @@ const CSS = `
     }
 
     /* The panel is the scroller. Contained overscroll so reaching the bottom of
-       it does not then start scrolling the page behind the modal. */
+       it does not then start scrolling the page behind the modal.
+
+       Hiding horizontal overflow rather than leaving it: turning an element into a
+       vertical scroller makes it a horizontal one too, and the vertical bar
+       takes ten pixels of the width that everything inside was already sized
+       against. The result is a few pixels of horizontal overflow and a full-
+       width scrollbar across the bottom of the panel, which is not a divider
+       and reads as one. */
     [class*="SkillActionDetail_skillActionDetail"] {
         max-height: calc(100vh - ${CHROME_PX}px);
         overflow-y: auto;
+        overflow-x: hidden;
         overscroll-behavior: contain;
         scrollbar-width: thin;
     }
 
     /* Wide enough to grab. The game's default is a two-pixel sliver, which is
-       tolerable on a panel with nothing to scroll and not on this one. */
+       tolerable on a panel with nothing to scroll and not on this one. Grey
+       rather than tinted — a coloured scrollbar beside a coloured divider is
+       what turned the footer into a box. */
     [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar {
         width: 10px;
+        height: 0;
+    }
+    [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-track {
+        background: transparent;
     }
     [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-thumb {
-        background: rgba(150, 170, 255, 0.28);
+        background: rgba(255, 255, 255, 0.16);
         border-radius: 5px;
     }
     [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-thumb:hover {
-        background: rgba(150, 170, 255, 0.45);
+        background: rgba(255, 255, 255, 0.28);
     }
 
     /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
-       to the panel and moves with a dragged modal. */
+       to the panel and moves with a dragged modal.
+
+       One neutral hairline and nothing else. A tinted line plus a shadow reads
+       as a frame around the buttons rather than as the edge of the content
+       sliding under them, and a frame says "this is a thing" when all it is
+       meant to say is "the list stops here". */
     [class*="SkillActionDetail_skillActionDetail"] [class*="SkillActionDetail_buttonsContainer"] {
         position: sticky;
         bottom: 0;
@@ -87,8 +106,7 @@ const CSS = `
         margin-top: 4px;
         padding: 8px 0 4px 0;
         background: var(--color-space-800, var(--color-space-700, #14141f));
-        box-shadow: 0 -8px 12px -8px rgba(0, 0, 0, 0.7);
-        border-top: 1px solid rgba(150, 170, 255, 0.18);
+        border-top: 1px solid rgba(255, 255, 255, 0.10);
     }
 
     /* Ours, tightened. Seven sections at eight pixels a side is a section's
