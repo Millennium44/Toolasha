@@ -99,6 +99,126 @@ export function rankCharms(charms) {
     });
 }
 
+/** Charm hrids are `/items/<tier>_<focus>_charm`, and both halves matter */
+const CHARM_HRID = /^\/items\/(trainee|basic|advanced|expert|master|grandmaster)_(.+)_charm$/;
+
+/**
+ * What a charm focuses on — the part of its name that is not the tier.
+ *
+ * @param {string} itemHrid - e.g. `/items/expert_melee_charm`
+ * @returns {string|null} e.g. `melee`
+ */
+export function charmFocus(itemHrid) {
+    return CHARM_HRID.exec(String(itemHrid || ''))?.[2] ?? null;
+}
+
+/**
+ * Every tier of the charm you are wearing.
+ *
+ * The comparison worth making is within one focus. A melee charm and a brewing
+ * charm are not alternatives to each other — they train different things — so a
+ * ranking across every charm in the game is a list of things you do not want,
+ * with the one you do want somewhere in it.
+ *
+ * @param {string} itemHrid - Any charm in the family
+ * @returns {string[]} The six hrids, lowest tier first; empty for a non-charm
+ */
+export function charmFamily(itemHrid) {
+    const focus = charmFocus(itemHrid);
+    if (!focus) return [];
+    return Object.keys(CHARM_TIER_EXPERIENCE).map((tier) => `/items/${tier}_${focus}_charm`);
+}
+
+/**
+ * A charm's name in the shape a table column wants.
+ *
+ * @param {string} itemHrid - The charm
+ * @returns {string} e.g. `Melee (Expert)`, or the hrid when it is not a charm
+ */
+export function charmDisplayName(itemHrid) {
+    const match = CHARM_HRID.exec(String(itemHrid || ''));
+    if (!match) return String(itemHrid || '');
+
+    const capitalise = (word) => word.charAt(0).toUpperCase() + word.slice(1);
+    const focus = match[2].split('_').map(capitalise).join(' ');
+    return `${focus} (${capitalise(match[1])})`;
+}
+
+/**
+ * Experience per million coins.
+ *
+ * Per coin the ratio is a number like 0.000000052, which no column can show and
+ * nobody can compare at a glance. Per million it is 0.05 against 0.03, which is
+ * the same ordering in a form you can read.
+ *
+ * @param {number} experience - The bonus, as a percentage
+ * @param {number} price - What it costs
+ * @returns {number|null} Null when unpriced, which must not sort above a number
+ */
+export function experiencePerMillion(experience, price) {
+    if (!(price > 0) || !(experience > 0)) return null;
+    return (experience / price) * 1_000_000;
+}
+
+/**
+ * Split a family into what beats what you are wearing and what does not.
+ *
+ * Both halves are worth showing. The downgrades are not there to be bought —
+ * they are there because seeing that a charm two tiers down is a tenth of the
+ * price is how you decide the top tier is not worth it.
+ *
+ * @param {Array<Object>} rows - Charms with an `experience`
+ * @param {number} equippedExperience - What the worn charm grants
+ * @returns {{upgrades: Array<Object>, downgrades: Array<Object>}}
+ */
+export function splitByUpgrade(rows, equippedExperience) {
+    const worn = Number(equippedExperience) || 0;
+    return {
+        // Equal counts as an upgrade: the same bonus for less money is the
+        // trade people are actually looking for
+        upgrades: (rows || []).filter((row) => row && row.experience >= worn),
+        downgrades: (rows || []).filter((row) => row && row.experience < worn),
+    };
+}
+
+/**
+ * Order a table of charms by one of its columns.
+ *
+ * @param {Array<Object>} rows - Charm rows
+ * @param {string} column - `name`, `experience`, `price` or `perMillion`
+ * @param {string} [direction] - `asc` or `desc`
+ * @returns {Array<Object>} A new array
+ */
+export function sortCharmRows(rows, column, direction = 'desc') {
+    const sign = direction === 'asc' ? 1 : -1;
+    const tiers = Object.keys(CHARM_TIER_EXPERIENCE);
+
+    const key = (row) => {
+        switch (column) {
+            // By name means by tier and then by enhancement, which is the order
+            // the charms actually come in — alphabetical puts Advanced first
+            case 'name':
+                return tiers.indexOf(row.tier) * 100 + (row.enhancementLevel || 0);
+            case 'price':
+                return row.price;
+            case 'perMillion':
+                return row.experiencePerMillion;
+            default:
+                return row.experience;
+        }
+    };
+
+    return [...(rows || [])].filter(Boolean).sort((a, b) => {
+        const left = key(a);
+        const right = key(b);
+        // Unpriced rows go last whichever way the column is pointing: they are
+        // the least informative rows, not the best or the worst
+        if (!Number.isFinite(left)) return Number.isFinite(right) ? 1 : 0;
+        if (!Number.isFinite(right)) return -1;
+        return (left - right) * sign;
+    });
+}
+
 /**
  * What a charm is worth against what you already have equipped.
  *
