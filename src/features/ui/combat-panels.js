@@ -28,6 +28,7 @@ import config from '../../core/config.js';
 import combatDPS from '../../features/combat/combat-dps.js';
 import combatDropLuck, { formatOrdinal, describeLuck } from '../../features/combat/combat-drop-luck.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
+import { calculatePlayerStats } from '../../features/combat-stats/combat-stats-calculator.js';
 import {
     damageBreakdown,
     actionLabel,
@@ -68,7 +69,14 @@ function runSeconds(data) {
 }
 
 /**
- * The current player's slice of the combat statistics.
+ * The current player's statistics, costed.
+ *
+ * Through `calculatePlayerStats`, which is where `dailyIncome`, `dailyProfit`
+ * and the cost figures are produced — the raw player carries none of them. The
+ * Profit panel first shipped reading the raw player and showed a column of
+ * zeroes for it, which is what a missing field looks like when every branch
+ * defaults to nought.
+ *
  * @returns {Object|null}
  */
 function playerStats() {
@@ -76,7 +84,8 @@ function playerStats() {
     const player = data?.players?.find((entry) => entry.isCurrentPlayer);
     if (!player) return null;
 
-    return { ...player, duration: runSeconds(data), encounters: data.totalEncounters || 0 };
+    const duration = runSeconds(data);
+    return { ...calculatePlayerStats(player, duration), duration, encounters: data.totalEncounters || 0 };
 }
 
 /**

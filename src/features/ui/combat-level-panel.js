@@ -47,6 +47,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { loadWhenReady } from '../../utils/deferred-load.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -210,10 +211,10 @@ const COMBAT_TARGET = 'combat';
 
 // Fire and forget: the panel opens on today's defaults and settles a moment
 // later, which is the same trade `restoreGeometry` makes for the same reason
-storage
-    .getJSON(SELECTION_KEY, 'settings', null)
-    .then((saved) => saved && Object.assign(selection, saved))
-    .catch((error) => console.error('[CombatLevel] Loading the saved target failed:', error));
+// Kept asking until the database opens, which happens after the libraries are
+// evaluated — a read at module scope always returns the default, and the tile
+// silently reverts to whichever skill is going up fastest
+loadWhenReady(SELECTION_KEY, 'settings', (saved) => Object.assign(selection, saved), 'the target selection');
 
 /**
  * What the Target Selector and the share assignment are set to.

@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: Combat Profit was a column of zeroes
+
+- It read the **raw player** out of the collector. `dailyIncome`, `dailyProfit` and the cost figures are produced by `calculatePlayerStats`, which the panel never called — so every branch defaulted to nought and the panel reported a confident zero for all three scenarios. It goes through the calculator now, the same one the Combat Revenue tile uses, so the two cannot disagree.
+
+### Fixed: the Watchlist and the target selection forgot everything on load
+
+- Both read their saved state at module scope, which races the database: IndexedDB is opened **after** the libraries are evaluated, so the read reliably returned the default and reliably logged `Database not available`. The feature then ran on defaults for the whole session and looked like it had simply forgotten.
+- `utils/deferred-load.js` keeps asking until the database answers, front-loaded so the usual case costs nothing, and gives up after a few seconds rather than polling for the rest of the session. Loading later was not an option — the overlay reads that state on its first paint.
+
+**Damage attribution is confirmed working against the live game.** The per-ability breakdown, accuracy and crit rate are all real, so `cMP`, `dmgCounter`, `critCounter` and `preparingAbilityHrid` are current in the payload.
+
 ### Damage attribution — DPs properly, and the combat text with it
 
 The gap behind three half-ports closed at once. The game attributes nothing, and MCS's trick is that **it does not need it to**: only the casting player's mana falls on a cast, so whoever's `cMP` went down this tick is who acted. That one join is what DPs, the floating text and a party mana tally were all missing.
