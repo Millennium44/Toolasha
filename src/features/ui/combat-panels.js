@@ -106,10 +106,14 @@ class CombatPanel {
      * @param {Function} [definition.controls] - `(bar) => void`, header buttons,
      *   redrawn with the body so a toggle shows the state it is actually in
      */
-    constructor({ id, title, size, draw, controls }) {
+    constructor({ id, title, size, minSize, draw, controls }) {
         this.id = id;
         this.title = title;
         this.size = size;
+        // A table has a width below which it is no longer a table, and a panel
+        // remembers whatever it was last dragged to — including a width set
+        // before it held a table at all
+        this.minSize = minSize || { width: 300, height: 180 };
         this.draw = draw;
         this.controls = controls;
         this.panel = null;
@@ -223,14 +227,20 @@ class CombatPanel {
             saveGeometry(this.id, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
         this.detachResize = makeResizable(this.panel, {
-            minWidth: 300,
-            minHeight: 180,
+            minWidth: this.minSize.width,
+            minHeight: this.minSize.height,
             onResize: (size) => saveGeometry(this.id, size),
         });
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
-        restoreGeometry(this.panel, this.id, { width: 300, height: 180 });
+        restoreGeometry(this.panel, this.id, this.minSize);
+
+        // A remembered width from before this panel held a table is a width the
+        // table cannot be read at, and nothing else would ever widen it again
+        if (parseFloat(this.panel.style.width) < this.minSize.width) {
+            this.panel.style.width = `${this.size.width}px`;
+        }
 
         this._render();
         this.refreshId = setInterval(() => this._render(), REFRESH_MS);
@@ -341,8 +351,17 @@ function card(body, title) {
  */
 const expandedRows = new Set();
 
-/** MCS's column widths, in the order it lists them */
-const DPS_COLUMNS = 'minmax(0, 1fr) 58px 76px 46px 74px 66px 64px';
+/**
+ * The table's columns, proportional rather than fixed.
+ *
+ * Fixed pixels add up to more than a panel somebody has narrowed, and the
+ * column that pays for it is the first one — so the name, which is the only
+ * cell you cannot infer from context, becomes "Mi…". Proportions share the
+ * squeeze out instead, and the minimums stop any column collapsing to nothing.
+ */
+const DPS_COLUMNS =
+    'minmax(72px, 1.7fr) minmax(38px, 0.7fr) minmax(74px, 1.35fr) ' +
+    'minmax(32px, 0.55fr) minmax(62px, 1.05fr) minmax(58px, 1fr) minmax(58px, 1fr)';
 
 /**
  * One line of the damage table.
@@ -360,15 +379,21 @@ function dpsRow(cells, { dim = false, indent = 0 } = {}) {
     Object.assign(row.style, {
         display: 'grid',
         gridTemplateColumns: DPS_COLUMNS,
-        gap: '6px',
+        gap: '4px',
         alignItems: 'center',
         padding: '2px 0',
-        fontSize: dim ? '11px' : '12px',
+        fontSize: dim ? '10.5px' : '11.5px',
+        // Digits of one width, so a column of figures reads as a column rather
+        // than as a ragged edge that shifts every time a number changes
+        fontVariantNumeric: 'tabular-nums',
     });
 
     cells.forEach((cell, index) => {
         const span = document.createElement('span');
         span.textContent = cell.text;
+        // A cell that has been ellipsised is still worth reading, and the name
+        // column is the one that truncates first and matters most
+        span.title = cell.text;
         Object.assign(span.style, {
             color: cell.color || (dim ? COLORS.textDim : COLORS.text),
             fontWeight: cell.bold ? 'bold' : 'normal',
@@ -482,7 +507,8 @@ function enemyHealthCard(breakdown) {
 export const dpsPanel = new CombatPanel({
     id: 'dpsPanel',
     title: 'DPs',
-    size: { width: 620, height: 420 },
+    size: { width: 620, height: 460 },
+    minSize: { width: 460, height: 220 },
     controls: (bar) => {
         // The two buttons DPs carries in its header, where it carries them
         bar.appendChild(
@@ -553,7 +579,6 @@ export const dpsPanel = new CombatPanel({
         for (const player of breakdown.players) {
             const open = expandedRows.has(player.index);
             const swings = player.hits + player.misses;
-            const share = partyDamage > 0 ? (player.damage / partyDamage) * 100 : 0;
 
             const row = dpsRow([
                 { text: `${open ? '▼' : '▶'}  ${player.name}`, color: ROW_COLORS.accent, bold: true },
@@ -562,7 +587,10 @@ export const dpsPanel = new CombatPanel({
                     color: ROW_COLORS.good,
                     bold: true,
                 },
-                { text: `${formatKMB(player.damage)} (${share.toFixed(1)}%)`, color: ROW_COLORS.good },
+                // The bare figure, as DPs shows it on a character row. The share
+                // of a party total is on the rows underneath, where it says
+                // something; on the only player in a solo run it says 100%.
+                { text: formatKMB(player.damage), color: ROW_COLORS.good },
                 { text: formatWithSeparator(swings) },
                 { text: countAndShare(player.hits, swings), color: ROW_COLORS.good },
                 { text: countAndShare(player.crits, player.hits), color: ROW_COLORS.gold },

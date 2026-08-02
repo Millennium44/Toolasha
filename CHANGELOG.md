@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The damage table reads at any width
+
+- **Proportional columns instead of fixed pixels.** Fixed widths add up to more than a panel somebody has narrowed, and the column that pays for it is the first — so the name, the one cell you cannot infer from the others, became "Mi…". Proportions share the squeeze out, and each column has a floor it cannot collapse past.
+- **The character row shows its damage bare**, as DPs does. A share of the party total says something on an ability row and on an enemy row; on the only player in a solo run it says 100% and costs the width that was making everything else truncate.
+- **A panel remembered at a width from before it held a table is widened to fit one.** It was 440 wide as a stack of cards, which is a column of ellipses as a table, and nothing else would ever have widened it again.
+- **Tabular figures**, so a column of numbers reads as a column rather than shifting every time one of them changes, and every cell carries its full text as a tooltip for when it does have to truncate.
+
 ### Per-enemy tracking, and DPs' second reading of the run
 
 The tracker attributed hits to players and abilities and stopped there — it never recorded which monster took the hit, and nothing counted kills. Both now exist, which is what the last two pieces of DPs needed.

@@ -10,6 +10,7 @@
 
 import { describe, test, expect, afterEach, vi, beforeEach } from 'vitest';
 
+const geometry = vi.hoisted(() => ({ width: null }));
 const state = vi.hoisted(() => ({
     dps: {},
     luck: null,
@@ -22,7 +23,12 @@ const state = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getInventory: () => state.inventory } }));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: (panel, id, fallback) => {
+        panel.style.width = `${geometry.width ?? fallback.width}px`;
+    },
+    saveGeometry: () => {},
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({
     default: {
@@ -280,6 +286,26 @@ describe('what the panels add over their tiles', () => {
         dpsPanel.show();
 
         expect(dpsPanel.panel.textContent).toContain('no health bars to count');
+    });
+
+    test('a width remembered from before the table is widened to fit it', () => {
+        // The panel was 440 wide when it was a stack of cards; a table at that
+        // width is a column of ellipses, and nothing else would widen it again
+        dpsPanel.hide();
+        geometry.width = 320;
+        dpsPanel.show();
+
+        expect(parseFloat(dpsPanel.panel.style.width)).toBeGreaterThanOrEqual(460);
+        geometry.width = null;
+    });
+
+    test('a name too long for its column is still readable', () => {
+        // The first column is the one that truncates first and the only cell
+        // you cannot infer from the others
+        dpsPanel.show();
+        const cell = [...dpsPanel.panel.querySelectorAll('span')].find((el) => el.textContent.includes('You'));
+
+        expect(cell.title).toContain('You');
     });
 
     test('and a Reset, as DPs has', () => {
