@@ -106,12 +106,26 @@ describe('the action panel layout', () => {
         expect(css).toMatch(/background:\s*#[0-9a-f]{6}/i);
     });
 
-    test('no child may be wider than the panel', () => {
-        // One fractionally oversized row — the buttons container measured
-        // 321.883 against a 320 panel — is all a horizontal scrollbar needs
+    test('nothing at any depth may be wider than the panel', () => {
+        // A rule for direct children walks past the Cost Summary card, which is
+        // inserted beside the item requirements rather than at the top level —
+        // and that card is the widest thing in the panel
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();
-        expect(styleEl().textContent).toContain('max-width: 100%');
+        const css = styleEl().textContent;
+
+        expect(css).toContain('max-width: 100%');
+        expect(css).toMatch(/SkillActionDetail_skillActionDetail"\] \*\s*\{/);
+    });
+
+    test('the scrollbar gutter is reserved', () => {
+        // The vertical bar otherwise appears after the layout is decided and
+        // takes its width out of the column, making every full-width row wider
+        // than the column it sits in — a horizontal scrollbar caused by the
+        // vertical one
+        settings.values.actionPanelLayout = true;
+        actionPanelLayout.initialize();
+        expect(styleEl().textContent).toContain('scrollbar-gutter: stable');
     });
 
     test('cleanup is as thorough as disable', () => {

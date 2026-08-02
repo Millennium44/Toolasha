@@ -12,6 +12,8 @@ The box was never a border. It was the pinned strip's own background, painted wi
 
 - **The strip is painted a dark literal**, so it reads as the panel continuing behind the buttons rather than as a coloured band around them.
 - **The horizontal scrollbar is gone, at its source.** Three of this script's own blocks — the Cost Summary card, the budget row and the Missing Mats button — were built full-width with padding and a border and no `box-sizing`, so each rendered about thirty pixels wider than the column holding it. That is what pushed the Calculate button past the edge and put a scrollbar under the whole panel. They are sized correctly now, which fixes them everywhere they appear rather than only inside a clipped panel.
+- **The scrollbar gutter is reserved.** Without it the vertical bar appears _after_ the layout has been worked out and takes its width out of the column, so every row that was exactly as wide as the column becomes wider than it — a horizontal scrollbar caused by the vertical one.
+- **The width limit applies at any depth.** It was written for the panel's direct children, which walked straight past the Cost Summary card: that is inserted beside the item requirements rather than at the top level, and it is the widest thing in the panel.
 - **The scrollbar is the game's own again.** Recolouring it was chasing the wrong thing: the bar was a width problem, not a styling one.
 - **The divider is a plain hairline with no drop shadow**, so the row reads as the edge of the content sliding underneath.
 
