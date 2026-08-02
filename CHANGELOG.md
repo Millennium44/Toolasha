@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Luck and Over Expected are a line per player
+
+LYuck's answer to a question a single figure cannot answer. A party shares a zone and a battle count and **nothing else** — drop rate, rare find and drop quantity are each somebody's own gear, so five people fighting the same monsters are owed five different amounts, and one number for the party is an average over people who are not comparable.
+
+- **A line per player, then the total**, in both tiles. The total is the party's takings against the party's expectation, not an average of the percentages: an average weights somebody who looted one item the same as somebody who looted a hundred.
+- **One model per player.** MCS computes a base expectation and multiplies each player's share by their own bonuses; this builds the whole session per player with their own bonuses instead. Same arithmetic — the bonuses enter as multipliers either way — but it cannot drift from the single-player model, because it _is_ the single-player model. A version that split one expectation evenly would report the player with the drop-rate build as permanently lucky, which is the exact failure the model already carries a warning about.
+- **Solo is unchanged.** One player means one line, as before.
+- Worth knowing what the figure means: a player with no drop gear is owed less, so par for them is a smaller haul. "Am I unlucky" is a different question from "am I contributing", and this answers the first.
+- `expectedItemCounts` is new alongside `sessionMean` — the same walk over the same priced drops, one summing coins and one summing counts, with a test that they agree when the counts are priced back up.
+
 ### The combat simulator is its own bundle, and the combat bundle stops scraping its ceiling
 
 The engine under `features/combat-sim/` is a megabyte of source and the largest thing in the script by a wide margin. Four features across three bundles reach into it — the labyrinth clear-rate model, task profit, the build score, and the simulator's own interface — and because it was never declared shared, **it was copied into each of them**. Both the combat and the UI bundle carried their own `class Monster` while sitting a few kilobytes under the 2 MB ceiling.

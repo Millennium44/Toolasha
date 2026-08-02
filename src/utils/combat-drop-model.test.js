@@ -7,6 +7,8 @@ import {
     buildCombatSession,
     lootValue,
     sessionMean,
+    expectedItemCounts,
+    percentOfExpected,
 } from './combat-drop-model.js';
 
 const priceOf = (hrid) => ({ '/items/a': 100, '/items/rare': 50000, '/items/worthless': 0 })[hrid] ?? null;
@@ -225,5 +227,86 @@ describe('sessionMean', () => {
 
     test('a monster with no priced drops contributes nothing rather than throwing', () => {
         expect(sessionMean({ ...session, monsterDrops: {} })).toBe(0);
+    });
+});
+
+describe('expectedItemCounts', () => {
+    // The same session sessionMean is tested against, so the two can be checked
+    // to agree: one item worth 100 at a rate of one in ten, over ten waves
+    const session = {
+        spawnInfo: { maxSpawnCount: 1, spawns: [{ combatMonsterHrid: '/m/a', rate: 1 }] },
+        monsterDrops: { '/m/a': [{ itemHrid: '/items/a', minCount: 1, maxCount: 1, dropRate: 0.1, price: 100 }] },
+        normalCount: 10,
+        bossCount: 0,
+    };
+
+    test('counts rather than coins', () => {
+        expect(expectedItemCounts(session)).toEqual({ '/items/a': expect.closeTo(1, 6) });
+    });
+
+    test('it agrees with sessionMean when the counts are priced back up', () => {
+        // Two models of one session that could disagree is the whole risk here
+        const counts = expectedItemCounts(session);
+        expect(counts['/items/a'] * 100).toBeCloseTo(sessionMean(session), 6);
+    });
+
+    test('a count range contributes its midpoint', () => {
+        const ranged = {
+            ...session,
+            monsterDrops: { '/m/a': [{ itemHrid: '/items/a', minCount: 1, maxCount: 3, dropRate: 1, price: 10 }] },
+        };
+        expect(expectedItemCounts(ranged)['/items/a']).toBeCloseTo(20, 6);
+    });
+
+    test('two monsters dropping the same item add up under it', () => {
+        const shared = {
+            ...session,
+            spawnInfo: {
+                maxSpawnCount: 2,
+                spawns: [
+                    { combatMonsterHrid: '/m/a', rate: 1 },
+                    { combatMonsterHrid: '/m/b', rate: 1 },
+                ],
+            },
+            monsterDrops: {
+                '/m/a': [{ itemHrid: '/items/a', minCount: 1, maxCount: 1, dropRate: 0.1, price: 100 }],
+                '/m/b': [{ itemHrid: '/items/a', minCount: 1, maxCount: 1, dropRate: 0.1, price: 100 }],
+            },
+        };
+        expect(Object.keys(expectedItemCounts(shared))).toEqual(['/items/a']);
+    });
+
+    test('bosses are counted outright, not weighted by a spawn rate', () => {
+        const withBoss = {
+            ...session,
+            normalCount: 0,
+            bossCount: 4,
+            bossDrops: { '/m/b': [{ itemHrid: '/items/key', minCount: 2, maxCount: 2, dropRate: 0.5, price: 1 }] },
+        };
+        expect(expectedItemCounts(withBoss)['/items/key']).toBeCloseTo(4, 6);
+    });
+
+    test('a drop with no item is skipped rather than counted under undefined', () => {
+        const nameless = {
+            ...session,
+            monsterDrops: { '/m/a': [{ minCount: 1, maxCount: 1, dropRate: 1, price: 1 }] },
+        };
+        expect(expectedItemCounts(nameless)).toEqual({});
+    });
+});
+
+describe('percentOfExpected', () => {
+    test('signed against zero rather than expressed as a fraction of expectation', () => {
+        // "+36%" is read at a glance and "136%" is read twice
+        expect(percentOfExpected(136, 100)).toBeCloseTo(36, 6);
+        expect(percentOfExpected(50, 100)).toBeCloseTo(-50, 6);
+        expect(percentOfExpected(100, 100)).toBeCloseTo(0, 6);
+    });
+
+    test('nothing to compare against is nothing, not a triumph', () => {
+        // A zero expectation with drops in hand is a model that does not cover
+        // this zone, rather than infinite luck
+        expect(percentOfExpected(500, 0)).toBeNull();
+        expect(percentOfExpected(0, 0)).toBeNull();
     });
 });

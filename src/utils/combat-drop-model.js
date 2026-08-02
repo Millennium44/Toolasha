@@ -160,6 +160,10 @@ export function buildCombatSession({
         if (rate <= 0) return null;
 
         return {
+            // Carried through so a per-item expectation can be built from the
+            // same priced drops the coin total is; two models of the same
+            // session would disagree the moment either changed
+            itemHrid: drop.itemHrid,
             minCount: (drop.minCount || 0) * quantity,
             maxCount: (drop.maxCount || 0) * quantity,
             dropRate: rate,
@@ -255,4 +259,56 @@ export function sessionMean({ spawnInfo, monsterDrops, bossDrops = {}, normalCou
     }
 
     return total;
+}
+
+/**
+ * What a session was owed, item by item.
+ *
+ * `sessionMean` answers the same question in coins, which is the right shape for
+ * "was this run lucky" and the wrong one for "which drop is behind it". Both
+ * walk the same priced drops in the same order, so they cannot disagree about
+ * the session — one sums `rate × count × price`, this one sums `rate × count`
+ * and keeps it under the item.
+ *
+ * @param {Object} session - From `buildCombatSession`
+ * @returns {Object<string, number>} Item hrid → expected count
+ */
+export function expectedItemCounts({ spawnInfo, monsterDrops, bossDrops = {}, normalCount, bossCount = 0 }) {
+    const counts = {};
+
+    const add = (drops, kills) => {
+        for (const drop of drops || []) {
+            if (!drop?.itemHrid) continue;
+            const meanCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
+            counts[drop.itemHrid] = (counts[drop.itemHrid] || 0) + drop.dropRate * meanCount * kills;
+        }
+    };
+
+    const perWave = expectedSpawnsPerWave(spawnInfo);
+    for (const [hrid, spawns] of Object.entries(perWave)) {
+        add(monsterDrops?.[hrid], spawns * (normalCount || 0));
+    }
+
+    // Every boss in the table turns up on a boss wave, so they are counted
+    // outright rather than weighted by a spawn rate
+    for (const drops of Object.values(bossDrops)) add(drops, bossCount || 0);
+
+    return counts;
+}
+
+/**
+ * How far above or below par a figure landed, as a percentage.
+ *
+ * Signed against zero rather than expressed as a fraction of expectation:
+ * "+36%" is read at a glance and "136%" is read twice. Nothing to compare
+ * against is nothing, not a triumph — a zero expectation with drops in hand is
+ * a model that does not cover this zone, not infinite luck.
+ *
+ * @param {number} actual - What happened
+ * @param {number} expected - What was owed
+ * @returns {number|null} Signed percentage, or null when there is nothing to say
+ */
+export function percentOfExpected(actual, expected) {
+    if (!(expected > 0)) return null;
+    return ((actual || 0) / expected - 1) * 100;
 }

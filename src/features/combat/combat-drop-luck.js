@@ -38,6 +38,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { sessionLuck } from '../../utils/drop-luck.js';
 import { buildCombatSession, lootValue, sessionMean } from '../../utils/combat-drop-model.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { partyLuck } from './party-luck.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { row, rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
@@ -353,6 +354,37 @@ registerRow({
         const percent = result.percentile * 100;
         const { tone, text } = describeLuck(result.percentile);
 
+        // A line per player where the party can be told apart, as LYuck does.
+        // The percentile is a property of the session and cannot be split, so
+        // what goes per player is how each did against what each was owed —
+        // which is the comparable figure anyway, since drop gear differs.
+        const party = partyLuck(combatDropLuck.context);
+        if (party.players.length > 1) {
+            const lines = party.players.map((player) => {
+                const verdict = signedPercent(player.percent ?? 0);
+                return [
+                    {
+                        text: player.name,
+                        color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
+                        ellipsis: true,
+                    },
+                    { text: player.percent === null ? '—' : verdict.text, color: verdict.color, push: true },
+                ];
+            });
+
+            const total = signedPercent(party.total?.percent ?? 0);
+            lines.push([
+                { text: 'Luck', color: ROW_COLORS.neutral, bold: true },
+                { text: `${percent.toFixed(1)}%`, bold: true, push: true, color: total.color },
+            ]);
+
+            rows(container, lines);
+            container.title =
+                `${formatOrdinal(result.percentile)} percentile — ${text}\n` +
+                'Per player: takings against what that player\u2019s own drop gear was owed.';
+            return;
+        }
+
         row(container, [
             { text: 'Luck', color: ROW_COLORS.dim },
             {
@@ -387,6 +419,37 @@ registerRow({
         if (!result || !(result.expected > 0)) return blank(container);
 
         const verdict = signedPercent((result.income / result.expected - 1) * 100);
+
+        // Per player where there is a party to split, then the total — which is
+        // the party's takings against the party's expectation, not an average of
+        // the percentages. An average weights somebody who looted one item the
+        // same as somebody who looted a hundred.
+        const party = partyLuck(combatDropLuck.context);
+        if (party.players.length > 1) {
+            const lines = party.players.map((player) => {
+                const each = signedPercent(player.percent ?? 0);
+                return [
+                    {
+                        text: player.name,
+                        color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
+                        ellipsis: true,
+                    },
+                    { text: player.percent === null ? '—' : each.text, color: each.color, push: true },
+                ];
+            });
+
+            const total = signedPercent(party.total?.percent ?? 0);
+            lines.push([
+                { text: 'TOTAL', color: ROW_COLORS.neutral, bold: true },
+                { text: total.text, color: total.color, bold: true, push: true },
+            ]);
+
+            rows(container, lines);
+            container.title =
+                'Each player against what their own drop gear was owed over the same battles.\n' +
+                'A player with no drop gear is owed less, so par for them is a smaller haul.';
+            return;
+        }
 
         rows(container, [
             [
