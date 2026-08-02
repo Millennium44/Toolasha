@@ -214,6 +214,9 @@ class OverlayPanel {
         });
 
         this.panel.appendChild(this._createHeader());
+        // Unlocked across a reload means the panel comes back mid-arrangement,
+        // and it should come back raised rather than underneath the game
+        this._refreshStacking();
 
         // The scroll container, so the canvas below can be as large as the tiles
         // need without the panel growing to match
@@ -276,6 +279,7 @@ class OverlayPanel {
             this.settings.locked = !this.settings.locked;
             this._save();
             this._refreshLockButton();
+            this._refreshStacking();
             this._renderBody();
         });
         this._refreshLockButton();
@@ -287,6 +291,7 @@ class OverlayPanel {
                 this._renderPicker();
                 this._placePicker();
             }
+            this._refreshStacking();
         });
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
 
@@ -370,6 +375,22 @@ class OverlayPanel {
     /** Whether the settings popover is up */
     get isPickerOpen() {
         return this.pickerEl && this.pickerEl.style.display !== 'none';
+    }
+
+    /**
+     * Where the panel sits against the game's own interface.
+     *
+     * At rest it belongs underneath: it is always up, and a permanent readout
+     * that covers the tabs and the ability bar is worse than one the game
+     * occasionally covers. But while the settings are open or the layout is
+     * unlocked it is not a readout, it is a thing being operated — and the
+     * ability cooldowns counting down through the tile you are dragging make it
+     * unusable. So it rises for exactly as long as it is being worked on.
+     */
+    _refreshStacking() {
+        if (!this.panel) return;
+        const inUse = this.isPickerOpen || !this.settings.locked;
+        this.panel.style.zIndex = String(inUse ? config.Z_FLOATING_PANEL : config.Z_HUD);
     }
 
     /**
@@ -711,52 +732,73 @@ class OverlayPanel {
                 if (!answer) return;
 
                 this._snapshot('Import');
-                this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
 
-                // Laid out against the width the file asks for, not the width
-                // the panel happens to be. Using the current width clamps every
-                // tile that sits beyond the right edge back inside it, which
-                // drops a second column on top of the first — and settling then
-                // stacks the collision into one very tall column. The panel is
-                // resized to fit a moment later, so the width it is about to
-                // have is the honest one to lay out against.
-                const width = this._importWidth(this.settings);
-                const laid = resolveLayout(
-                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                    this.settings,
-                    width
-                );
+                // A file this overlay wrote already holds this overlay's own
+                // coordinates, measured against this overlay's own tiles. There
+                // is nothing to correct, and correcting it anyway is what turned
+                // an export and a re-import on the *same character* into a
+                // different layout: growing sizes to fit and then repacking the
+                // columns moves tiles that were exactly where they were put.
+                // Refitting is for OPanel's files, whose sizes measure OPanel's
+                // rendering rather than ours.
+                if (read.native) {
+                    this.settings = { ...this.settings, ...read.settings };
+                } else {
+                    this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
 
-                // OPanel measured those tiles against OPanel's rendering, and
-                // the same rows drawn here are not the same size — so they are
-                // grown to fit and then settled, which resolves the collisions
-                // that causes and closes the gaps it leaves
-                const positions = { ...this.settings.positions };
-                for (const { key, x, y } of compactColumns(laid, width)) positions[key] = { x, y };
-                this.settings.positions = positions;
+                    // Laid out against the width the file asks for, not the width
+                    // the panel happens to be. Using the current width clamps every
+                    // tile that sits beyond the right edge back inside it, which
+                    // drops a second column on top of the first — and settling then
+                    // stacks the collision into one very tall column. The panel is
+                    // resized to fit a moment later, so the width it is about to
+                    // have is the honest one to lay out against.
+                    const laidWidth = this._importWidth(this.settings);
+                    const laid = resolveLayout(
+                        resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                        this.settings,
+                        laidWidth
+                    );
+
+                    // OPanel measured those tiles against OPanel's rendering, and
+                    // the same rows drawn here are not the same size — so they are
+                    // grown to fit and then settled, which resolves the collisions
+                    // that causes and closes the gaps it leaves
+                    const positions = { ...this.settings.positions };
+                    for (const { key, x, y } of compactColumns(laid, laidWidth)) positions[key] = { x, y };
+                    this.settings.positions = positions;
+                }
 
                 this._save();
 
                 // The frame came sized for OPanel's tiles too, so it is grown to
                 // whatever ours actually need. Left smaller, the imported layout
                 // arrives half below the fold, which reads as tiles that failed
-                // to import rather than as a panel that needs dragging.
+                // to import rather than as a panel that needs dragging. Our own
+                // file needs none of that — it was written from a frame that
+                // already fitted, so it is restored as it was written.
                 const geometry = read.geometry || {};
-                const bounds = contentBounds(
-                    resolveLayout(
-                        resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                        this.settings,
-                        width
-                    )
-                );
-                await saveGeometry(GEOMETRY_KEY, {
-                    ...geometry,
-                    width: Math.max(geometry.width || 0, bounds.width + 30),
-                    height: Math.max(geometry.height || 0, bounds.height + 80),
-                });
+                if (read.native) {
+                    if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
+                } else {
+                    const width = this._importWidth(this.settings);
+                    const bounds = contentBounds(
+                        resolveLayout(
+                            resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                            this.settings,
+                            width
+                        )
+                    );
+                    await saveGeometry(GEOMETRY_KEY, {
+                        ...geometry,
+                        width: Math.max(geometry.width || 0, bounds.width + 30),
+                        height: Math.max(geometry.height || 0, bounds.height + 80),
+                    });
+                }
                 await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
 
                 this._refreshLockButton();
+                this._refreshStacking();
                 this._renderPicker();
                 this._renderBody();
                 this._placePicker();

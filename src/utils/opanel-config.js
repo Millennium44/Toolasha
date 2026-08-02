@@ -98,8 +98,11 @@ export function isOPanelConfig(json) {
  * @param {Object} json - Parsed OPanel config file
  * @returns {{settings: Object, geometry: Object|null, unknown: string[]}|null}
  *   `settings` merges into the overlay's own, `geometry` is the panel's frame,
- *   and `unknown` names every row of theirs we have nothing to map to. Null when
- *   the file is not an OPanel config.
+ *   and `unknown` names every row of theirs we have nothing to map to. `native`
+ *   says the layout came from this overlay's own section rather than from
+ *   OPanel's, which is the difference between coordinates that can be used as
+ *   they are and coordinates that have to be laid out again. Null when the file
+ *   is not an OPanel config.
  */
 export function fromOPanelConfig(json) {
     if (!isOPanelConfig(json)) return null;
@@ -108,7 +111,7 @@ export function fromOPanelConfig(json) {
     // the twenty OPanel knows, and a layout half of whose rows arrive without a
     // position is a layout the packer rearranges from scratch
     const native = readToolashaSection(json);
-    if (native) return { settings: native, geometry: readGeometry(json), unknown: [] };
+    if (native) return { settings: native, geometry: readGeometry(json), unknown: [], native: true };
 
     const config = json.config;
     const unknown = [];
@@ -164,7 +167,7 @@ export function fromOPanelConfig(json) {
     if (typeof config.snapToGrid === 'boolean') settings.snapToGrid = config.snapToGrid;
     if (typeof json.is_locked === 'boolean') settings.locked = json.is_locked;
 
-    return { settings, geometry: readGeometry(json), unknown };
+    return { settings, geometry: readGeometry(json), unknown, native: false };
 }
 
 /**

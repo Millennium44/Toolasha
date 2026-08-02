@@ -101,6 +101,91 @@ export function calculateDungeonTokenValue(
 }
 
 /**
+ * A shop line's costs, whichever shape the shop keeps them in.
+ *
+ * The dungeon and task shops carry a `costs` array; the labyrinth shop carries a
+ * single `cost`. Same idea, two spellings.
+ *
+ * @param {Object} line - A shop line
+ * @returns {Array<{itemHrid: string, count: number}>}
+ */
+function shopCosts(line) {
+    if (Array.isArray(line?.costs)) return line.costs;
+    if (line?.cost) return [line.cost];
+    return [];
+}
+
+/**
+ * The best coins one token buys, within the shop that takes it.
+ *
+ * A token is worth the most valuable thing its own shop converts to. Only lines
+ * the market prices count — a line nobody can sell says nothing about what a
+ * token is worth.
+ *
+ * @param {Object} shopMap - One of the game's shop maps
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @param {string} tokenHrid - The currency
+ * @returns {number} Coins per token, or 0
+ */
+function tokenValueIn(shopMap, priceOf, tokenHrid) {
+    let best = 0;
+
+    for (const line of Object.values(shopMap || {})) {
+        const cost = shopCosts(line).find((entry) => entry?.itemHrid === tokenHrid);
+        if (!(cost?.count > 0)) continue;
+
+        const price = priceOf(line.itemHrid);
+        if (!(price > 0)) continue;
+
+        const perToken = (price * (line.outputCount || 1)) / cost.count;
+        if (perToken > best) best = perToken;
+    }
+    return best;
+}
+
+/**
+ * What a shop charges for something, in coins.
+ *
+ * Some equipment is never listed on the market at all — capes drop, and are
+ * otherwise bought from a shop for tokens. A market-only reading says such a
+ * piece cannot be had at any price, which is the opposite of true. The shop
+ * knows the price; it is just quoted in a currency that needs converting, and a
+ * token converts at whatever the best line in its own shop is worth.
+ *
+ * @param {string} itemHrid - The item
+ * @param {Array<Object>} shopMaps - The game's shop maps, in preference order
+ * @param {Function} priceOf - `(itemHrid) => number|null`, a market ask
+ * @returns {number|null} Coins, or null when no shop sells it for anything priceable
+ */
+export function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
+    for (const shopMap of shopMaps || []) {
+        const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === itemHrid);
+        const costs = shopCosts(line);
+        if (!costs.length) continue;
+
+        let total = 0;
+        let priced = true;
+
+        for (const cost of costs) {
+            const each =
+                cost?.itemHrid === '/items/coin'
+                    ? 1
+                    : priceOf(cost?.itemHrid) || tokenValueIn(shopMap, priceOf, cost?.itemHrid);
+            // One unpriceable currency makes the whole line unpriceable rather
+            // than cheap, the same rule the rest of this file runs on
+            if (!(each > 0) || !(cost?.count > 0)) {
+                priced = false;
+                break;
+            }
+            total += each * cost.count;
+        }
+
+        if (priced && total > 0) return total / (line.outputCount || 1);
+    }
+    return null;
+}
+
+/**
  * The best coins a labyrinth token can be turned into.
  *
  * Labyrinth rewards are bought with tokens, and a token is worth whatever the

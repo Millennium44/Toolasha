@@ -206,4 +206,14 @@ describe('a round trip through our own section', () => {
 
         expect(fromOPanelConfig(file).settings.order).toEqual(['coins', 'dps']);
     });
+
+    test('it says which half it read', () => {
+        // The reader has to know: our own coordinates are final, and OPanel's
+        // are measurements of OPanel's tiles that have to be laid out again.
+        // Treating ours as theirs repacks a layout that was already right,
+        // which is what made an export and a re-import on one character come
+        // back different.
+        expect(fromOPanelConfig(toOPanelConfig(settings, null)).native).toBe(true);
+        expect(fromOPanelConfig({ config: { order: ['dps'], sizes: {}, positions: {} } }).native).toBe(false);
+    });
 });
