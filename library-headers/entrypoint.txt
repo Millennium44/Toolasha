@@ -21,6 +21,7 @@
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
 // @require      https://UPDATE-THIS-URL/toolasha-core.js
 // @require      https://UPDATE-THIS-URL/toolasha-utils.js
+// @require      https://UPDATE-THIS-URL/toolasha-sim.js
 // @require      https://UPDATE-THIS-URL/toolasha-market.js
 // @require      https://UPDATE-THIS-URL/toolasha-actions.js
 // @require      https://UPDATE-THIS-URL/toolasha-combat.js

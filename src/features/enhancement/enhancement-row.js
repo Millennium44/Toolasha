@@ -18,12 +18,11 @@
  * because "this has taken twice what it should" is exactly the thing you want it
  * to be able to say.
  *
- * ## Not MCS's EWatch, despite the similar name
+ * ## It used to be called Equipment Watch
  *
- * This is Toolasha's own Equipment Watch tile and shows an enhancement run in
- * progress. MCS's EWatch is a different tool — what you are **saving up for** —
- * and is ported separately as Equipment Savings, in
- * `features/inventory/equipment-savings-row.js`.
+ * That name belongs to EWatch, which tracks what you are **saving up for** and
+ * now holds the tile — see `features/inventory/equipment-savings-row.js`. This
+ * row is an enhancement run in progress, which is what it is called now.
  */
 
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -64,8 +63,8 @@ export function enhancementProgress() {
 }
 
 registerRow({
-    key: 'equipmentWatch',
-    name: 'Equipment Watch',
+    key: 'enhancementRun',
+    name: 'Enhancement Run',
     defaultSize: { width: 280, height: 50 },
     render: (container) => {
         const run = enhancementProgress();

@@ -14,6 +14,7 @@ const libraryHeaderCore = readFileSync(join(__dirname, 'library-headers/core.txt
 const libraryHeaderUtils = readFileSync(join(__dirname, 'library-headers/utils.txt'), 'utf-8');
 const libraryHeaderMarket = readFileSync(join(__dirname, 'library-headers/market.txt'), 'utf-8');
 const libraryHeaderActions = readFileSync(join(__dirname, 'library-headers/actions.txt'), 'utf-8');
+const libraryHeaderSim = readFileSync(join(__dirname, 'library-headers/sim.txt'), 'utf-8');
 const libraryHeaderCombat = readFileSync(join(__dirname, 'library-headers/combat.txt'), 'utf-8');
 const libraryHeaderUI = readFileSync(join(__dirname, 'library-headers/ui.txt'), 'utf-8');
 const entrypointHeader = readFileSync(join(__dirname, 'library-headers/entrypoint.txt'), 'utf-8');
@@ -106,6 +107,22 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
     [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
     [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
+]);
+
+// The combat simulator engine, which is its own bundle.
+// About a megabyte of source reached into by four features across three bundles;
+// left inline it was copied into each of them, and both the combat and the UI
+// bundle carried the same `Monster` class while sitting a few kilobytes under
+// the 2 MB ceiling.
+const simExternalGlobals = new Map([
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim.js')), 'Toolasha.Sim.combatSim'],
+    [normalize(join(__dirname, 'src/features/combat-sim/lab-sim.js')), 'Toolasha.Sim.labSim'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-ui.js')), 'Toolasha.Sim.combatSimUI'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-adapter.js')), 'Toolasha.Sim.combatSimAdapter'],
+    [normalize(join(__dirname, 'src/features/combat-sim/combat-sim-runner.js')), 'Toolasha.Sim.combatSimRunner'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/wilson.js')), 'Toolasha.Sim.wilson'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/game-data.js')), 'Toolasha.Sim.gameData'],
+    [normalize(join(__dirname, 'src/features/combat-sim/engine/monster.js')), 'Toolasha.Sim.monster'],
 ]);
 
 // Combat feature modules imported cross-library (by ui)
@@ -305,6 +322,16 @@ const prodLibraries = [
         },
     },
     {
+        key: 'sim',
+        input: 'src/libraries/sim.js',
+        output: {
+            file: 'dist/libraries/toolasha-sim.js',
+            format: 'iife',
+            name: 'ToolashaSim',
+            banner: libraryHeaderSim,
+        },
+    },
+    {
         key: 'combat',
         input: 'src/libraries/combat.js',
         output: {
@@ -350,12 +377,22 @@ const prodConfig = [
         if (key === 'utils') {
             external = buildExternal(coreExternalGlobals);
             globals = sharedCoreGlobals;
-        } else if (key === 'market') {
+        } else if (key === 'sim') {
+            // The engine is self-contained apart from core and utils; it must
+            // NOT treat itself as external or the bundle would be empty
             external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
             globals = sharedFeatureGlobals;
+        } else if (key === 'market') {
+            external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
+            globals = buildGlobals(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
         } else if (key !== 'core') {
-            // actions, combat, ui — need core + utils + market externals
-            const allExternals = new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...marketExternalGlobals]);
+            // actions, combat, ui — need core + utils + sim + market externals
+            const allExternals = new Map([
+                ...coreExternalGlobals,
+                ...utilsExternalGlobals,
+                ...simExternalGlobals,
+                ...marketExternalGlobals,
+            ]);
             // ui and actions also treat combat feature singletons as externals to avoid duplicate instances
             if (key === 'ui' || key === 'actions') {
                 for (const [k, v] of combatFeatureExternals) allExternals.set(k, v);
