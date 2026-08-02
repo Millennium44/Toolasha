@@ -112,6 +112,37 @@ export function vendorFloor(bid, vendor) {
 }
 
 /**
+ * How many of an item are sitting in your own sell orders.
+ *
+ * A watchlist that counts only the inventory says you have none of something
+ * you have two hundred of — they are just on the market rather than in the bag.
+ * That is the difference between "I need to farm this" and "I need to wait", and
+ * a collection checklist that cannot tell them apart is worse than no checklist.
+ *
+ * Unclaimed items from a filled **buy** order count too: they are yours, bought
+ * and paid for, and only a click away from the inventory.
+ *
+ * @param {Array<Object>} listings - The game's `myMarketListings`
+ * @returns {Object<string, {listed: number, unclaimed: number}>} By item hrid
+ */
+export function listedCounts(listings) {
+    const counts = {};
+    const bump = (hrid, field, amount) => {
+        if (!hrid || !(amount > 0)) return;
+        counts[hrid] = counts[hrid] || { listed: 0, unclaimed: 0 };
+        counts[hrid][field] += amount;
+    };
+
+    for (const listing of listings || []) {
+        const remaining = Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
+        // Only a sell order is holding items; a buy order's remainder is coin
+        if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
+        bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);
+    }
+    return counts;
+}
+
+/**
  * Price and count every row.
  *
  * The lookups are passed in rather than imported, so the awkward parts — the
@@ -122,17 +153,29 @@ export function vendorFloor(bid, vendor) {
  * @param {Function} lookups.quantityOf - `(hrid) => number`
  * @param {Function} lookups.pricesFor - `(hrid) => {ask, bid}|null`
  * @param {Function} [lookups.vendorOf] - `(hrid) => number`
- * @returns {Array<Object>} Rows with `quantity`, `ask`, `bid`, `flag`, `totalAsk`, `totalBid`
+ * @param {Function} [lookups.listedOf] - `(hrid) => {listed, unclaimed}`
+ * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
+ *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
+ *   own of the item wherever it is sitting; `held` is only the bag.
  */
-export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf }) {
+export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
     return (entries || []).map((entry) => {
-        const quantity = Number(quantityOf?.(entry.hrid)) || 0;
+        const held = Number(quantityOf?.(entry.hrid)) || 0;
+        const market = listedOf?.(entry.hrid) || {};
+        const listed = Number(market.listed) || 0;
+        const unclaimed = Number(market.unclaimed) || 0;
+        // Everything you own of it, wherever it happens to be
+        const quantity = held + listed + unclaimed;
+
         const prices = pricesFor?.(entry.hrid) || {};
         const ask = Number(prices.ask) || 0;
         const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
 
         return {
             ...entry,
+            held,
+            listed,
+            unclaimed,
             quantity,
             ask,
             bid: floor.price,

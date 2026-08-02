@@ -10,9 +10,16 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ data: {}, prices: {} }));
+const game = vi.hoisted(() => ({ data: {}, prices: {}, character: null }));
 
-vi.mock('../../core/data-manager.js', () => ({ default: { getInitClientData: () => game.data } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInitClientData: () => game.data,
+        get characterData() {
+            return game.character;
+        },
+    },
+}));
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
@@ -37,10 +44,20 @@ beforeEach(() => {
             '/items/smack': { abilityBookDetail: { experienceGain: 500 } },
             '/items/rare_move': { abilityBookDetail: { experienceGain: 500 } },
         },
+    };
+    // Equipped is the kit; characterAbilities is where the experience lives
+    game.character = {
+        combatUnit: {
+            combatAbilities: [
+                { abilityHrid: '/abilities/poke', level: 2 },
+                { abilityHrid: '/abilities/smack', level: 2 },
+                { abilityHrid: '/abilities/rare_move', level: 0 },
+            ],
+        },
         characterAbilities: [
             { abilityHrid: '/abilities/poke', level: 2, experience: 1000 },
             { abilityHrid: '/abilities/smack', level: 2, experience: 1000 },
-            { abilityHrid: '/abilities/rare_move', level: 0, experience: 0 },
+            { abilityHrid: '/abilities/never_slotted', level: 9, experience: 0 },
         ],
     };
     game.prices = {
@@ -65,8 +82,22 @@ describe('the panel renders', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('only the equipped kit is listed, not everything ever learned', () => {
+        // The panel is about what to buy next for the build you are running
+        expect(abilityPlans().map((plan) => plan.name)).not.toContain('Never Slotted');
+        expect(abilityPlans()).toHaveLength(3);
+    });
+
+    test('experience comes from the character, not from the equipped slot', () => {
+        // The slot carries a level and no experience; without joining the two
+        // every ability reads as freshly levelled and every plan costs a full
+        // level more than it should
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').experience).toBe(1000);
+    });
+
     test('it draws before the game has sent anything', () => {
         game.data = {};
+        game.character = null;
         abilityBookPanel.show();
         expect(text()).toContain('No abilities');
         expect(text()).not.toContain(FAILED);

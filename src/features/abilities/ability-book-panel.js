@@ -36,10 +36,9 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
-import { itemIcon, linkToMarketplace, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { abilityPlan, cheapestNextLevel, planTotals, bookItemFor } from '../../utils/ability-books.js';
-import { registerRow } from '../../utils/overlay-rows.js';
 
 const PANEL_ID = 'toolasha-ability-book-panel';
 const GEOMETRY_KEY = 'abilityBookPanel';
@@ -87,14 +86,11 @@ function abilityName(abilityHrid) {
  */
 export function abilityPlans(targetLevel = sharedTarget) {
     const data = dataManager.getInitClientData?.();
-    // `getInitClientData` merges the character's own abilities into the game
-    // data it returns, so there is one place to read rather than two
-    const abilities = data?.characterAbilities;
     const table = data?.levelExperienceTable;
     if (!table) return [];
 
     const plans = [];
-    for (const ability of Object.values(abilities || {})) {
+    for (const ability of equippedAbilities()) {
         if (!ability?.abilityHrid) continue;
 
         const itemHrid = bookItemFor(ability.abilityHrid);
@@ -117,6 +113,44 @@ export function abilityPlans(targetLevel = sharedTarget) {
         if (b.costToNext === null) return -1;
         return a.costToNext - b.costToNext;
     });
+}
+
+/**
+ * The abilities actually in your kit, with their level and experience.
+ *
+ * Two sources, and both are needed. `combatUnit.combatAbilities` is the live
+ * equipped state — the five slots — and is the only place that says which
+ * abilities are in use rather than merely owned. `characterAbilities` is the
+ * only place that carries experience, which is what "how far to the next level"
+ * turns on. Neither alone answers the question.
+ *
+ * Not `getInitClientData()`, which is static game data: it has an
+ * `abilityDetailMap` describing every ability in the game and nothing about
+ * yours. Reading the character out of it is how this panel first shipped
+ * showing an empty list.
+ *
+ * @returns {Array<{abilityHrid: string, level: number, experience: number}>}
+ */
+export function equippedAbilities() {
+    const character = dataManager.characterData;
+    const equipped = character?.combatUnit?.combatAbilities || [];
+    const owned = character?.characterAbilities || [];
+
+    const abilities = [];
+    for (const slot of equipped) {
+        if (!slot?.abilityHrid) continue;
+
+        const known = owned.find((entry) => entry.abilityHrid === slot.abilityHrid);
+        abilities.push({
+            abilityHrid: slot.abilityHrid,
+            level: known?.level ?? slot.level ?? 0,
+            // Without the experience the level is a floor, not a position: every
+            // ability would read as freshly levelled and every plan would be
+            // the full cost of a level
+            experience: known?.experience ?? 0,
+        });
+    }
+    return abilities;
 }
 
 class AbilityBookPanel {
@@ -474,24 +508,3 @@ class AbilityBookPanel {
 }
 
 export const abilityBookPanel = new AbilityBookPanel();
-
-registerRow({
-    key: 'abilityBooks',
-    name: 'Ability Books',
-    defaultSize: { width: 230, height: 30 },
-    render: (container) => {
-        const best = cheapestNextLevel(abilityPlans(null));
-        if (!best) return blank(container);
-
-        row(container, [
-            { text: '📘' },
-            { text: best.name, color: ROW_COLORS.dim, ellipsis: true },
-            { text: `${best.booksToNext}`, color: COLORS.accent },
-            { text: formatKMB(best.costToNext), color: ROW_COLORS.gold, push: true },
-        ]);
-        container.title =
-            `${best.name} is the cheapest next ability level: ${formatWithSeparator(best.booksToNext)} books ` +
-            `at ${formatWithSeparator(best.bookPrice)} each, ${formatWithSeparator(Math.round(best.costToNext))} in total.`;
-    },
-    onOpen: () => abilityBookPanel.toggle(),
-});

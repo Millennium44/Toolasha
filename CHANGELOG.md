@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Ability Book panel listed nothing at all
+
+- It read the character out of `getInitClientData()`, which returns **static game data** — an `abilityDetailMap` describing every ability in the game and nothing about yours. So the list was always empty, and "No abilities learned yet" was the panel faithfully reporting a lookup that could never succeed.
+- **It now shows the equipped kit**, which is the right question anyway: what to buy next for the build you are running, not for every ability you have ever touched. That needs **two** sources — `combatUnit.combatAbilities` is the only place that says which abilities are slotted, and `characterAbilities` is the only place that carries experience. Joined, because with the level alone every ability reads as freshly levelled and every plan costs a whole level too much.
+
+### Skill Books is BRead now, and Ability Books is gone
+
+- One row, not two. **Skill Books** already existed and was already about books; it now also carries the cheapest next ability level and opens the panel on double-click. The separate **Ability Books** row I added last time has been removed — two rows about books, one of which you had to know to enable, is worse than one that was already there.
+
+### The Watchlist counts what is on the market
+
+- Items sitting in your own **sell orders** and **unclaimed** from filled buy orders now count towards what you own. A checklist that reads only the inventory says you have none of something you have two hundred of — the difference between "go farm this" and "wait", which is exactly the distinction a collection list exists to make.
+- The count is starred and the tooltip breaks it down — in the bag, listed for sale, unclaimed — because where they are is the actionable part. A buy order's unfilled remainder is coin rather than items and is not counted.
+
+Every item icon and name in the new panels opens the marketplace; checked across all four.
+
 ### Ability Books — BRead
 
 - **Every ability at once**, with the books its next level costs and what those books cost in coin. The Item Dictionary already answered this for the one ability whose book you happened to be looking at, which is the wrong shape for the question people actually ask — not "what does this cost" but "what should I buy", and you cannot answer the second by opening the first eighteen times.

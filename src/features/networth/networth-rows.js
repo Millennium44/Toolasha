@@ -22,6 +22,8 @@
  */
 
 import { registerRow } from '../../utils/overlay-rows.js';
+import { abilityBookPanel, abilityPlans } from '../abilities/ability-book-panel.js';
+import { cheapestNextLevel } from '../../utils/ability-books.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import networthFeature from './index.js';
@@ -93,17 +95,32 @@ registerRow({
 registerRow({
     key: 'skillBooks',
     name: 'Skill Books',
-    defaultSize: { width: 200, height: 30 },
+    defaultSize: { width: 230, height: 30 },
     render: (container) => {
         const books = networthFeature.currentData?.fixedAssets?.abilityBooks;
         const breakdown = books?.breakdown || [];
-        if (!breakdown.length) return blank(container);
 
+        // What the next ability level would cost, which is the one thing on this
+        // row you can act on — a pile of unread books is a figure, and "Smack
+        // for 4M" is a purchase
+        const best = cheapestNextLevel(abilityPlans(null));
         const count = breakdown.reduce((sum, entry) => sum + (entry.count || 0), 0);
+        if (!breakdown.length && !best) return blank(container);
+
         row(container, [
             { text: '📖' },
-            { text: `${formatLargeNumber(count)} books`, color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(books.totalCost || 0)), color: ROW_COLORS.violet, push: true },
+            breakdown.length ? { text: `${formatLargeNumber(count)} books`, color: ROW_COLORS.dim } : null,
+            breakdown.length
+                ? { text: formatLargeNumber(Math.round(books.totalCost || 0)), color: ROW_COLORS.violet }
+                : null,
+            best ? { text: best.name, color: ROW_COLORS.dim, push: true, ellipsis: true } : null,
+            best ? { text: formatLargeNumber(Math.round(best.costToNext)), color: ROW_COLORS.gold } : null,
         ]);
+        container.title = best
+            ? `${best.name} is the cheapest next ability level: ${best.booksToNext} books at ` +
+              `${Math.round(best.bookPrice).toLocaleString()} each.\nDouble-click for every equipped ability.`
+            : 'Unread ability books.\nDouble-click for every equipped ability.';
     },
+    // BRead's panel, behind the row that was already about books
+    onOpen: () => abilityBookPanel.toggle(),
 });
