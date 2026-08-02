@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A recorded fight, replayed as a test — and a second bug it found
+
+A real sixty-eight-second run confirms the attribution fix: the split is now 79.8% auto-attack, 11.0% penetrating strike, 9.3% puncture, against the 34%/23%/42% the same code produced before it. The recording is kept as a fixture and replayed on every test run, so this cannot quietly come back.
+
+- **Monsters were being named from a field the payload does not carry.** It looked for `combatMonsterHrid` or `monsterHrid`; a real battle carries `name` and `hrid`. The fallback happened to work, but only by accident — `name` is checked first now, with the hrid behind it.
+- **The replay script carried its monster map between battles.** The indices are reused every fight and mean different monsters each time — slot 0 is an Eye in one and an Eyes in the next — so a stale entry credits one monster's damage to the other. The tracker already rebuilt it; the script did not.
+- **Seven assertions on the real run**, including the one that matters: an ability cast twice may not be credited with a third of a run. Reverting either half of the attribution fix fails four of them.
+
 ### Fixed: every hit was credited to whatever was cast first
 
 The ability attached to a hit was read once, from `new_battle`, and never again. So the label was frozen at whatever the character happened to be preparing when the fight began, and the entire fight was credited to that one ability — which is why the per-ability split disagreed with DPs so badly.
