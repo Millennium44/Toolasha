@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Clicking a book fills the buy dialog in
+
+- **The count is already typed in when the marketplace's Buy Listing dialog opens.** The number of books is the point of the panel, and retyping it into the dialog is where it gets rounded to something convenient — 2,800 rather than 2,809 is one book short of a level, found out a fortnight later.
+- It follows the **target the row is aimed at**, not the next level, so setting a row to 150 and clicking its book buys the books for 150.
+- **One-shot rather than standing.** The dialog does not say which item it is for, so a quantity left armed would be filled into the next thing you buy. An ability that needs no books arms nothing rather than leaving the last count sitting there.
+- The observer that fills it in registers on the first click and stays. The dialog is reached by navigating to the marketplace and then clicking + New Buy Listing, which can be a while later and with the panel shut in between — an observer that lived only as long as the panel would miss exactly that.
+
 ### The Ability Books panel loses its labels, and tiles stop sitting an icon low
 
 - **The heading row and the ability-name column are gone.** They were what made the panel look cramped beside BRead: the labels were the widest thing in three columns — a third of the width spent writing "Books" above a column of book counts — and the name was ellipsed to `Pen…` at any width that left room for the figures. The book's icon is the name, as it is in BRead, with the ability named in its tooltip. Every cell keeps a tooltip, so nothing that was labelled is now unexplained.
