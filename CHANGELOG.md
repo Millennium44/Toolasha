@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Drop Luck breaks out per player after all
+
+Last change said a percentile could not be split between a party. That was wrong: it cannot be _divided_, but it can be computed again for each player, and doing so gives a genuinely different number for each of them.
+
+- **A row per player, each against their own distribution.** Everybody's drop gear differs, so everybody's distribution differs — the same haul is a remarkable run for one of them and an ordinary one for another. The party's percentile repeated under two names would have said nothing; these are separate figures.
+- **It is the better per-player reading**, and better than Over Expected's. Takings against expectation say how far off the mean somebody landed; they cannot say whether that is unusual. On a zone whose value rides on one rare, −20% is an entirely ordinary run, and on a zone of small steady drops it is a bad one. Only the distribution knows which.
+- **Computed when a session is analysed, not while drawing.** Inverting a distribution costs about ten milliseconds — nothing once a session, and a frozen overlay if it ran per player on a tile that redraws every second.
+- **Solo is still one row**, deliberately: the session percentile already _is_ that player's, since the model was built from their bonuses. A second one would be the same number arrived at twice.
+- **Luck: only you** joins the other tile options, now that there is more than one row for it to narrow.
+
 ### Only-numbers options for the luck tiles
 
 Three checkboxes beside the row list in the overlay's settings, where OPanel keeps the same ones — somebody arranging an overlay is already looking there and would not think to open a settings dialog for it.

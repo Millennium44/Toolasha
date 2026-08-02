@@ -129,6 +129,12 @@ function playerLuck({ player, actionDetail, monsterDetailMap, battles, difficult
         name: player.name,
         isCurrentPlayer: Boolean(player.isCurrentPlayer),
         bonuses,
+        // Handed back so a caller can place this player among the sessions they
+        // could have had, which needs the distribution rather than the mean.
+        // Inverting it costs about ten milliseconds, so it is emphatically not
+        // something to do while drawing a tile — the caller does it once, when a
+        // session is analysed.
+        session,
         actualValue,
         expectedValue,
         percent: percentOfExpected(actualValue, expectedValue),
