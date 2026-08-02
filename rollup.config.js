@@ -93,6 +93,10 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/combat-level.js')), 'Toolasha.Utils.combatLevel'],
     [normalize(join(__dirname, 'src/utils/opanel-config.js')), 'Toolasha.Utils.opanelConfig'],
     [normalize(join(__dirname, 'src/utils/skill-progress.js')), 'Toolasha.Utils.skillProgress'],
+    // A factory rather than a singleton, so sharing it changes nothing about the
+    // measurements — each caller still gets its own history. It is here because
+    // two bundles want it and a second copy is only weight.
+    [normalize(join(__dirname, 'src/utils/skill-history.js')), 'Toolasha.Utils.skillHistory'],
     [normalize(join(__dirname, 'src/utils/experience-parser.js')), 'Toolasha.Utils.experienceParser'],
     [normalize(join(__dirname, 'src/utils/ability-books.js')), 'Toolasha.Utils.abilityBooks'],
     [normalize(join(__dirname, 'src/utils/damage-attribution.js')), 'Toolasha.Utils.damageAttribution'],

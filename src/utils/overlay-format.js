@@ -173,13 +173,20 @@ export function drawLine(host, segments) {
 
 /**
  * Draw a tile as one line.
+ *
  * @param {HTMLElement} container - The row's container
  * @param {Segment[]} segments - The line
+ * @param {Object} [options] - Layout
+ * @param {boolean} [options.center] - Centre the line rather than filling the
+ *   tile. Right for a tile whose pieces belong together — an icon, a count and
+ *   a price read as one phrase, and pushing the price to the far edge of a
+ *   resized tile puts a gap in the middle of it.
  */
-export function row(container, segments) {
+export function row(container, segments, { center = false } = {}) {
     container.replaceChildren();
     container.style.flexDirection = '';
     drawLine(container, segments);
+    container.style.justifyContent = center ? 'center' : '';
 }
 
 /**

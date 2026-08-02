@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Ability Books panel is BRead's panel now
+
+- **BRead's columns, which are not the ones it had**: level, book, **experience still owed with the rate it is coming in at**, **time to get there**, books, cost, and a target level **per ability**. The old table had books and cost against a single shared target, which cannot answer the question anybody has — an ability at 41 and one at 70 are different purchases, and "how long" was not on the table at all.
+- **The rate is measured over the last ten minutes**, not from when you opened the panel, so it is sampled whether the panel is open or shut. A rate that only starts measuring when you look at it says nothing for ten minutes, every time you look.
+- **An ability nobody is training reads `—`, not `never`.** No rate is unmeasurable; infinity would be a claim about the future.
+- The header carries the same phrase the tile does — icon, books, cost — so the panel opens showing the figure you opened it for. **Reset** puts every ability back to its next level.
+- The shared "take everything to level" bar stays and now clears the per-ability targets when used, or "everything" would quietly mean "everything else". Its total counts each ability where **it** is aimed, which needs `aimedTotals` rather than a single column — `costToTarget` is null on the rows with no target and `costToNext` ignores the ones that have one.
+- **Not ported: MCS's range calculator.** It answers "books from level 1 to 100" at a hardcoded 50 and 500 experience per book. The target column does the same job against each book's real experience, so the two would disagree and the hardcoded one would be the wrong one.
+
+### The Skill Books tile is centred, and the Combat Log says why it is empty
+
+- The tile's icon, count and price are one phrase and now read as one, centred, rather than the price being pushed to the far edge of a resized tile with a gap in the middle.
+- **The Combat Log tile was blank because the feature behind it is off by default.** Blank reads as broken, so it now names the switch it wants — Settings › Combat › Scrolling Combat Text — and says "waiting for a fight" once it is on and nothing has happened yet.
+- It opens a panel too, with the last eighty events rather than the six a tile holds. Six is fine for a glance and no use for "what actually killed me".
+
 ### QCharm and MAna open, and the Skill Books tile is BRead's
 
 - **Charms and Mana were tiles with nothing behind them.** Both now open on double-click. **Charms** lists the whole field ranked by experience per coin — icon, name, bonus, price — with each one's **gain over the charm you are wearing**, which is the number to pay against; the charm's own bonus is what you already have plus what you would gain, and paying for the whole of it is how people overpay. **Mana** breaks the run down by ability with each one's share, because the tile's per-fight figure does not say which ability moves when the rotation changes, and carries a Reset.

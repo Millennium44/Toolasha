@@ -24,7 +24,7 @@
 import { registerRow } from '../../utils/overlay-rows.js';
 import { abilityBookPanel, abilityPlans } from '../abilities/ability-book-panel.js';
 import { cheapestNextLevel } from '../../utils/ability-books.js';
-import { formatLargeNumber } from '../../utils/formatters.js';
+import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import networthFeature from './index.js';
 
@@ -106,12 +106,18 @@ registerRow({
         const best = cheapestNextLevel(abilityPlans(null));
         if (!best) return blank(container);
 
-        row(container, [
-            { icon: best.itemHrid, size: 18 },
-            { text: String(best.booksToNext), color: ROW_COLORS.good, bold: true },
-            { text: 'books', color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(best.costToNext)), color: ROW_COLORS.gold, push: true },
-        ]);
+        row(
+            container,
+            [
+                { icon: best.itemHrid, size: 18 },
+                // Counted, not abbreviated: "2.8K books" is a number you cannot
+                // put in a buy order, and this is a figure you act on
+                { text: formatWithSeparator(best.booksToNext), color: ROW_COLORS.good, bold: true },
+                { text: 'books', color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(best.costToNext)), color: ROW_COLORS.gold },
+            ],
+            { center: true }
+        );
         container.title =
             `${best.name} is the cheapest next ability level: ${best.booksToNext} books at ` +
             `${Math.round(best.bookPrice).toLocaleString()} each.` +

@@ -44,6 +44,7 @@ import * as orderBook from '../utils/order-book.js';
 import * as combatLevel from '../utils/combat-level.js';
 import * as opanelConfig from '../utils/opanel-config.js';
 import * as skillProgress from '../utils/skill-progress.js';
+import * as skillHistory from '../utils/skill-history.js';
 import * as abilityBooks from '../utils/ability-books.js';
 import * as damageAttribution from '../utils/damage-attribution.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
@@ -114,6 +115,7 @@ toolashaRoot.Utils = {
     combatLevel,
     opanelConfig,
     skillProgress,
+    skillHistory,
     abilityBooks,
     damageAttribution,
     panelGeometry,
