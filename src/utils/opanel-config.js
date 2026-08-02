@@ -20,6 +20,20 @@
  * in the geometry store rather than in the layout, so they are returned beside
  * it rather than inside it.
  *
+ * ## Why the file also carries a Toolasha section
+ *
+ * OPanel names twenty rows. This overlay has half as many again — the watchlist,
+ * charms, mana, the combat log, equipment savings — and OPanel has no key for
+ * any of them. Written in OPanel's shape alone, a Toolasha layout comes back
+ * missing every one of those, and rows that arrive with no position get laid out
+ * wherever the packer puts them. Exporting from one character and importing on
+ * another produced a jumble for exactly this reason.
+ *
+ * So the file carries **both**: `config` in OPanel's shape, which MCS reads and
+ * this ignores when the other half is present, and `toolasha` carrying the
+ * layout whole. MCS ignores keys it does not know, so the file stays readable by
+ * both without either losing anything.
+ *
  * Kept pure and apart from the panel so the mapping is testable without a DOM,
  * which is where a rename table's mistakes actually live.
  */
@@ -54,6 +68,12 @@ export const ROW_KEY_MAP = {
     gwhizTTL: 'timeToLevel',
 };
 
+/**
+ * Bumped only when the section's shape changes in a way a reader must know
+ * about. It is written and never yet read, which is the point of writing it.
+ */
+const TOOLASHA_SECTION_VERSION = 1;
+
 /** Ours back to theirs, for writing a file MCS can read */
 const REVERSE_KEY_MAP = Object.fromEntries(Object.entries(ROW_KEY_MAP).map(([theirs, ours]) => [ours, theirs]));
 
@@ -83,6 +103,12 @@ export function isOPanelConfig(json) {
  */
 export function fromOPanelConfig(json) {
     if (!isOPanelConfig(json)) return null;
+
+    // Our own section wins when the file has one: it names every row rather than
+    // the twenty OPanel knows, and a layout half of whose rows arrive without a
+    // position is a layout the packer rearranges from scratch
+    const native = readToolashaSection(json);
+    if (native) return { settings: native, geometry: readGeometry(json), unknown: [] };
 
     const config = json.config;
     const unknown = [];
@@ -139,6 +165,50 @@ export function fromOPanelConfig(json) {
     if (typeof json.is_locked === 'boolean') settings.locked = json.is_locked;
 
     return { settings, geometry: readGeometry(json), unknown };
+}
+
+/**
+ * The layout as this overlay stores it, if the file carries one.
+ *
+ * Validated rather than trusted: a hand-edited or truncated file should be
+ * declined so the OPanel half is read instead, which is worse but not wrong.
+ *
+ * @param {Object} json - Parsed file
+ * @returns {Object|null} Settings, or null when there is no usable section
+ */
+function readToolashaSection(json) {
+    const saved = json?.toolasha?.settings;
+    if (!saved || !Array.isArray(saved.order) || !saved.order.length) return null;
+
+    const settings = {
+        order: saved.order.filter((key) => typeof key === 'string'),
+        visible: {},
+        positions: {},
+        sizes: {},
+        zoom: {},
+    };
+
+    for (const [key, on] of Object.entries(saved.visible || {})) settings.visible[key] = !!on;
+
+    for (const [key, value] of Object.entries(saved.positions || {})) {
+        if (Number.isFinite(value?.x) && Number.isFinite(value?.y))
+            settings.positions[key] = { x: value.x, y: value.y };
+    }
+
+    for (const [key, value] of Object.entries(saved.sizes || {})) {
+        if (value?.width > 0 && value?.height > 0) settings.sizes[key] = { width: value.width, height: value.height };
+    }
+
+    for (const [key, value] of Object.entries(saved.zoom || {})) {
+        if (Number.isFinite(value)) settings.zoom[key] = value;
+    }
+
+    if (typeof saved.snapToGrid === 'boolean') settings.snapToGrid = saved.snapToGrid;
+    if (typeof saved.locked === 'boolean') settings.locked = saved.locked;
+    if (typeof saved.separators === 'boolean') settings.separators = saved.separators;
+    if (Number.isFinite(saved.textScale)) settings.textScale = saved.textScale;
+
+    return settings;
 }
 
 /**
@@ -202,5 +272,34 @@ export function toOPanelConfig(settings, geometry = null) {
         position: geometry ? { top: geometry.top ?? 0, left: geometry.left ?? 0 } : undefined,
         size: geometry?.width ? { width: geometry.width, height: geometry.height } : undefined,
         zoom_levels: zoomLevels,
+        // The layout whole, beside the twenty rows OPanel has names for. MCS
+        // ignores keys it does not know, so this costs it nothing and is the
+        // difference between a Toolasha layout surviving a round trip and
+        // arriving with a third of its rows unplaced.
+        toolasha: { version: TOOLASHA_SECTION_VERSION, settings: nativeSection(settings) },
+    };
+}
+
+/**
+ * The layout as this overlay holds it, trimmed to what a file needs.
+ *
+ * Copied field by field rather than spread, so a future setting that has no
+ * business in a layout file — a cache, a timestamp — does not silently start
+ * travelling between characters.
+ *
+ * @param {Object} settings - The overlay's settings
+ * @returns {Object}
+ */
+function nativeSection(settings) {
+    return {
+        order: [...(settings?.order || [])],
+        visible: { ...(settings?.visible || {}) },
+        positions: { ...(settings?.positions || {}) },
+        sizes: { ...(settings?.sizes || {}) },
+        zoom: { ...(settings?.zoom || {}) },
+        snapToGrid: settings?.snapToGrid !== false,
+        locked: settings?.locked !== false,
+        separators: settings?.separators !== false,
+        textScale: settings?.textScale,
     };
 }
