@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Combat Level panel stopped after the session bar
+
+- `_busiest` was called and never written. It threw on the Target Selector, which is the section immediately after the session bar — so everything below it, the whole panel, was never drawn.
+- **A section that cannot be drawn no longer takes the rest of the panel with it.** Each one is built inside its own guard and says what went wrong in its place. Half a panel with no explanation looks like a missing feature rather than a bug, which is the wrong thing for it to look like — and it is why this shipped at all.
+
 ### GWhiz, part three: the bar was measuring the wrong thing
 
 - **The progress bar was 30% when it should have been 79%.** The obvious reading of "how far to the next combat level" is the fraction the displayed whole number throws away — `126.300` is 30% of the way to 127. That is wrong. Combat level is computed from **whole** skill levels, so it steps; feed it the part-finished levels instead and it becomes the continuous figure it really is. A build at `126.300` whose Melee is 81.7% of the way to its next level is 79% of the way to Combat 127, because most of the Melee level carrying the doubled term is already banked. That is the difference between "a third of the way" and "nearly there", and it is what GWhiz's bar has been showing all along.
