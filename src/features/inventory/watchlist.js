@@ -37,6 +37,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -87,16 +88,19 @@ const COLORS = {
  */
 const state = { entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' };
 
-storage
-    .getJSON(STORAGE_KEY, 'settings', null)
-    .then((saved) => {
-        if (!saved) return;
+// Kept asking until the database opens: it is opened after the libraries are
+// evaluated, so a read at module scope always returns the default and the list
+// looks like it forgot everything
+loadWhenReady(
+    STORAGE_KEY,
+    'settings',
+    (saved) => {
         Object.assign(state, saved);
-        // A list restored from storage has to reach the dot, which by then has
-        // already drawn nothing on every item
+        // The dot has by now drawn nothing on every item
         inventoryBadgeManager.invalidateCache?.();
-    })
-    .catch((error) => console.error('[Watchlist] Loading the saved list failed:', error));
+    },
+    'the watchlist'
+);
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
