@@ -52,6 +52,7 @@ import watchlist, { watchlistPanel } from '../features/inventory/watchlist.js';
 import autoAllButton from '../features/inventory/auto-all-button.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
+import equipmentSavings, { equipmentSavingsPanel } from '../features/inventory/equipment-savings-row.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -98,6 +99,8 @@ toolashaRoot.Market = {
     autoAllButton,
     inventoryCategoryTotals,
     customTabsFeature,
+    equipmentSavings,
+    equipmentSavingsPanel,
     marketplaceShortcuts,
     sellQueue,
     milkywayMarketLink,

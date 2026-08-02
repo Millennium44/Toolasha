@@ -217,6 +217,17 @@ function registerFeatures() {
             async: false,
         },
         {
+            // The list itself is always live — the overlay tile and the panel
+            // read it whatever this says. What the switch turns on is only the
+            // button in the game's own item menu.
+            key: 'equipmentSavings_menuButton',
+            name: 'Equipment Savings',
+            category: 'Inventory',
+            module: Market.equipmentSavings,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             key: 'inventorySort',
             name: 'Inventory Sort',
             category: 'Inventory',

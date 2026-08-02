@@ -531,6 +531,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
             },
+            equipmentSavings_menuButton: {
+                id: 'equipmentSavings_menuButton',
+                label: 'Equipment Savings: Add a Save for button to the item menu',
+                type: 'checkbox',
+                default: false,
+                help: 'Puts a Save for / Stop saving button beside Sell when you click a piece of equipment, which is how a target gets onto the Equipment Savings list. Off by default because it changes a menu you use for other things',
+            },
             combatText_floating: {
                 id: 'combatText_floating',
                 label: 'Floating Combat Text: Damage numbers over the units taking them',
