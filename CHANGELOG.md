@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Party Luck panel — LYuck's item table
+
+Behind the Drop Luck tile. The tile carries one figure and the panel behind it carried the run in coins; neither answers the question a long session actually raises, which is **which drop is the reason**. A run reads as unlucky because one rare did not come, and no total can say that.
+
+- **Session Statistics** — battles, party size, zone and difficulty tier. Every figure below is built from these, so they are visible rather than assumed.
+- **Revenue** — expected against actual per player and for the party, with each player's own drop-rate, rare-find and quantity bonuses in the tooltip, since those are why two people in the same fight are owed different amounts.
+- **A table per player** — item, quantity, value, what was owed, and how far off it landed, biggest haul first. A drop that was owed and never came is still a row: those are the interesting ones.
+- MCS draws these as separate draggable panes; they are sections of one panel here, because six panes that each need positioning is six panes that end up on top of each other.
+
+**A bug the panel test caught:** the loot map is keyed by the game's own slot key, not by item hrid, so matching it against the expectation on the raw key produced **two rows for every item that dropped** — one with the haul and one stuck at −100%. Resolved through each entry now.
+
 ### Luck and Over Expected are a line per player
 
 LYuck's answer to a question a single figure cannot answer. A party shares a zone and a battle count and **nothing else** — drop rate, rare find and drop quantity are each somebody's own gear, so five people fighting the same monsters are owed five different amounts, and one number for the party is an average over people who are not comparable.
@@ -44,6 +55,14 @@ It takes over the **Equipment Watch** tile, which is what that tile was named fo
 - **No income measured means no arrival time**, not "never" — a figure there would be a claim about the future. Likewise an unpriced target is unknown rather than free: costing it at nothing would report it as already bought, which is the most misleading thing this could say.
 - Targets are added with a **Save for** button on the game's item menu, off by default like the Watchlist's, since it changes a menu you use for other things. Equipment only — saving up for a cheese is not a plan.
 - Coins are read off the character rather than out of net worth, which is recalculated on a schedule: a savings bar has to move when you spend, not when a worker next runs.
+
+Rebuilt against EWatch's own pane rather than from its idea:
+
+- **The eye.** With several things on the list, one of them is the one you are actually saving for; clicking its eye puts it at the top of the panel with its own bar, as EWatch's header does.
+- **The purse bar** carries coins, what is tied up in market orders, and income per day — the three numbers that decide everything below.
+- **Market Value** decides whether coins in market orders count as money you have. Sell orders at what they will pay after tax, buy orders at what was already handed over, plus anything unclaimed.
+- **No Sell**, under its own name, for the trade-in switch.
+- **The percentage runs to five decimals**, which looks absurd until the target is a two-billion-coin spear — at which point the bar and a rounded figure both sit still for an entire evening and the fifth decimal is the only thing saying you are getting anywhere.
 
 ### Fixed: the Drop Luck panel said `[object Object]`
 

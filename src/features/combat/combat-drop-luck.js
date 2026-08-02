@@ -344,6 +344,9 @@ registerRow({
     key: 'luck',
     name: 'Drop Luck',
     defaultSize: { width: 200, height: 40 },
+    // LYuck behind the tile that carries its headline: a percentile cannot say
+    // which drop is the reason, and that is the question a long run raises
+    onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
     render: (container) => {
         const result = combatDropLuck.lastResult;
         if (!result) return blank(container);

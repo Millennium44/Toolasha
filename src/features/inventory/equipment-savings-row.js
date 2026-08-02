@@ -58,7 +58,7 @@ const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
  * `targets` is keyed by item hrid rather than by slot: you can be saving for two
  * rings, and a slot-keyed list would silently drop one.
  */
-const state = { targets: {}, noSell: false };
+const state = { targets: {}, noSell: false, marketValue: true, selected: null };
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
@@ -98,14 +98,31 @@ export function unwatchTarget(itemHrid) {
     persist();
 }
 
-/** Whether the old piece is being sold to pay for the new one */
-export function isKeepingOldGear() {
+/** Whether the old piece is being kept rather than sold to pay for the new one */
+export function isNoSell() {
     return state.noSell;
 }
 
-/** @param {boolean} keep - Keep the old piece rather than trading it in */
-export function setKeepOldGear(keep) {
-    state.noSell = Boolean(keep);
+/** @param {boolean} noSell - Keep the old piece rather than trading it in */
+export function setNoSell(noSell) {
+    state.noSell = Boolean(noSell);
+    persist();
+}
+
+/** Whether coins tied up in market orders count towards what you can spend */
+export function isCountingMarketOrders() {
+    return state.marketValue;
+}
+
+/** @param {boolean} counting - Count outstanding orders as spendable */
+export function setCountingMarketOrders(counting) {
+    state.marketValue = Boolean(counting);
+    persist();
+}
+
+/** @param {string|null} itemHrid - Which target the header watches */
+export function selectTarget(itemHrid) {
+    state.selected = state.selected === itemHrid ? null : itemHrid;
     persist();
 }
 
@@ -113,6 +130,8 @@ export function setKeepOldGear(keep) {
 export function resetEquipmentSavings() {
     state.targets = {};
     state.noSell = false;
+    state.marketValue = true;
+    state.selected = null;
 }
 
 /**
@@ -183,12 +202,36 @@ function wornRivalOf(itemHrid) {
 }
 
 /**
+ * What is tied up in market orders.
+ *
+ * Sell orders are counted at what they will pay after tax and buy orders at the
+ * coins already handed over, both of which are money you have — just not money
+ * you can spend this second. Whether it counts is the switch.
+ *
+ * @returns {number}
+ */
+export function marketOrderValue() {
+    const totals = window.Toolasha?.Market?.marketOrderTotals?.calculateTotals?.();
+    if (!totals) return 0;
+    return (totals.sellOrders || 0) + (totals.buyOrders || 0) + (totals.unclaimed || 0);
+}
+
+/**
+ * Coins a purchase can actually draw on.
+ *
+ * @returns {number}
+ */
+export function spendable() {
+    return coinsHeld() + (state.marketValue ? marketOrderValue() : 0);
+}
+
+/**
  * Every target, costed against what you are wearing and what you have.
  *
  * @returns {Array<Object>} `{itemHrid, name, enhancementLevel, ask, cost, ...}`
  */
 export function watchedTargets() {
-    const coins = coinsHeld();
+    const coins = spendable();
     const perDay = incomePerDay();
 
     return Object.entries(state.targets).map(([itemHrid, target]) => {
@@ -218,7 +261,7 @@ export function watchedTargets() {
 export function everything() {
     const targets = watchedTargets();
     const { cost, unpriced } = totalSavings(targets);
-    const progress = savingsProgress(targets.length ? cost : null, coinsHeld());
+    const progress = savingsProgress(targets.length ? cost : null, spendable());
 
     return {
         targets,
@@ -227,6 +270,80 @@ export function everything() {
         ...progress,
         seconds: timeToAffordSeconds(progress.needed, incomePerDay()),
     };
+}
+
+/**
+ * A switch that reads as on or off rather than as a checkbox.
+ *
+ * EWatch's own shape: the state is the button, in the colour of what it means,
+ * because these two change what every figure below them says and a tickbox is
+ * easy to leave in the wrong position without noticing.
+ *
+ * @param {string} label - What it controls
+ * @param {boolean} on - Its state
+ * @param {Function} onChange - `(next) => void`
+ * @param {string} title - What it does
+ * @returns {HTMLElement}
+ */
+function toggle(label, on, onChange, title) {
+    const button = document.createElement('button');
+    button.textContent = `${label} ${on ? 'On' : 'Off'}`;
+    button.dataset.toggle = label;
+    Object.assign(button.style, {
+        background: on ? 'rgba(74, 222, 128, 0.18)' : 'rgba(248, 113, 113, 0.18)',
+        border: `1px solid ${on ? '#4ade80' : '#f87171'}`,
+        borderRadius: '3px',
+        color: on ? '#4ade80' : '#f87171',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 9px',
+    });
+    button.title = title;
+    button.addEventListener('click', () => onChange(!on));
+    return button;
+}
+
+/**
+ * The one target the header watches, said large.
+ *
+ * @param {Object} target - From `watchedTargets`
+ * @returns {HTMLElement}
+ */
+function headline(target) {
+    const card = document.createElement('div');
+    Object.assign(card.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+
+    const line = document.createElement('div');
+    Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px' });
+
+    const icon = itemIcon(target.itemHrid, 20);
+    linkToMarketplace(icon, target.itemHrid, navigateToMarketplace);
+
+    const name = document.createElement('span');
+    name.textContent = target.enhancementLevel ? `${target.name} +${target.enhancementLevel}` : target.name;
+    Object.assign(name.style, {
+        color: ROW_COLORS.gold,
+        fontWeight: 'bold',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    });
+
+    const cost = document.createElement('span');
+    cost.textContent = target.cost === null ? 'no price' : formatKMB(target.cost);
+    cost.style.color = target.cost === null ? ROW_COLORS.bad : ROW_COLORS.neutral;
+
+    const eta = document.createElement('span');
+    eta.textContent = target.affordable ? 'Affordable' : target.seconds === null ? '--' : shortDuration(target.seconds);
+    Object.assign(eta.style, {
+        color: target.affordable ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.6)',
+        marginLeft: 'auto',
+        fontSize: '11px',
+    });
+
+    line.append(icon, name, cost, eta);
+    card.append(line, progressBar(target.fraction));
+    return card;
 }
 
 /**
@@ -277,6 +394,26 @@ function targetCard(target) {
     const heading = document.createElement('div');
     Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px' });
 
+    // EWatch's eye: which of several targets the header carries. Open on the one
+    // being watched, closed on the rest.
+    const watching = state.selected === target.itemHrid;
+    const eye = document.createElement('button');
+    eye.textContent = watching ? '\u{1F441}' : '\u{1F576}';
+    eye.dataset.watchEye = target.itemHrid;
+    Object.assign(eye.style, {
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '12px',
+        padding: '0',
+        opacity: watching ? '1' : '0.45',
+    });
+    eye.title = watching ? 'Shown at the top of the panel.' : 'Show this one at the top of the panel.';
+    eye.addEventListener('click', () => {
+        selectTarget(target.itemHrid);
+        equipmentSavingsPanel.render();
+    });
+
     const icon = itemIcon(target.itemHrid, 22);
     linkToMarketplace(icon, target.itemHrid, navigateToMarketplace);
 
@@ -312,7 +449,7 @@ function targetCard(target) {
         equipmentSavingsPanel.render();
     });
 
-    heading.append(icon, name, cost, remove);
+    heading.append(eye, icon, name, cost, remove);
     card.appendChild(heading);
 
     const bar = document.createElement('div');
@@ -331,7 +468,30 @@ function targetCard(target) {
     bar.appendChild(status);
 
     card.appendChild(bar);
+    card.appendChild(percentLine(target));
     return card;
+}
+
+/**
+ * The bar's own figure, to five places.
+ *
+ * Five looks absurd until the target is a two-billion-coin spear, at which point
+ * a bar and a rounded percentage both sit still for a whole evening and the only
+ * thing that says you are getting anywhere is the fifth decimal. EWatch shows
+ * five for exactly this reason.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function percentLine(target) {
+    const line = document.createElement('div');
+    line.textContent = target.fraction === null ? '' : `${(target.fraction * 100).toFixed(5)}%`;
+    Object.assign(line.style, {
+        color: target.affordable ? ROW_COLORS.good : ROW_COLORS.accent,
+        fontSize: '10px',
+        textAlign: 'right',
+    });
+    return line;
 }
 
 /**
@@ -360,17 +520,31 @@ export const equipmentSavingsPanel = createPanel({
     draw: (body) => {
         const plan = everything();
 
+        // The one the header watches, as EWatch's eye picks it: with several
+        // things on the list the one you are actually saving for is the only
+        // figure you want at a glance
+        const watched = plan.targets.find((target) => target.itemHrid === state.selected) || plan.targets[0];
+        if (watched) body.appendChild(headline(watched));
+
         const purse = panelCard(body, undefined, '#6495ed');
-        Object.assign(purse.style, { flexDirection: 'row', alignItems: 'center', gap: '10px' });
+        Object.assign(purse.style, { flexDirection: 'row', alignItems: 'center', gap: '10px', flexWrap: 'wrap' });
 
         const coins = document.createElement('span');
-        coins.textContent = `🪙 ${formatWithSeparator(Math.round(coinsHeld()))}`;
-        coins.style.color = ROW_COLORS.gold;
-        coins.style.fontWeight = 'bold';
+        coins.textContent = `\u{1FA99} ${formatWithSeparator(Math.round(coinsHeld()))}`;
+        Object.assign(coins.style, { color: ROW_COLORS.gold, fontWeight: 'bold' });
+        coins.title = 'Coins in hand.';
+
+        const orders = marketOrderValue();
+        const listed = document.createElement('span');
+        listed.textContent = `\u{1F4E6} ${formatKMB(orders)}`;
+        listed.style.color = orders > 0 ? ROW_COLORS.good : 'rgba(232, 236, 245, 0.5)';
+        listed.title =
+            'Coins tied up in market orders — sell orders at what they will pay after tax, buy orders at what ' +
+            'was handed over, plus anything unclaimed.';
 
         const perDay = incomePerDay();
         const income = document.createElement('span');
-        income.textContent = perDay === null ? 'no income measured' : `${formatKMB(perDay)}/day`;
+        income.textContent = perDay === null ? 'No income data' : `${formatKMB(perDay)}/day`;
         income.style.color = perDay === null ? 'rgba(232, 236, 245, 0.5)' : ROW_COLORS.good;
         income.style.flex = '1';
         income.title =
@@ -378,20 +552,37 @@ export const equipmentSavingsPanel = createPanel({
                 ? 'Combat has not run long enough to measure an income, so no arrival time can be given.'
                 : 'Daily profit from the combat session, which is what the countdowns divide by.';
 
-        const keep = document.createElement('label');
-        Object.assign(keep.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.checked = state.noSell;
-        box.dataset.keepOld = 'true';
-        box.addEventListener('change', () => {
-            setKeepOldGear(box.checked);
-            equipmentSavingsPanel.render();
-        });
-        keep.append(box, document.createTextNode('Keep old gear'));
-        keep.title = 'Pay the full asking price rather than putting the piece it replaces towards it.';
+        purse.append(coins, listed, income);
 
-        purse.append(coins, income, keep);
+        // EWatch's two switches, each changing what the figures below mean
+        const switches = panelCard(body, undefined, '#6495ed');
+        Object.assign(switches.style, { flexDirection: 'row', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
+
+        const explain = document.createElement('span');
+        explain.textContent = 'Include market orders';
+        Object.assign(explain.style, { color: 'rgba(232, 236, 245, 0.6)', flex: '1', fontSize: '11px' });
+
+        switches.append(
+            explain,
+            toggle(
+                'Market Value',
+                state.marketValue,
+                (on) => {
+                    setCountingMarketOrders(on);
+                    equipmentSavingsPanel.render();
+                },
+                'Count coins tied up in market orders as money you have. Off, only coins in hand count.'
+            ),
+            toggle(
+                'No Sell',
+                state.noSell,
+                (on) => {
+                    setNoSell(on);
+                    equipmentSavingsPanel.render();
+                },
+                'Pay the full asking price rather than putting the piece it replaces towards it.'
+            )
+        );
 
         if (!plan.targets.length) {
             body.appendChild(panelNote('Nothing being saved for.'));
@@ -421,6 +612,7 @@ export const equipmentSavingsPanel = createPanel({
         });
         line.appendChild(status);
         all.appendChild(line);
+        all.appendChild(percentLine(plan));
         all.appendChild(
             panelNote(
                 `${formatKMB(plan.cost)} for ${plan.targets.length} pieces` +
