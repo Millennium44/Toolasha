@@ -117,6 +117,10 @@ const combatFeatureExternals = new Map([
         normalize(join(__dirname, 'src/features/combat-stats/combat-stats-calculator.js')),
         'Toolasha.Combat.combatStatsCalculator',
     ],
+    // Both are stateful singletons fed by the websocket, so a second copy in
+    // another bundle would sit there receiving nothing and report zeroes
+    [normalize(join(__dirname, 'src/features/combat/combat-dps.js')), 'Toolasha.Combat.combatDPS'],
+    [normalize(join(__dirname, 'src/features/combat/combat-drop-luck.js')), 'Toolasha.Combat.combatDropLuck'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

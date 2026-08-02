@@ -402,6 +402,7 @@ registerRow({
             `${result.battles} battles were owed ${Math.round(result.expected).toLocaleString()} coins on average.\n` +
             'Drops with no market price are left out of both sides.';
     },
+    onOpen: () => window.Toolasha?.UI?.dropLuckPanel?.toggle(),
 });
 
 export default combatDropLuck;

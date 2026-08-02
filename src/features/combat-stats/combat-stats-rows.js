@@ -102,6 +102,7 @@ registerRow({
             },
         ]);
     },
+    onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
 });
 
 registerRow({
@@ -142,6 +143,7 @@ registerRow({
             },
         ]);
     },
+    onOpen: () => window.Toolasha?.UI?.deathsPanel?.toggle(),
 });
 
 /**
@@ -199,6 +201,7 @@ registerRow({
             { text: `${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`, color: ROW_COLORS.dim, push: true },
         ]);
     },
+    onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
 });
 
 /**
