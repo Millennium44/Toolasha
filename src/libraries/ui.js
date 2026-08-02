@@ -97,6 +97,8 @@ import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 import pformancePanel from '../features/dev/pformance-panel.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
+// Side-effect import too: registers the Ability Books overlay row
+import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -169,6 +171,7 @@ toolashaRoot.UI = {
     pformancePanel,
     consumablesPanel,
     combatLevelPanel,
+    abilityBookPanel,
 };
 
 console.log('[Toolasha] UI library loaded');

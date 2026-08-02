@@ -12,6 +12,7 @@ import dom from '../../utils/dom.js';
 import domObserver from '../../core/dom-observer.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { booksToLevel } from '../../utils/ability-books.js';
 
 /**
  * AbilityBookCalculator class handles ability book calculations in Item Dictionary
@@ -164,25 +165,18 @@ class AbilityBookCalculator {
      * @returns {number} Number of books needed
      */
     calculateBooksNeeded(currentLevel, currentXp, targetLevel, xpPerBook) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) return 0;
-
-        const levelXpTable = gameData.levelExperienceTable;
-        if (!levelXpTable) return 0;
-
-        // Calculate XP needed to reach target level
-        const targetXp = levelXpTable[targetLevel];
-        const xpNeeded = targetXp - currentXp;
-
-        // Calculate books needed
-        let booksNeeded = Math.ceil(xpNeeded / xpPerBook);
-
-        // If starting from level 0, need +1 book to learn the ability initially
-        if (currentLevel === 0) {
-            booksNeeded += 1;
-        }
-
-        return booksNeeded;
+        // The same arithmetic the Watchlist-era book panel uses, in one place:
+        // two copies of "and one more book if the ability is unlearned" is two
+        // places for it to go missing
+        const table = dataManager.getInitClientData()?.levelExperienceTable;
+        const books = booksToLevel({
+            level: currentLevel,
+            experience: currentXp,
+            targetLevel,
+            perBookExperience: xpPerBook,
+            table,
+        });
+        return books ?? 0;
     }
 
     /**

@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Ability Books — BRead
+
+- **Every ability at once**, with the books its next level costs and what those books cost in coin. The Item Dictionary already answered this for the one ability whose book you happened to be looking at, which is the wrong shape for the question people actually ask — not "what does this cost" but "what should I buy", and you cannot answer the second by opening the first eighteen times.
+- **Sorted by cost, because cheapest is not nearest.** Books differ in the experience they grant and by orders of magnitude in price, so the ability two hundred experience from a level routinely costs more than one four thousand away. An **Ability Books** overlay row carries the winner; double-click opens the panel.
+- **An unpriced book is unknown, not free.** Treating a missing price as zero would make whatever nobody is selling win every time, which is exactly backwards. Those rows say `no price`, sort last, and are excluded from the cheapest.
+- **One target level for everything**, with the total books and coin to get every ability there — and a count of how many it could not price, so a lower bound is not read as a total.
+- **The maths now lives in one place.** `utils/ability-books.js` holds it, and the dictionary calculator was rewired onto it. Both need the rule that an unlearned ability costs one book more — the book teaches the ability rather than levelling it — and two copies of that rule is two places for it to go missing.
+
+20 tests on the arithmetic and 13 that build the panel. The panel ships in the UI bundle rather than the combat one: put beside the dictionary calculator it took the combat bundle to 2,093,537 bytes, 3.6 KB under the ceiling.
+
 ### A Track button in the item menu, off by default
 
 - Clicking an inventory item now offers **Track** / **Untrack** beside Sell, so an item goes on the Watchlist where you noticed it rather than by opening a panel and finding it again. It says which of the two it will do, so the menu reports the item's state as well as changing it.
