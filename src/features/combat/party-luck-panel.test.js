@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ players: [], actionDetail: null, monsters: {}, context: null }));
+const game = vi.hoisted(() => ({ players: [], actionDetail: null, monsters: {}, context: null, luck: null }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -28,7 +28,12 @@ vi.mock('./combat-drop-luck.js', () => ({
         get context() {
             return game.context;
         },
+        get lastResult() {
+            return game.luck;
+        },
     },
+    formatOrdinal: (percentile) => `${Math.round(percentile * 100)}th`,
+    describeLuck: (percentile) => ({ text: `${Math.round(percentile * 100)}th percentile`, tone: 'unlucky' }),
 }));
 vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => ({ players: game.players }) },
@@ -42,6 +47,7 @@ const { partyLuck } = await import('./party-luck.js');
 
 beforeEach(() => {
     game.context = { actionHrid: '/actions/zone', difficultyTier: 2, battles: 100 };
+    game.luck = { percentile: 0.15, income: 4_000_000, expected: 3_000_000, battles: 100, hasBonuses: true };
     game.monsters = {
         '/monsters/grunt': { dropTable: [{ itemHrid: '/items/a', dropRate: 0.1, minCount: 1, maxCount: 1 }] },
     };
@@ -87,6 +93,28 @@ describe('the panel renders', () => {
         expect(text()).toContain('Revenue');
         expect(text()).toContain('Geared');
         expect(text()).toContain('Bare');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('it carries the verdict the Drop Luck panel used to', () => {
+        // That panel is gone: a percentile in one panel and the item table that
+        // explains it in another meant the answer was always in the half you
+        // did not open
+        partyLuckPanel.show();
+
+        expect(text()).toContain('Verdict');
+        expect(text()).toContain('15th percentile');
+        // A percentile alone cannot tell a fortune from a rounding error
+        expect(text()).toContain('+1.0M');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('with no reading yet the rest of the panel still draws', () => {
+        game.luck = null;
+        partyLuckPanel.show();
+
+        expect(text()).not.toContain('Verdict');
+        expect(text()).toContain('Session Statistics');
         expect(text()).not.toContain(FAILED);
     });
 

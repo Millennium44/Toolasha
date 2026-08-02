@@ -445,7 +445,11 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
     const calculator = window.Toolasha?.Utils?.enhancementCalculator?.calculateEnhancement;
-    const params = window.Toolasha?.Utils?.enhancementConfig?.getEnhancingParams?.();
+    // The character's own gear, skill and teas — not `getEnhancingParams`,
+    // which hands back the simulator's manual settings unless auto-detect
+    // happens to be on, and those default to a fully kitted enhancer. Costing
+    // your cape at somebody else's bench quotes a run you cannot make.
+    const params = window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.();
     const details = dataManager.getItemDetails?.(itemHrid);
     if (!calculator || !params || !details) return null;
 
@@ -958,7 +962,9 @@ function costPreview(itemHrid, enhancementLevel) {
     }
 
     if (enhancing) {
-        wrap.appendChild(priceLine(`Enhance +${fromLevel} → +${enhancementLevel}`, 'expected cost', ROW_COLORS.gold));
+        wrap.appendChild(
+            priceLine(`Enhance +${fromLevel} → +${enhancementLevel}`, 'Enhancement Cost', ROW_COLORS.gold)
+        );
     } else {
         wrap.appendChild(
             priceLine(crafted ? 'Materials:' : 'Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold)
@@ -1274,7 +1280,7 @@ function targetCard(target) {
         card.appendChild(
             priceLine(
                 target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
-                'expected cost at the anvil',
+                'Enhancement Cost',
                 'rgba(232, 236, 245, 0.55)'
             )
         );
