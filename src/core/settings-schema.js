@@ -524,6 +524,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add everything it contains. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row',
             },
+            watchlist_menuButton: {
+                id: 'watchlist_menuButton',
+                label: 'Watchlist: Add a Track button to the item menu in your inventory',
+                type: 'checkbox',
+                default: false,
+                help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',

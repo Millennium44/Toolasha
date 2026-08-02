@@ -12,6 +12,9 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ data: {}, inventory: [], prices: {} }));
+const settings = vi.hoisted(() => ({}));
+const listeners = vi.hoisted(() => ({}));
+const observed = vi.hoisted(() => []);
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -32,8 +35,44 @@ vi.mock('./inventory-badge-manager.js', () => ({
     default: { registerProvider: () => {}, unregisterProvider: () => {}, invalidateCache: () => {} },
 }));
 
-const { watchlistPanel, watchlistRows, watchItem, isWatched, watchlistEntries, clearWatchlist } =
-    await import('./watchlist.js');
+vi.mock('../../core/config.js', () => ({
+    default: {
+        Z_FLOATING_PANEL: 1100,
+        getSetting: (key) => settings[key],
+        setSetting: (key, value) => {
+            settings[key] = value;
+            for (const cb of listeners[key] || []) cb(value);
+        },
+        onSettingChange: (key, cb) => {
+            listeners[key] = listeners[key] || [];
+            listeners[key].push(cb);
+        },
+    },
+}));
+
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, className, callback) => {
+            observed.push({ name, className, callback });
+            return () => {
+                observed.splice(
+                    observed.findIndex((entry) => entry.name === name),
+                    1
+                );
+            };
+        },
+    },
+}));
+
+const {
+    watchlistPanel,
+    watchlistRows,
+    watchItem,
+    isWatched,
+    watchlistEntries,
+    clearWatchlist,
+    default: watchlist,
+} = await import('./watchlist.js');
 
 const itemDetailMap = {
     '/items/coin': { name: 'Coin' },
@@ -74,7 +113,35 @@ afterEach(() => {
     watchlistPanel.hide();
     clearWatchlist();
     watchlistPanel.collapsed = { zones: true, chests: true };
+    watchlist.cleanup();
+    observed.length = 0;
+    for (const key of Object.keys(settings)) delete settings[key];
+    for (const key of Object.keys(listeners)) delete listeners[key];
 });
+
+/** Build the game's item menu for one item */
+function itemMenu(name) {
+    const menu = document.createElement('div');
+    menu.className = 'Item_actionMenu__abc';
+    const label = document.createElement('div');
+    label.className = 'Item_name__xyz';
+    label.textContent = name;
+    const sell = document.createElement('button');
+    sell.className = 'Button_button__ABC';
+    sell.textContent = 'Sell';
+    menu.append(label, sell);
+    document.body.appendChild(menu);
+    return menu;
+}
+
+/** Fire the observer as the game opening a menu would */
+function openMenu(name) {
+    const menu = itemMenu(name);
+    for (const entry of observed) entry.callback(menu);
+    return menu;
+}
+
+const trackButton = (menu) => menu.querySelector('.toolasha-watchlist-track');
 
 const text = () => watchlistPanel.panel.textContent;
 const FAILED = 'could not be drawn';
@@ -240,5 +307,97 @@ describe('the header', () => {
 
         // Cheese is held, the hat is not
         expect(watchlistPanel.headerCount.textContent).toBe('1 / 2');
+    });
+});
+
+describe('the Track button in the item menu', () => {
+    test('is off by default, so the game\u2019s menu is left alone', () => {
+        // It sits next to Sell, and a misclick there is a sale
+        watchlist.initialize();
+        expect(observed).toHaveLength(0);
+        expect(trackButton(openMenu('Cheese'))).toBeNull();
+    });
+
+    test('turning the setting on attaches it without a reload', () => {
+        watchlist.initialize();
+        settings.watchlist_menuButton = true;
+        for (const cb of listeners.watchlist_menuButton || []) cb(true);
+
+        expect(trackButton(openMenu('Cheese'))).not.toBeNull();
+    });
+
+    test('it tracks and untracks, and says which it will do', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+
+        const menu = openMenu('Cheese');
+        const button = trackButton(menu);
+        expect(button.textContent).toBe('Track');
+
+        button.click();
+        expect(isWatched('/items/cheese')).toBe(true);
+        expect(button.textContent).toBe('Untrack');
+
+        button.click();
+        expect(isWatched('/items/cheese')).toBe(false);
+        expect(button.textContent).toBe('Track');
+    });
+
+    test('an item already tracked opens saying Untrack', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+        watchItem('/items/cheese');
+
+        expect(trackButton(openMenu('Cheese')).textContent).toBe('Untrack');
+    });
+
+    test('it borrows the game\u2019s own button styling', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+
+        expect(trackButton(openMenu('Cheese')).className).toContain('Button_button__ABC');
+    });
+
+    test('a menu it cannot identify gets no button rather than a broken one', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+
+        expect(trackButton(openMenu('Not A Real Item'))).toBeNull();
+    });
+
+    test('turning the setting off takes the buttons away again', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+        const menu = openMenu('Cheese');
+        expect(trackButton(menu)).not.toBeNull();
+
+        settings.watchlist_menuButton = false;
+        for (const cb of listeners.watchlist_menuButton || []) cb(false);
+
+        expect(trackButton(menu)).toBeNull();
+        expect(observed).toHaveLength(0);
+    });
+
+    test('the panel\u2019s switch is the same setting, not a copy of it', () => {
+        // Two switches that disagree is worse than one switch in the wrong place
+        watchlist.initialize();
+        watchlistPanel.show();
+
+        const box = watchlistPanel.panel.querySelector('[data-menu-button]');
+        expect(box.checked).toBe(false);
+
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+
+        expect(settings.watchlist_menuButton).toBe(true);
+        expect(trackButton(openMenu('Cheese'))).not.toBeNull();
+    });
+
+    test('the panel\u2019s switch shows what the settings page did', () => {
+        settings.watchlist_menuButton = true;
+        watchlist.initialize();
+        watchlistPanel.show();
+
+        expect(watchlistPanel.panel.querySelector('[data-menu-button]').checked).toBe(true);
     });
 });

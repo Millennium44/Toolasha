@@ -56,6 +56,7 @@ import {
 import { combatZones, zoneDrops, openableItems, openableDrops } from '../../utils/drop-sources.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
+import domObserver from '../../core/dom-observer.js';
 
 const PANEL_ID = 'toolasha-watchlist-panel';
 const GEOMETRY_KEY = 'watchlistPanel';
@@ -63,6 +64,8 @@ const STORAGE_KEY = 'watchlist';
 const DEFAULT_PANEL = { width: 560, height: 640 };
 const REFRESH_MS = 5000;
 const DOT_CLASS = 'toolasha-watchlist-dot';
+const MENU_BUTTON_CLASS = 'toolasha-watchlist-track';
+const MENU_BUTTON_SETTING = 'watchlist_menuButton';
 
 const COLORS = {
     background: 'rgba(14, 16, 22, 0.97)',
@@ -388,6 +391,7 @@ class WatchlistPanel {
             () => this._sets('zones', 'Zones', combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
             () => this._sets('chests', 'Chests', openableItems(dataManager.getInitClientData?.())),
             () => this._table(rows),
+            () => this._options(),
         ]) {
             // One section that cannot be drawn must not take the others with it
             try {
@@ -399,6 +403,38 @@ class WatchlistPanel {
                 this.bodyEl.appendChild(failed);
             }
         }
+    }
+
+    /**
+     * The switches that belong to this panel rather than to a set.
+     *
+     * The Track button is here as well as on the settings page because this is
+     * where you are when you decide you want it — and it is the same setting,
+     * not a copy, so the two can never disagree.
+     *
+     * @returns {HTMLElement}
+     */
+    _options() {
+        const card = this._card();
+
+        const label = document.createElement('label');
+        Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' });
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.dataset.menuButton = 'true';
+        box.checked = Boolean(config.getSetting(MENU_BUTTON_SETTING));
+        box.addEventListener('change', () => config.setSetting(MENU_BUTTON_SETTING, box.checked));
+
+        const text = document.createElement('span');
+        text.textContent = 'Track button in the item menu';
+        text.title =
+            'Adds Track / Untrack beside Sell when you click an inventory item. Off by default, because it ' +
+            'changes a menu you open for other reasons.';
+
+        label.append(box, text);
+        card.appendChild(label);
+        return card;
     }
 
     /**
@@ -740,14 +776,87 @@ function markTrackedItem(itemElem) {
     itemElem.appendChild(dot);
 }
 
+/**
+ * The Track button in the game's own item menu.
+ *
+ * Off by default, and deliberately: this adds a button to a menu you open for
+ * other reasons, next to Sell. Somebody who never uses the watchlist should not
+ * find their item menu rearranged by a feature they did not ask for, and a
+ * misclick there is a sale.
+ *
+ * The switch lives in one place — the setting — and both the settings page and
+ * the panel's own checkbox write to it. `onSettingChange` does the rest, so
+ * flipping it from either surface attaches or detaches the observer immediately
+ * rather than at the next reload.
+ */
+let detachMenuObserver = null;
+
+/**
+ * Put a Track button on one item menu.
+ * @param {HTMLElement} actionMenu - The game's `Item_actionMenu` popup
+ */
+function injectTrackButton(actionMenu) {
+    if (actionMenu.querySelector(`.${MENU_BUTTON_CLASS}`)) return;
+
+    const itemName = actionMenu.querySelector('[class*="Item_name"]')?.textContent?.trim();
+    const hrid = itemName && hridForName(itemName);
+    if (!hrid) return;
+
+    const button = document.createElement('button');
+    // The game's own button classes, taken from a button already in this menu,
+    // so it does not look like something bolted on
+    const sibling = actionMenu.querySelector('button');
+    if (sibling) button.className = sibling.className;
+    button.classList.add(MENU_BUTTON_CLASS);
+
+    const label = () => {
+        button.textContent = isWatched(hrid) ? 'Untrack' : 'Track';
+    };
+    label();
+
+    button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (isWatched(hrid)) unwatchItem(hrid);
+        else watchItem(hrid, itemName);
+
+        label();
+        inventoryBadgeManager.invalidateCache?.();
+        // The panel may be open behind the menu, and a list that does not
+        // change when you press Track looks like a button that does nothing
+        if (watchlistPanel.panel) watchlistPanel._render();
+    });
+
+    actionMenu.appendChild(button);
+}
+
+/** Start watching for item menus, if the setting says to */
+function applyMenuButtonSetting() {
+    const wanted = config.getSetting(MENU_BUTTON_SETTING);
+
+    if (wanted && !detachMenuObserver) {
+        detachMenuObserver = domObserver.onClass('WatchlistTrackButton', 'Item_actionMenu', injectTrackButton);
+    } else if (!wanted && detachMenuObserver) {
+        detachMenuObserver();
+        detachMenuObserver = null;
+        document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
+    }
+}
+
 export default {
     name: 'Watchlist',
     initialize: () => {
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
+        applyMenuButtonSetting();
+        config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
     },
     cleanup: () => {
         inventoryBadgeManager.unregisterProvider('watchlist-dot');
         document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
+        detachMenuObserver?.();
+        detachMenuObserver = null;
+        document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
         watchlistPanel.hide();
     },
 };
