@@ -8,10 +8,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Fixed: the blue box around Queue and Start
 
-That box was mine, and it was two mistakes stacked.
+That box was mine, and the first attempt at removing it missed — it styled the action panel's own scrollbar, and the bars stayed the game's blue, because the element that overflows is not always the one that was made to scroll.
 
-- **A scrollbar was being paid for with another scrollbar.** Making the panel a vertical scroller makes it a horizontal one too, and the vertical bar takes ten pixels of a width everything inside had already been sized against. The few pixels of overflow that leaves produced a full-width horizontal scrollbar sitting directly under the pinned buttons — which is not a divider and read as one. Horizontal overflow is hidden now, and the horizontal bar is switched off outright.
-- **The divider was tinted, and so was the scrollbar.** A blue hairline above the buttons and a blue bar below them frame the buttons; the same two lines in grey read as what they are, the edge of the content sliding underneath. Both are neutral now, and the drop shadow that thickened the top edge is gone.
+- **Every scrollbar in the modal is styled, not just the panel's.** Rather than work out which ancestor owns a given bar, anything scrollable inside an action modal is now grey. A blue line above the buttons and a blue line below them is a frame around the buttons, which is not what a scrollbar is for.
+- **Horizontal bars are removed outright.** Making an element a vertical scroller makes it a horizontal one too, and the vertical bar costs ten pixels of a width everything inside was already sized against — so a few pixels of overflow appear and draw a full-width bar directly under the pinned buttons. The content is not meaningfully wider than the panel; the bar is an artefact of the scrolling, so it is switched off.
+- **The divider is neutral and the drop shadow is gone**, so the row reads as the edge of the content sliding underneath rather than as a boxed-off group.
 
 ### The action panel fits on the screen again
 

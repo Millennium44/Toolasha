@@ -73,23 +73,51 @@ const CSS = `
         scrollbar-width: thin;
     }
 
-    /* Wide enough to grab. The game's default is a two-pixel sliver, which is
-       tolerable on a panel with nothing to scroll and not on this one. Grey
-       rather than tinted — a coloured scrollbar beside a coloured divider is
-       what turned the footer into a box. */
-    [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar {
+    /* Scrollbars for the whole modal, not just the panel.
+
+       The first attempt styled the panel alone and the bars stayed the game's
+       blue — because the element that overflows is not always the one made to
+       scroll. Rather than guess which ancestor owns a given bar, every
+       scrollable thing inside an action modal is styled: grey, because a blue
+       line above the buttons and a blue line below them is a frame around the
+       buttons, which is not what a scrollbar is for.
+
+       Horizontal bars are removed outright. Making an element a vertical
+       scroller makes it a horizontal one too, and the vertical bar costs ten
+       pixels of a width everything inside was already sized against — so a few
+       pixels of overflow appear and draw a full-width bar. The content is not
+       meaningfully wider than the panel; the bar is an artefact. */
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar,
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])::-webkit-scrollbar {
         width: 10px;
         height: 0;
     }
-    [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-track {
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-track,
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-corner {
         background: transparent;
     }
-    [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-thumb {
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-thumb,
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])::-webkit-scrollbar-thumb {
         background: rgba(255, 255, 255, 0.16);
         border-radius: 5px;
     }
-    [class*="SkillActionDetail_skillActionDetail"]::-webkit-scrollbar-thumb:hover {
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]) ::-webkit-scrollbar-thumb:hover {
         background: rgba(255, 255, 255, 0.28);
+    }
+
+    /* The containers between the modal and the panel scroll nothing of their
+       own — the panel is the scroller — so any bar they show is the same
+       artefact one level up */
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"]),
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])
+        [class*="Modal_modalContent"],
+    [class*="Modal_modal__"]:has([class*="SkillActionDetail_skillActionDetail"])
+        [class*="SkillActionDetail_content"] {
+        overflow-x: hidden;
     }
 
     /* Queue and Start, always reachable. Sticky rather than fixed so it belongs
