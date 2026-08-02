@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A Track button in the item menu, off by default
+
+- Clicking an inventory item now offers **Track** / **Untrack** beside Sell, so an item goes on the Watchlist where you noticed it rather than by opening a panel and finding it again. It says which of the two it will do, so the menu reports the item's state as well as changing it.
+- **Off by default.** This adds a button to a menu you open for other reasons, next to Sell, and a misclick there is a sale — nobody who does not use the Watchlist should find that menu rearranged by a feature they did not ask for.
+- **The switch is in two places and is one setting.** It is on the settings page under Loot Log and on the Watchlist panel itself, which is where you are when you decide you want it. Neither is a copy: both write the same setting, and flipping it from either attaches or removes the buttons immediately rather than at the next reload.
+- It borrows the game's own button styling from a button already in that menu, so it does not read as something bolted on.
+
 ### Watchlist — NTally
 
 - **A list of items you care about**, with what you hold, the unit ask and bid, and what the pile is worth. Inventory Value says what the whole bag is worth, which is a number that moves when anything moves; this one answers something narrower and actionable — _these thirty things, how many have I got, and which of them should I not be selling on the market._
