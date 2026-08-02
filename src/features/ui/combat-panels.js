@@ -26,6 +26,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import combatDPS from '../../features/combat/combat-dps.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../../features/combat-stats/combat-stats-calculator.js';
@@ -483,19 +484,36 @@ export const deathsPanel = new CombatPanel({
 });
 
 /**
- * Which case the headline reads as, remembered between openings.
+ * How the profit is being read: which case, and what is subtracted.
  *
- * HWhat keeps one too, because the three cases are not equally interesting to
- * everybody: somebody who sells into bids and buys from asks is always reading
- * the Lazy line and never the other two.
+ * HWhat keeps the same three settings, because the cases are not equally
+ * interesting to everybody — somebody who sells into bids and buys from asks
+ * is always reading the Lazy line and never the other three.
+ *
+ * Persisted rather than held for the session. The overlay tile follows these
+ * now, and a tile that silently reverts to a different reading of profit every
+ * time the page reloads is worse than one that never followed at all.
  */
-let profitMode = 'mid';
+const PROFIT_SETTINGS_KEY = 'combatProfitView';
 
-/** Whether costs are subtracted at all, as HWhat's Costs On does */
-let costsOn = true;
+const profitView = { mode: 'mid', costsOn: true, taxOn: false };
 
-/** Whether the weekly MooPass tax is subtracted too, as HWhat's tax toggle does */
-let taxOn = false;
+storage
+    .getJSON(PROFIT_SETTINGS_KEY, 'settings', null)
+    .then((saved) => {
+        if (saved) Object.assign(profitView, saved);
+    })
+    .catch((error) => console.error('[CombatPanels] Reading the profit view failed:', error));
+
+/**
+ * Remember how profit is being read, and redraw what follows it.
+ */
+function saveProfitView() {
+    storage
+        .setJSON(PROFIT_SETTINGS_KEY, { ...profitView }, 'settings')
+        .catch((error) => console.error('[CombatPanels] Saving the profit view failed:', error));
+    profitPanel.refresh();
+}
 
 /**
  * A profit box in HWhat's shape: the case, the figure, the rule, the sum.
@@ -510,7 +528,7 @@ let taxOn = false;
  * @returns {HTMLElement}
  */
 function profitBox(body, scenario, tax = 0) {
-    const value = scenario.revenue - (costsOn ? scenario.cost : 0) - tax;
+    const value = scenario.revenue - (profitView.costsOn ? scenario.cost : 0) - tax;
     const colour = value >= 0 ? scenario.colour : ROW_COLORS.bad;
 
     const block = card(body);
@@ -525,11 +543,12 @@ function profitBox(body, scenario, tax = 0) {
     Object.assign(figure.style, { color: colour, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.3' });
 
     const rule = document.createElement('div');
-    rule.textContent = (costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - Tax' : '');
+    rule.textContent =
+        (profitView.costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - Tax' : '');
     Object.assign(rule.style, { color: COLORS.textDim, fontSize: '11px' });
 
     const terms = [formatKMB(scenario.revenue)];
-    if (costsOn) terms.push(formatKMB(scenario.cost));
+    if (profitView.costsOn) terms.push(formatKMB(scenario.cost));
     if (tax) terms.push(formatKMB(tax));
 
     const sum = document.createElement('div');
@@ -638,6 +657,31 @@ function profitCases(stats) {
     ];
 }
 
+/**
+ * How the overlay tile should read profit, given stats it has already computed.
+ *
+ * The tile used to be hard-wired to bid revenue less every cost, which is one
+ * of four readings and not the one somebody who has chosen Patient in the panel
+ * is thinking in. Rather than have the tile guess, the panel says: the case
+ * that is selected, with the tax in it if the tax is on.
+ *
+ * Takes the caller's stats rather than fetching its own, so the tile keeps its
+ * own cache and nothing is priced twice per tick.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @returns {{title: string, revenue: number, cost: number, tax: number, profit: number}|null}
+ */
+export function combatProfitView(stats) {
+    if (!stats) return null;
+
+    const cases = profitCases(stats);
+    const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
+    const cost = profitView.costsOn ? headline.cost : 0;
+    const tax = profitView.taxOn ? cowbellTax().perDay : 0;
+
+    return { title: headline.title, revenue: headline.revenue, cost, tax, profit: headline.revenue - cost - tax };
+}
+
 export const profitPanel = new CombatPanel({
     id: 'profitPanel',
     title: 'Combat Profit',
@@ -647,18 +691,18 @@ export const profitPanel = new CombatPanel({
         if (!stats) return;
 
         bar.appendChild(
-            toggleButton(costsOn ? 'Costs On' : 'Costs Off', costsOn, () => {
-                costsOn = !costsOn;
-                profitPanel.refresh();
+            toggleButton(profitView.costsOn ? 'Costs On' : 'Costs Off', profitView.costsOn, () => {
+                profitView.costsOn = !profitView.costsOn;
+                saveProfitView();
             })
         );
 
         // The MooPass is a real weekly cost, and a profit figure that ignores it
         // is a profit figure that has not paid the rent
         bar.appendChild(
-            toggleButton(taxOn ? 'Tax On' : 'Tax Off', taxOn, () => {
-                taxOn = !taxOn;
-                profitPanel.refresh();
+            toggleButton(profitView.taxOn ? 'Tax On' : 'Tax Off', profitView.taxOn, () => {
+                profitView.taxOn = !profitView.taxOn;
+                saveProfitView();
             })
         );
 
@@ -667,12 +711,12 @@ export const profitPanel = new CombatPanel({
         const cases = profitCases(stats);
         const index = Math.max(
             0,
-            cases.findIndex((scenario) => scenario.key === profitMode)
+            cases.findIndex((scenario) => scenario.key === profitView.mode)
         );
         bar.appendChild(
             toggleButton(cases[index].title.split(' ')[0], true, () => {
-                profitMode = cases[(index + 1) % cases.length].key;
-                profitPanel.refresh();
+                profitView.mode = cases[(index + 1) % cases.length].key;
+                saveProfitView();
             })
         );
     },
@@ -684,24 +728,24 @@ export const profitPanel = new CombatPanel({
         }
 
         const cases = profitCases(stats);
-        const headline = cases.find((scenario) => scenario.key === profitMode) || cases[1];
-        const tax = taxOn ? cowbellTax().perDay : 0;
+        const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
+        const tax = profitView.taxOn ? cowbellTax().perDay : 0;
 
         // The header sum HWhat carries: revenue, cost and what is left, in one
         // line, so the panel answers its own question before it is scrolled
         const summary = card(body);
         summary.style.borderLeft = `3px solid ${headline.colour}`;
-        const total = headline.revenue - (costsOn ? headline.cost : 0) - tax;
+        const total = headline.revenue - (profitView.costsOn ? headline.cost : 0) - tax;
         const equation = document.createElement('div');
         Object.assign(equation.style, { fontSize: '14px', fontWeight: 'bold' });
         equation.appendChild(piece(formatKMB(headline.revenue), ROW_COLORS.good));
         if (tax) {
             equation.append(piece(' - ', COLORS.textDim), piece(formatKMB(tax), '#e8b4d8'));
         }
-        if (costsOn) {
+        if (profitView.costsOn) {
             equation.append(piece(' - ', COLORS.textDim), piece(formatKMB(headline.cost), ROW_COLORS.bad));
         }
-        if (tax || costsOn) equation.appendChild(piece(' = ', COLORS.textDim));
+        if (tax || profitView.costsOn) equation.appendChild(piece(' = ', COLORS.textDim));
         equation.appendChild(piece(`${formatKMB(total)}/day`, ROW_COLORS.gold));
         summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
 
@@ -709,8 +753,8 @@ export const profitPanel = new CombatPanel({
 
         const spread = card(body, 'Difference');
         // Patient against lazy: the tax is in both, so it cancels
-        const best = cases[2].revenue - (costsOn ? cases[2].cost : 0);
-        const worst = cases[0].revenue - (costsOn ? cases[0].cost : 0);
+        const best = cases[2].revenue - (profitView.costsOn ? cases[2].cost : 0);
+        const worst = cases[0].revenue - (profitView.costsOn ? cases[0].cost : 0);
         spread.append(
             line('Patient over lazy', formatKMB(best - worst), ROW_COLORS.gold),
             line('Consumables/day', formatKMB(cases[0].cost), ROW_COLORS.bad),
@@ -782,7 +826,7 @@ function cowbellTax() {
  */
 function taxCard(stats) {
     const holder = document.createElement('div');
-    const block = card(holder, taxOn ? 'Paying the Tax' : 'Pay the Tax');
+    const block = card(holder, profitView.taxOn ? 'Paying the Tax' : 'Pay the Tax');
 
     const tax = cowbellTax();
     if (!tax.bagPrice) {
@@ -810,7 +854,7 @@ function taxCard(stats) {
     if (profit > 0) {
         block.appendChild(line('Days of profit per week of tax', (tax.perWeek / profit).toFixed(1), ROW_COLORS.accent));
     }
-    if (!taxOn) {
+    if (!profitView.taxOn) {
         block.appendChild(note('Not counted against the figures above — press Tax in the header to include it.'));
     }
     return holder;

@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getInventory: () => state.inventory } }));
+vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({
@@ -67,7 +68,7 @@ vi.mock('../../features/combat/damage-tracker.js', () => ({
     },
 }));
 
-const { dpsPanel, deathsPanel, profitPanel } = await import('./combat-panels.js');
+const { dpsPanel, deathsPanel, profitPanel, combatProfitView } = await import('./combat-panels.js');
 
 const panels = () => [dpsPanel, deathsPanel, profitPanel];
 const FAILED = 'could not be drawn';
@@ -309,6 +310,34 @@ describe('what the panels add over their tiles', () => {
         expect(after).toContain('Paying the Tax');
         // Three terms in the sum now, not two
         expect(after).toMatch(/-?[\d.]+[KMB]? - -?[\d.]+[KMB]? - -?[\d.]+[KMB]? = -?[\d.]+[KMB]?/);
+
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
+    });
+
+    test('the tile is told which reading the panel is showing', () => {
+        // The tile used to be hard-wired to bid revenue less every cost, which
+        // is one of four readings and not necessarily the one on screen
+        profitPanel.show();
+        const lazy = combatProfitView(state.stats);
+        expect(lazy).toBeTruthy();
+
+        [...profitPanel.panel.querySelectorAll('button')]
+            .find((b) => ['Lazy', 'Mid', 'Patient', 'Ask'].includes(b.textContent.split(' ')[0]))
+            .click();
+
+        expect(combatProfitView(state.stats).title).not.toBe(lazy.title);
+    });
+
+    test('nothing to read from is nothing rather than a row of zeroes', () => {
+        expect(combatProfitView(null)).toBeNull();
+    });
+
+    test('the tile carries the tax only when the panel is counting it', () => {
+        profitPanel.show();
+        expect(combatProfitView(state.stats).tax).toBe(0);
+
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax Off').click();
+        expect(combatProfitView(state.stats).tax).toBeGreaterThan(0);
 
         [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
     });

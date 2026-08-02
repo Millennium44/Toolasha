@@ -81,26 +81,53 @@ registerRow({
 
         // Income, what it cost to earn it, and what is left — the third number is
         // the only one worth acting on, and it is the one an income figure alone
-        // quietly overstates
-        const income = stats.dailyIncome.bid;
-        const costs = stats.dailyConsumableCosts + stats.dailyKeyCosts;
-        const profit = stats.dailyProfit.bid;
+        // quietly overstates.
+        //
+        // Which income and which cost is the panel's decision, not the tile's:
+        // somebody reading Patient there is not thinking in bid revenue, and a
+        // tile that disagrees with the panel behind it is a tile nobody trusts.
+        // The panel lives in the UI bundle, so it is reached through the global.
+        const view = window.Toolasha?.UI?.combatProfitView?.(stats) || {
+            revenue: stats.dailyIncome.bid,
+            cost: stats.dailyConsumableCosts + stats.dailyKeyCosts,
+            tax: 0,
+            profit: stats.dailyProfit.bid,
+            title: 'Lazy Profit',
+        };
 
         // One decimal and a plain hyphen, as MCS draws it. Three numbers and two
         // operators on one tile is already tight, and the second decimal buys
         // nothing here — 95.1M against 95.14M is not a distinction anybody acts
         // on when the figure moves by millions a minute.
-        row(container, [
-            { text: formatLargeNumber(Math.round(income), 1), color: ROW_COLORS.good },
-            { text: '-', color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(costs), 1), color: ROW_COLORS.bad },
+        const segments = [{ text: formatLargeNumber(Math.round(view.revenue), 1), color: ROW_COLORS.good }];
+
+        // The MooPass sits between revenue and consumables, in its own colour,
+        // because it is a standing bill rather than a cost of this run
+        if (view.tax) {
+            segments.push(
+                { text: '-', color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(view.tax), 1), color: '#e8b4d8' }
+            );
+        }
+        if (view.cost) {
+            segments.push(
+                { text: '-', color: ROW_COLORS.dim },
+                { text: formatLargeNumber(Math.round(view.cost), 1), color: ROW_COLORS.bad }
+            );
+        }
+        segments.push(
             { text: '=', color: ROW_COLORS.dim },
             {
-                text: `${formatLargeNumber(Math.round(profit), 1)}/day`,
-                color: profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
+                text: `${formatLargeNumber(Math.round(view.profit), 1)}/day`,
+                color: view.profit >= 0 ? ROW_COLORS.gold : ROW_COLORS.bad,
                 bold: true,
-            },
-        ]);
+            }
+        );
+
+        row(container, segments);
+        container.title =
+            `${view.title}.\nDouble-click for the other readings, costs and the MooPass tax.` +
+            (view.tax ? '\nThe middle figure is the weekly MooPass, per day.' : '');
     },
     onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
 });
