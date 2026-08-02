@@ -150,6 +150,34 @@ describe('the panel renders', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('a section you fold away stays folded across a refresh', () => {
+        // The panel rebuilds its whole body every few seconds. A fold held in
+        // the DOM springs back to its default on the next redraw — collapse it,
+        // watch it reappear, over and over.
+        charmPanel.show();
+
+        const fold = (id) => charmPanel.panel.querySelector(`[data-section="${id}"]`);
+        const isOpen = (id) => fold(id).textContent.startsWith('▼');
+
+        expect(isOpen('upgrades')).toBe(true);
+        fold('upgrades').click();
+        expect(isOpen('upgrades')).toBe(false);
+
+        charmPanel.render();
+        expect(isOpen('upgrades')).toBe(false);
+    });
+
+    test('and one you unfold stays unfolded', () => {
+        charmPanel.show();
+
+        const guide = () => charmPanel.panel.querySelector('[data-section="guide"]');
+        guide().click();
+        charmPanel.render();
+
+        expect(guide().textContent.startsWith('▼')).toBe(true);
+        expect(charmPanel.panel.textContent).toContain('Grandmaster 8%');
+    });
+
     test('clicking a column heading reorders rather than throwing', () => {
         charmPanel.show();
 

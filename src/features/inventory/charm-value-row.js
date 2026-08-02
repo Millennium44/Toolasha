@@ -74,10 +74,23 @@ const CHARM_DETAILS = { equipmentDetail: { type: '/equipment_types/charm' } };
 let sortColumn = 'perMillion';
 let sortDirection = 'desc';
 
-/** Put the ordering back, for a test that must not inherit the last one */
+/**
+ * Which sections are folded open.
+ *
+ * Held outside the draw, because the draw is where it would be lost: the panel
+ * rebuilds its whole body every few seconds, so a section whose state lived in
+ * the DOM would spring back to its default on the next refresh — folding one
+ * away and watching it reappear three seconds later, over and over.
+ *
+ * @type {Map<string, boolean>}
+ */
+const sectionOpen = new Map();
+
+/** Put the ordering and the folds back, for a test that must not inherit them */
 export function resetCharmSort() {
     sortColumn = 'perMillion';
     sortDirection = 'desc';
+    sectionOpen.clear();
 }
 
 /**
@@ -162,12 +175,17 @@ export function familyRows() {
  * A block with a heading that folds it away.
  *
  * @param {HTMLElement} body - Where it goes
- * @param {string} title - Heading
- * @param {string} accent - Heading colour
- * @param {boolean} [open] - Whether it starts unfolded
+ * @param {Object} definition - What section this is
+ * @param {string} definition.id - Stable key the fold is remembered under. Not
+ *   the title: the titles carry the equipped bonus, so they change under you
+ * @param {string} definition.title - Heading
+ * @param {string} definition.accent - Heading colour
+ * @param {boolean} [definition.defaultOpen] - How it starts, the first time only
  * @returns {HTMLElement} The contents, to append rows to
  */
-function section(body, title, accent, open = true) {
+function section(body, { id, title, accent, defaultOpen = true }) {
+    const open = sectionOpen.get(id) ?? defaultOpen;
+
     const card = panelCard(body, undefined, accent);
     card.style.padding = '0';
 
@@ -179,15 +197,17 @@ function section(body, title, accent, open = true) {
         padding: '6px 9px',
         userSelect: 'none',
     });
+    header.dataset.section = id;
 
     const content = document.createElement('div');
     Object.assign(content.style, { padding: '0 9px 7px', display: open ? 'block' : 'none' });
 
     header.textContent = `${open ? '▼' : '▶'} ${title}`;
     header.addEventListener('click', () => {
-        const hidden = content.style.display === 'none';
-        content.style.display = hidden ? 'block' : 'none';
-        header.textContent = `${hidden ? '▼' : '▶'} ${title}`;
+        // Recorded before it is drawn, so the next refresh finds the choice
+        // rather than the default
+        sectionOpen.set(id, !(sectionOpen.get(id) ?? defaultOpen));
+        charmPanel.render();
     });
 
     card.append(header, content);
@@ -319,7 +339,12 @@ function charmLine(charm, worn) {
  * @param {HTMLElement} body - Where it goes
  */
 function drawGuide(body) {
-    const content = section(body, 'Charm EXP Guide', '#c9a0ff', false);
+    const content = section(body, {
+        id: 'guide',
+        title: 'Charm EXP Guide',
+        accent: '#c9a0ff',
+        defaultOpen: false,
+    });
 
     const chips = (entries) => {
         const wrap = document.createElement('div');
@@ -377,13 +402,13 @@ export const charmPanel = createPanel({
         const { upgrades, downgrades } = splitByUpgrade(rows, worn.experience);
         const current = `${worn.experience.toFixed(2)}%`;
 
-        for (const [title, group, open] of [
-            [`Charm Upgrades (${current})`, upgrades, true],
-            [`Charm Downgrades (${current})`, downgrades, false],
+        for (const [id, title, group, defaultOpen] of [
+            ['upgrades', `Charm Upgrades (${current})`, upgrades, true],
+            ['downgrades', `Charm Downgrades (${current})`, downgrades, false],
         ]) {
             if (!group.length) continue;
 
-            const content = section(body, title, '#c9a0ff', open);
+            const content = section(body, { id, title, accent: '#c9a0ff', defaultOpen });
             content.appendChild(tableHeading(() => charmPanel.render()));
             for (const charm of sortCharmRows(group, sortColumn, sortDirection)) {
                 content.appendChild(charmLine(charm, worn));
