@@ -195,6 +195,20 @@ export function combatSkillState() {
 }
 
 /**
+ * The skill gaining fastest, which is the one a selector should open on.
+ *
+ * @param {Object} state - From `combatSkillState`
+ * @returns {Object|null} The skill, or null when nothing is measurably moving
+ */
+export function busiest(state) {
+    let best = null;
+    for (const skill of state?.skills || []) {
+        if (skill.perHour && (!best || skill.perHour > best.perHour)) best = skill;
+    }
+    return best;
+}
+
+/**
  * Start or restart the session against the current readings.
  * @param {Array<Object>} skills - From `combatSkillState`
  */
@@ -429,17 +443,37 @@ class CombatLevelPanel {
                 ? `Combat ${combatLevel(state.levels).level + 1}: ${shortDuration(next.seconds)}`
                 : '';
 
-        this.bodyEl.appendChild(this._sessionBar(state));
-        this.bodyEl.appendChild(this._targetSelector(state));
-        this.bodyEl.appendChild(this._combatBlock(state, next));
+        const sections = [
+            () => this._sessionBar(state),
+            () => this._targetSelector(state),
+            () => this._combatBlock(state, next),
+            ...state.skills.filter((entry) => entry.perHour).map((skill) => () => this._skillBlock(skill, state)),
+            () => this._timeToLevel(state),
+            () => this._charms(state),
+            () => this._expLookup(state),
+        ];
+        for (const build of sections) this._section(build);
+    }
 
-        for (const skill of state.skills.filter((entry) => entry.perHour)) {
-            this.bodyEl.appendChild(this._skillBlock(skill, state));
+    /**
+     * Draw one section, or say which one could not be drawn.
+     *
+     * Without this the panel is all-or-nothing: one section that throws takes
+     * every section after it with it, and what you see is a panel that stops
+     * halfway with nothing to say why. Half a panel looks like a missing feature
+     * rather than a bug, which is exactly the wrong thing for it to look like.
+     *
+     * @param {Function} build - Returns the section's element
+     */
+    _section(build) {
+        try {
+            this.bodyEl.appendChild(build());
+        } catch (error) {
+            console.error('[CombatLevel] A section could not be drawn:', error);
+            const failed = this._note(`This section could not be drawn: ${error.message}`);
+            failed.style.color = ROW_COLORS.bad;
+            this.bodyEl.appendChild(failed);
         }
-
-        this.bodyEl.appendChild(this._timeToLevel(state));
-        this.bodyEl.appendChild(this._charms(state));
-        this.bodyEl.appendChild(this._expLookup(state));
     }
 
     /**
@@ -495,7 +529,7 @@ class CombatLevelPanel {
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
-        const chosen = this.ttl.skill ?? this._busiest(state)?.name ?? state.skills[0].name;
+        const chosen = this.ttl.skill ?? busiest(state)?.name ?? state.skills[0].name;
         const skill = state.skills.find((entry) => entry.name === chosen) || state.skills[0];
         const target = this.ttl.level ?? skill.level + 1;
 
