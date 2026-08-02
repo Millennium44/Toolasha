@@ -46,7 +46,13 @@ function draw(key) {
 
 beforeEach(() => {
     game.options = {};
-    combatDropLuck.lastResult = { percentile: 0.347, income: 44_870_000, expected: 47_880_000, battles: 900 };
+    combatDropLuck.lastResult = {
+        percentile: 0.347,
+        income: 44_870_000,
+        expected: 47_880_000,
+        battles: 900,
+        players: [],
+    };
     game.party = {
         battles: 900,
         players: [{ name: 'Millennium44', isCurrentPlayer: true, percent: -6.3 }],
@@ -162,5 +168,64 @@ describe('the only-numbers options', () => {
 
         expect(text).toContain('Millennium44');
         expect(text).toContain('TOTAL');
+    });
+});
+
+describe('luck per player', () => {
+    beforeEach(() => {
+        // Two players, the same battles, different drop gear — so different
+        // distributions and genuinely different percentiles
+        combatDropLuck.lastResult.players = [
+            { name: 'Millennium44', isCurrentPlayer: true, percentile: 0.12 },
+            { name: 'Second', isCurrentPlayer: false, percentile: 0.88 },
+        ];
+        game.party.players.push({ name: 'Second', isCurrentPlayer: false, percent: 40 });
+    });
+
+    test('a party gets a row each', () => {
+        const text = draw('luck');
+
+        expect(text).toContain('Millennium44');
+        expect(text).toContain('12.0%');
+        expect(text).toContain('Second');
+        expect(text).toContain('88.0%');
+    });
+
+    test("the party figure is not repeated as everybody's", () => {
+        // The whole reason to break it out: one number under two names says
+        // nothing that the single row did not
+        expect(draw('luck')).not.toContain('34.7%');
+    });
+
+    test('only you narrows it to your row', () => {
+        game.options.luckOnlyPlayer = true;
+        const text = draw('luck');
+
+        expect(text).toContain('Millennium44');
+        expect(text).not.toContain('Second');
+    });
+
+    test('only numbers drops the names from every row', () => {
+        game.options.luckOnlyNumbers = true;
+        const text = draw('luck');
+
+        expect(text).not.toContain('Millennium44');
+        expect(text).toContain('12.0%');
+        expect(text).toContain('88.0%');
+    });
+
+    test('a player who cannot be placed reads as unmeasured', () => {
+        combatDropLuck.lastResult.players[1].percentile = null;
+        expect(draw('luck')).toContain('—');
+    });
+
+    test('solo stays one row and uses the session figure', () => {
+        // Solo, the session percentile already is this player's: the model was
+        // built from their bonuses, so a second one is the same number computed
+        // a second way
+        combatDropLuck.lastResult.players = [];
+        const text = draw('luck');
+
+        expect(text).toContain('34.7%');
     });
 });

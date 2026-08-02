@@ -293,8 +293,46 @@ class CombatDropLuck {
         // and reads as bad luck. Against the mean it reads as par.
         const expected = sessionMean(session);
 
-        this.lastResult = { percentile, income, expected, battles, hasBonuses };
+        this.lastResult = { percentile, income, expected, battles, hasBonuses, players: this._playerLuck() };
         return this.lastResult;
+    }
+
+    /**
+     * Each player placed among the sessions they could have had.
+     *
+     * A real figure per player rather than the party's repeated: everybody's
+     * drop gear differs, so everybody has a different distribution, and the
+     * question "was that haul unusual" has a different answer for each of them.
+     *
+     * It is also the *better* per-player figure. Takings against expectation
+     * says how far off the mean somebody landed; it cannot say whether that is
+     * remarkable. On a zone whose value rides on one rare, −20% is an utterly
+     * ordinary run; on a zone of small steady drops it is a bad one. Only the
+     * distribution knows which, and the percentile is what carries it.
+     *
+     * Computed here rather than in the tile because inverting a distribution
+     * costs about ten milliseconds — once per session is nothing, and once per
+     * player per second is a frozen overlay.
+     *
+     * @returns {Array<Object>} `{name, isCurrentPlayer, percentile}`, empty solo
+     */
+    _playerLuck() {
+        try {
+            const party = partyLuck(this.context);
+            // Solo, the session percentile already *is* this player's: the model
+            // was built from their bonuses. A second one would be the same
+            // number computed a second way.
+            if (party.players.length < 2) return [];
+
+            return party.players.map((player) => ({
+                name: player.name,
+                isCurrentPlayer: player.isCurrentPlayer,
+                percentile: player.session ? sessionLuck(player.session, player.actualValue).percentile : null,
+            }));
+        } catch (error) {
+            console.error('[CombatDropLuck] Placing each player in their own distribution failed:', error);
+            return [];
+        }
     }
 
     /**
@@ -354,8 +392,7 @@ registerRow({
         // The percentile as a figure, not as a sentence. "93 runs in 100 beat
         // it" is the right explanation and the wrong tile — it wrapped to three
         // lines and pushed the number out of sight. It is the tooltip now.
-        const percent = result.percentile * 100;
-        const { tone, text } = describeLuck(result.percentile);
+        const { text } = describeLuck(result.percentile);
 
         // Your name on the left and the figure on the right, which is the shape
         // Lucky's tile has. One row rather than one per player: the percentile
@@ -366,25 +403,52 @@ registerRow({
         const party = partyLuck(combatDropLuck.context);
         const me = party.players.find((player) => player.isCurrentPlayer) || party.players[0];
 
-        const figure = {
-            text: `${percent.toFixed(1)}%`,
-            bold: true,
-            push: true,
-            color: {
-                lucky: ROW_COLORS.good,
-                unlucky: ROW_COLORS.bad,
-                normal: ROW_COLORS.neutral,
-            }[tone],
+        const onlyNumbers = rowOption('luckOnlyNumbers');
+        const onlyPlayer = rowOption('luckOnlyPlayer');
+
+        /**
+         * One row: who, and where their haul sat among the ones they could have had.
+         * @param {string} name - Whose
+         * @param {number|null} value - Percentile, 0 to 1
+         * @param {boolean} mine - Whether it is the current player
+         * @returns {Array<Object>}
+         */
+        const luckRow = (name, value, mine) => {
+            const figure = {
+                text: value === null ? '—' : `${(value * 100).toFixed(1)}%`,
+                bold: true,
+                push: true,
+                color:
+                    value === null
+                        ? ROW_COLORS.dim
+                        : { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
+                              describeLuck(value).tone
+                          ],
+            };
+            if (onlyNumbers) return [figure];
+            return [{ text: name, color: mine ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true }, figure];
         };
 
-        // Only Numbers, as OPanel has it: on a tile shrunk to fit beside five
-        // others the name is the part you already know
-        row(
-            container,
-            rowOption('luckOnlyNumbers')
-                ? [figure]
-                : [{ text: me?.name || 'Luck', color: ROW_COLORS.gold, ellipsis: true }, figure]
-        );
+        // A row each where there is a party, because everybody's drop gear
+        // differs and so does everybody's distribution — the same haul is
+        // remarkable for one of them and ordinary for another. The figures are
+        // computed when the session is analysed, not here: inverting a
+        // distribution costs ten milliseconds a player.
+        const each = result.players || [];
+        if (each.length > 1) {
+            const shown = onlyPlayer ? each.filter((player) => player.isCurrentPlayer) : each;
+            rows(
+                container,
+                shown.map((player) => luckRow(player.name, player.percentile, player.isCurrentPlayer))
+            );
+            container.title =
+                `${formatOrdinal(result.percentile)} percentile for the party — ${text}\n` +
+                'Per player: their own haul against their own drop gear\u2019s distribution, so the figures are ' +
+                'comparable even when the gear is not.';
+            return;
+        }
+
+        row(container, luckRow(me?.name || 'Luck', result.percentile, true));
         container.title = `${formatOrdinal(result.percentile)} percentile — ${text}`;
     },
 });

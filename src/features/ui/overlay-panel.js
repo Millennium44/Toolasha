@@ -541,7 +541,12 @@ class OverlayPanel {
         );
         controls.appendChild(
             this._optionBox('Luck: only numbers', 'luckOnlyNumbers', {
-                title: 'Drop the name from Drop Luck, leaving the percentage.',
+                title: 'Drop the names from Drop Luck, leaving the percentages.',
+            })
+        );
+        controls.appendChild(
+            this._optionBox('Luck: only you', 'luckOnlyPlayer', {
+                title: 'Show only your own row in Drop Luck, without the rest of the party.',
             })
         );
 
