@@ -38,6 +38,7 @@ import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { createSkillHistory } from '../../utils/skill-history.js';
 import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../utils/ability-books.js';
 
@@ -96,6 +97,41 @@ function targetFor(abilityHrid) {
 export function resetAbilityTargets() {
     abilityTargets.clear();
     sharedTarget = null;
+}
+
+/**
+ * Fills the quantity box in the game's buy dialog.
+ *
+ * Registered on first use rather than when the panel opens: the dialog is
+ * reached by navigating to the marketplace and then clicking + New Buy Listing,
+ * which can be a while later and with the panel closed in between. An observer
+ * that only lives as long as the panel would miss exactly that.
+ */
+const autofill = createAutofillManager('AbilityBookPanel');
+let autofillReady = false;
+
+/**
+ * Open a book's marketplace listing with the number you need already typed in.
+ *
+ * The count is the point of the panel and retyping it into the dialog is where
+ * it gets rounded to something convenient — 2,800 rather than 2,809 is one book
+ * short of a level, discovered a fortnight later.
+ *
+ * @param {string} itemHrid - The book
+ * @param {number|null} books - How many, or null when it cannot be worked out
+ */
+export function buyBooks(itemHrid, books) {
+    if (!autofillReady) {
+        autofill.initialize();
+        autofillReady = true;
+    }
+
+    // One-shot rather than standing: the dialog does not say which item it is
+    // for, so a quantity left armed would fill in the next thing you buy
+    if (books > 0) autofill.setQuantity(Math.ceil(books));
+    else autofill.clearQuantity();
+
+    navigateToMarketplace(itemHrid);
 }
 
 /**
@@ -509,15 +545,18 @@ class AbilityBookPanel {
         // ellipsed to "Pen…" at any width that left room for the figures.
         const icon = itemIcon(plan.itemHrid, 28);
         icon.style.justifySelf = 'center';
-        linkToMarketplace(icon, plan.itemHrid, navigateToMarketplace);
+        linkToMarketplace(icon, plan.itemHrid, (itemHrid) => buyBooks(itemHrid, books));
         icon.style.opacity = plan.level === 0 ? '0.55' : '1';
         // An ability never learned reads differently from one at level 1, since
         // its first book buys the ability rather than a level
         icon.setAttribute(
             'title',
-            plan.level === 0
+            (plan.level === 0
                 ? `${plan.name} — not learned. The first book teaches the ability rather than levelling it.`
-                : plan.name
+                : plan.name) +
+                (books > 0
+                    ? `\nClick to buy: opens the marketplace with ${formatWithSeparator(books)} filled in.`
+                    : '\nClick to open in the marketplace.')
         );
 
         line.append(level, icon, this._experienceCell(plan, owed), this._timeCell(plan, owed));

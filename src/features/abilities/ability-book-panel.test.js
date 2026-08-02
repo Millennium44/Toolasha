@@ -12,6 +12,18 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ data: {}, prices: {}, character: null }));
 
+/** What the panel asked the game's buy dialog to be filled with, and for what */
+const market = vi.hoisted(() => ({ filled: [], opened: [], initialized: 0 }));
+
+vi.mock('../../utils/marketplace-autofill.js', () => ({
+    createAutofillManager: () => ({
+        initialize: () => market.initialized++,
+        setQuantity: (quantity) => market.filled.push(quantity),
+        clearQuantity: () => market.filled.push(null),
+        cleanup: () => {},
+    }),
+}));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.data,
@@ -23,7 +35,9 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
-vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: (itemHrid) => market.opened.push(itemHrid),
+}));
 
 const { abilityBookPanel, abilityPlans, resetAbilityTargets } = await import('./ability-book-panel.js');
 
@@ -64,6 +78,8 @@ beforeEach(() => {
         '/items/poke': { ask: 900000, bid: 1 },
         '/items/smack': { ask: 4000, bid: 1 },
     };
+    market.filled = [];
+    market.opened = [];
 });
 
 afterEach(() => {
@@ -273,6 +289,49 @@ describe('a target per ability', () => {
         reset.click();
 
         expect(abilityPlans().every((plan) => plan.targetLevel === null)).toBe(true);
+    });
+});
+
+describe('buying the books', () => {
+    /** The book icon on one ability's row */
+    const bookIcon = (abilityHrid) => {
+        const input = abilityBookPanel.panel.querySelector(`input[data-ability="${abilityHrid}"]`);
+        return [...input.parentElement.children].find((child) => child.style.cursor === 'pointer');
+    };
+
+    test('clicking a book opens it with the count already filled in', () => {
+        abilityBookPanel.show();
+
+        bookIcon('/abilities/poke').dispatchEvent(new Event('click', { bubbles: true }));
+
+        // Poke is 1,000 experience from level 3 at 500 a book
+        expect(market.filled).toEqual([2]);
+        expect(market.opened).toEqual(['/items/poke']);
+    });
+
+    test('the count follows the target rather than the next level', () => {
+        // Retyping it into the dialog is where it gets rounded to something
+        // convenient, and 2,800 rather than 2,809 is one book short of a level
+        abilityBookPanel.show();
+
+        const target = abilityBookPanel.panel.querySelector('input[data-ability="/abilities/poke"]');
+        target.value = '5';
+        target.dispatchEvent(new Event('change'));
+
+        bookIcon('/abilities/poke').dispatchEvent(new Event('click', { bubbles: true }));
+        expect(market.filled).toEqual([6]);
+    });
+
+    test('a book with nothing to buy arms nothing rather than the last count', () => {
+        // Poke has banked enough for level 3 already, so it needs no books —
+        // and a quantity left armed from the previous click would be filled
+        // into whatever you buy next
+        game.character.characterAbilities[0].experience = 99_999;
+        abilityBookPanel.show();
+
+        bookIcon('/abilities/poke').dispatchEvent(new Event('click', { bubbles: true }));
+        expect(market.filled).toEqual([null]);
+        expect(market.opened).toEqual(['/items/poke']);
     });
 });
 
