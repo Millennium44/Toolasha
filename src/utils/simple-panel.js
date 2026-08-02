@@ -53,6 +53,23 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
         }
     }
 
+    /**
+     * The timed redraw, which leaves a control being used alone.
+     *
+     * A refresh rebuilds the whole body, and rebuilding a `<select>` closes its
+     * dropdown. Scroll through a long list of equipment for more than a few
+     * seconds and the list shuts under the pointer — which reads as the panel
+     * refusing to be used rather than as a redraw. A control the pointer or the
+     * keyboard is in is a control somebody is in the middle of.
+     */
+    function refresh() {
+        const active = document.activeElement;
+        const busy = panel?.contains(active) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName);
+        if (busy) return;
+
+        render();
+    }
+
     function create() {
         panel = document.createElement('div');
         panel.id = `toolasha-${id}-panel`;
@@ -134,7 +151,7 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
         restoreGeometry(panel, id, { width: 280, height: 160 });
 
         render();
-        refreshId = setInterval(render, refreshMs);
+        refreshId = setInterval(refresh, refreshMs);
     }
 
     const api = {

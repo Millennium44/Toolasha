@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: an unpriced drop is a row, and a dropdown stops closing under you
+
+- **Anything a chest drops now gets a row**, priced or not. Valuing the scrolls through the labyrinth shop was the wrong half of the fix — the rule underneath it was that an item with no price contributes to neither side of a chest's verdict _and gets no row_, so anything the script cannot value simply vanished and read as a chest that never contained it. Unpriced rows show the count with a dash and `no price`, sort last so they cannot lead the verdict, and still count towards nothing. A zero would have been a different and wrong claim: that the chest gave you something worthless.
+- **A panel no longer rebuilds a control you are using.** The refresh redraws the whole body every few seconds, and redrawing a `<select>` closes its dropdown — scroll a long equipment list for more than a moment and it shut under the pointer, which reads as the panel refusing to be used. Any panel with a focused input, select or textarea now skips its timed redraw.
+
+### EWatch is laid out by slot
+
+- **A section per equipment slot**, as EWatch has: the slot, what is in it, and what selling that would fetch — then either what is being saved for or **Click to watch**. A slot with nothing on it is still worth a line; a list of only your targets cannot say "this slot is empty and here is what it would cost to fill".
+- **Clicking an empty slot opens the picker on that slot alone**, because scrolling past every charm in the game to reach a helmet is exactly what the invitation is there to avoid. It widens back to everything with one click.
+- Watched targets gain EWatch's **Ask Price** and **Difference** lines and an **ETA**, and take its colouring — blue for the one the header carries, gold for the rest.
+
 ### Treasure was dropping the scrolls, and EWatch gains its item picker
 
 - **Scrolls were missing from the chest contents.** They are bought from the labyrinth shop and used, never sold, so a market-only reading prices them at nothing — and an item worth nothing contributes to neither side of a chest's verdict and gets no row at all. The valuation already existed for the tooltip; the treasure tracker was looking only in `shopItemDetailMap`, and the labyrinth keeps its own shop under `labyrinthShopItemDetailMap`. A scroll is worth the tokens it costs, and a token is worth the best thing its shop converts to.

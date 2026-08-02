@@ -119,27 +119,39 @@ export function chestPerformance(entry, dropTable, priceOf) {
     for (const itemHrid of hrids) {
         const price = priceOf(itemHrid);
         // No price means no contribution to either side, which keeps the
-        // comparison honest rather than counting the item as free
-        if (!(price > 0)) continue;
+        // comparison honest rather than counting the item as free. It is still
+        // a row: an item that dropped and is simply not shown reads as a chest
+        // that did not contain it, and a panel that quietly omits things is
+        // worse than one that says it cannot price them.
+        const priced = price > 0;
 
         const actualCount = loot[itemHrid] || 0;
         const expectedCount = (perChest[itemHrid] || 0) * opened;
 
-        actualValue += actualCount * price;
-        expectedValue += expectedCount * price;
+        if (priced) {
+            actualValue += actualCount * price;
+            expectedValue += expectedCount * price;
+        }
 
         items.push({
             itemHrid,
             actualCount,
             expectedCount,
-            actualValue: actualCount * price,
-            expectedValue: expectedCount * price,
+            unpriced: !priced,
+            actualValue: priced ? actualCount * price : 0,
+            expectedValue: priced ? expectedCount * price : 0,
         });
     }
 
     // Sorted by what each item was supposed to be worth, so the rows that
-    // dominate the verdict are the rows at the top
-    items.sort((a, b) => b.expectedValue - a.expectedValue);
+    // dominate the verdict are the rows at the top. Unpriced rows have no worth
+    // to sort by and go last, ordered by how many were owed so the ones the
+    // chest is really about lead them.
+    items.sort((a, b) => {
+        if (a.unpriced !== b.unpriced) return a.unpriced ? 1 : -1;
+        if (a.unpriced) return b.expectedCount - a.expectedCount;
+        return b.expectedValue - a.expectedValue;
+    });
 
     return {
         opened,
@@ -183,6 +195,7 @@ export function chestBreakdown(entry, dropTable, priceOf) {
         return {
             itemHrid: item.itemHrid,
             price,
+            unpriced: item.unpriced,
             lastCount: lastItem?.actualCount || 0,
             lastValue: lastItem?.actualValue || 0,
             lastRatio: lastExpectedValue > 0 ? (lastItem?.actualValue || 0) / lastExpectedValue : null,

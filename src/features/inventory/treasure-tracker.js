@@ -572,6 +572,7 @@ class TreasureTracker {
     _openingRow(item) {
         const row = document.createElement('div');
         Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start', padding: '2px 0' });
+        if (item.unpriced) row.title = 'Nothing will price this, so it counts towards neither side of the verdict.';
         row.appendChild(this._icon(item.itemHrid));
 
         const columns = document.createElement('div');
@@ -585,12 +586,15 @@ class TreasureTracker {
         const actualCount = document.createElement('span');
         actualCount.textContent = formatLargeNumber(item.actualCount);
         const actualValue = document.createElement('span');
-        actualValue.textContent = formatLargeNumber(Math.round(item.actualValue));
-        actualValue.style.color = COLORS.good;
+        // An item nothing can price gets a row and no figure. A dash says "this
+        // came out and is not counted"; a zero would say the chest gave you
+        // something worthless, which is a different and wrong claim.
+        actualValue.textContent = item.unpriced ? '—' : formatLargeNumber(Math.round(item.actualValue));
+        actualValue.style.color = item.unpriced ? COLORS.textDim : COLORS.good;
         actualValue.style.marginLeft = 'auto';
         const diff = document.createElement('span');
-        diff.textContent = verdict.text;
-        diff.style.color = verdict.color;
+        diff.textContent = item.unpriced ? 'no price' : verdict.text;
+        diff.style.color = item.unpriced ? COLORS.textDim : verdict.color;
         diff.style.minWidth = '62px';
         diff.style.textAlign = 'right';
         actual.appendChild(actualCount);
@@ -610,7 +614,7 @@ class TreasureTracker {
         expectedCount.textContent =
             item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatLargeNumber(Math.round(item.expectedCount));
         const expectedValue = document.createElement('span');
-        expectedValue.textContent = formatLargeNumber(Math.round(item.expectedValue));
+        expectedValue.textContent = item.unpriced ? '' : formatLargeNumber(Math.round(item.expectedValue));
         expectedValue.style.marginLeft = 'auto';
         const word = document.createElement('span');
         word.textContent = 'expected';

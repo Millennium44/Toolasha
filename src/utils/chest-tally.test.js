@@ -115,13 +115,28 @@ describe('chestPerformance', () => {
         expect(first.itemHrid).toBe('/items/rare');
     });
 
-    test('an item with no price sits out of both sides', () => {
+    test('an item with no price sits out of both sides but is still a row', () => {
+        // It counts towards neither side of the verdict, because counting it as
+        // free would be a lie. It is still listed: an item that dropped and is
+        // simply not shown reads as a chest that did not contain it.
         const withJunk = [...dropTable, { itemHrid: '/items/junk', dropRate: 1, minCount: 5, maxCount: 5 }];
         const entry = { opened: 10, loot: { '/items/coin': 2000, '/items/junk': 50 } };
         const result = chestPerformance(entry, withJunk, priceOf);
 
-        expect(result.items.some((item) => item.itemHrid === '/items/junk')).toBe(false);
+        const junk = result.items.find((item) => item.itemHrid === '/items/junk');
+        expect(junk).toBeDefined();
+        expect(junk.unpriced).toBe(true);
+        expect(junk.actualCount).toBe(50);
+        expect(junk.actualValue).toBe(0);
         expect(result.actualValue).toBe(2000);
+    });
+
+    test('unpriced rows sort last, so they cannot lead the verdict', () => {
+        const withJunk = [...dropTable, { itemHrid: '/items/junk', dropRate: 1, minCount: 5, maxCount: 5 }];
+        const entry = { opened: 10, loot: { '/items/coin': 2000, '/items/junk': 50 } };
+        const items = chestPerformance(entry, withJunk, priceOf).items;
+
+        expect(items[items.length - 1].itemHrid).toBe('/items/junk');
     });
 
     test('nothing opened yet is not a verdict', () => {

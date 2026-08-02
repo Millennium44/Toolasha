@@ -53,6 +53,34 @@ const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
 const MAX_ENHANCEMENT = 20;
 
 /**
+ * The slots EWatch lists, in its order.
+ *
+ * A row per slot rather than a row per target, because the question is "what is
+ * this slot going to be" — a slot with nothing watched is still worth a line
+ * saying what is in it and inviting a target, which a list of targets alone
+ * cannot do.
+ */
+const SLOTS = [
+    'body',
+    'charm',
+    'earrings',
+    'feet',
+    'hands',
+    'head',
+    'legs',
+    'main_hand',
+    'neck',
+    'off_hand',
+    'pouch',
+    'ring',
+    'trinket',
+    'back',
+];
+
+/** A slot's name as a heading */
+const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+/**
  * The list, and how it is being read.
  *
  * At module scope and persisted, because the overlay tile reads it while the
@@ -64,7 +92,7 @@ const MAX_ENHANCEMENT = 20;
 const state = { targets: {}, noSell: false, marketValue: true, selected: null };
 
 /** The picker's own state, which is not worth persisting — it is a form */
-const editing = { open: false, itemHrid: '', enhancementLevel: 0 };
+const editing = { open: false, itemHrid: '', enhancementLevel: 0, slot: '' };
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
@@ -137,6 +165,7 @@ export function resetEquipmentSavings() {
     editing.open = false;
     editing.itemHrid = '';
     editing.enhancementLevel = 0;
+    editing.slot = '';
     state.targets = {};
     state.noSell = false;
     state.marketValue = true;
@@ -320,7 +349,31 @@ export function equipmentBySlot() {
  * @param {HTMLElement} body - Where it goes
  */
 function drawPicker(body) {
-    const card = panelCard(body, 'Add a target', '#6495ed');
+    const card = panelCard(
+        body,
+        editing.slot ? `Compare with (${slotLabel(editing.slot)})` : 'Compare with',
+        '#6495ed'
+    );
+
+    if (editing.slot) {
+        const all = document.createElement('button');
+        all.textContent = 'Show every slot';
+        all.dataset.pickAllSlots = 'true';
+        Object.assign(all.style, {
+            background: 'none',
+            border: 'none',
+            color: '#6495ed',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '0 0 3px',
+            textAlign: 'left',
+        });
+        all.addEventListener('click', () => {
+            editing.slot = '';
+            equipmentSavingsPanel.render();
+        });
+        card.appendChild(all);
+    }
 
     const select = document.createElement('select');
     select.dataset.pickItem = 'true';
@@ -339,7 +392,13 @@ function drawPicker(body) {
     blank.textContent = '— pick a piece —';
     select.appendChild(blank);
 
-    for (const group of equipmentBySlot()) {
+    // Narrowed to the slot that invited the picker, since scrolling past every
+    // charm in the game to reach a helmet is the thing the invitation avoided
+    const groups = editing.slot
+        ? equipmentBySlot().filter((group) => group.type.split('/').pop() === editing.slot)
+        : equipmentBySlot();
+
+    for (const group of groups) {
         const optgroup = document.createElement('optgroup');
         optgroup.label = group.label;
         for (const item of group.items) {
@@ -417,6 +476,7 @@ function drawPicker(body) {
         watchTarget(editing.itemHrid, editing.enhancementLevel);
         editing.itemHrid = '';
         editing.enhancementLevel = 0;
+        editing.slot = '';
         equipmentSavingsPanel.render();
     });
     card.appendChild(add);
@@ -555,13 +615,18 @@ function progressBar(fraction) {
  * @returns {HTMLElement}
  */
 function targetCard(target) {
+    const watching = state.selected === target.itemHrid;
+
     const card = document.createElement('div');
     Object.assign(card.style, {
         display: 'flex',
         flexDirection: 'column',
-        gap: '4px',
-        padding: '6px 0',
-        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+        gap: '3px',
+        padding: '6px 7px',
+        borderRadius: '3px',
+        // The one the header carries reads blue, the rest gold, as EWatch's do
+        borderLeft: `2px solid ${watching ? '#6495ed' : '#ffcf5c'}`,
+        background: watching ? 'rgba(100, 149, 237, 0.10)' : 'rgba(255, 207, 92, 0.06)',
     });
 
     const heading = document.createElement('div');
@@ -569,7 +634,6 @@ function targetCard(target) {
 
     // EWatch's eye: which of several targets the header carries. Open on the one
     // being watched, closed on the rest.
-    const watching = state.selected === target.itemHrid;
     const eye = document.createElement('button');
     eye.textContent = watching ? '\u{1F441}' : '\u{1F576}';
     eye.dataset.watchEye = target.itemHrid;
@@ -625,6 +689,19 @@ function targetCard(target) {
     heading.append(eye, icon, name, cost, remove);
     card.appendChild(heading);
 
+    if (target.ask > 0) {
+        card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
+        // What it costs after the trade-in, which is the figure the bar fills
+        // against — the ask alone is not what you have to find
+        card.appendChild(
+            priceLine(
+                'Difference:',
+                `+${formatWithSeparator(Math.round(target.cost ?? 0))}`,
+                target.affordable ? ROW_COLORS.good : ROW_COLORS.bad
+            )
+        );
+    }
+
     const bar = document.createElement('div');
     Object.assign(bar.style, { display: 'flex', alignItems: 'center', gap: '7px' });
     bar.appendChild(progressBar(target.fraction));
@@ -642,7 +719,38 @@ function targetCard(target) {
 
     card.appendChild(bar);
     card.appendChild(percentLine(target));
+
+    if (target.seconds !== null && !target.affordable) {
+        const eta = document.createElement('div');
+        eta.textContent = `ETA: ${shortDuration(target.seconds)}`;
+        Object.assign(eta.style, { color: ROW_COLORS.accent, fontSize: '10px', textAlign: 'right' });
+        card.appendChild(eta);
+    }
     return card;
+}
+
+/**
+ * A label and a figure on one line, as EWatch lists Ask Price and Difference.
+ *
+ * @param {string} label - What it is
+ * @param {string} value - What it says
+ * @param {string} color - Ink for the figure
+ * @returns {HTMLElement}
+ */
+function priceLine(label, value, color) {
+    const line = document.createElement('div');
+    Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '11px' });
+
+    const name = document.createElement('span');
+    name.textContent = label;
+    name.style.color = 'rgba(232, 236, 245, 0.55)';
+
+    const figure = document.createElement('span');
+    figure.textContent = value;
+    Object.assign(figure.style, { color, fontWeight: 'bold', whiteSpace: 'nowrap' });
+
+    line.append(name, figure);
+    return line;
 }
 
 /**
@@ -680,6 +788,99 @@ function statusText(target) {
     // have not been told is not a figure you can act on
     const short = `${formatKMB(target.needed)} to go`;
     return target.seconds === null ? short : `${short} · ${shortDuration(target.seconds)}`;
+}
+
+/**
+ * One slot: what is in it, what it would fetch, and what is being saved for.
+ *
+ * @param {string} slot - e.g. `main_hand`
+ * @param {Array<Object>} targets - From `watchedTargets`
+ * @returns {HTMLElement}
+ */
+function slotSection(slot, targets) {
+    const wrap = document.createElement('div');
+    wrap.dataset.slot = slot;
+    Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '3px' });
+
+    const worn = dataManager.getEquipment?.()?.get?.(`/item_locations/${slot}`) || null;
+    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+
+    // The heading: what is in the slot and what selling it would put towards
+    // the upgrade, which is half the cost of every target below it
+    const heading = document.createElement('div');
+    Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '7px', padding: '3px 0' });
+
+    const label = document.createElement('span');
+    label.textContent = `${slotLabel(slot)}:`;
+    Object.assign(label.style, { color: 'rgba(232, 236, 245, 0.6)', minWidth: '76px', fontSize: '11px' });
+
+    const name = document.createElement('span');
+    name.textContent = worn
+        ? `${nameOf(worn.itemHrid)}${worn.enhancementLevel ? ` +${worn.enhancementLevel}` : ''}`
+        : 'Empty';
+    Object.assign(name.style, {
+        flex: '1',
+        color: worn ? ROW_COLORS.neutral : 'rgba(232, 236, 245, 0.4)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    });
+
+    const bid = document.createElement('span');
+    bid.textContent = wornBid > 0 ? formatWithSeparator(Math.round(wornBid)) : 'No bid';
+    bid.style.color = wornBid > 0 ? ROW_COLORS.gold : 'rgba(232, 236, 245, 0.4)';
+    bid.title = wornBid > 0 ? 'What selling this would put towards an upgrade.' : 'Nothing bidding on this.';
+
+    heading.append(label, name, bid);
+    wrap.appendChild(heading);
+
+    const mine = targets.filter((target) => slotOf(target.itemHrid) === slot);
+    if (!mine.length) {
+        wrap.appendChild(emptySlotRow(slot));
+        return wrap;
+    }
+
+    for (const target of mine) wrap.appendChild(targetCard(target));
+    return wrap;
+}
+
+/**
+ * The invitation on a slot with nothing watched.
+ *
+ * @param {string} slot - The slot
+ * @returns {HTMLElement}
+ */
+function emptySlotRow(slot) {
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+        borderLeft: '2px solid rgba(127, 214, 163, 0.5)',
+        background: 'rgba(255, 255, 255, 0.03)',
+        borderRadius: '3px',
+        color: 'rgba(232, 236, 245, 0.45)',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '6px',
+        textAlign: 'center',
+    });
+    row.dataset.watchSlot = slot;
+    row.textContent = '\u{1F576} Click to watch';
+    row.title = 'Open the picker with this slot in mind.';
+    row.addEventListener('click', () => {
+        editing.open = true;
+        editing.slot = slot;
+        equipmentSavingsPanel.render();
+    });
+    return row;
+}
+
+/**
+ * Which slot a piece of equipment fills.
+ * @param {string} itemHrid - The piece
+ * @returns {string} e.g. `main_hand`, or '' when it is not equipment
+ */
+function slotOf(itemHrid) {
+    const type = dataManager.getItemDetails?.(itemHrid)?.equipmentDetail?.type;
+    return type ? type.split('/').pop() : '';
 }
 
 /**
@@ -780,14 +981,22 @@ export const equipmentSavingsPanel = createPanel({
 
         if (editing.open) drawPicker(body);
 
+        // A section per slot, watched or not, which is EWatch's shape. A slot
+        // with nothing on it still says what is in it and invites a target;
+        // a list of only what you are saving for cannot do that.
+        const list = panelCard(body, undefined, '#6495ed');
+        for (const slot of SLOTS) list.appendChild(slotSection(slot, plan.targets));
+
+        // Anything watched whose slot is not in the list above — a slot the game
+        // added, or a piece whose type this does not know. Better an odd section
+        // than a target that silently disappears.
+        const stray = plan.targets.filter((target) => !SLOTS.includes(slotOf(target.itemHrid)));
+        for (const target of stray) list.appendChild(targetCard(target));
+
         if (!plan.targets.length) {
-            body.appendChild(panelNote('Nothing being saved for.'));
-            body.appendChild(panelNote('Press Edit to pick a piece of equipment to save for.'));
+            body.appendChild(panelNote('Nothing being saved for yet — click a slot above, or press Edit.'));
             return;
         }
-
-        const list = panelCard(body, 'Saving for', '#6495ed');
-        for (const target of plan.targets) list.appendChild(targetCard(target));
 
         // One at a time answers the wrong question when you want three pieces
         const all = panelCard(body, 'Everything', '#6495ed');
