@@ -6,6 +6,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: every hit was credited to whatever was cast first
+
+The ability attached to a hit was read once, from `new_battle`, and never again. So the label was frozen at whatever the character happened to be preparing when the fight began, and the entire fight was credited to that one ability — which is why the per-ability split disagreed with DPs so badly.
+
+Two things were wrong at once:
+
+- **The field has two spellings.** `new_battle` writes `preparingAbilityHrid` and `isPreparingAutoAttack`; a `battle_updated` tick abbreviates them to `abilityHrid` and `isAutoAtk`. Only the long pair was being read, so a tick never had anything to say. Both are read now.
+- **It has to be read after attributing, not before.** The hit that lands on a tick was cast by what was prepared _before_ it — by the time the payload arrives the character has already begun the next thing. Updating first would swap one wrong answer for another, crediting every hit to its successor. The tracker now attributes the tick and then records what is being prepared next, which is the order DPs uses.
+
+### Recording combat, so attribution can be settled rather than argued
+
+Attribution is inferred — mana falling identifies the caster, a counter rising identifies a hit — and every inference is somewhere to be wrong. Two panels disagreeing cannot be settled from two screenshots: both are summaries of a fight that is over.
+
+- **A Record button in the DPs header** captures the raw feed and writes it to a file. It keeps `new_battle` whole, because that is one payload per fight and carries the names and health bars, and from each tick only `pMap` and `mMap` — everything attribution reads and none of the rest. No character name, no chat.
+- **It stops itself.** Ticks arrive several times a second, so an unbounded recording is a tab that quietly grows until it falls over. It caps and says so in the file.
+- **`npm run replay -- recording.json`** feeds a recording back through the attribution and prints what the panel would have made of it. That is what turns a disagreement into a comparison, and a fight into a fixture that fails when a change breaks it.
+
 ### The enemy rows belong to the player who fought them
 
 They sat at the top of the table as a party-wide total, which is the wrong shape and the wrong arithmetic. They nest under the player now, as DPs nests them: collapse a player and their enemies go with them.

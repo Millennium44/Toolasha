@@ -44,20 +44,34 @@ export function newAttributionState() {
 /**
  * Note what each player is preparing, so a hit can be labelled with an ability.
  *
- * `preparingAbilityHrid` when one is mid-cast, `auto` when it is an auto-attack,
- * and `idle` otherwise — the same three cases MCS distinguishes, and what the
+ * The ability when one is mid-cast, `auto` when it is an auto-attack, and
+ * `idle` otherwise — the same three cases MCS distinguishes, and what the
  * non-damaging filter keys off.
  *
+ * ## Two spellings of the same field
+ *
+ * `new_battle` writes `preparingAbilityHrid` and `isPreparingAutoAttack`; the
+ * per-tick `battle_updated` abbreviates them to `abilityHrid` and `isAutoAtk`.
+ * Reading only the long pair means the label is whatever was being prepared
+ * when the battle began and never changes again — which credits the entire
+ * fight to one ability, and to the wrong one at that.
+ *
+ * ## When to call it
+ *
+ * **After attributing a tick, not before.** The hit that lands on a tick was
+ * cast by what was being prepared *before* it; by the time the payload arrives
+ * the player has already begun the next thing. Updating first credits every hit
+ * to the ability that follows it.
+ *
  * @param {Object} state - From `newAttributionState`, mutated
- * @param {Array<Object>} players - The `new_battle` player list
+ * @param {Object} players - A `new_battle` player list or a tick's `pMap`
  */
 export function noteActions(state, players) {
     for (const [index, player] of Object.entries(players || {})) {
-        state.actions[index] = player?.preparingAbilityHrid
-            ? player.preparingAbilityHrid
-            : player?.isPreparingAutoAttack
-              ? 'auto'
-              : 'idle';
+        const ability = player?.preparingAbilityHrid || player?.abilityHrid;
+        const auto = player?.isPreparingAutoAttack || player?.isAutoAtk;
+
+        state.actions[index] = ability ? ability : auto ? 'auto' : 'idle';
     }
 }
 

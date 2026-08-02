@@ -9,6 +9,7 @@
 import zoneIndices from '../features/combat/zone-indices.js';
 import loadoutEnhancementDisplay from '../features/combat/loadout-enhancement-display.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
+import combatRecorder from '../features/combat/combat-recorder.js';
 import scrollSimulator from '../features/combat/scroll-simulator.js';
 import scrollSimulatorUI from '../features/combat/scroll-simulator-ui.js';
 import dungeonTracker from '../features/combat/dungeon-tracker.js';
@@ -60,6 +61,7 @@ toolashaRoot.Combat = {
     zoneIndices,
     loadoutEnhancementDisplay,
     loadoutSnapshot,
+    combatRecorder,
     scrollSimulator,
     scrollSimulatorUI,
     dungeonTracker,
