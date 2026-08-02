@@ -94,6 +94,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/opanel-config.js')), 'Toolasha.Utils.opanelConfig'],
     [normalize(join(__dirname, 'src/utils/skill-progress.js')), 'Toolasha.Utils.skillProgress'],
     [normalize(join(__dirname, 'src/utils/experience-parser.js')), 'Toolasha.Utils.experienceParser'],
+    [normalize(join(__dirname, 'src/utils/ability-books.js')), 'Toolasha.Utils.abilityBooks'],
     // Shared above all for its cache: a private copy per bundle means the overlay
     // and the Treasure panel each hold a stale map of every panel's geometry, and
     // whichever saves last wipes the other's entry
