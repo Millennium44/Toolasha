@@ -172,6 +172,21 @@ const combatDPS = new CombatDPS();
  * @param {HTMLElement} container - The tile
  * @param {Object} breakdown - From `damageBreakdown`
  */
+/**
+ * A DPS figure, to a decimal where a decimal means something.
+ *
+ * DPs writes 347.6 rather than 348, and at these magnitudes the tenth is a real
+ * distinction — it is the figure people watch move as they change a rotation.
+ * Past ten thousand it is noise on a number that no longer fits, so the compact
+ * form takes over.
+ *
+ * @param {number} value - Damage per second
+ * @returns {string}
+ */
+function dpsFigure(value) {
+    return value < 10_000 ? value.toFixed(1) : formatLargeNumber(Math.round(value));
+}
+
 function drawPerPlayer(container, breakdown) {
     const lines = [];
     let total = 0;
@@ -182,7 +197,7 @@ function drawPerPlayer(container, breakdown) {
 
         lines.push([
             { text: player.name, color: ROW_COLORS.gold, ellipsis: true },
-            { text: formatLargeNumber(Math.round(player.dps)), color: ROW_COLORS.good, push: true },
+            { text: dpsFigure(player.dps), color: ROW_COLORS.good, push: true },
             {
                 // Null accuracy is no swings seen, which is not a 0% hit rate
                 text: player.accuracy === null ? '--' : `${(player.accuracy * 100).toFixed(1)}%`,
@@ -193,7 +208,7 @@ function drawPerPlayer(container, breakdown) {
 
     lines.push([
         { text: 'Total DPS', color: ROW_COLORS.neutral, bold: true },
-        { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
+        { text: dpsFigure(total), color: ROW_COLORS.good, bold: true, push: true },
     ]);
 
     rows(container, lines);

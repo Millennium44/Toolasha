@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The DPS and luck tiles, in OPanel's shapes
+
+- **DPS reads to a tenth.** OPanel writes `347.6` rather than `348`, and at these magnitudes the tenth is the figure people watch move as they change a rotation. Past ten thousand it is noise on a number that no longer fits, so the compact form takes over there.
+- **Drop Luck is your name and the figure**, which is the shape Lucky's tile has, rather than the word "Luck" and a number. Still one row in a party: the percentile is a property of the session — how unusual this run was against the zone's own distribution — and there is no honest way to split it between the people who were in it.
+- **Over Expected is a row per player and a total, whether or not there is a party.** It had a separate solo layout carrying the coins the percentage came from; those are three times as wide as the tile and are the tooltip now. One shape rather than two is also one fewer thing to keep matching.
+- The two tiles sit side by side and would look equally plausible showing each other's number, so there are now tests that each shows its own: the percentile on one, takings against expectation on the other.
+
 ### A recorded fight, replayed as a test — and a second bug it found
 
 A real sixty-eight-second run confirms the attribution fix: the split is now 79.8% auto-attack, 11.0% penetrating strike, 9.3% puncture, against the 34%/23%/42% the same code produced before it. The recording is kept as a fixture and replayed on every test run, so this cannot quietly come back.
