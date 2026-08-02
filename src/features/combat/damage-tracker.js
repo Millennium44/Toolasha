@@ -193,13 +193,16 @@ export function damageBreakdown() {
  * @returns {string|null}
  */
 function monsterName(monster) {
-    const hrid = monster?.combatMonsterHrid || monster?.monsterHrid;
-    if (hrid) {
-        const detail = dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid];
-        if (detail?.name) return detail.name;
-        return String(hrid).split('/').pop().replace(/_/g, ' ');
-    }
-    return monster?.name || null;
+    // `name` first, because that is what the payload actually carries — a
+    // recorded battle has `name` and `hrid` and neither of the two hrid
+    // spellings this used to look for
+    if (monster?.name) return monster.name;
+
+    const hrid = monster?.combatMonsterHrid || monster?.monsterHrid || monster?.hrid;
+    if (!hrid) return null;
+
+    const detail = dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid];
+    return detail?.name || String(hrid).split('/').pop().replace(/_/g, ' ');
 }
 
 /**

@@ -57,9 +57,9 @@ const MAX_GAP_MS = 2000;
  * @returns {string|null}
  */
 function monsterName(monster) {
-    const hrid = monster?.combatMonsterHrid || monster?.monsterHrid;
-    if (hrid) return String(hrid).split('/').pop().replace(/_/g, ' ');
-    return monster?.name || null;
+    if (monster?.name) return monster.name;
+    const hrid = monster?.combatMonsterHrid || monster?.monsterHrid || monster?.hrid;
+    return hrid ? String(hrid).split('/').pop().replace(/_/g, ' ') : null;
 }
 
 for (const tick of file.ticks || []) {
@@ -74,6 +74,11 @@ for (const tick of file.ticks || []) {
         state.dmgCounter = {};
         state.critCounter = {};
 
+        // Rebuilt, not merged: the indices are reused every battle and mean
+        // different monsters each time. Slot 0 is an Eye in one fight and an
+        // Eyes in the next, so a stale entry credits one monster's damage to
+        // the other — which is exactly what the tracker guards against.
+        for (const key of Object.keys(monsters)) delete monsters[key];
         for (const [index, monster] of Object.entries(tick.payload?.monsters || {})) {
             const name = monsterName(monster);
             if (name) monsters[index] = { name };
