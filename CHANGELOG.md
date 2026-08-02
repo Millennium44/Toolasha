@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The MWI Combat Suite source is back in the tree while the port runs
+
+- `third-party/mwi-combat-suite/mwi-combat-suite-0.9.36235.user.js` is restored. It was removed because 2 MB and 42,155 lines cost every clone for a file nothing builds against — which is true, and was the wrong trade while the port is still in progress. Without it, every question about what a panel actually does gets answered from screenshots, and at least one port went in wrong that way.
+- Nothing in the toolchain reads it: `eslint` and the test runner only look at `src/`, `prettier` is scoped to `src`, `*.config.js` and `**/*.md`, and CI's 2 MB check only measures `dist/`. It is added to `.prettierignore` anyway, so a repo-wide `prettier --write` cannot reformat somebody else's script. The notes and licence beside it stay formatted.
+- It can go again once nothing is being read out of it.
+
 ### The combat level is a target you can aim at
 
 - **The Target Selector offers Combat alongside the skills**, so "when do I hit 151?" is answerable directly rather than by picking a skill and doing the last step in your head. It drives the Time to Level tile like any other target: `Combat → 130`.
