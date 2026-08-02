@@ -90,7 +90,7 @@ const slotLabel = (slot) => slot.replace(/_/g, ' ').replace(/\b\w/g, (letter) =>
  * `targets` is keyed by item hrid rather than by slot: you can be saving for two
  * rings, and a slot-keyed list would silently drop one.
  */
-const state = { targets: {}, noSell: false, marketValue: true, selected: null, locked: true };
+const state = { targets: {}, noSell: false, marketValue: true, selected: null, locked: false };
 
 /** The picker's own state, which is not worth persisting — it is a form */
 const editing = { itemHrid: '', enhancementLevel: 0, slot: '' };
@@ -216,7 +216,7 @@ export function resetEquipmentSavings() {
     state.noSell = false;
     state.marketValue = true;
     state.selected = null;
-    state.locked = true;
+    state.locked = false;
 }
 
 /**
@@ -229,7 +229,14 @@ export function resetEquipmentSavings() {
  * @returns {number}
  */
 export function coinsHeld() {
-    const coin = dataManager.getInventory?.()?.find((item) => item.itemHrid === '/items/coin');
+    // Filtered to the inventory location, as every other reader of this list
+    // does. `getInventory` returns every character item — equipped pieces,
+    // listings, everything — and coins turn up under more than one of them, so
+    // an unfiltered `find` picks up a figure that is not what you can spend.
+    const items = dataManager.getInventory?.() || [];
+    const coin = items.find(
+        (item) => item.itemHrid === '/items/coin' && item.itemLocationHrid === '/item_locations/inventory'
+    );
     return coin?.count || 0;
 }
 
@@ -1101,7 +1108,9 @@ export const equipmentSavingsPanel = createPanel({
 
         if (state.locked) {
             if (!plan.targets.length) {
-                body.appendChild(panelNote('Nothing being saved for yet — press Edit and click a slot.'));
+                body.appendChild(
+                    panelNote('Nothing being saved for yet — press Edit to open the slots and click one.')
+                );
                 return;
             }
             for (const target of plan.targets) list.appendChild(targetCard(target));
