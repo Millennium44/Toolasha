@@ -200,6 +200,16 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'combatText',
+            name: 'Combat Text',
+            category: 'UI',
+            module: UI.combatText,
+            async: false,
+            // Either half being on is enough; the module subscribes to nothing
+            // when both are off
+            customCheck: () => config.getSetting('combatText_floating') || config.getSetting('combatText_scrolling'),
+        },
+        {
             key: 'watchlist',
             name: 'Watchlist',
             category: 'Inventory',

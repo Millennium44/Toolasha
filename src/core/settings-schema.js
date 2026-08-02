@@ -531,6 +531,20 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
             },
+            combatText_floating: {
+                id: 'combatText_floating',
+                label: 'Floating Combat Text: Damage numbers over the units taking them',
+                type: 'checkbox',
+                default: false,
+                help: 'A health bar tells you the state, not the event — "did that hit for 400 or 4,000" is a question a number answers and a bar does not',
+            },
+            combatText_scrolling: {
+                id: 'combatText_scrolling',
+                label: 'Scrolling Combat Text: Keep a log of recent hits',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a Combat Log overlay row with the last few hits, for anything that went past too fast to read',
+            },
             manaTracker: {
                 id: 'manaTracker',
                 label: 'Mana Tracker: Count what your abilities cost per fight',
