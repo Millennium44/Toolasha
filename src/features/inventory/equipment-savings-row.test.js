@@ -56,7 +56,12 @@ const {
 } = await import('./equipment-savings-row.js');
 
 beforeEach(() => {
-    game.inventory = [{ itemHrid: '/items/coin', count: 60_000_000 }];
+    game.inventory = [
+        { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', count: 60_000_000 },
+        // Coins turn up under more than one location; only the inventory one is
+        // money you can spend
+        { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/market_listing', count: 51_000_000_000_000 },
+    ];
     game.details = {
         '/items/cheese_sword': { name: 'Cheese Sword', equipmentDetail: { type: '/equipment_types/main_hand' } },
         '/items/holy_sword': { name: 'Holy Sword', equipmentDetail: { type: '/equipment_types/main_hand' } },
@@ -129,6 +134,12 @@ describe('the whole list', () => {
         expect(coinsHeld()).toBe(60_000_000);
     });
 
+    test('only coins in the inventory count, not every coin row the game has', () => {
+        // An unfiltered read picked up a listing's row and reported fifty-one
+        // trillion, which made everything affordable
+        expect(coinsHeld()).not.toBe(51_000_000_000_000);
+    });
+
     test('no income measured means no arrival time rather than never', () => {
         // Genuinely short: with nothing left to save the answer is zero seconds
         // whatever the income, which is not the case being tested
@@ -141,8 +152,18 @@ describe('the whole list', () => {
 });
 
 describe('the panel renders', () => {
-    test('an empty list says how to add to it', () => {
+    test('an empty list is the slots inviting one', () => {
+        // The invitation is the slot itself, so there is nothing to explain
         equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Click to watch');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('locked with nothing watched says where to go', () => {
+        // The slots are hidden there, so the invitation has to be words
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
 
         expect(text()).toContain('Nothing being saved for');
         expect(text()).not.toContain(FAILED);
@@ -216,11 +237,8 @@ describe('the panel renders', () => {
     });
 });
 
-/** Unlock the panel, which is what every slot interaction needs first */
-const unlock = () => {
-    equipmentSavingsPanel.show();
-    equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
-};
+/** The panel opens unlocked, so a slot interaction only needs it open */
+const unlock = () => equipmentSavingsPanel.show();
 
 /** Unlock, open the picker under a slot, and hand back its list */
 const openPicker = (slot = 'main_hand') => {
@@ -230,11 +248,17 @@ const openPicker = (slot = 'main_hand') => {
 };
 
 describe('lock and edit', () => {
+    test('the slots are what it opens on', () => {
+        // EWatch's own resting state. Hiding them behind a button hides the only
+        // way to add anything, which is the panel's whole point.
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Main Hand:');
+    });
+
     test('locked lists only what is being saved for', () => {
-        // Which is what the panel is for almost all of the time; the slots are a
-        // great deal longer and only needed while changing targets
         watchTarget('/items/holy_sword');
         equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
 
         expect(text()).toContain('Holy Sword');
         expect(text()).not.toContain('Main Hand:');
@@ -245,15 +269,16 @@ describe('lock and edit', () => {
         equipmentSavingsPanel.show();
         const button = () => equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]');
 
-        expect(button().textContent).toBe('Edit');
-        button().click();
         expect(button().textContent).toBe('Lock');
+        button().click();
+        expect(button().textContent).toBe('Edit');
     });
 
     test('locking closes any picker that was open', () => {
         openPicker('feet');
-        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeTruthy();
 
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
         expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
     });
 });

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: EWatch counted coins it could not spend, and hid the slots by default
+
+- **The coin figure was reading every coin row the game holds, not the one in your inventory.** `getInventory` returns every character item — equipped pieces, listings, all of it — and coins appear under more than one, so an unfiltered lookup reported fifty-one trillion where the character had two hundred and sixty-eight million. Everything was affordable, every bar sat at 100%. It filters to `/item_locations/inventory` now, which is what every other reader of that list already did.
+- **The slot list is what the panel opens on again.** Locking it away by default hid the only way to add a target, which is most of what the panel is for. Locked is still there as the compact reading view; it is just no longer the resting state.
+
 ### EWatch gains Lock, Refresh, and the picker where it belongs
 
 - **Lock and Edit are the panel's two shapes.** Locked is a reading list — what you are saving for, how far along, and the Everything row — which is what the panel is for almost all of the time. Edit opens every slot so targets can be changed. Locked is the resting state because the editing view is several times longer and only wanted while changing something.
