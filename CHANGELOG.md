@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### MAna and QCharm
+
+- **Mana/fight.** Mana is the constraint nobody watches — damage is in the combat log, mana shows up only as the moment an ability does not fire, by which point the fight has gone differently. The row reports mana and casts **per fight** rather than the running total, because a total only says how long you have been playing.
+- The game announces a cast but not what it cost, so a cast is a message and its mana is a lookup in `abilityDetailMap`. An ability the game has never described contributes casts and no mana, and the row carries a ⚠ saying the total is a lower bound rather than letting a short figure read as a measurement.
+- **Charm Value.** A charm's bonus scales with tier and enhancement; its price scales with neither in any orderly way. So the best charm to buy is neither the highest tier nor the cheapest — it is the most bonus per coin, which is a division across six tiers and twenty enhancement levels. Ranking by bonus alone recommends the grandmaster every time, which is true and useless.
+- The tooltip says what the **upgrade** buys rather than what the charm is worth: swapping a 5% charm for a 6.5% one buys 1.5%, and paying for it as though it bought 6.5% is how people overpay.
+- An unpriced charm is unknown rather than free, and sorts last — the same rule the ability books needed, for the same reason.
+
+`utils/mana-spend.js` (8 tests) and `utils/charm-value.js` (14 tests) hold the arithmetic. Charms are found by looking for the charm slot in the item map and reading the tier out of the hrid, so one added by a game update is priced rather than missed.
+
 ### Fixed: the Ability Book panel listed nothing at all
 
 - It read the character out of `getInitClientData()`, which returns **static game data** — an `abilityDetailMap` describing every ability in the game and nothing about yours. So the list was always empty, and "No abilities learned yet" was the panel faithfully reporting a lookup that could never succeed.

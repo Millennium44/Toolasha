@@ -39,6 +39,8 @@ import networthFeature from '../features/networth/index.js';
 // Side-effect import: registers the coins, listings, inventory and books overlay rows
 import '../features/networth/networth-rows.js';
 import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
+// Side-effect import: registers the Charm Value overlay row
+import '../features/inventory/charm-value-row.js';
 
 // Inventory features
 import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';

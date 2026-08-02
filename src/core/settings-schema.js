@@ -531,6 +531,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
             },
+            manaTracker: {
+                id: 'manaTracker',
+                label: 'Mana Tracker: Count what your abilities cost per fight',
+                type: 'checkbox',
+                default: true,
+                help: 'Mana is the constraint nobody watches — it shows up only as the moment an ability does not fire. Adds a Mana/fight overlay row',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',
