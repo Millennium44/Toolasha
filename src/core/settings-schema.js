@@ -517,6 +517,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Tracks what every chest you open actually paid out against what its drop table says it owes. Open the panel from the Treasure button on the settings page',
             },
+            watchlist: {
+                id: 'watchlist',
+                label: "Watchlist: Track chosen items, a zone's drops, or a chest's contents",
+                type: 'checkbox',
+                default: true,
+                help: 'A list of items with what you hold and what it is worth. Tick a combat zone to add everything it drops, or a chest to add everything it contains. Tracked items get a dot in the inventory, and anything the vendor pays more for than the market is flagged. Open it from the Watchlist overlay row',
+            },
             lootLogStats: {
                 id: 'lootLogStats',
                 label: 'Loot Log Statistics',

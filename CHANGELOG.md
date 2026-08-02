@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Watchlist — NTally
+
+- **A list of items you care about**, with what you hold, the unit ask and bid, and what the pile is worth. Inventory Value says what the whole bag is worth, which is a number that moves when anything moves; this one answers something narrower and actionable — _these thirty things, how many have I got, and which of them should I not be selling on the market._
+- **Tick a combat zone and its whole drop table goes on the list.** Read from the game's own data: both `dropTable` and `rareDropTable` of every ordinary spawn **and every boss**, or the completion reward table if it is a dungeon. Reading only the common table would omit precisely the drops anybody tracks a zone for, and reading a dungeon as an ordinary zone finds nothing at all. Chests work the same way, and include the unopened chest itself.
+- **The zones come from the action map rather than a list**, so a zone added by a game update appears on its own — where MCS's hardcoded fifteen would not.
+- **Un-ticking a set does not take items another set still wants.** Zones share drops, so every row remembers which set put it there, and un-ticking re-homes any row a still-ticked set also contains instead of deleting it. Items added by hand belong to no set and survive everything. This is the part with the most tests, because getting it wrong looks like the list losing things at random.
+- **A green dot on tracked items in the inventory**, so the list is readable where you are actually looking rather than only when the panel is open.
+- **The vendor warning.** A market bid below what the vendor pays flat is not a price, and reporting it as the item's value quietly advises the worse of two sales. Those rows show the vendor price with a ⚠ and say why. Items with no market at all report the vendor price too — a bid of zero is the absence of a price, not a value of nothing. Toolasha already made this comparison inside the bulk-sell flow; here it stands as a property of the item rather than as a step in selling one.
+- A **Watchlist** overlay row carries `held / tracked`, the total at ask, and the count of rows the vendor would pay more for. Double-click opens the panel.
+- One tick can add thirty rows, so there is one gesture to empty the list again — which unticks every set at the same time, since a ticked box over an empty list is a box claiming something untrue.
+
+`utils/watchlist.js` (26 tests) and `utils/drop-sources.js` (16 tests) hold the set algebra and the drop-table walking; 14 more build the panel and read it back.
+
 ### The MWI Combat Suite source is back in the tree while the port runs
 
 - `third-party/mwi-combat-suite/mwi-combat-suite-0.9.36235.user.js` is restored. It was removed because 2 MB and 42,155 lines cost every clone for a file nothing builds against — which is true, and was the wrong trade while the port is still in progress. Without it, every question about what a panel actually does gets answered from screenshots, and at least one port went in wrong that way.
