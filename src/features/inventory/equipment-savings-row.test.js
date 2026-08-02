@@ -269,3 +269,57 @@ describe('the item picker', () => {
         expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]').value).toBe('');
     });
 });
+
+describe('the slot layout', () => {
+    test('every slot gets a section, watched or not', () => {
+        // A slot with nothing on it still says what is in it and invites a
+        // target, which a list of only your targets cannot do
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Main Hand:');
+        expect(text()).toContain('Charm:');
+        expect(text()).toContain('Cheese Sword');
+    });
+
+    test('an empty slot reads as empty rather than as missing', () => {
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Empty');
+    });
+
+    test('a watched target sits under the slot it would fill', () => {
+        watchTarget('/items/holy_sword');
+        equipmentSavingsPanel.show();
+
+        const mainHand = equipmentSavingsPanel.panel.querySelector('[data-slot="main_hand"]');
+        expect(mainHand.textContent).toContain('Holy Sword');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-slot="feet"]').textContent).not.toContain('Holy Sword');
+    });
+
+    test('clicking an empty slot opens the picker on that slot alone', () => {
+        // Scrolling past every charm in the game to reach a helmet is the thing
+        // the invitation is there to avoid
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
+
+        const groups = [...equipmentSavingsPanel.panel.querySelectorAll('optgroup')].map((group) => group.label);
+        expect(groups).toEqual(['feet']);
+    });
+
+    test('the picker can be widened back to every slot', () => {
+        equipmentSavingsPanel.show();
+        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
+        equipmentSavingsPanel.panel.querySelector('[data-pick-all-slots]').click();
+
+        const groups = [...equipmentSavingsPanel.panel.querySelectorAll('optgroup')].map((group) => group.label);
+        expect(groups.length).toBeGreaterThan(1);
+    });
+
+    test('a watched target shows its ask and what the swap actually costs', () => {
+        watchTarget('/items/holy_sword');
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Ask Price:');
+        expect(text()).toContain('Difference:');
+        expect(text()).not.toContain(FAILED);
+    });
+});

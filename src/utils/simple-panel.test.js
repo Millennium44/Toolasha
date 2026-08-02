@@ -87,6 +87,31 @@ describe('createPanel', () => {
         expect(draw).toHaveBeenCalledTimes(drawsWhileOpen);
     });
 
+    test('a control being used is not rebuilt under the pointer', () => {
+        // A refresh rebuilds the body, and rebuilding a select closes its
+        // dropdown — scroll a long list for a few seconds and it shuts under you
+        const panel = createPanel({
+            id: 'busy',
+            title: 'Busy',
+            size: SIZE,
+            refreshMs: 1000,
+            draw: (body) => body.appendChild(document.createElement('select')),
+        });
+        panel.show();
+
+        const select = panel.panel.querySelector('select');
+        select.focus();
+        vi.advanceTimersByTime(5000);
+
+        // Same element, so nothing was torn down and rebuilt
+        expect(panel.panel.querySelector('select')).toBe(select);
+
+        select.blur();
+        vi.advanceTimersByTime(1000);
+        expect(panel.panel.querySelector('select')).not.toBe(select);
+        panel.hide();
+    });
+
     test('the close button closes it', () => {
         const panel = createPanel({ id: 'close', title: 'Close', size: SIZE, draw: () => {} });
         panel.show();
