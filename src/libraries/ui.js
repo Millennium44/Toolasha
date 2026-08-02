@@ -76,8 +76,6 @@ import alchemyActionProtection from '../features/alchemy/alchemy-action-protecti
 
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
-// Side-effect import: registers the Equipment Watch overlay row
-import '../features/enhancement/enhancement-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 
 // Guild

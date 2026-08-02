@@ -49,7 +49,7 @@ import {
     findEdibleToolsData,
     mergeTally,
 } from '../../utils/chest-import.js';
-import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import { calculateDungeonTokenValue, labyrinthRewardValue } from '../../utils/token-valuation.js';
 
 const STORAGE_KEY = 'treasureTally';
 const SETTINGS_KEY = 'treasureSettings';
@@ -372,13 +372,23 @@ class TreasureTracker {
         if (mode === 'mirror') return getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
 
         // Token value: what the tokens it costs would otherwise have bought
-        const shop = dataManager.getInitClientData()?.shopItemDetailMap || {};
+        const data = dataManager.getInitClientData();
+        const shop = data?.shopItemDetailMap || {};
         const entry = Object.values(shop).find((item) => item.itemHrid === itemHrid);
         const cost = entry?.costs?.[0];
-        if (!cost?.count) return null;
 
-        const perToken = calculateDungeonTokenValue(cost.itemHrid);
-        return perToken > 0 ? perToken * cost.count : null;
+        if (cost?.count) {
+            const perToken = calculateDungeonTokenValue(cost.itemHrid);
+            return perToken > 0 ? perToken * cost.count : null;
+        }
+
+        // The labyrinth keeps its own shop under its own map, and the scrolls a
+        // combat chest drops are in it and nowhere else. Without this they price
+        // at nothing and vanish from the contents rather than showing a value —
+        // which is what "the ported Treasure is missing the scrolls" was.
+        return labyrinthRewardValue(itemHrid, data?.labyrinthShopItemDetailMap, (hrid) =>
+            getItemPrice(hrid, { context: 'profit', side: 'sell' })
+        );
     }
 
     _saveSettings() {

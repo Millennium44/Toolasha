@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Treasure was dropping the scrolls, and EWatch gains its item picker
+
+- **Scrolls were missing from the chest contents.** They are bought from the labyrinth shop and used, never sold, so a market-only reading prices them at nothing — and an item worth nothing contributes to neither side of a chest's verdict and gets no row at all. The valuation already existed for the tooltip; the treasure tracker was looking only in `shopItemDetailMap`, and the labyrinth keeps its own shop under `labyrinthShopItemDetailMap`. A scroll is worth the tokens it costs, and a token is worth the best thing its shop converts to.
+- **An unsellable shop line cannot set the token price.** Otherwise a token prices at nothing and every reward follows it down — which is the same "unpriced is not free" rule the ability books and the charms already run on.
+- **EWatch has its Edit picker.** The item menu can only offer what you are holding, which is exactly the wrong set: the thing you are saving for is by definition something you do not have. Edit opens a list of every piece of equipment in the game, grouped by the slot it fills, with a button per enhancement level — greyed where nobody is selling — and a live reading of what the swap would cost before you commit to it.
+- **The Enhancement Run tile is gone**, along with the row it drew. It was the readout that used to sit under the Equipment Watch name.
+
 ### The Party Luck panel — LYuck's item table
 
 Behind the Drop Luck tile. The tile carries one figure and the panel behind it carried the run in coins; neither answers the question a long session actually raises, which is **which drop is the reason**. A run reads as unlucky because one rare did not come, and no total can say that.

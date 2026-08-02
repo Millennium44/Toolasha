@@ -49,6 +49,9 @@ const STORAGE_KEY = 'equipmentSavings';
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
 const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
 
+/** The enhancement levels the game allows, which is what the picker offers */
+const MAX_ENHANCEMENT = 20;
+
 /**
  * The list, and how it is being read.
  *
@@ -59,6 +62,9 @@ const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
  * rings, and a slot-keyed list would silently drop one.
  */
 const state = { targets: {}, noSell: false, marketValue: true, selected: null };
+
+/** The picker's own state, which is not worth persisting — it is a form */
+const editing = { open: false, itemHrid: '', enhancementLevel: 0 };
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
@@ -128,6 +134,9 @@ export function selectTarget(itemHrid) {
 
 /** Forget everything, for a test that must not inherit the last one */
 export function resetEquipmentSavings() {
+    editing.open = false;
+    editing.itemHrid = '';
+    editing.enhancementLevel = 0;
     state.targets = {};
     state.noSell = false;
     state.marketValue = true;
@@ -270,6 +279,170 @@ export function everything() {
         ...progress,
         seconds: timeToAffordSeconds(progress.needed, incomePerDay()),
     };
+}
+
+/**
+ * Every piece of equipment the game has, grouped by the slot it fills.
+ *
+ * From the item map rather than from a list, so a piece added by an update can be
+ * saved for rather than being missing until somebody notices.
+ *
+ * @returns {Array<{type: string, items: Array<{itemHrid: string, name: string}>}>}
+ */
+export function equipmentBySlot() {
+    const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
+    const groups = new Map();
+
+    for (const [itemHrid, details] of Object.entries(itemDetailMap)) {
+        const type = details?.equipmentDetail?.type;
+        if (!type) continue;
+
+        if (!groups.has(type)) groups.set(type, []);
+        groups.get(type).push({ itemHrid, name: details.name || itemHrid });
+    }
+
+    return [...groups.entries()]
+        .map(([type, items]) => ({
+            type,
+            label: type.split('/').pop().replace(/_/g, ' '),
+            items: items.sort((a, b) => a.name.localeCompare(b.name)),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * EWatch's own item picker: pick a piece, pick an enhancement, watch it.
+ *
+ * The item menu can only offer what you are holding, which is exactly the wrong
+ * set — the thing you are saving for is by definition something you do not have.
+ * So the panel needs a way in of its own.
+ *
+ * @param {HTMLElement} body - Where it goes
+ */
+function drawPicker(body) {
+    const card = panelCard(body, 'Add a target', '#6495ed');
+
+    const select = document.createElement('select');
+    select.dataset.pickItem = 'true';
+    Object.assign(select.style, {
+        background: 'rgba(255, 255, 255, 0.06)',
+        border: '1px solid rgba(255, 255, 255, 0.10)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        fontSize: '11px',
+        padding: '3px',
+        width: '100%',
+    });
+
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '— pick a piece —';
+    select.appendChild(blank);
+
+    for (const group of equipmentBySlot()) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.label;
+        for (const item of group.items) {
+            const option = document.createElement('option');
+            option.value = item.itemHrid;
+            option.textContent = item.name;
+            option.selected = item.itemHrid === editing.itemHrid;
+            optgroup.appendChild(option);
+        }
+        select.appendChild(optgroup);
+    }
+    select.addEventListener('change', () => {
+        editing.itemHrid = select.value;
+        equipmentSavingsPanel.render();
+    });
+    // A keystroke in a dropdown should not also be a game hotkey
+    select.addEventListener('keydown', (event) => event.stopPropagation());
+    card.appendChild(select);
+
+    if (!editing.itemHrid) {
+        card.appendChild(panelNote('Enhancement levels appear once a piece is chosen.'));
+        return;
+    }
+
+    const levels = document.createElement('div');
+    Object.assign(levels.style, { display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '5px' });
+
+    for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+        const ask = getItemPrices(editing.itemHrid, level)?.ask || 0;
+        const chosen = level === editing.enhancementLevel;
+
+        const button = document.createElement('button');
+        button.textContent = `+${level}`;
+        button.dataset.pickLevel = String(level);
+        Object.assign(button.style, {
+            background: chosen ? 'rgba(100, 149, 237, 0.35)' : 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${chosen ? '#6495ed' : 'rgba(255, 255, 255, 0.10)'}`,
+            borderRadius: '3px',
+            // A level nobody is selling can still be watched — the listing may
+            // come back — but it is worth knowing there is no price behind it
+            color: ask > 0 ? '#e8ecf5' : 'rgba(232, 236, 245, 0.35)',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '2px 5px',
+        });
+        button.title = ask > 0 ? `${formatWithSeparator(Math.round(ask))} to buy.` : 'Nobody is selling this one.';
+        button.addEventListener('click', () => {
+            editing.enhancementLevel = level;
+            equipmentSavingsPanel.render();
+        });
+        levels.appendChild(button);
+    }
+    card.appendChild(levels);
+
+    const ask = getItemPrices(editing.itemHrid, editing.enhancementLevel)?.ask || 0;
+    const preview = costPreview(editing.itemHrid, editing.enhancementLevel, ask);
+    card.appendChild(preview);
+
+    const add = document.createElement('button');
+    add.textContent = isTargeted(editing.itemHrid) ? 'Already watching' : '\u{1F441} Watch';
+    add.dataset.pickAdd = 'true';
+    Object.assign(add.style, {
+        background: 'rgba(100, 149, 237, 0.25)',
+        border: '1px solid #6495ed',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        cursor: 'pointer',
+        fontSize: '11px',
+        marginTop: '5px',
+        padding: '3px 10px',
+        alignSelf: 'flex-start',
+    });
+    add.disabled = isTargeted(editing.itemHrid);
+    add.addEventListener('click', () => {
+        watchTarget(editing.itemHrid, editing.enhancementLevel);
+        editing.itemHrid = '';
+        editing.enhancementLevel = 0;
+        equipmentSavingsPanel.render();
+    });
+    card.appendChild(add);
+}
+
+/**
+ * What the piece being picked would cost, before it is committed to.
+ *
+ * @param {string} itemHrid - The piece
+ * @param {number} enhancementLevel - Which enhancement
+ * @param {number} ask - Its asking price
+ * @returns {HTMLElement}
+ */
+function costPreview(itemHrid, enhancementLevel, ask) {
+    const worn = wornRivalOf(itemHrid);
+    const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
+    const cost = upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell: state.noSell });
+
+    const line = document.createElement('div');
+    Object.assign(line.style, { color: 'rgba(232, 236, 245, 0.7)', fontSize: '11px', marginTop: '5px' });
+    line.textContent =
+        cost === null
+            ? 'No price for that enhancement, so there is nothing to save towards yet.'
+            : `${formatKMB(ask)} to buy` +
+              (worn ? `, less ${formatKMB(wornBid)} for your ${worn.name} \u2192 ${formatKMB(cost)}` : '');
+    return line;
 }
 
 /**
@@ -584,11 +757,32 @@ export const equipmentSavingsPanel = createPanel({
             )
         );
 
+        // The way in that the item menu cannot be: what you are saving for is by
+        // definition something you do not have, so it is not in your inventory
+        const edit = document.createElement('button');
+        edit.textContent = editing.open ? 'Done' : 'Edit';
+        edit.dataset.editToggle = 'true';
+        Object.assign(edit.style, {
+            background: editing.open ? 'rgba(74, 222, 128, 0.18)' : 'rgba(255, 255, 255, 0.08)',
+            border: `1px solid ${editing.open ? '#4ade80' : 'rgba(255, 255, 255, 0.10)'}`,
+            borderRadius: '3px',
+            color: editing.open ? '#4ade80' : '#e8ecf5',
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '2px 9px',
+        });
+        edit.title = 'Pick a piece of equipment to save for.';
+        edit.addEventListener('click', () => {
+            editing.open = !editing.open;
+            equipmentSavingsPanel.render();
+        });
+        switches.appendChild(edit);
+
+        if (editing.open) drawPicker(body);
+
         if (!plan.targets.length) {
             body.appendChild(panelNote('Nothing being saved for.'));
-            body.appendChild(
-                panelNote('Click an item in your inventory or the marketplace and press Save for to add one.')
-            );
+            body.appendChild(panelNote('Press Edit to pick a piece of equipment to save for.'));
             return;
         }
 
