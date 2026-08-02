@@ -8,13 +8,19 @@
  * XP tracker already answers it in skill tooltips; this puts it where you can
  * see it without hovering anything.
  *
+ * ## Which question it answers
+ *
+ * Two, and the second wins. On its own it reports whichever skill is going up
+ * fastest. Once a target has been chosen in the Combat Level panel it reports
+ * that instead — otherwise the selector drives nothing you can see, which is
+ * indistinguishable from a selector that does not work.
+ *
  * ## Why it keeps its own readings
  *
- * The tracker's history is keyed to its own display concerns and lives behind
- * its instance. Two readings of one number is a small enough thing to keep here,
- * and keeping it here means the row works whether or not that feature is on.
- * Readings are taken from the same `characterSkills` the game keeps current, so
- * nothing here is polled out of the DOM.
+ * Its own instance of `skill-history`, so opening or closing the Combat Level
+ * panel cannot reset this row's measurement. Readings are taken from the same
+ * `characterSkills` the game keeps current, so nothing here is polled out of the
+ * DOM.
  *
  * The rate is measured over a rolling window rather than since the session
  * started. A rate measured from the start of an eight-hour idle answers "how
@@ -29,8 +35,9 @@
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
-import { experiencePerHour, timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
-import { combatLevelPanel } from '../ui/combat-level-panel.js';
+import { timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
+import { createSkillHistory } from '../../utils/skill-history.js';
+import { combatLevelPanel, selectedTarget } from '../ui/combat-level-panel.js';
 
 /** How far back the rate is measured over */
 const WINDOW_MS = 10 * 60 * 1000;
@@ -38,9 +45,15 @@ const WINDOW_MS = 10 * 60 * 1000;
 /** No point re-reading the skill list faster than the overlay redraws */
 const SAMPLE_MS = 5000;
 
-/** skillHrid → [{t, xp}], oldest first */
-const history = new Map();
-let lastSampleAt = 0;
+/**
+ * This row's own record, kept apart from the Combat Level panel's.
+ *
+ * The awkward parts — a clock that goes backwards leaving readings stamped in
+ * the future, a reading from a different character that is not a loss — live in
+ * `utils/skill-history.js` rather than in a copy of the loop here. There were
+ * two copies, and only one of them had been fixed.
+ */
+const history = createSkillHistory({ windowMs: WINDOW_MS, sampleMs: SAMPLE_MS });
 
 /**
  * Take a reading of every skill, if one is due.
@@ -50,24 +63,7 @@ let lastSampleAt = 0;
  * that is only ever read off the screen.
  */
 function sample() {
-    const now = Date.now();
-    if (now - lastSampleAt < SAMPLE_MS) return;
-    lastSampleAt = now;
-
-    const skills = dataManager.getSkills?.();
-    if (!skills) return;
-
-    for (const skill of skills) {
-        if (!skill?.skillHrid || !Number.isFinite(skill.experience)) continue;
-
-        const readings = history.get(skill.skillHrid) || [];
-        readings.push({ t: now, xp: skill.experience });
-
-        // Drop everything that has fallen out of the window, but never the last
-        // one before it — that reading is the far end of the measurement
-        while (readings.length > 2 && readings[1].t < now - WINDOW_MS) readings.shift();
-        history.set(skill.skillHrid, readings);
-    }
+    history.sample(dataManager.getSkills?.());
 }
 
 /**
@@ -79,12 +75,7 @@ export function trainingSkill() {
     const table = dataManager.getInitClientData?.()?.levelExperienceTable;
     if (!skills || !table) return null;
 
-    const rates = {};
-    for (const [hrid, readings] of history) {
-        const rate = experiencePerHour(readings[0], readings[readings.length - 1]);
-        if (rate) rates[hrid] = rate;
-    }
-
+    const rates = history.rates();
     const hrid = fastestGaining(rates);
     if (!hrid) return null;
 
@@ -111,6 +102,14 @@ registerRow({
     render: (container) => {
         sample();
 
+        // The panel's Target Selector wins when it has been set. Otherwise this
+        // row would keep answering about whichever skill happens to be going up
+        // fastest, which is not the question you asked by choosing a target —
+        // and a selector that changes nothing you can see is a selector that
+        // looks broken.
+        const chosen = selectedTarget();
+        if (chosen) return drawChosen(container, chosen);
+
         const training = trainingSkill();
         if (!training) return blank(container);
 
@@ -134,3 +133,33 @@ registerRow({
     // same question asked of all of them, with targets you can move
     onOpen: () => combatLevelPanel.toggle(),
 });
+
+/**
+ * Draw the row for a target chosen in the panel.
+ *
+ * The target is only spelled out when it is not simply the next level, so the
+ * ordinary case reads exactly as it did before rather than gaining an arrow that
+ * says nothing.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} chosen - From `selectedTarget`
+ */
+function drawChosen(container, chosen) {
+    const label =
+        chosen.target === chosen.level + 1 ? `${chosen.name} ${chosen.level}:` : `${chosen.name} → ${chosen.target}:`;
+
+    row(container, [
+        { text: label, color: ROW_COLORS.gold, ellipsis: true },
+        {
+            text: chosen.seconds === null ? '—' : shortDuration(chosen.seconds),
+            color: ROW_COLORS.accent,
+            push: true,
+        },
+    ]);
+    container.title =
+        `Level ${chosen.level} → ${chosen.target}, chosen in the Combat Level panel.\n` +
+        (chosen.perHour
+            ? `At ${Math.round(chosen.perHour).toLocaleString()} exp/hr.`
+            : 'Nothing is pointed at this skill, so there is no time to give.') +
+        '\nDouble-click to change it.';
+}

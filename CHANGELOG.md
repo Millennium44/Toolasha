@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Time to Level tile follows the Target Selector
+
+- **Pick a skill and a level in the panel and the tile reports that**, instead of going on about whichever skill happens to be going up fastest. A selector that drives nothing you can see is indistinguishable from a selector that does not work. A target beyond the next level reads `Defense → 130`; the next level reads as it always did, since the arrow would be saying nothing.
+- **The choice is kept**, so a tile you set once still says the same thing next week. It also lives outside the panel now — it has to, since the tile is on screen while the panel is closed, which is most of the time.
+- The time comes from the same projected rate the panel shows, so the tile and the Target Selector cannot disagree.
+
+### The two copies of the sampling loop are now one
+
+- The panel and the Time to Level row each had their own copy of "read every skill, keep ten minutes, work out a rate". Both had the clock-going-backwards bug and the different-character bug; **only one copy had been fixed**, so the overlay row was still going quiet after a resume from sleep and still measuring the gap between two characters as a rate.
+- Both now use `utils/skill-history.js`, with 12 tests. Each still keeps its own instance, so opening or closing the panel cannot reset the row's measurement — which was the reason for two copies in the first place, and did not require two copies.
+- Writing its tests found a third: the very first reading was refused whenever the clock started near zero, because "never sampled" was stored as time zero and zero is a real time. Invisible under a real clock, which is how it survived.
+
 ### Fixed: changing a dropdown appeared to do nothing
 
 - **The refresh guard was blocking the redraws the user asked for.** The panel skips its five-second redraw while a field has focus, so a half-typed level is not swept away — but `change` fires on a dropdown while that dropdown still has focus, so the redraw it asked for was skipped too. The new figures then turned up whenever focus next moved and the clock came round, which is what "takes ages to show the new exp rate" was.
