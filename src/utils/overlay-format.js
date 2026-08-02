@@ -110,7 +110,9 @@ export const ROW_COLORS = {
 /**
  * A piece of a line.
  * @typedef {Object} Segment
- * @property {string} text - What it says
+ * @property {string} [text] - What it says
+ * @property {string} [icon] - An item hrid to draw instead of text
+ * @property {number} [size] - Icon size in pixels
  * @property {string} [color] - From `ROW_COLORS`, or any CSS colour
  * @property {boolean} [bold] - Emphasis
  * @property {boolean} [ellipsis] - This is the piece that gives way when the tile is too narrow
@@ -138,6 +140,18 @@ export function drawLine(host, segments) {
 
     for (const segment of segments) {
         if (!segment) continue;
+
+        // An item's own icon says which item without spending the width a name
+        // costs, which is the only reason a forty-pixel tile can name one at all
+        if (segment.icon) {
+            const icon = itemIcon(segment.icon, segment.size || 16);
+            // The line is baseline-aligned for text; an icon has no baseline to
+            // sit on and drops below the numbers if it is left to find one
+            icon.style.alignSelf = 'center';
+            if (segment.push) icon.style.marginLeft = 'auto';
+            host.appendChild(icon);
+            continue;
+        }
 
         const span = document.createElement('span');
         span.textContent = segment.text;

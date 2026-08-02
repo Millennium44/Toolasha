@@ -84,42 +84,42 @@ registerRow({
 });
 
 /**
- * Books held, and what they are worth.
+ * The next ability level, and what it costs.
  *
- * Both halves, because the two answer different questions — how many are waiting
- * to be read, and how much is sitting there unread. Which pile the game counts
- * as books follows the net worth setting: with "ability books as inventory" on
- * they are part of the inventory figure instead, and this row goes quiet rather
- * than counting them twice.
+ * BRead's own tile: the cheapest ability to advance, written as its book's icon,
+ * how many books that level takes, and what they come to. The icon does the
+ * naming — a tile is not wide enough to spell "Penetrating Strike" and still
+ * have room for the number that decides anything.
+ *
+ * Books already held sit in the tooltip. They are a figure; the cheapest next
+ * level is a purchase, and only one of the two is worth a tile.
  */
 registerRow({
     key: 'skillBooks',
     name: 'Skill Books',
-    defaultSize: { width: 230, height: 30 },
+    defaultSize: { width: 180, height: 30 },
     render: (container) => {
         const books = networthFeature.currentData?.fixedAssets?.abilityBooks;
         const breakdown = books?.breakdown || [];
+        const held = breakdown.reduce((sum, entry) => sum + (entry.count || 0), 0);
 
-        // What the next ability level would cost, which is the one thing on this
-        // row you can act on — a pile of unread books is a figure, and "Smack
-        // for 4M" is a purchase
         const best = cheapestNextLevel(abilityPlans(null));
-        const count = breakdown.reduce((sum, entry) => sum + (entry.count || 0), 0);
-        if (!breakdown.length && !best) return blank(container);
+        if (!best) return blank(container);
 
         row(container, [
-            { text: '📖' },
-            breakdown.length ? { text: `${formatLargeNumber(count)} books`, color: ROW_COLORS.dim } : null,
-            breakdown.length
-                ? { text: formatLargeNumber(Math.round(books.totalCost || 0)), color: ROW_COLORS.violet }
-                : null,
-            best ? { text: best.name, color: ROW_COLORS.dim, push: true, ellipsis: true } : null,
-            best ? { text: formatLargeNumber(Math.round(best.costToNext)), color: ROW_COLORS.gold } : null,
+            { icon: best.itemHrid, size: 18 },
+            { text: String(best.booksToNext), color: ROW_COLORS.good, bold: true },
+            { text: 'books', color: ROW_COLORS.dim },
+            { text: formatLargeNumber(Math.round(best.costToNext)), color: ROW_COLORS.gold, push: true },
         ]);
-        container.title = best
-            ? `${best.name} is the cheapest next ability level: ${best.booksToNext} books at ` +
-              `${Math.round(best.bookPrice).toLocaleString()} each.\nDouble-click for every equipped ability.`
-            : 'Unread ability books.\nDouble-click for every equipped ability.';
+        container.title =
+            `${best.name} is the cheapest next ability level: ${best.booksToNext} books at ` +
+            `${Math.round(best.bookPrice).toLocaleString()} each.` +
+            (breakdown.length
+                ? `\nYou hold ${formatLargeNumber(held)} unread books worth ` +
+                  `${formatLargeNumber(Math.round(books.totalCost || 0))}.`
+                : '') +
+            '\nDouble-click for every equipped ability.';
     },
     // BRead's panel, behind the row that was already about books
     onOpen: () => abilityBookPanel.toggle(),

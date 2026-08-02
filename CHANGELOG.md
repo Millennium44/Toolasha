@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### QCharm and MAna open, and the Skill Books tile is BRead's
+
+- **Charms and Mana were tiles with nothing behind them.** Both now open on double-click. **Charms** lists the whole field ranked by experience per coin — icon, name, bonus, price — with each one's **gain over the charm you are wearing**, which is the number to pay against; the charm's own bonus is what you already have plus what you would gain, and paying for the whole of it is how people overpay. **Mana** breaks the run down by ability with each one's share, because the tile's per-fight figure does not say which ability moves when the rotation changes, and carries a Reset.
+- **The Skill Books tile is BRead's tile now**: the cheapest ability's **own book icon**, how many books that level takes, and what they come to. It was carrying four figures — inventory count, inventory worth, ability name, cost — and the name was ellipsed to `Pen…` to fit. The icon names the ability in the width a truncation was costing, and the books you already hold moved to the tooltip: a pile of unread books is a figure, the cheapest next level is a purchase.
+- `utils/simple-panel.js` is the shell all of these share, now declared shared in the build — it was about to be copied into both the combat and market bundles. 8 tests, including that a `draw` which throws says so rather than leaving an empty panel.
+
 ### Fixed: Combat Profit was a column of zeroes
 
 - It read the **raw player** out of the collector. `dailyIncome`, `dailyProfit` and the cost figures are produced by `calculatePlayerStats`, which the panel never called — so every branch defaulted to nought and the panel reported a confident zero for all three scenarios. It goes through the calculator now, the same one the Combat Revenue tile uses, so the two cannot disagree.

@@ -24,7 +24,9 @@ import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { charmValue, rankCharms, upgradeValue, charmTier } from '../../utils/charm-value.js';
 
@@ -75,6 +77,84 @@ export function equippedCharm() {
     return valued ? { ...valued, name: details?.name || worn.itemHrid } : null;
 }
 
+/**
+ * Every charm, ranked by what it buys per coin.
+ *
+ * The row names the winner; the panel is for when you want to see the field —
+ * which matters because the winner changes with the market and the second-best
+ * is often within a rounding error of it.
+ */
+export const charmPanel = createPanel({
+    id: 'charmPanel',
+    title: 'Charms',
+    size: { width: 460, height: 420 },
+    accent: '#c9a0ff',
+    draw: (body) => {
+        const charms = rankedCharms();
+        const worn = equippedCharm();
+
+        const current = panelCard(body, 'Equipped', '#c9a0ff');
+        if (worn) {
+            current.append(
+                panelLine(worn.name, `+${worn.experience.toFixed(2)}%`, ROW_COLORS.good),
+                panelLine('Enhancement', `+${worn.enhancementLevel}`),
+                panelLine('Worth', worn.price ? formatKMB(worn.price) : 'no price', ROW_COLORS.gold)
+            );
+        } else {
+            current.appendChild(panelNote('Nothing in the charm slot.'));
+        }
+
+        if (!charms.length) {
+            body.appendChild(panelNote('No charms priced yet.'));
+            return;
+        }
+
+        const table = panelCard(body, 'Best value per coin', '#c9a0ff');
+        for (const charm of charms.slice(0, 12)) {
+            const line = document.createElement('div');
+            Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px', padding: '1px 0' });
+
+            const icon = itemIcon(charm.itemHrid, 18);
+            linkToMarketplace(icon, charm.itemHrid, navigateToMarketplace);
+
+            const name = document.createElement('span');
+            name.textContent = charm.name;
+            Object.assign(name.style, {
+                flex: '1',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+            });
+            linkToMarketplace(name, charm.itemHrid, navigateToMarketplace);
+
+            const bonus = document.createElement('span');
+            bonus.textContent = `+${charm.experience.toFixed(2)}%`;
+            bonus.style.color = ROW_COLORS.good;
+
+            const price = document.createElement('span');
+            price.textContent = charm.price ? formatKMB(charm.price) : 'no price';
+            price.style.color = charm.price ? ROW_COLORS.gold : ROW_COLORS.bad;
+
+            // What the swap actually buys, which is the number to pay against —
+            // not the charm's whole bonus
+            const upgrade = upgradeValue(charm, worn);
+            const gain = document.createElement('span');
+            gain.textContent = upgrade.gain > 0 ? `+${upgrade.gain.toFixed(2)}%` : '—';
+            gain.style.color = upgrade.gain > 0 ? ROW_COLORS.accent : 'rgba(232, 236, 245, 0.4)';
+            gain.title = 'What this would gain over the charm you are wearing.';
+
+            line.append(icon, name, bonus, price, gain);
+            table.appendChild(line);
+        }
+
+        body.appendChild(
+            panelNote(
+                'Ranked by experience per coin. Ranking by bonus alone always names the grandmaster, which is true and useless.'
+            )
+        );
+    },
+});
+
 registerRow({
     key: 'charmValue',
     name: 'Charm Value',
@@ -101,6 +181,8 @@ registerRow({
                 ? upgrade.gain > 0
                     ? `\nOver your ${worn.name} that is +${upgrade.gain.toFixed(2)}% gained.`
                     : `\nYour ${worn.name} is already at least as good.`
-                : '\nNothing in the charm slot.');
+                : '\nNothing in the charm slot.') +
+            '\nDouble-click for the whole field.';
     },
+    onOpen: () => charmPanel.toggle(),
 });
