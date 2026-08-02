@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The enemy rows belong to the player who fought them
+
+They sat at the top of the table as a party-wide total, which is the wrong shape and the wrong arithmetic. They nest under the player now, as DPs nests them: collapse a player and their enemies go with them.
+
+- **Per-player, per-enemy tracking.** One player kiting while another burns the boss is two different fights, and a party-wide enemy row averages them into neither. The attribution fold now splits a player's damage by what it was aimed at, and by ability within that.
+- **Three levels, each closed by default** — the player, then the abilities and the enemies they fought, then what was used against each enemy. Every one of them remembers whether it was open across the panel's repaint.
+- **The enemy-HP card stays party-level**, which is right: a health bar is emptied by the party, and kills are not attributable to one person the way a hit is.
+
 ### The enemy-HP card, laid out as DPs lays it out
 
 - **The three figures are the headline**, side by side above the detail with the caption that tells them apart underneath each — total time, battle time, and the loss between them. As a column of labelled rows they read as three findings of equal weight; they are one finding read three ways.

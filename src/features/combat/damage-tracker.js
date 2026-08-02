@@ -134,6 +134,16 @@ export function damageBreakdown() {
             abilities: Object.entries(entry.byAbility)
                 .map(([action, stats]) => ({ action, ...stats }))
                 .sort((a, b) => b.damage - a.damage),
+            enemies: Object.entries(entry.byEnemy || {})
+                .map(([name, stats]) => ({
+                    name,
+                    ...stats,
+                    dps: measurable ? stats.damage / seconds : null,
+                    abilities: Object.entries(stats.byAbility || {})
+                        .map(([action, ability]) => ({ action, ...ability }))
+                        .sort((a, b) => b.damage - a.damage),
+                }))
+                .sort((a, b) => b.damage - a.damage),
         };
     });
 
@@ -254,8 +264,9 @@ export default {
                 }
 
                 const events = attributeTick(data, state);
-                foldEvents(tally, events, { filterNonDamaging });
-                foldEnemies(enemyTally, events, (index) => monsters[index]?.name || null);
+                const nameOf = (index) => monsters[index]?.name || null;
+                foldEvents(tally, events, { filterNonDamaging, nameOf });
+                foldEnemies(enemyTally, events, nameOf);
 
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none

@@ -170,10 +170,11 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
  *
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
- * @param {Object} [options] - `{filterNonDamaging, nonDamaging}`
- * @returns {Object} Player index → `{damage, hits, crits, misses, byAbility}`
+ * @param {Object} [options] - `{filterNonDamaging, nonDamaging, nameOf}`. `nameOf`
+ *   turns a monster index into a name; without it the per-enemy split is skipped.
+ * @returns {Object} Player index → `{damage, hits, crits, misses, byAbility, byEnemy}`
  */
-export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging } = {}) {
+export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging, nameOf } = {}) {
     for (const event of events || []) {
         // A death is not a swing, and counting it as one would add a phantom
         // hit to whoever happened to be casting
@@ -185,6 +186,7 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
             crits: 0,
             misses: 0,
             byAbility: {},
+            byEnemy: {},
         });
 
         // Counted before the filter: a miss is a swing that happened, and
@@ -209,6 +211,41 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
             ability.damage += event.amount;
             ability.hits++;
             if (event.isCrit) ability.crits++;
+        }
+
+        // The same split again, by what was being hit rather than by what was
+        // swung. A party's enemy rows belong under the player who fought them —
+        // one player kiting while another burns the boss is two different
+        // fights, and a party-wide enemy total averages them into neither.
+        const name = nameOf ? nameOf(event.monsterIndex) : null;
+        if (!name) continue;
+
+        const enemy = (player.byEnemy[name] = player.byEnemy[name] || {
+            damage: 0,
+            hits: 0,
+            crits: 0,
+            misses: 0,
+            byAbility: {},
+        });
+        const against = (enemy.byAbility[event.action] = enemy.byAbility[event.action] || {
+            damage: 0,
+            hits: 0,
+            crits: 0,
+            misses: 0,
+        });
+
+        if (event.isMiss) {
+            enemy.misses++;
+            against.misses++;
+        } else if (!event.isHeal) {
+            enemy.damage += event.amount;
+            enemy.hits++;
+            against.damage += event.amount;
+            against.hits++;
+            if (event.isCrit) {
+                enemy.crits++;
+                against.crits++;
+            }
         }
     }
     return tally;
