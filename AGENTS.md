@@ -44,6 +44,36 @@ src/
 
 Tests are co-located: `formatters.js` → `formatters.test.js`.
 
+### Testing something that draws
+
+Tests run in `node` by default, because most of what is worth testing is
+arithmetic. A module that builds DOM needs a DOM, which is opted into per file:
+
+```js
+/** @vitest-environment happy-dom */
+```
+
+Keep it per-file rather than global — the DOM environment costs setup time on
+every file that takes it, and only a handful need it.
+
+The pattern, from `src/features/ui/combat-level-panel.test.js`:
+
+- **Mock the game, not the panel.** `vi.mock('../../core/data-manager.js', …)`
+  with a `vi.hoisted` object you mutate between tests, so each test decides what
+  character the panel is looking at.
+- **Mock anything that reaches storage.** `panel-geometry.js` lives in IndexedDB
+  and is never what the test is about.
+- **Drive the clock, do not let it run.** `vi.setSystemTime(…)` then call
+  `_render()` directly. `vi.advanceTimersByTime(5 * 60_000)` fires a
+  five-second refresh sixty times to produce the two readings a rate needs, and
+  turns a 50 ms test into a 2 s one.
+- **Assert that nothing failed to draw.** The panel catches per-section errors so
+  one failure does not blank the rest; `expect(text()).not.toContain('could not
+be drawn')` is what catches a missing method, a renamed helper, or a property
+  read off something that stopped having it. No arithmetic test can.
+- **Reset panel state in `afterEach`.** A panel remembers its selections between
+  openings, which is right for a panel and wrong for a test.
+
 ## Code Style & Conventions
 
 ### Imports

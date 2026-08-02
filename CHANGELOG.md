@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Panels can now be tested, and testing this one found two more bugs
+
+- **`happy-dom` is a dev dependency, opted into per file** with `/** @vitest-environment happy-dom */`. Everything else stays in `node`, which is right — most of what is worth testing here is arithmetic, and the DOM environment costs setup time on every file that takes it. `AGENTS.md` documents the pattern.
+- **23 tests build the Combat Level panel and read it back.** The load-bearing one is the dullest: every section draws and none reports a failure. That single line is what a missing method, a renamed helper, or a property read off something that stopped having it all fail — and it is exactly what nothing caught last time.
+- **Fixed: a clock that goes backwards stopped the rates.** A correction or a resume from sleep leaves readings stamped in the future, and the window between them is negative, so every rate reads as unmeasurable until real time catches up — which for a long sleep is hours of a panel quietly saying nothing. The readings are now discarded and the measurement starts again.
+- **Fixed: switching character measured the gap between the two as a rate.** Experience does not go down, so a reading below the last one is a different character — a test server beside a live one is an ordinary thing to have. That skill's history is now dropped rather than subtracted across.
+
+Both were found by writing the tests, not by using the panel.
+
 ### Fixed: the Combat Level panel stopped after the session bar
 
 - `_busiest` was called and never written. It threw on the Target Selector, which is the section immediately after the session bar — so everything below it, the whole panel, was never drawn.
