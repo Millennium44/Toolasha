@@ -1,5 +1,17 @@
 import { describe, test, expect } from 'vitest';
-import { charmTier, charmValue, rankCharms, upgradeValue, CHARM_TIER_EXPERIENCE } from './charm-value.js';
+import {
+    charmTier,
+    charmValue,
+    rankCharms,
+    upgradeValue,
+    charmFocus,
+    charmFamily,
+    charmDisplayName,
+    experiencePerMillion,
+    splitByUpgrade,
+    sortCharmRows,
+    CHARM_TIER_EXPERIENCE,
+} from './charm-value.js';
 
 /** A stand-in for the game's enhancement curve */
 const multiplierOf = (level) => [1, 1.1, 1.21][level] ?? 1;
@@ -89,5 +101,126 @@ describe('upgradeValue', () => {
     test('a sidegrade or downgrade has no value per coin', () => {
         expect(upgradeValue(expert, master).gainPerCoin).toBeNull();
         expect(upgradeValue(expert, expert).gainPerCoin).toBeNull();
+    });
+});
+
+describe('charmFocus', () => {
+    test('the part of the name that is not the tier', () => {
+        expect(charmFocus('/items/expert_melee_charm')).toBe('melee');
+        expect(charmFocus('/items/grandmaster_ranged_charm')).toBe('ranged');
+    });
+
+    test('a two-word focus stays whole', () => {
+        expect(charmFocus('/items/basic_task_speed_charm')).toBe('task_speed');
+    });
+
+    test('anything that is not a charm is nothing', () => {
+        expect(charmFocus('/items/cheese_sword')).toBeNull();
+        expect(charmFocus(null)).toBeNull();
+    });
+});
+
+describe('charmFamily', () => {
+    test('every tier of the same focus, lowest first', () => {
+        // The comparison worth making: a melee charm and a brewing charm are
+        // not alternatives to each other
+        expect(charmFamily('/items/expert_melee_charm')).toEqual([
+            '/items/trainee_melee_charm',
+            '/items/basic_melee_charm',
+            '/items/advanced_melee_charm',
+            '/items/expert_melee_charm',
+            '/items/master_melee_charm',
+            '/items/grandmaster_melee_charm',
+        ]);
+    });
+
+    test('any member of the family finds the same family', () => {
+        expect(charmFamily('/items/trainee_melee_charm')).toEqual(charmFamily('/items/grandmaster_melee_charm'));
+    });
+
+    test('nothing equipped is no family rather than every charm', () => {
+        expect(charmFamily(undefined)).toEqual([]);
+        expect(charmFamily('/items/cheese_sword')).toEqual([]);
+    });
+});
+
+describe('charmDisplayName', () => {
+    test('focus first, tier in brackets', () => {
+        expect(charmDisplayName('/items/expert_melee_charm')).toBe('Melee (Expert)');
+        expect(charmDisplayName('/items/basic_task_speed_charm')).toBe('Task Speed (Basic)');
+    });
+
+    test('something it cannot read comes back unchanged rather than as blank', () => {
+        expect(charmDisplayName('/items/cheese_sword')).toBe('/items/cheese_sword');
+    });
+});
+
+describe('experiencePerMillion', () => {
+    test('a number a column can show', () => {
+        // Per coin this is 0.000000052, which nobody can compare at a glance
+        expect(experiencePerMillion(8, 155_000_000)).toBeCloseTo(0.0516, 4);
+    });
+
+    test('unpriced is nothing, which must not sort above a number', () => {
+        expect(experiencePerMillion(8, 0)).toBeNull();
+        expect(experiencePerMillion(0, 100)).toBeNull();
+    });
+});
+
+describe('splitByUpgrade', () => {
+    const rows = [
+        { name: 'a', experience: 12.8 },
+        { name: 'b', experience: 8 },
+        { name: 'c', experience: 5 },
+    ];
+
+    test('equal counts as an upgrade', () => {
+        // The same bonus for less money is the trade people are looking for
+        const { upgrades, downgrades } = splitByUpgrade(rows, 8);
+        expect(upgrades.map((row) => row.name)).toEqual(['a', 'b']);
+        expect(downgrades.map((row) => row.name)).toEqual(['c']);
+    });
+
+    test('an empty slot makes everything an upgrade', () => {
+        expect(splitByUpgrade(rows, 0).upgrades).toHaveLength(3);
+    });
+});
+
+describe('sortCharmRows', () => {
+    const rows = [
+        { tier: 'master', enhancementLevel: 3, experience: 8.64, price: 240, experiencePerMillion: 0.036 },
+        { tier: 'expert', enhancementLevel: 5, experience: 8, price: 155, experiencePerMillion: 0.052 },
+        { tier: 'grandmaster', enhancementLevel: 0, experience: 8, price: 500, experiencePerMillion: 0.016 },
+        { tier: 'basic', enhancementLevel: 0, experience: 2, price: 0, experiencePerMillion: null },
+    ];
+
+    test('by value per million, best first', () => {
+        expect(sortCharmRows(rows, 'perMillion', 'desc').map((row) => row.tier)).toEqual([
+            'expert',
+            'master',
+            'grandmaster',
+            'basic',
+        ]);
+    });
+
+    test('by name means by tier and then enhancement, not alphabetically', () => {
+        // Alphabetical puts Advanced above Basic above Expert, which is not the
+        // order the charms come in
+        expect(sortCharmRows(rows, 'name', 'asc').map((row) => row.tier)).toEqual([
+            'basic',
+            'expert',
+            'master',
+            'grandmaster',
+        ]);
+    });
+
+    test('unpriced sorts last whichever way the column points', () => {
+        expect(sortCharmRows(rows, 'perMillion', 'asc')[3].tier).toBe('basic');
+        expect(sortCharmRows(rows, 'price', 'desc')[3].tier).toBe('basic');
+    });
+
+    test('it does not modify the array it was given', () => {
+        sortCharmRows(rows, 'price', 'asc');
+        expect(rows[0].tier).toBe('master');
     });
 });

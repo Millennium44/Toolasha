@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the charm slot was read with the wrong kind of key, and the panel is QCharm's
+
+- **It asked the equipment map for `/equipment_types/charm`.** The map is keyed by **item locations** — `/item_locations/charm` — so every lookup returned undefined, the panel reported an empty charm slot with a Grandmaster Melee Charm sitting in it, and "over what you are wearing" was computed against nothing. Nothing threw; the wrong key is simply a miss. A panel test now states the key the game actually uses, because no arithmetic test can catch this.
+- **Scoped to the charm you are wearing**, as QCharm is. It was ranking every charm in the game together and opening on Basic Brewing, Basic Tailoring and Basic Cooking — a melee charm and a brewing charm are not alternatives to each other, so that list was things you do not want with the one you do want somewhere in it. Now it is the same focus at every tier.
+- **A row per enhancement level the market is selling**, not one per charm. A Master +3 and a Master +5 are different purchases at different prices, and which of them is worth it is the whole question.
+- **Charm Upgrades and Charm Downgrades**, each headed with what you are wearing. Downgrades are not there to be bought — seeing that a charm two tiers down is a fraction of the price is how you decide the top tier is not worth it. Equal counts as an upgrade, because the same bonus for less money is the trade people are looking for.
+- **Exp/M**, the bonus per million coins, sortable along with every other column. Per coin the ratio is 0.000000052, which no column can show; per million it is 0.05 against 0.03, the same ordering in a form you can read.
+- **The Charm EXP Guide**, folded away by default: the six tier percentages and the twenty enhancement multipliers. Every figure in the panel comes out of those two tables and neither is visible anywhere in the game.
+- Enhancement scaling is now stated as the charm slot's rather than looked up per item. A lookup that misses does not fail — it returns the 1× default and reports a +20 charm as scaling like a sword.
+- **Not ported: MCS's 250,000 fallback price for trainee charms.** Nobody sells them, so it hardcodes the shop price; an unpriced charm here says "no data" rather than carrying a number the market never quoted.
+
 ### Clicking a book fills the buy dialog in
 
 - **The count is already typed in when the marketplace's Buy Listing dialog opens.** The number of books is the point of the panel, and retyping it into the dialog is where it gets rounded to something convenient — 2,800 rather than 2,809 is one book short of a level, found out a fortnight later.
