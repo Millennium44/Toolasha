@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Party Loot, behind the profit tile
+
+The Total Profit tile now carries a coin figure per character, and the question that raises is _what_ — a party does not split a dungeon evenly, because loot is rolled per character against their own drop gear. FLoot's answer, as a panel.
+
+- **A card per character**: what they banked, what that is per day, and every drop with its value and count, biggest first. Yours first and in gold whatever order the party arrived in.
+- **The party total sits above them**, because "did we do well" is asked before "who got what" — and it is the party against the party rather than an average of the characters, which would weight somebody who looted one item the same as somebody who looted a hundred.
+- **Item rows link to the marketplace**, icon and name both.
+- **An unpriced drop reads as unpriced, not as worthless.** Zero is a claim about what something is worth; the market has simply not said.
+- **Nothing is recomputed here.** Every figure comes from `calculatePlayerStats`, the same function the Combat Statistics popup and the overlay rows call — a third opinion about a run's income is a third number to reconcile when they disagree.
+- **Double-clicking Total Profit opens it.** Combat Revenue still opens the Profit panel, which answers the other question: which pricing, and what the costs were.
+
 ### Houses: rooms you can switch off, and the materials you are actually short of
 
 - **A checkbox per room, as JHouse has.** A room nobody intends to buy — a skill you do not train — sat in the denominator forever, so "14 of 17 affordable" was answering a question about somebody else's character. An unchecked room leaves _both_ halves of the count and stops being eligible as "cheapest"; it stays in the grid, dimmed, because you have to be able to switch it back on. Remembered across sessions.

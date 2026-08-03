@@ -273,7 +273,11 @@ registerRow({
             })
         );
     },
-    onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
+    // Party Loot rather than the Profit panel: this tile is a coin figure per
+    // character, and the question it raises is *what* each of them picked up.
+    // The Profit panel answers a different one — which pricing, and what the
+    // costs were — and is still behind Combat Revenue.
+    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
 });
 
 /**
