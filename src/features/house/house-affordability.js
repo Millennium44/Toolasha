@@ -19,7 +19,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { rows, blank, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
+import { rows, blank, itemIcon, skillIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -50,16 +50,81 @@ const COLORS = {
 };
 
 /**
- * What one unit of a material costs to buy.
+ * The skill each room boosts, which is how its icon is found.
  *
- * The ask side, because this prices what is *missing* — the thing you would have
- * to go and buy rather than something you are deciding whether to sell.
+ * A room is recognised by its skill far faster than by its name — a milk bottle
+ * says Dairy Barn before "Dairy Barn" has been read — and the game already has
+ * artwork for every skill. JHouse makes the same association; this is its map.
+ *
+ * Hardcoded because the room detail does not carry the link. If a room is added
+ * and not listed here it falls back to its own hrid, which finds nothing and
+ * draws a spacer — a missing icon rather than a wrong one.
+ */
+const ROOM_SKILLS = {
+    dairy_barn: 'milking',
+    garden: 'foraging',
+    log_shed: 'woodcutting',
+    forge: 'cheesesmithing',
+    workshop: 'crafting',
+    sewing_parlor: 'tailoring',
+    kitchen: 'cooking',
+    brewery: 'brewing',
+    laboratory: 'alchemy',
+    observatory: 'enhancing',
+    dining_room: 'stamina',
+    library: 'intelligence',
+    dojo: 'attack',
+    armory: 'defense',
+    gym: 'melee',
+    archery_range: 'ranged',
+    mystical_study: 'magic',
+};
+
+/**
+ * @param {string} houseRoomHrid - The room
+ * @returns {string} The skill sprite's id
+ */
+export function roomSkill(houseRoomHrid) {
+    const key = String(houseRoomHrid || '')
+        .split('/')
+        .pop();
+    return ROOM_SKILLS[key] || key;
+}
+
+/**
+ * What one unit of a material costs.
+ *
+ * Ask by default, because the commonest question here prices what is *missing* —
+ * the thing you would have to go and buy rather than something you are deciding
+ * whether to sell.
  *
  * @param {string} itemHrid - The material
+ * @param {string} [side] - `ask` or `bid`
  * @returns {number} Price, or 0 when the market has no answer
  */
-function priceOfMaterial(itemHrid) {
-    return getItemPrice(itemHrid, { context: 'cost', side: 'ask' }) || 0;
+function priceOfMaterial(itemHrid, side = 'ask') {
+    return getItemPrice(itemHrid, { context: 'cost', side }) || 0;
+}
+
+/**
+ * What a level's whole material list costs at one side of the book.
+ *
+ * Coins in the list are counted at face value rather than looked up — a coin
+ * has no bid and no ask, and leaving it out would understate the level by
+ * exactly the coin part.
+ *
+ * @param {Array<Object>} materials - From `upgradeCostsMap`
+ * @param {string} side - `ask` or `bid`
+ * @returns {number}
+ */
+export function materialsCost(materials, side) {
+    let total = 0;
+    for (const material of materials || []) {
+        const count = material?.count || 0;
+        if (!count) continue;
+        total += material.itemHrid === '/items/coin' ? count : priceOfMaterial(material.itemHrid, side) * count;
+    }
+    return total;
 }
 
 /**
@@ -487,7 +552,10 @@ class HousesPanel {
             minWidth: '0',
         });
 
-        top.append(track, name);
+        // The game's own skill artwork, as JHouse has it: the icon identifies the
+        // room before the name has been read, which is what makes a grid of
+        // seventeen scannable at all
+        top.append(track, skillIcon(roomSkill(room.hrid), 16), name);
 
         const level = document.createElement('div');
         level.textContent = room.maxed ? `Lv ${room.level} · max` : `Lv ${room.level} → ${room.level + 1}`;
@@ -528,11 +596,38 @@ class HousesPanel {
 
         if (room.maxed) return;
 
+        // Both sides of the book, as JHouse shows them. They are genuinely
+        // different answers: ask is what finishing this today costs, bid is what
+        // it costs if you are willing to wait for your buy orders to fill, and
+        // on a level wanting six thousand milk the gap between them is the
+        // decision.
+        const ask = materialsCost(room.materials, 'ask');
+        const bid = materialsCost(room.materials, 'bid');
+
         const cost = document.createElement('div');
         cost.textContent = `Upgrade cost ${formatLargeNumber(Math.round(room.cost))}`;
         cost.style.color = room.affordable ? COLORS.accent : '#f87171';
         cost.style.marginBottom = '2px';
         this.detailEl.appendChild(cost);
+
+        if (ask > 0 || bid > 0) {
+            const sides = document.createElement('div');
+            Object.assign(sides.style, { display: 'flex', gap: '10px', marginBottom: '2px' });
+
+            const askEl = document.createElement('span');
+            askEl.textContent = `${formatLargeNumber(Math.round(ask))} ask`;
+            askEl.style.color = '#f87171';
+
+            const bidEl = document.createElement('span');
+            bidEl.textContent = `${formatLargeNumber(Math.round(bid))} bid`;
+            bidEl.style.color = COLORS.accent;
+
+            sides.append(askEl, bidEl);
+            sides.title =
+                'Materials at both sides of the book: ask is buying them now, bid is waiting for your own ' +
+                'buy orders to fill.';
+            this.detailEl.appendChild(sides);
+        }
 
         const held = document.createElement('div');
         held.textContent = `You hold ${formatLargeNumber(coins)}`;

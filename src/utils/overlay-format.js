@@ -21,37 +21,52 @@
  */
 
 /**
- * The game's own item sprite sheet, found once.
+ * The game's own sprite sheets, found once each.
  *
  * Read off an existing icon rather than hardcoded: the URL carries a build hash
  * that changes with every game update, so a constant would be right until the
  * next Tuesday and silently wrong after it.
  */
-let spriteSheet = null;
+const spriteSheets = {};
 
 /**
- * The sprite sheet URL, or an empty string before the game has drawn anything.
+ * A sprite sheet's URL, or an empty string before the game has drawn from it.
+ *
+ * @param {string} [sheet] - `items`, `skills`, `actions`, `combat_monsters`
  * @returns {string}
  */
-export function itemSpriteUrl() {
-    if (spriteSheet !== null) return spriteSheet;
-    const use = document.querySelector('svg use[href*="items_sprite"]');
-    spriteSheet = use?.getAttribute('href')?.split('#')[0] || '';
-    // Not cached when it came back empty — the game may simply not have drawn an
-    // icon yet, and one empty answer should not be the answer forever
-    if (!spriteSheet) spriteSheet = null;
-    return spriteSheet || '';
+export function spriteUrl(sheet = 'items') {
+    if (spriteSheets[sheet]) return spriteSheets[sheet];
+
+    const use = document.querySelector(`svg use[href*="${sheet}_sprite"]`);
+    const found = use?.getAttribute('href')?.split('#')[0] || '';
+    // Not cached when it came back empty — the game may simply not have drawn
+    // from this sheet yet, and one empty answer should not be the answer forever
+    if (found) spriteSheets[sheet] = found;
+    return found;
 }
 
 /**
- * An item's icon.
- * @param {string} itemHrid - Item to draw
+ * The item sheet, kept as its own name because most callers only want that one.
+ * @returns {string}
+ */
+export function itemSpriteUrl() {
+    return spriteUrl('items');
+}
+
+/**
+ * One sprite, from whichever sheet holds it.
+ *
+ * @param {string} id - The sprite's id, or an hrid whose last segment is one
  * @param {number} [size] - Pixels
+ * @param {string} [sheet] - Which sheet
  * @returns {SVGElement|HTMLElement} An icon, or a spacer while the sheet is unknown
  */
-export function itemIcon(itemHrid, size = 18) {
-    const sprite = itemSpriteUrl();
+export function spriteIcon(id, size = 18, sheet = 'items') {
+    const sprite = spriteUrl(sheet);
     if (!sprite) {
+        // A spacer rather than nothing, so a row of icons does not reflow the
+        // moment the sheet turns up
         const spacer = document.createElement('span');
         Object.assign(spacer.style, { width: `${size}px`, flex: '0 0 auto', display: 'inline-block' });
         return spacer;
@@ -63,9 +78,33 @@ export function itemIcon(itemHrid, size = 18) {
     svg.style.flex = '0 0 auto';
 
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    use.setAttribute('href', `${sprite}#${String(itemHrid).split('/').pop()}`);
+    use.setAttribute('href', `${sprite}#${String(id).split('/').pop()}`);
     svg.appendChild(use);
     return svg;
+}
+
+/**
+ * An item's icon.
+ * @param {string} itemHrid - Item to draw
+ * @param {number} [size] - Pixels
+ * @returns {SVGElement|HTMLElement} An icon, or a spacer while the sheet is unknown
+ */
+export function itemIcon(itemHrid, size = 18) {
+    return spriteIcon(itemHrid, size, 'items');
+}
+
+/**
+ * A skill's icon.
+ *
+ * The sheet OPanel and JHouse draw their headings from — a house room is
+ * recognised by the skill it boosts far faster than by its name.
+ *
+ * @param {string} skill - `milking`, `attack`, and so on
+ * @param {number} [size] - Pixels
+ * @returns {SVGElement|HTMLElement}
+ */
+export function skillIcon(skill, size = 18) {
+    return spriteIcon(skill, size, 'skills');
 }
 
 /**
@@ -155,10 +194,53 @@ export const GLYPHS = {
 };
 
 /**
+ * The glyphs the game itself has artwork for.
+ *
+ * OPanel draws these as sprites rather than as text, and beside the game's own
+ * UI that is the difference between a row that belongs on the screen and one
+ * that looks pasted on: an emoji is whatever font the browser picked, at
+ * whatever weight, in whatever palette its designer chose. The game's coin is
+ * *the* coin.
+ *
+ * Only the ones the game actually draws. A bid order and a market trend are
+ * concepts rather than objects, so they have no sprite and stay as emoji — which
+ * is what OPanel does with them too.
+ */
+const GLYPH_SPRITES = {
+    coin: { id: 'coin', sheet: 'items' },
+    chest: { id: 'chimerical_chest', sheet: 'items' },
+    books: { id: 'ability_book', sheet: 'items' },
+    consumable: { id: 'cooking', sheet: 'skills' },
+    mana: { id: 'intelligence', sheet: 'skills' },
+    dealt: { id: 'attack', sheet: 'skills' },
+    taken: { id: 'defense', sheet: 'skills' },
+};
+
+/**
+ * A glyph as a row segment: the game's own artwork where it has some, the emoji
+ * where it does not.
+ *
+ * Falls back on its own, so a caller never has to know which is which — and a
+ * sheet the game has not drawn from yet produces a spacer rather than a gap that
+ * shifts everything when it arrives.
+ *
+ * @param {string} name - A key of `GLYPHS`
+ * @param {number} [size] - Pixels, for the sprite form
+ * @returns {Object} A segment for `row` or `rows`
+ */
+export function glyph(name, size = 16) {
+    const sprite = GLYPH_SPRITES[name];
+    if (sprite && spriteUrl(sprite.sheet)) return { icon: sprite.id, sheet: sprite.sheet, size };
+
+    return { text: GLYPHS[name] || '' };
+}
+
+/**
  * A piece of a line.
  * @typedef {Object} Segment
  * @property {string} [text] - What it says
- * @property {string} [icon] - An item hrid to draw instead of text
+ * @property {string} [icon] - An item hrid, or any sprite id, to draw instead of text
+ * @property {string} [sheet] - Which sprite sheet `icon` is on; items by default
  * @property {number} [size] - Icon size in pixels
  * @property {string} [color] - From `ROW_COLORS`, or any CSS colour
  * @property {boolean} [bold] - Emphasis
@@ -198,7 +280,7 @@ export function drawLine(host, segments) {
         // An item's own icon says which item without spending the width a name
         // costs, which is the only reason a forty-pixel tile can name one at all
         if (segment.icon) {
-            const icon = itemIcon(segment.icon, segment.size || 16);
+            const icon = spriteIcon(segment.icon, segment.size || 16, segment.sheet || 'items');
             if (segment.push) icon.style.marginLeft = 'auto';
             host.appendChild(icon);
             continue;

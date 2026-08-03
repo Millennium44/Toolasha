@@ -25,7 +25,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { abilityBookPanel, abilityPlans } from '../abilities/ability-book-panel.js';
 import { cheapestNextLevel } from '../../utils/ability-books.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
+import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import networthFeature from './index.js';
 
 /**
@@ -51,7 +51,7 @@ registerRow({
         if (coins === null) return blank(container);
 
         row(container, [
-            { text: GLYPHS.coin },
+            glyph('coin'),
             { text: formatLargeNumber(Math.round(coins)), color: ROW_COLORS.gold, bold: true, push: true },
         ]);
     },
@@ -67,7 +67,7 @@ registerRow({
         if (listings === null) return blank(container);
 
         row(container, [
-            { text: GLYPHS.market },
+            glyph('market'),
             { text: formatLargeNumber(Math.round(listings)), color: ROW_COLORS.accent, bold: true, push: true },
         ]);
     },
@@ -83,7 +83,7 @@ registerRow({
         if (inventory === null) return blank(container);
 
         row(container, [
-            { text: GLYPHS.inventory },
+            glyph('inventory'),
             { text: formatLargeNumber(Math.round(inventory)), bold: true, push: true },
         ]);
     },

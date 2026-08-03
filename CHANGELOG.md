@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The game's own artwork, where the game has some
+
+Emoji beside the game's UI look pasted on: an emoji is whatever font the browser picked, at whatever weight, in whatever palette its designer chose. The game's coin is _the_ coin.
+
+- **Any sprite sheet, not just the item one.** `spriteUrl(sheet)` finds `skills`, `actions` and `combat_monsters` the same way the item sheet was already found — off an icon the game has drawn, because the URL carries a build hash that changes every update. Row segments take a `sheet` alongside `icon`.
+- **`glyph(name)` returns artwork or text**, deciding for itself. Coin, chests, books, food, mana, damage dealt and taken have sprites; a bid order and a market trend are concepts rather than objects, so they stay emoji — which is what OPanel does with them too.
+- **It falls back rather than failing.** The sheet can only be found once the game has drawn from it, so a glyph asked for too early is the emoji, and the row is never an empty box.
+
+### The houses grid reads like JHouse
+
+- **Every room carries the skill it boosts**, from the game's skill sheet — a milk bottle says Dairy Barn before the words have been read, which is what makes a grid of seventeen scannable. The room-to-skill map is JHouse's; a room nobody has mapped falls back to its own name, finds no sprite and draws a spacer, so an added room is a missing icon rather than somebody else's.
+- **Materials are priced at both sides of the book**, as JHouse shows them, and they are genuinely different answers: ask is finishing the level today, bid is waiting for your own buy orders to fill. On a level wanting six thousand milk the gap between them is the decision.
+- **Coins in a material list count at face value** rather than being looked up — a coin has no bid and no ask, and dropping it would understate the level by exactly the coin part.
+
 ### Damage on the battle portraits
 
 Each character's DPS and total damage, drawn on their own portrait. The DPS tile already ranks the party, and a ranked list is the wrong shape for the question asked mid-fight, which is "is _that_ one pulling their weight" while looking straight at them.

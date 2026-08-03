@@ -29,7 +29,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
-import { row, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
+import { row, ROW_COLORS, GLYPHS, glyph } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { healthDeltas, createCombatLog } from '../../utils/combat-events.js';
@@ -318,7 +318,7 @@ registerRow({
         for (const event of entries.slice(0, 6)) {
             const line = document.createElement('div');
             row(line, [
-                { text: event.side === 'ally' ? GLYPHS.taken : GLYPHS.dealt, color: ROW_COLORS.dim },
+                glyph(event.side === 'ally' ? 'taken' : 'dealt'),
                 {
                     text: event.isMiss
                         ? 'miss'
