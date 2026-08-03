@@ -23,7 +23,7 @@ import { rows, blank, itemIcon, skillIcon, linkToMarketplace, ROW_COLORS } from 
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
@@ -364,8 +364,13 @@ class HousesPanel {
         this.refreshId = null;
     }
 
-    /** Open the panel, or raise it if it is already up */
-    show() {
+    /**
+     * Open the panel, or raise it if it is already up.
+     * @param {Object} [options] - `remember: false` when reopening at start-up,
+     *   so restoring a panel is not itself recorded as opening one
+     */
+    show({ remember = true } = {}) {
+        if (remember) saveOpenState(GEOMETRY_KEY, true);
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
             return;
@@ -373,8 +378,16 @@ class HousesPanel {
         this._create();
     }
 
-    hide() {
+    hide({ remember = true } = {}) {
+        if (remember) saveOpenState(GEOMETRY_KEY, false);
         this._remove();
+    }
+
+    /** Reopen if the page was left with this panel up */
+    restore() {
+        wasOpen(GEOMETRY_KEY).then((open) => {
+            if (open) this.show({ remember: false });
+        });
     }
 
     toggle() {
@@ -745,6 +758,7 @@ export const housesPanel = new HousesPanel();
 // forget: until it lands every room counts, which is what an empty set means
 // anyway, and the row redraws every second.
 loadUntrackedRooms();
+housesPanel.restore();
 
 registerRow({
     key: 'houses',

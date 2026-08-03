@@ -39,7 +39,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry, clearGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, clearGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import {
     toExport,
@@ -325,8 +325,13 @@ class TreasureTracker {
         });
     }
 
-    /** Open the panel, or raise it if it is already up */
-    show() {
+    /**
+     * Open the panel, or raise it if it is already up.
+     * @param {Object} [options] - `remember: false` when reopening at start-up,
+     *   so restoring a panel is not itself recorded as opening one
+     */
+    show({ remember = true } = {}) {
+        if (remember) saveOpenState(PANEL_GEOMETRY_KEY, true);
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
             return;
@@ -334,10 +339,29 @@ class TreasureTracker {
         this._createPanel();
     }
 
+    /** Close it, and stop reopening it */
+    hide() {
+        saveOpenState(PANEL_GEOMETRY_KEY, false);
+        this._removePanel();
+    }
+
     /** Open if closed, close if open */
     toggle() {
-        if (this.panel && document.body.contains(this.panel)) this._removePanel();
+        if (this.panel && document.body.contains(this.panel)) this.hide();
         else this.show();
+    }
+
+    /**
+     * Reopen if the page was left with this panel up.
+     *
+     * The panel only; the chest popup is deliberately not restored. It is a
+     * reaction to opening something, and a popup about a chest opened yesterday
+     * reappearing on load would be a stale answer to a question nobody asked.
+     */
+    restore() {
+        wasOpen(PANEL_GEOMETRY_KEY).then((open) => {
+            if (open) this.show({ remember: false });
+        });
     }
 
     /**
@@ -814,7 +838,7 @@ class TreasureTracker {
         const spacer = document.createElement('div');
         spacer.style.flex = '1';
 
-        const closeBtn = this._headerButton('✕', () => this._removePanel());
+        const closeBtn = this._headerButton('✕', () => this.hide());
         closeBtn.title = 'Close';
 
         header.append(title, this.capeBtn, this.cowbellBtn, gear, spacer, closeBtn);
@@ -1526,6 +1550,11 @@ class TreasureTracker {
 }
 
 const treasureTracker = new TreasureTracker();
+
+// Reopen if the page was left with the panel up. At module scope rather than in
+// `initialize`, because the feature's initialize is gated on a setting and the
+// panel outliving a refresh is not the same question as the tracker running.
+treasureTracker.restore();
 
 // Registered at module scope so the overlay has the row whether or not this
 // feature has started yet. It draws nothing until a chest has been opened.
