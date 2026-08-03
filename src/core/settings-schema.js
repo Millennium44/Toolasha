@@ -573,6 +573,22 @@ export const settingsGroups = {
                 default: true,
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
             },
+            combatRecorder_autoStart: {
+                id: 'combatRecorder_autoStart',
+                label: 'Auto-record combat on load',
+                type: 'checkbox',
+                default: false,
+                help: 'Starts the combat recorder the moment the page loads and writes the file out on its own. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Leave off unless you are collecting a recording to send',
+            },
+            combatRecorder_autoStartSeconds: {
+                id: 'combatRecorder_autoStartSeconds',
+                label: 'Auto-record length (seconds)',
+                type: 'number',
+                default: 60,
+                min: 10,
+                max: 600,
+                help: 'How long the automatic recording runs before it saves itself',
+            },
             manaTracker: {
                 id: 'manaTracker',
                 label: 'Mana Tracker: Count what your abilities cost per fight',
