@@ -11,17 +11,15 @@
  * simply forgot everything.
  *
  * The fix is not to load later, because the overlay reads that state on its
- * first paint. It is to keep asking until the database answers.
+ * first paint. It is to wait for the database rather than to ask it early.
  *
- * Nothing here retries forever: a database that is not open after several
- * seconds is not going to open, and a feature quietly polling for the rest of
- * the session is worse than one that gave up and said so.
+ * This used to poll — read, wait, read again, for about five seconds — because
+ * a shut database is indistinguishable from an empty one from the outside. The
+ * storage module now says when it has finished starting up, so there is one
+ * thing to wait on and no guessing about how long.
  */
 
 import storage from '../core/storage.js';
-
-/** Roughly five seconds of trying, front-loaded so the usual case is quick */
-const DELAYS_MS = [0, 50, 150, 400, 800, 1500, 2500];
 
 /**
  * Read a key once storage can answer.
@@ -33,22 +31,11 @@ const DELAYS_MS = [0, 50, 150, 400, 800, 1500, 2500];
  * @returns {Promise<void>}
  */
 export async function loadWhenReady(key, store, onLoaded, label = key) {
-    for (const delay of DELAYS_MS) {
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-
-        // `getJSON` warns and returns the default when the database is shut, so
-        // the presence of a value is the only usable signal that it opened
-        try {
-            const saved = await storage.getJSON(key, store, null);
-            if (saved !== null && saved !== undefined) {
-                onLoaded(saved);
-                return;
-            }
-            // An open database with nothing stored is a real answer: a first run
-            if (storage.db) return;
-        } catch (error) {
-            console.error(`[DeferredLoad] Reading ${label} failed:`, error);
-            return;
-        }
+    try {
+        await storage.ready;
+        const saved = await storage.getJSON(key, store, null);
+        if (saved !== null && saved !== undefined) onLoaded(saved);
+    } catch (error) {
+        console.error(`[DeferredLoad] Reading ${label} failed:`, error);
     }
 }

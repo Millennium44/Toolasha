@@ -107,6 +107,10 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
     [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
     [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
+    // Holds the chosen target in memory, and the panel that sets it is in a
+    // different bundle from the tile that colours against it. Two copies means
+    // the tile never hears about a change and quietly keeps its own answer.
+    [normalize(join(__dirname, 'src/utils/consumable-target.js')), 'Toolasha.Utils.consumableTarget'],
 ]);
 
 // The combat simulator engine, which is its own bundle.
