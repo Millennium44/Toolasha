@@ -53,6 +53,7 @@ const {
     resolveCandidateModes,
     candidateAssignmentKey,
     candidateAppliesToDTO,
+    applyToEquipment,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -779,10 +780,89 @@ describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
         };
 
         const all = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), map);
-        expect(all.map((c) => c.currentHrid).sort()).toEqual(['/items/spatula', '/items/wisdom_necklace']);
+        const enhancements = all.filter((c) => c.type === 'enhancement');
+        expect(enhancements.map((c) => c.currentHrid).sort()).toEqual(['/items/spatula', '/items/wisdom_necklace']);
+
+        // The necklace is generic skilling gear, so every skill not already
+        // wearing it is offered one — and each offer names the skill it is for
+        const offers = all.filter((c) => c.type === 'skilling_gear');
+        expect(offers.length).toBeGreaterThan(0);
+        expect(offers.every((c) => c.skillKey)).toBe(true);
+        expect(offers.some((c) => c.skillKey === '/skills/alchemy')).toBe(false);
 
         const alchemyOnly = generateSkillingEquipmentCandidates(editorDTO, skillingGameData(), map, '/skills/alchemy');
         expect(alchemyOnly.map((c) => c.currentHrid)).toEqual(['/items/wisdom_necklace']);
+    });
+});
+
+describe('where a skilling upgrade lands', () => {
+    const TOOL = '/equipment_types/milking_tool';
+    const BODY = '/equipment_types/body';
+    const payload = { hrid: '/items/celestial_brush', enhancementLevel: 5 };
+
+    test('a piece bought for one skill goes into that skill alone', () => {
+        const map = {
+            '/skills/milking': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 0 } },
+            '/skills/crafting': {},
+        };
+        applyToEquipment({ skillKey: '/skills/milking', slot: TOOL }, payload, { equipment: {} }, map, null);
+
+        expect(map['/skills/milking'][TOOL]).toBe(payload);
+        expect(map['/skills/crafting'][TOOL]).toBeUndefined();
+    });
+
+    test('a skill with no loadout gets a kit of its own rather than the shared one', () => {
+        // Its room runs in the base kit, so writing the piece there would put a
+        // Milking outfit into every other skill that also has no loadout
+        const dto = { equipment: { [BODY]: { hrid: '/items/plain_shirt', enhancementLevel: 0 } } };
+        const map = {};
+
+        applyToEquipment({ skillKey: '/skills/milking', slot: TOOL }, payload, dto, map, null);
+
+        expect(map['/skills/milking'][TOOL]).toBe(payload);
+        expect(map['/skills/milking'][BODY]).toEqual(dto.equipment[BODY]);
+        expect(dto.equipment[TOOL]).toBeUndefined();
+    });
+
+    test('enhancing an item you own upgrades it in every kit wearing it', () => {
+        const candidate = { slot: TOOL, currentHrid: '/items/basic_brush', currentLevel: 3 };
+        const dto = { equipment: { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 3 } } };
+        const map = {
+            '/skills/milking': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 3 } },
+        };
+
+        applyToEquipment(candidate, payload, dto, map, null);
+
+        expect(dto.equipment[TOOL]).toBe(payload);
+        expect(map['/skills/milking'][TOOL]).toBe(payload);
+    });
+
+    test('but not a second copy of it worn at a different level', () => {
+        // Matching on hrid alone dragged the +7 copy down to the +5 this
+        // candidate was about, which reads as an upgrade making things worse
+        const candidate = { slot: TOOL, currentHrid: '/items/basic_brush', currentLevel: 3 };
+        const map = {
+            '/skills/milking': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 3 } },
+            '/skills/foraging': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 7 } },
+        };
+
+        applyToEquipment(candidate, payload, { equipment: {} }, map, null);
+
+        expect(map['/skills/milking'][TOOL]).toBe(payload);
+        expect(map['/skills/foraging'][TOOL].enhancementLevel).toBe(7);
+    });
+
+    test('and only the skill under analysis when one skill is being analysed', () => {
+        const candidate = { slot: TOOL, currentHrid: '/items/basic_brush', currentLevel: 3 };
+        const map = {
+            '/skills/milking': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 3 } },
+            '/skills/foraging': { [TOOL]: { hrid: '/items/basic_brush', enhancementLevel: 3 } },
+        };
+
+        applyToEquipment(candidate, payload, { equipment: {} }, map, '/skills/milking');
+
+        expect(map['/skills/milking'][TOOL]).toBe(payload);
+        expect(map['/skills/foraging'][TOOL]).not.toBe(payload);
     });
 });
 

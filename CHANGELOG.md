@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Export any of the three Lab Simulator analyses to CSV
+
+The Upgrade table, the All Fights table and the Skilling Upgrade table each carry an **Export CSV** button now. The file holds raw numbers rather than the panel's formatting — `1200000000` and `0.0032`, not `1.2B` and `+0.32%` — because a spreadsheet cannot sort or sum a display string, and a CSV of them is a screenshot with extra steps. Filenames carry the date and time, since exporting the same table before and after buying something is the normal case.
+
+### Skilling gear was being offered to the wrong skill, or to none at all
+
+Auditing the skilling side for the same fault as All Fights turned up four, three of them silent:
+
+- **Celestial tools and skill outfits were never offered at all.** The candidate builder wanted a bare skill name (`milking`) and the panel hands it a skill hrid (`/skills/milking`), so it looked for a stat called `/skills/milkingSpeed`, matched nothing, and missed the tool slot entirely. It returned an empty list without ever erroring — the feature has been inert since it shipped. It takes either form now.
+- **Skills with no assigned loadout got no gear candidates.** Only skills with a loadout were swept, which excludes exactly the skill most likely to still be missing its tool. Every labyrinth skill is swept now, falling back to the base kit.
+- **A piece bought for a skill with no loadout was applied nowhere** — simulated, ranked, and reported as a flat +0.00%. It now gets a kit of its own, copied from the one it was running, so the change lands on that skill and no other.
+- **Enhancing an item downgraded a second copy of it.** The application matched on item alone, so a "+3 → +5" candidate also rewrote a second copy worn at +7 in another skill's loadout down to +5 — an upgrade that made things worse. It matches the enhancement level too, and in single-skill mode leaves the other skills' kits alone.
+
 ### All Fights only sims a piece against the loadouts that wear it
 
 The all-fights analysis pooled candidates from every fight and then measured each of them against every fight. That is right for a combat level — one number the whole character carries into every room — and wrong for a piece of gear. A sword upgrade generated from the melee loadout, installed into the magic loadout, replaced the staff with a sword: not an upgrade, a costume change, and it came back as a large negative win-rate delta for a room nobody would ever have applied it to. Those deltas went straight into the aggregate the ranking is built on, so a good weapon could be pushed down the list by rooms it has nothing to do with.

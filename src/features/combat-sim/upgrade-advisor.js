@@ -3136,8 +3136,11 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
     // already on. Each one belongs to one skill and is applied to that skill
     // alone: a Milking outfit does nothing in a Crafting room, and a candidate
     // with no skill on it would be applied to every room and appear to help.
+    // Every labyrinth skill, not just the ones with a loadout assigned: a skill
+    // with no loadout of its own still runs a room, in the base kit, and is
+    // exactly the skill most likely to be missing its tool
     const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
-    for (const skill of targetSkill ? [targetSkill] : Object.keys(skillEquipmentMap)) {
+    for (const skill of targetSkill ? [targetSkill] : LABYRINTH_SKILLS) {
         const forSkill = bestGearForSkill({
             skill,
             equipment: skillEquipmentMap[skill] || editorDTO.equipment || {},
@@ -3287,21 +3290,31 @@ export function applyCandidateToDTO(playerDTO, candidate) {
  * @param {Object} equipMap - Per-skill equipment overrides
  * @param {string|null} targetSkill - The skill being analysed, when only one is
  */
-function applyToEquipment(candidate, payload, dto, equipMap, targetSkill) {
-    const { skillKey, slot, currentHrid } = candidate;
+export function applyToEquipment(candidate, payload, dto, equipMap, targetSkill) {
+    const { skillKey, slot, currentHrid, currentLevel = 0 } = candidate;
 
     if (skillKey) {
-        // The override map is where a skill's own kit lives; the editor's own
-        // equipment is only the right target when that skill is what is being
-        // analysed and it has no override of its own
-        if (equipMap[skillKey]) equipMap[skillKey][slot] = payload;
-        else if (targetSkill === skillKey && dto.equipment) dto.equipment[slot] = payload;
+        // A skill with no loadout of its own runs in the character's base kit,
+        // and writing the piece there would put a Milking outfit into every
+        // other skill that shares it. It gets a kit of its own instead, copied
+        // from the one it was running, so the change lands on that skill alone.
+        if (!equipMap[skillKey]) equipMap[skillKey] = { ...(dto.equipment || {}) };
+        equipMap[skillKey][slot] = payload;
         return;
     }
 
-    if (dto.equipment?.[slot]?.hrid === currentHrid) dto.equipment[slot] = payload;
-    for (const skillEquip of Object.values(equipMap)) {
-        if (skillEquip?.[slot]?.hrid === currentHrid) skillEquip[slot] = payload;
+    // The same item, at the same enhancement — enhancing the sword you own
+    // upgrades it in every kit it is worn in, but a second copy of it worn a few
+    // levels higher elsewhere is a different item and would be dragged *down* to
+    // this candidate's target by an hrid-only match
+    const isTheSameItem = (worn) => worn?.hrid === currentHrid && (worn.enhancementLevel || 0) === currentLevel;
+
+    if (isTheSameItem(dto.equipment?.[slot])) dto.equipment[slot] = payload;
+    for (const [skill, skillEquip] of Object.entries(equipMap)) {
+        // In single-skill mode the other skills' kits are not being simulated;
+        // rewriting them is invisible work at best and confusing at worst
+        if (targetSkill && skill !== targetSkill) continue;
+        if (isTheSameItem(skillEquip?.[slot])) skillEquip[slot] = payload;
     }
 }
 
