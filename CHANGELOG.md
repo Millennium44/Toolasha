@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### No arrow on the time-to-level tile
+
+`Defense → 130:` ellipsised to `Defense → 1…` and lost the very number the arrow was introducing. The tile has no width to spare, so the arrow is gone in every case and the label is simply the level being worked towards. The starting level and where the target came from are in the tooltip.
+
 ### Portrait DPS was drawing, and being cropped away
 
 The meter was positioned at `top: -14px`, outside the portrait tile's own box. The battle panel clips its children, so it was present in the DOM and invisible. It sits **in the flow** of the tile now, as MCS's does — the tile simply gets taller — and is re-seated on every draw, since React rebuilding the tile puts its children back in whatever order it likes.

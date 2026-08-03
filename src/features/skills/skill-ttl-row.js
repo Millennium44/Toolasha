@@ -151,15 +151,16 @@ registerRow({
  * already got. The duration is the giveaway: it is time until the number, so the
  * number has to be the one you do not have yet.
  *
- * The arrow is still kept for a target further off, because "→ 140" and "136"
- * are different claims and the arrow is what distinguishes them.
+ * No arrow, even for a target several levels off. It cost three characters of a
+ * tile that has none to spare — "Defense → 130:" ellipsised to "Defense → 1…"
+ * and lost the very number it was introducing. The level is in the tooltip along
+ * with where it came from, and the tile keeps the figure.
  *
  * @param {HTMLElement} container - The tile
  * @param {Object} chosen - From `selectedTarget`
  */
 function drawChosen(container, chosen) {
-    const label =
-        chosen.target === chosen.level + 1 ? `${chosen.name} ${chosen.target}:` : `${chosen.name} → ${chosen.target}:`;
+    const label = `${chosen.name} ${chosen.target}:`;
 
     row(container, [
         { text: label, color: ROW_COLORS.gold, ellipsis: true },
