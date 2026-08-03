@@ -26,9 +26,24 @@
  * Ticks arrive several times a second, so an unbounded recording is a tab that
  * quietly grows until it falls over. It stops at a fixed number of ticks and
  * says so rather than continuing to grow.
+ *
+ * ## Recording the refresh
+ *
+ * A recording started by hand can never capture the first seconds of a session,
+ * and those are the interesting ones: reload mid-fight and the client never sees
+ * the message that names what you are fighting. What arrives instead, and in
+ * what order, is not something to reason about from the outside.
+ *
+ * So it can start itself. With **Auto-record on load** on, it begins the moment
+ * the feature starts, runs for a set number of seconds and writes the file out
+ * without being asked. It also snapshots the battle panel on every tick until
+ * the first `new_battle` arrives, because whether the names can be read off the
+ * screen during that window is the other half of the same question.
  */
 
+import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
+import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
 
 /** Enough for a long fight, small enough to hand to somebody */
 const MAX_TICKS = 4000;
@@ -46,12 +61,18 @@ function hook() {
     return (typeof window !== 'undefined' && window.Toolasha?.Core?.webSocketHook) || webSocketHook;
 }
 
+/** Panel snapshots stop once the wave is known, since the payload names it then */
+const MAX_PANEL_SNAPSHOTS = 40;
+
 let ticks = [];
 let recording = false;
 let startedAt = 0;
 let onNewBattle = null;
 let onBattleUpdated = null;
 let full = false;
+let sawNewBattle = false;
+let panelSnapshots = 0;
+let stopTimer = null;
 
 /** @returns {boolean} Whether a recording is in progress */
 export function isRecording() {
@@ -74,19 +95,33 @@ export function recordingStatus() {
  * appending a second run to the first would produce a file that replays as a
  * fight that never happened.
  */
-export function startRecording() {
+export function startRecording({ seconds = 0, thenDownload = false } = {}) {
     stopRecording();
 
     ticks = [];
     full = false;
+    sawNewBattle = false;
+    panelSnapshots = 0;
     startedAt = Date.now();
     recording = true;
 
-    onNewBattle = (data) => capture('new_battle', data);
+    onNewBattle = (data) => {
+        sawNewBattle = true;
+        capture('new_battle', data);
+    };
     onBattleUpdated = (data) => capture('battle_updated', { pMap: data?.pMap, mMap: data?.mMap });
 
     hook().on('new_battle', onNewBattle);
     hook().on('battle_updated', onBattleUpdated);
+
+    if (seconds > 0) {
+        stopTimer = setTimeout(() => {
+            stopRecording();
+            // Unattended by definition: nobody is watching a recording that
+            // started itself, so it has to hand over the file on its own
+            if (thenDownload) downloadRecording();
+        }, seconds * 1000);
+    }
 }
 
 /**
@@ -102,11 +137,22 @@ function capture(type, payload) {
         stopRecording();
         return;
     }
-    ticks.push({ at: Date.now() - startedAt, type, payload });
+
+    const entry = { at: Date.now() - startedAt, type, payload };
+
+    // Only while the wave is unknown. Once `new_battle` has arrived the payload
+    // names everything and the screen has nothing left to add.
+    if (!sawNewBattle && type === 'battle_updated' && panelSnapshots < MAX_PANEL_SNAPSHOTS) {
+        entry.panel = describeMonsterPanel();
+        panelSnapshots += 1;
+    }
+    ticks.push(entry);
 }
 
 /** Stop keeping it. What has been captured stays captured. */
 export function stopRecording() {
+    clearTimeout(stopTimer);
+    stopTimer = null;
     if (onNewBattle) hook().off('new_battle', onNewBattle);
     if (onBattleUpdated) hook().off('battle_updated', onBattleUpdated);
     onNewBattle = null;
@@ -153,7 +199,13 @@ export function downloadRecording() {
 
 export default {
     name: 'Combat Recorder',
-    initialize: () => {},
+    initialize: () => {
+        if (!config.getSetting('combatRecorder_autoStart')) return;
+
+        const seconds = Number(config.getSettingValue('combatRecorder_autoStartSeconds', 60)) || 60;
+        startRecording({ seconds, thenDownload: true });
+        console.log(`[CombatRecorder] Auto-recording the first ${seconds}s of this session`);
+    },
     cleanup: () => {
         stopRecording();
         ticks = [];

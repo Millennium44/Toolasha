@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The recorder can catch the refresh
+
+The Record button in the Damage panel can only start once a session is already running, which means it can never capture the seconds that matter most: reload mid-fight and the client never sees the message that names what you are fighting, and what arrives instead is not something to reason about from the outside.
+
+- **Auto-record combat on load**, off by default, starts the recorder the moment the page does and writes the file out on its own after a set number of seconds (sixty by default, ten to six hundred). Nobody is watching a recording that started itself, so it hands over the file without being asked.
+- **It snapshots the battle panel on every tick until the first battle is announced.** Whether the monsters' names can be read off the screen during that window is the other half of the same question, and a recording made during a refresh can now carry the answer rather than leaving it to be guessed at.
+- **The snapshots stop once the payload names the wave**, because from that point the screen has nothing to add.
+
 ### Fixed: everything went to Unknown Enemy, and the fixture was why
 
 The previous change sent every hit of a live session to Unknown Enemy while three replay tests passed. It had been measured against a recording that was **hand-trimmed to five fields per monster** when it became a fixture, and the rung derived from it — "a monster in the delta with nothing changed is the one that swung" — held on thirty-seven of that recording's forty-two hits only because the trimming had removed everything that changes. Against a real payload it fires never.

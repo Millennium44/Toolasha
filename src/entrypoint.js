@@ -429,6 +429,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'combatRecorder_autoStart',
+            name: 'Combat Recorder',
+            category: 'Combat',
+            module: Combat.combatRecorder,
+            async: false,
+            // The module is always reachable from the Damage panel's Record
+            // button; what this switch turns on is only the automatic start
+            customCheck: () => true,
+        },
+        {
             key: 'manaTracker',
             name: 'Mana Tracker',
             category: 'Combat',

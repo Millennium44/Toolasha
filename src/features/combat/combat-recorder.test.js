@@ -6,6 +6,17 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const bus = vi.hoisted(() => ({ handlers: {} }));
+const settings = vi.hoisted(() => ({ autoStart: false, seconds: 60 }));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => (key === 'combatRecorder_autoStart' ? settings.autoStart : false),
+        getSettingValue: (key, fallback) => (key === 'combatRecorder_autoStartSeconds' ? settings.seconds : fallback),
+    },
+}));
+vi.mock('../../utils/battle-panel-monsters.js', () => ({
+    describeMonsterPanel: () => ({ area: true, grid: true, tiles: [['Eyes', '2215/2215']] }),
+}));
 
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -24,6 +35,8 @@ const send = (event, payload) => bus.handlers[event]?.(payload);
 
 beforeEach(() => {
     bus.handlers = {};
+    settings.autoStart = false;
+    settings.seconds = 60;
     recorder.stopRecording();
 });
 
@@ -73,5 +86,56 @@ describe('recording the combat feed', () => {
 
         expect(recorder.isRecording()).toBe(false);
         expect(recorder.recordingStatus().ticks).toBe(1);
+    });
+});
+
+describe('recording the first seconds of a session', () => {
+    test('it does not start itself unless asked to', () => {
+        recorder.default.initialize();
+        expect(recorder.isRecording()).toBe(false);
+    });
+
+    test('asked to, it is already running before anything is clicked', () => {
+        // The Record button cannot capture the seconds after a reload, which is
+        // exactly when the client never sees what it is fighting
+        settings.autoStart = true;
+        recorder.default.initialize();
+
+        expect(recorder.isRecording()).toBe(true);
+    });
+
+    test('and it stops and saves itself', () => {
+        vi.useFakeTimers();
+        settings.autoStart = true;
+        settings.seconds = 30;
+        recorder.default.initialize();
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        vi.advanceTimersByTime(30_000);
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.recordingFile().ticks.length).toBe(1);
+        vi.useRealTimers();
+    });
+
+    test('it snapshots the battle panel until the wave is announced', () => {
+        // The other half of the same question: whether the names can be read off
+        // the screen during the window where the payload does not carry them
+        recorder.startRecording();
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        expect(recorder.recordingFile().ticks[0].panel).toEqual({
+            area: true,
+            grid: true,
+            tiles: [['Eyes', '2215/2215']],
+        });
+    });
+
+    test('and stops once the payload names the wave itself', () => {
+        recorder.startRecording();
+        send('new_battle', { monsters: [{ name: 'Eyes' }] });
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        const ticks = recorder.recordingFile().ticks;
+        expect(ticks[ticks.length - 1].panel).toBeUndefined();
     });
 });

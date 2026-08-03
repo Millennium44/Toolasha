@@ -169,6 +169,33 @@ export function matchMonsterNames(units, mMap) {
  * @param {Document|HTMLElement} [root] - Where to read the panel from
  * @returns {Object<string, {name: string, max: number|null}>} Monster index → what it is
  */
+/**
+ * What the battle panel looks like right now, for a recording to carry.
+ *
+ * A diagnostic rather than something the tracker uses. Whether the selectors
+ * here still match the game is not a thing that can be reasoned about from this
+ * side of the screen, and it is exactly what goes wrong silently — so a
+ * recording made during a refresh can carry the answer instead.
+ *
+ * @param {Document|HTMLElement} [root] - Where to look
+ * @returns {Object} `{area, grid, tiles}` — what was found and what it said
+ */
+export function describeMonsterPanel(root = document) {
+    try {
+        const area = root.querySelector?.(MONSTER_AREA);
+        if (!area) return { area: false };
+
+        const grid = area.querySelector(UNIT_GRID);
+        return {
+            area: true,
+            grid: Boolean(grid),
+            tiles: [...(grid || area).children].map((tile) => leafTexts(tile)),
+        };
+    } catch (error) {
+        return { area: false, error: String(error?.message || error) };
+    }
+}
+
 export function recoverMonsterNames(mMap, root = document) {
     try {
         return matchMonsterNames(readMonsterUnits(root), mMap);
