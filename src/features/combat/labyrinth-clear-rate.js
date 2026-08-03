@@ -19,6 +19,7 @@ import {
     accuracyRows,
     accuracySummary,
     accuracyBySubject,
+    totalsSince,
     foldRoomResult,
 } from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
@@ -804,8 +805,10 @@ class LabyrinthClearRate {
         labyrinthRoomLogs.useSimSource({
             forecast: (hrid, level, kind) => this.roomForecast(hrid, level, kind),
             record: (result) => this.recordRoomResult(result),
-            accuracy: () => this.accuracySnapshot(),
+            accuracy: (options) => this.accuracySnapshot(options),
             reset: () => this.resetOutcomes(),
+            markBaseline: () => this.markOutcomeBaseline(),
+            clearBaseline: () => this.clearOutcomeBaseline(),
         });
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
@@ -1012,9 +1015,11 @@ class LabyrinthClearRate {
             if (stored.version === OUTCOME_STORAGE_VERSION) {
                 this._outcomes = stored.totals || {};
                 this._outcomesSeen = stored.seen || {};
+                this._baseline = stored.baseline || null;
             } else {
                 this._outcomes = {};
                 this._outcomesSeen = {};
+                this._baseline = null;
             }
         } catch (error) {
             console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
@@ -1026,7 +1031,12 @@ class LabyrinthClearRate {
         try {
             await storage.setJSON(
                 OUTCOME_STORAGE_KEY,
-                { version: OUTCOME_STORAGE_VERSION, totals: this._outcomes, seen: this._outcomesSeen },
+                {
+                    version: OUTCOME_STORAGE_VERSION,
+                    totals: this._outcomes,
+                    seen: this._outcomesSeen,
+                    baseline: this._baseline,
+                },
                 'settings'
             );
         } catch (error) {
@@ -1169,18 +1179,21 @@ class LabyrinthClearRate {
      * The whole record, judged, for anything that wants to show it.
      * @returns {Promise<{rows: Array<Object>, summary: Object}>}
      */
-    async accuracySnapshot() {
+    async accuracySnapshot({ since = false } = {}) {
         await this.loadOutcomes();
         const orderOf = (hrid) => this.subjectSortIndex(hrid);
-        const rows = accuracyRows(this._outcomes, {
+        const totals = since && this._baseline ? totalsSince(this._outcomes, this._baseline.totals) : this._outcomes;
+        const rows = accuracyRows(totals, {
             predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
             interval: wilsonInterval,
             orderOf,
         });
         return {
             rows,
-            summary: accuracySummary(rows),
+            summary: accuracySummary(rows, wilsonInterval),
             bySubject: accuracyBySubject(rows, wilsonInterval, orderOf),
+            baselineAt: this._baseline?.at || null,
+            since: !!(since && this._baseline),
         };
     }
 
@@ -1207,7 +1220,31 @@ class LabyrinthClearRate {
     async resetOutcomes() {
         this._outcomes = {};
         this._outcomesSeen = {};
+        this._baseline = null;
         this._outcomesLoaded = true;
+        await this.saveOutcomes();
+    }
+
+    /**
+     * Mark here, and keep everything before it.
+     *
+     * The question Reset was being used to answer — "has it been right *since* I
+     * changed something?" — does not actually need the history destroyed. A copy
+     * of the totals as they stand is enough to subtract later.
+     *
+     * @returns {Promise<Object>} The baseline that was set
+     */
+    async markOutcomeBaseline() {
+        await this.loadOutcomes();
+        this._baseline = { at: Date.now(), totals: structuredClone(this._outcomes) };
+        await this.saveOutcomes();
+        return this._baseline;
+    }
+
+    /** Forget the mark; the record itself is untouched either way */
+    async clearOutcomeBaseline() {
+        await this.loadOutcomes();
+        this._baseline = null;
         await this.saveOutcomes();
     }
 

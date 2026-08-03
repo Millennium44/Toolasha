@@ -181,3 +181,133 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Brewing Lv.200');
     });
 });
+
+describe('marking a point to measure from', () => {
+    const ROW = {
+        subjectHrid: '/skills/milking',
+        kind: 'skilling',
+        monster: 'milking',
+        level: 200,
+        attempts: 2,
+        clears: 1,
+        predicted: 0.5,
+        observed: 0.5,
+        low: 0.1,
+        high: 0.9,
+        likelihood: 0.5,
+        verdict: 'consistent',
+        measured: null,
+        timing: null,
+        fightLength: null,
+        rates: null,
+    };
+
+    const snapshot = (over = {}) => ({
+        rows: [ROW],
+        summary: {
+            buckets: 1,
+            attempts: 2,
+            clears: 1,
+            judged: 2,
+            judgedClears: 1,
+            expected: 1,
+            sd: null,
+            sigma: null,
+            contested: 0,
+            contestedByChance: 0,
+        },
+        bySubject: [],
+        baselineAt: null,
+        since: false,
+        ...over,
+    });
+
+    let marked;
+    let cleared;
+    let asked;
+
+    const setup = async (snap) => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        labyrinthRoomLogs.view = 'accuracy';
+        labyrinthRoomLogs.sinceBaseline = false;
+        marked = 0;
+        cleared = 0;
+        asked = [];
+        labyrinthRoomLogs.simSource = {
+            accuracy: async (options) => {
+                asked.push(options);
+                return snap;
+            },
+            markBaseline: async () => {
+                marked += 1;
+            },
+            clearBaseline: async () => {
+                cleared += 1;
+            },
+        };
+        await labyrinthRoomLogs.renderAccuracy();
+    };
+
+    const text = () => document.querySelector('.mwi-lab-logs-list').textContent;
+    const click = (label) => {
+        const found = [...document.querySelectorAll('.mwi-lab-logs-list span')].find(
+            (span) => span.textContent === label
+        );
+        found.click();
+        return found;
+    };
+
+    test('is offered before there is one', async () => {
+        await setup(snapshot());
+        expect(text()).toContain('mark a point to measure from');
+    });
+
+    test('and marking one switches to the period since', async () => {
+        await setup(snapshot());
+        click('mark a point to measure from');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(marked).toBe(1);
+        expect(labyrinthRoomLogs.sinceBaseline).toBe(true);
+    });
+
+    test('the view asks for the period it is showing', async () => {
+        await setup(snapshot({ baselineAt: Date.now() }));
+        expect(asked.at(-1)).toEqual({ since: false });
+
+        labyrinthRoomLogs.sinceBaseline = true;
+        await labyrinthRoomLogs.renderAccuracy();
+        expect(asked.at(-1)).toEqual({ since: true });
+    });
+
+    test('both views are reachable from either', async () => {
+        await setup(snapshot({ baselineAt: Date.now() }));
+        expect(text()).toContain('show only since then');
+
+        await setup(snapshot({ baselineAt: Date.now(), since: true }));
+        expect(text()).toContain('show everything');
+    });
+
+    test('forgetting the mark leaves the record alone and returns to everything', async () => {
+        await setup(snapshot({ baselineAt: Date.now(), since: true }));
+        labyrinthRoomLogs.sinceBaseline = true;
+        click('forget the mark');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(cleared).toBe(1);
+        expect(labyrinthRoomLogs.sinceBaseline).toBe(false);
+    });
+
+    test('a period with nothing in it still offers a way back', async () => {
+        // Otherwise the only escape from an empty view is a page reload
+        await setup(snapshot({ rows: [], baselineAt: Date.now(), since: true }));
+
+        expect(text()).toContain('Nothing recorded since the mark');
+        expect(text()).toContain('show everything');
+    });
+
+    test('and Reset is still there, because it answers a different question', () => {
+        expect(labyrinthRoomLogs.clearButton.textContent).toBe('Reset');
+    });
+});
