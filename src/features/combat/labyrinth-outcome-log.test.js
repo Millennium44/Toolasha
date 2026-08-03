@@ -255,8 +255,17 @@ describe('roomMeasurements', () => {
             successes: 28,
             doubles: 6,
         });
-        expect(measured).toMatchObject({ rooms: 2, secondsPerRoom: 60, success: 0.7, double: 0.15 });
+        // Doubles against successes, not against every action: a double rolls on
+        // a success. Counted per action it read about a quarter of the stated
+        // rate — a denominator, not a fault, and the loudest thing in the record
+        expect(measured).toMatchObject({ rooms: 2, secondsPerRoom: 60, success: 0.7, double: 6 / 28 });
         expect(measured.xpPerHour).toBe(720000);
+    });
+
+    test('no successes means no double rate to report, rather than a zero', () => {
+        const measured = roomMeasurements({ rooms: 1, seconds: 120, actions: 40, successes: 0, doubles: 0 });
+        expect(measured.double).toBeNull();
+        expect(measured.success).toBe(0);
     });
 
     test('says nothing about a room never entered', () => {
@@ -575,5 +584,165 @@ describe('accuracyReport', () => {
         const empty = accuracyReport({ rows: [], summary: {}, bySubject: [] });
         expect(empty).toContain('labyrinth sim accuracy');
         expect(empty).not.toContain('PER-ACTION RATES');
+    });
+});
+
+describe('per-room rates', () => {
+    const room = (actions, successes, doubles) => ({
+        subjectHrid: '/skills/milking',
+        roomLevel: 200,
+        kind: 'skilling',
+        cleared: true,
+        seconds: 60,
+        actions,
+        successes,
+        doubles,
+        serverSuccess: 0.5,
+        serverDouble: 0.18,
+    });
+    const KEY = outcomeKey('/skills/milking', 200);
+    const fold = (rooms) => rooms.reduce((totals, next) => foldRoomResult(totals, next), {});
+
+    test('a room contributes its own rate once, however many actions it took', () => {
+        // The whole point: a room that ended after four actions and one that
+        // ran the full budget are one sample each
+        const totals = fold([room(4, 2, 0), room(40, 10, 0)]);
+        const measured = roomMeasurements(totals[KEY]);
+
+        // Pooled: 12/44 = 27%. Per room: mean of 50% and 25%.
+        expect(measured.success).toBeCloseTo(12 / 44, 6);
+        expect(measured.perRoom.success.rate).toBeCloseTo(0.375, 6);
+    });
+
+    test('which is what stops the stopping rule dragging the figure down', () => {
+        // Nine rooms cleared quickly at a high rate and one that ran long at a
+        // low one. Pooled, the long room is most of the actions and wins.
+        const rooms = [...Array(9)].map(() => room(4, 3, 0));
+        rooms.push(room(120, 24, 0));
+        const measured = roomMeasurements(fold(rooms)[KEY]);
+
+        expect(measured.success).toBeLessThan(0.4);
+        expect(measured.perRoom.success.rate).toBeGreaterThan(0.65);
+    });
+
+    test('the spread comes from how much the rooms differed', () => {
+        const agreed = roomMeasurements(fold([room(10, 5, 0), room(10, 5, 0), room(10, 5, 0)])[KEY]);
+        const varied = roomMeasurements(fold([room(10, 1, 0), room(10, 5, 0), room(10, 9, 0)])[KEY]);
+        const width = (m) => m.perRoom.success.high - m.perRoom.success.low;
+
+        expect(width(varied)).toBeGreaterThan(width(agreed));
+    });
+
+    test('rooms that agree exactly still do not pin the rate to a point', () => {
+        // Zero variance between rooms would give a zero-width interval, and any
+        // difference at all would then read as a contradiction. Three rooms of
+        // 5-for-10 do not settle the question.
+        const agreed = roomMeasurements(fold([room(10, 5, 0), room(10, 5, 0), room(10, 5, 0)])[KEY]);
+
+        expect(agreed.perRoom.success.high - agreed.perRoom.success.low).toBeGreaterThan(0.1);
+    });
+
+    test('one room gives a rate but no spread, because one room has none', () => {
+        const measured = roomMeasurements(fold([room(10, 5, 0)])[KEY]);
+
+        expect(measured.perRoom.success.rate).toBe(0.5);
+        expect(measured.perRoom.success.low).toBeNull();
+    });
+
+    test('doubles are per room over successes, and a room with none is not a room', () => {
+        const measured = roomMeasurements(fold([room(10, 5, 1), room(10, 0, 0)])[KEY]);
+
+        expect(measured.perRoom.double.rooms).toBe(1);
+        expect(measured.perRoom.double.rate).toBeCloseTo(0.2, 6);
+    });
+
+    test('a record written before rooms were measured separately still reads', () => {
+        // There is nothing to recover the per-room sums from, so the pooled
+        // figure is what it has and the caller falls back to it
+        const measured = roomMeasurements({ rooms: 2, seconds: 60, actions: 40, successes: 20, doubles: 4 });
+
+        expect(measured.perRoom.success).toBeNull();
+        expect(measured.success).toBe(0.5);
+    });
+});
+
+describe('judging the per-action rates', () => {
+    const bucketOf = (rooms, stamp = {}) => {
+        const totals = rooms.reduce(
+            (acc, next) => foldRoomResult(acc, { subjectHrid: '/skills/milking', roomLevel: 200, ...stamp, ...next }),
+            {}
+        );
+        return totals[outcomeKey('/skills/milking', 200)];
+    };
+
+    const rates = (bucket) => {
+        const [row] = accuracyRows({ k: bucket }, { interval: wilsonInterval });
+        return row.rates;
+    };
+
+    test('the reading is the per-room mean, with the pooled one kept beside it', () => {
+        const bucket = bucketOf(
+            [
+                { actions: 4, successes: 3, doubles: 0, seconds: 10 },
+                { actions: 120, successes: 24, doubles: 0, seconds: 120 },
+            ],
+            { serverSuccess: 0.5, predictedSuccess: 0.5, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.observed).toBeCloseTo((0.75 + 0.2) / 2, 6);
+        expect(rates(bucket).success.pooled).toBeCloseTo(27 / 124, 6);
+    });
+
+    test('a server rate outside the spread of the rooms is called out', () => {
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 10, successes: 2, doubles: 0, seconds: 30 })),
+            { serverSuccess: 0.6, predictedSuccess: 0.6, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.verdict).toBe('sim too high');
+    });
+
+    test('and one inside it is not', () => {
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 10, successes: 6, doubles: 0, seconds: 30 })),
+            { serverSuccess: 0.6, predictedSuccess: 0.6, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).success.verdict).toBe('consistent');
+    });
+
+    test('one room is not enough to contradict anything', () => {
+        const bucket = bucketOf([{ actions: 10, successes: 1, doubles: 0, seconds: 30 }], {
+            serverSuccess: 0.9,
+            predictedSuccess: 0.9,
+            serverDouble: 0.18,
+            predictedDouble: 0.18,
+        });
+
+        expect(rates(bucket).success.verdict).toBe('too few rooms');
+    });
+
+    test('the double rate is judged against successes, so a right rate reads right', () => {
+        // The reported case: 18% doubles on ~22% successes read as 4% against
+        // every action, and the panel called it a fourfold shortfall
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 100, successes: 22, doubles: 4, seconds: 60 })),
+            { serverSuccess: 0.22, predictedSuccess: 0.22, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).double.observed).toBeCloseTo(4 / 22, 6);
+        expect(rates(bucket).double.verdict).toBe('consistent');
+    });
+
+    test('the calculator disagreeing with the server is still the loudest thing it can say', () => {
+        const bucket = bucketOf([{ actions: 10, successes: 5, doubles: 1, seconds: 30 }], {
+            serverSuccess: 0.5,
+            predictedSuccess: 0.62,
+            serverDouble: 0.18,
+            predictedDouble: 0.18,
+        });
+
+        expect(rates(bucket).success.formulaOff).toBe(true);
+        expect(rates(bucket).double.formulaOff).toBe(false);
     });
 });

@@ -248,6 +248,37 @@ export function foldRoomResult(totals, result) {
     const bucket = (totals || {})[key] || { subjectHrid, kind: result.kind || '', roomLevel, attempts: 0, clears: 0 };
     const add = (field, value) => (bucket[field] || 0) + Math.max(0, Number(value) || 0);
 
+    // Each room's own rate, kept as a running sum and sum of squares so a mean
+    // and a spread can be recovered without storing every room.
+    //
+    // Pooling every action across every room is what the per-action figures used
+    // to do, and a skilling room ends the moment you clear it — so a lucky room
+    // contributes ten actions and an unlucky one contributes the full two
+    // minutes of them. The pool is then mostly made of unlucky rooms and reads
+    // several points below the rate the server states, for no reason but the
+    // stopping rule.
+    //
+    // Doubles are counted against *successes*, because that is what they roll
+    // on. Against all actions they read about a quarter of the stated rate,
+    // which looked like the loudest fault in the record and was only ever a
+    // denominator.
+    const actions = Math.max(0, Number(result.actions) || 0);
+    const successes = Math.max(0, Number(result.successes) || 0);
+    const doubles = Math.max(0, Number(result.doubles) || 0);
+    const ratios = {};
+    if (actions > 0) {
+        const rate = successes / actions;
+        ratios.successRatioSum = add('successRatioSum', rate);
+        ratios.successRatioSquares = add('successRatioSquares', rate * rate);
+        ratios.successRatioRooms = add('successRatioRooms', 1);
+    }
+    if (successes > 0) {
+        const rate = doubles / successes;
+        ratios.doubleRatioSum = add('doubleRatioSum', rate);
+        ratios.doubleRatioSquares = add('doubleRatioSquares', rate * rate);
+        ratios.doubleRatioRooms = add('doubleRatioRooms', 1);
+    }
+
     // Predictions are last-write-wins rather than averaged. They are what the
     // calculator says for the gear you have on now, and averaging today's
     // prediction with one made for gear you have since replaced produces a
@@ -273,6 +304,7 @@ export function foldRoomResult(totals, result) {
             actions: add('actions', result.actions),
             successes: add('successes', result.successes),
             doubles: add('doubles', result.doubles),
+            ...ratios,
             ...stamp,
         },
     };
@@ -305,9 +337,64 @@ export function roomMeasurements(bucket) {
         // Measured throughput: real experience over all the time it cost,
         // including the attempts that paid nothing
         xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
+        successCount: Math.max(0, Math.floor(Number(bucket.successes) || 0)),
         success: actions > 0 ? (Number(bucket.successes) || 0) / actions : null,
-        double: actions > 0 ? (Number(bucket.doubles) || 0) / actions : null,
+        // Against successes, which is what a double rolls on. Against every
+        // action it read about a quarter of the stated rate — a denominator
+        // rather than a fault.
+        double:
+            Number(bucket.successes) > 0 ? (Number(bucket.doubles) || 0) / Math.max(1, Number(bucket.successes)) : null,
+        perRoom: {
+            success: roomMean(bucket, 'successRatio', actions),
+            double: roomMean(bucket, 'doubleRatio', Math.max(0, Math.floor(Number(bucket.successes) || 0))),
+        },
     };
+}
+
+/**
+ * The mean of one rate across rooms, with the spread of that mean.
+ *
+ * A room is the unit that was actually sampled. The actions inside it are not
+ * independent of how it went — a skilling room ends the moment you clear it, so
+ * a lucky room contributes few actions and an unlucky one contributes the full
+ * budget of them, and pooling actions therefore weights the unlucky rooms
+ * heavily enough to drag the figure several points below the truth.
+ *
+ * The interval is the standard error of the mean rather than a Wilson interval,
+ * because what is being averaged is a set of rates and not a set of coin flips.
+ * One room can produce a mean but not a spread, so it gets no interval — which
+ * is right: one room says nothing about how much rooms vary.
+ *
+ * @param {Object} bucket - Accumulator bucket
+ * @param {string} prefix - `successRatio` or `doubleRatio`
+ * @param {number} trials - Underlying draws, for the floor on the interval
+ * @returns {{rate: number, rooms: number, low: number, high: number}|null}
+ */
+function roomMean(bucket, prefix, trials) {
+    const rooms = Math.max(0, Math.floor(Number(bucket?.[`${prefix}Rooms`]) || 0));
+    // Records predate this and hold no per-room sums; there is nothing to
+    // recover them from, so the caller falls back to the pooled figure
+    if (!rooms) return null;
+
+    const sum = Number(bucket[`${prefix}Sum`]) || 0;
+    const squares = Number(bucket[`${prefix}Squares`]) || 0;
+    const rate = sum / rooms;
+
+    if (rooms < 2) return { rate, rooms, low: null, high: null };
+
+    // Sample variance from the running sums, floored at zero against the
+    // rounding that the subtraction can produce when every room agreed
+    const variance = Math.max(0, (squares - rooms * rate * rate) / (rooms - 1));
+    const between = Math.sqrt(variance / rooms);
+
+    // Rooms that happen to agree exactly give a variance of zero, and a
+    // zero-width interval would call any difference at all a contradiction —
+    // six rooms that each went 4-for-22 do not pin the rate to nine decimal
+    // places. The floor is the ordinary binomial error over the same draws, so
+    // the interval can never be narrower than the sample itself allows.
+    const within = trials > 0 ? Math.sqrt((rate * (1 - rate)) / trials) : Infinity;
+    const margin = 1.96 * Math.max(between, within);
+    return { rate, rooms, low: Math.max(0, rate - margin), high: Math.min(1, rate + margin) };
 }
 
 /**
@@ -420,22 +507,39 @@ function actionRates(bucket, measured, interval) {
     if (!measured?.actions) return null;
 
     const out = {};
-    for (const [name, field, observedRate] of [
-        ['success', 'Success', measured.success],
-        ['double', 'Double', measured.double],
+    for (const [name, field, pooledRate, trials] of [
+        ['success', 'Success', measured.success, measured.actions],
+        ['double', 'Double', measured.double, measured.successCount],
     ]) {
         const predicted = rateOrNaN(bucket[`predicted${field}`]);
         const server = rateOrNaN(bucket[`server${field}`]);
-        const hits = Math.round(observedRate * measured.actions);
-        const check = compareToPrediction(hits, measured.actions, server, interval);
+        const perRoom = measured.perRoom?.[name] || null;
+
+        // The per-room mean is the reading, and the pooled one is the fallback
+        // for records written before rooms were measured separately. Where both
+        // exist the pooled figure is still carried, because the gap between them
+        // is itself the size of the stopping-rule bias.
+        const observed = perRoom ? perRoom.rate : pooledRate;
+        const pooledCheck = compareToPrediction(Math.round(pooledRate * trials), trials, server, interval);
+        const low = perRoom ? perRoom.low : pooledCheck.low;
+        const high = perRoom ? perRoom.high : pooledCheck.high;
+
+        let verdict = 'consistent';
+        if (!Number.isFinite(server)) verdict = 'no server rate';
+        else if (low === null || high === null) verdict = 'too few rooms';
+        else if (server < low) verdict = 'sim too low';
+        else if (server > high) verdict = 'sim too high';
 
         out[name] = {
             predicted: Number.isFinite(predicted) ? predicted : null,
             server: Number.isFinite(server) ? server : null,
-            observed: observedRate,
-            low: check.low,
-            high: check.high,
-            verdict: Number.isFinite(server) ? check.verdict : 'no server rate',
+            observed,
+            pooled: pooledRate,
+            rooms: perRoom ? perRoom.rooms : 0,
+            trials,
+            low,
+            high,
+            verdict,
             // A formula that disagrees with the rate the server states is wrong
             // outright, which is a different and much louder problem than a run
             // of bad luck
@@ -635,8 +739,13 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
     if (withRates.length) {
         out.push('');
         out.push('PER-ACTION RATES (calc vs server vs observed)');
+        out.push('Success is the mean across rooms, not pooled over actions: a room ends when you');
+        out.push('clear it, so pooling weights the rooms that went badly. Doubles are counted');
+        out.push('against successes, which is what they roll on. "pooled" is the old reading.');
         out.push(
-            'subject\tlevel\tactions\tsuccess calc\tsuccess server\tsuccess seen\tdouble calc\tdouble server\tdouble seen\tformula off'
+            'subject\tlevel\trooms\tactions\tsuccesses\t' +
+                'success calc\tsuccess server\tsuccess seen\tsuccess pooled\tsuccess verdict\t' +
+                'double calc\tdouble server\tdouble seen\tdouble pooled\tdouble verdict\tformula off'
         );
         for (const row of withRates) {
             const { success, double } = row.rates;
@@ -644,13 +753,19 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
                 [
                     label(row.subjectHrid),
                     row.level,
+                    success.rooms || '—',
                     row.measured?.actions ?? 0,
+                    row.measured?.successCount ?? 0,
                     pct(success.predicted),
                     pct(success.server),
                     pct(success.observed),
+                    pct(success.pooled),
+                    success.verdict,
                     pct(double.predicted),
                     pct(double.server),
                     pct(double.observed),
+                    pct(double.pooled),
+                    double.verdict,
                     success.formulaOff || double.formulaOff ? 'YES' : '',
                 ].join('\t')
             );

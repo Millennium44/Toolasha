@@ -1606,9 +1606,14 @@ class LabyrinthRoomLogs {
             actionLine.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
             const text = document.createElement('span');
             text.style.color = 'rgba(221,232,255,0.8)';
+            // Per room rather than per action, where there is one. A skilling
+            // room ends the moment you clear it, so pooling every action across
+            // rooms weights the rooms that went badly and reads several points
+            // low for no reason but the stopping rule.
+            const over = rates.rooms ? `over ${rates.rooms} room${rates.rooms === 1 ? '' : 's'}` : `of ${rates.trials}`;
             text.textContent =
-                `Per action — calc ${pct(rates.predicted)}, ` +
-                `server ${pct(rates.server)}, hit ${pct(rates.observed)} of ${row.measured.actions}`;
+                `Success — calc ${pct(rates.predicted)}, server ${pct(rates.server)}, ` +
+                `seen ${pct(rates.observed)} ${over}`;
             actionLine.appendChild(text);
             // A formula that disagrees with the rate the server states is wrong
             // outright, which no amount of play will fix or reveal
@@ -1638,11 +1643,31 @@ class LabyrinthRoomLogs {
     throughputTooltip(row, pct) {
         const lines = [];
         if (row.rates?.success) {
-            const { predicted, server, observed, low, high, formulaOff } = row.rates.success;
+            const { predicted, server, observed, pooled, rooms, low, high, formulaOff } = row.rates.success;
+            const band = low === null ? '' : ` (${pct(low, 0)}–${pct(high, 0)})`;
             lines.push(
                 `Success rate — Toolasha's formula says ${pct(predicted, 1)}, the server says ${pct(server, 1)}, ` +
-                    `and ${pct(observed, 1)} of ${row.measured.actions} actions succeeded (${pct(low, 0)}–${pct(high, 0)})`
+                    (rooms
+                        ? `and the mean across ${rooms} room(s) was ${pct(observed, 1)}${band}`
+                        : `and ${pct(observed, 1)} of ${row.measured.actions} actions succeeded${band}`)
             );
+            if (rooms && Number.isFinite(pooled) && Math.abs(pooled - observed) > 0.01) {
+                lines.push(
+                    `Pooled over all ${row.measured.actions} actions it reads ${pct(pooled, 1)}. A room ends the ` +
+                        'moment you clear it, so a lucky room contributes few actions and an unlucky one contributes ' +
+                        'the full budget — the pool is mostly made of unlucky rooms, and the gap between the two ' +
+                        'figures is the size of that effect rather than anything the model got wrong'
+                );
+            }
+
+            const dbl = row.rates.double;
+            if (dbl && Number.isFinite(dbl.server)) {
+                lines.push(
+                    `Double rate — the server says ${pct(dbl.server, 1)}, and ${pct(dbl.observed, 1)} of your ` +
+                        `${row.measured.successCount} successful actions doubled. Doubles roll on a success, not on ` +
+                        'every action, which is why this is counted against successes'
+                );
+            }
             if (formulaOff) {
                 lines.push(
                     'The formula and the server disagree, which is a bug rather than variance — the server states the ' +
