@@ -33,7 +33,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: () => {},
+    saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid) => market.opened.push(itemHrid),

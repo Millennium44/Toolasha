@@ -8,7 +8,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ listings: null, styles: new Set() }));
+const game = vi.hoisted(() => ({ listings: null, styles: new Map() }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -21,7 +21,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/dom.js', () => ({
-    addStyles: (_css, id) => game.styles.add(id),
+    addStyles: (css, id) => game.styles.set(id, css),
     removeStyles: (id) => game.styles.delete(id),
 }));
 
@@ -112,14 +112,17 @@ describe('anyFinished', () => {
 });
 
 describe('starting up with listings already on the books', () => {
-    /** Whether the badge is currently being hidden */
-    const hiding = () => game.styles.has('mwi-marketplace-badge-filter');
+    const css = () => game.styles.get('mwi-marketplace-badge-filter') || '';
+    /** Whether the badge is currently being hidden outright */
+    const hiding = () => css().includes('display: none');
 
     beforeEach(() => {
         game.styles.clear();
         game.listings = null;
         badgeFilter.hidden = false;
+        badgeFilter.showing = null;
         badgeFilter.unregister = null;
+        badgeFilter.lastSeen = null;
     });
 
     test('a filled order sitting there through a reload still badges', () => {
@@ -170,5 +173,55 @@ describe('starting up with listings already on the books', () => {
         badgeFilter.refresh();
 
         expect(hiding()).toBe(true);
+    });
+});
+
+describe('what number the badge shows', () => {
+    const css = () => game.styles.get('mwi-marketplace-badge-filter') || '';
+    const hiding = () => css().includes('display: none');
+
+    beforeEach(() => {
+        game.styles.clear();
+        game.listings = null;
+        badgeFilter.hidden = false;
+        badgeFilter.showing = null;
+        badgeFilter.unregister = null;
+        badgeFilter.lastSeen = null;
+    });
+
+    test('the finished ones, not everything collectable', () => {
+        // The game's own badge said 2: a filled sell order and a buy order that
+        // had taken 130 of 719. Collecting the 130 does nothing but silence it.
+        game.listings = [
+            listing({ id: 1, orderQuantity: 2, filledQuantity: 2, unclaimedItemCount: 0, unclaimedCoinCount: 1568000 }),
+            listing({ id: 2, orderQuantity: 719, filledQuantity: 130, unclaimedCoinCount: 293020 }),
+        ];
+
+        badgeFilter.initialize();
+
+        expect(css()).toContain('content: "1"');
+        expect(hiding()).toBe(false);
+    });
+
+    test('two finished say two', () => {
+        game.listings = [listing({ id: 1 }), listing({ id: 2 })];
+        badgeFilter.initialize();
+
+        expect(css()).toContain('content: "2"');
+    });
+
+    test('none finished hides it outright rather than showing a zero', () => {
+        game.listings = [listing({ filledQuantity: 30, unclaimedItemCount: 30 })];
+        badgeFilter.initialize();
+
+        expect(css()).toContain('display: none');
+        expect(css()).not.toContain('content:');
+    });
+
+    test('the real text is blanked, so ours is not printed beside it', () => {
+        game.listings = [listing()];
+        badgeFilter.initialize();
+
+        expect(css()).toContain('font-size: 0');
     });
 });

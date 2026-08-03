@@ -48,7 +48,12 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => ({ players: game.players }) },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => ({ '/items/a': 100 })[hrid] ?? null }));
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: () => {},
+    saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 
 const { partyLuckPanel } = await import('./party-luck-panel.js');

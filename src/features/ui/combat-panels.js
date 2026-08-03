@@ -41,7 +41,7 @@ import { takenBreakdown } from '../../features/combat/damage-taken-tracker.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
@@ -210,7 +210,8 @@ class CombatPanel {
         this.refreshId = null;
     }
 
-    show() {
+    show({ remember = true } = {}) {
+        if (remember) saveOpenState(this.id, true);
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
             return;
@@ -218,7 +219,21 @@ class CombatPanel {
         this._create();
     }
 
-    hide() {
+    /**
+     * Reopen if the page was left with this panel up.
+     *
+     * Called once per panel at module scope. Fire and forget — a storage read
+     * has no business holding up the library load, and a panel appearing a
+     * moment after the page is exactly what a remembered panel looks like.
+     */
+    restore() {
+        wasOpen(this.id).then((open) => {
+            if (open) this.show({ remember: false });
+        });
+    }
+
+    hide({ remember = true } = {}) {
+        if (remember) saveOpenState(this.id, false);
         clearInterval(this.refreshId);
         this.refreshId = null;
         this.detachDrag?.();
@@ -1769,3 +1784,10 @@ function taxCard(stats) {
     }
     return holder;
 }
+
+// Panels reopen themselves if the page was left with them up. At module scope
+// rather than inside a feature's initialize, because these are created here and
+// nothing else owns their lifetime.
+dpsPanel.restore();
+deathsPanel.restore();
+profitPanel.restore();

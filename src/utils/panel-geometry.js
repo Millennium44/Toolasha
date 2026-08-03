@@ -141,3 +141,39 @@ export async function restoreGeometry(panel, panelKey, min) {
         panel.style.bottom = 'auto';
     }
 }
+
+/**
+ * Whether a panel was open when the page was last left.
+ *
+ * Stored beside the geometry rather than as its own thing, because it is the
+ * same question — where a panel was, and whether it was anywhere at all. A panel
+ * that has to be reopened after every refresh is a panel that gets opened once
+ * and then not bothered with.
+ *
+ * @param {string} panelKey - The panel's key
+ * @param {boolean} open - Whether it is open now
+ * @returns {Promise<void>}
+ */
+export async function saveOpenState(panelKey, open) {
+    try {
+        const all = await allGeometry();
+        all[panelKey] = { ...(all[panelKey] || {}), open: Boolean(open) };
+        await storage.setJSON(STORAGE_KEY, all, 'settings');
+    } catch (error) {
+        console.error('[PanelGeometry] Remembering whether a panel was open failed:', error);
+    }
+}
+
+/**
+ * @param {string} panelKey - The panel's key
+ * @returns {Promise<boolean>} Whether it should be reopened
+ */
+export async function wasOpen(panelKey) {
+    try {
+        const all = await allGeometry();
+        return Boolean(all[panelKey]?.open);
+    } catch (error) {
+        console.error('[PanelGeometry] Reading whether a panel was open failed:', error);
+        return false;
+    }
+}

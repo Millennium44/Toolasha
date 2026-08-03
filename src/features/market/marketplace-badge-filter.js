@@ -35,11 +35,34 @@ const STYLE_ID = 'mwi-marketplace-badge-filter';
  * icon label rather than a position, so a reordered sidebar still matches, and
  * excluding the ocean variant the way the other badge features do.
  */
-const CSS = `
-    [class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) [class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"]) {
-        display: none !important;
-    }
-`;
+const BADGE =
+    '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) ' +
+    '[class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"])';
+
+/**
+ * Hide it, or make it say a different number.
+ *
+ * The count has to come through CSS like the hiding does, and for the same
+ * reason: React owns that node and rewrites its text on every update, so
+ * anything written into it is gone within the second. A generated rule that
+ * blanks the real text and prints ours in a pseudo-element survives every
+ * re-render, because the game does not know the rule exists.
+ *
+ * @param {number|null} count - What it should say, or null to hide it entirely
+ * @returns {string} A stylesheet
+ */
+function badgeCss(count) {
+    if (count === null) return `${BADGE} { display: none !important; }`;
+
+    return `
+        ${BADGE} { font-size: 0 !important; }
+        ${BADGE}::after {
+            content: "${count}";
+            font-size: 12px;
+            line-height: 1;
+        }
+    `;
+}
 
 /**
  * Whether a listing is done and holding something for you.
@@ -79,6 +102,8 @@ export function anyFinished(listings) {
 class MarketplaceBadgeFilter {
     constructor() {
         this.hidden = false;
+        /** How many finished listings the badge is currently claiming */
+        this.showing = null;
         this.unregister = null;
         /** The last non-empty listing array seen on the wire */
         this.lastSeen = null;
@@ -124,7 +149,11 @@ class MarketplaceBadgeFilter {
      * order that no longer exists.
      */
     refresh() {
-        this.apply(anyFinished(this.book()));
+        // The count, not just the presence. The game badges every listing with
+        // anything collectable, so a filled order beside a buy order that has
+        // taken 130 of 719 reads "2" — and collecting the 130 does nothing but
+        // silence it. One of those is finished, so the badge should say one.
+        this.apply(this.book().filter(isFinishedWithSpoils).length);
     }
 
     /**
@@ -185,13 +214,17 @@ class MarketplaceBadgeFilter {
     }
 
     /**
-     * @param {boolean} show - Whether the badge is warranted
+     * @param {number} finished - How many listings have finished
      */
-    apply(show) {
-        if (show === !this.hidden) return;
-        this.hidden = !show;
-        if (this.hidden) addStyles(CSS, STYLE_ID);
-        else removeStyles(STYLE_ID);
+    apply(finished) {
+        if (finished === this.showing) return;
+        this.showing = finished;
+        this.hidden = finished === 0;
+
+        // Removed first: `addStyles` appends a new element every call, so
+        // toggling without this leaves a stack of them and the oldest wins
+        removeStyles(STYLE_ID);
+        addStyles(badgeCss(finished > 0 ? finished : null), STYLE_ID);
     }
 
     disable() {
@@ -199,6 +232,7 @@ class MarketplaceBadgeFilter {
         this.unregister = null;
         removeStyles(STYLE_ID);
         this.hidden = false;
+        this.showing = null;
     }
 }
 

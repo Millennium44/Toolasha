@@ -42,6 +42,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
         panel.style.width = `${geometry.width ?? fallback.width}px`;
     },
     saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({

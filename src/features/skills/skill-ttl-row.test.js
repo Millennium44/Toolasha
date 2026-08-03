@@ -28,6 +28,8 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
     saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({
