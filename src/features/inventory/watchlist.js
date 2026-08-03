@@ -68,6 +68,7 @@ const REFRESH_MS = 5000;
 const DOT_CLASS = 'toolasha-watchlist-dot';
 const MENU_BUTTON_CLASS = 'toolasha-watchlist-track';
 const MENU_BUTTON_SETTING = 'watchlist_menuButton';
+const DOTS_SETTING = 'watchlist_inventoryDots';
 
 const COLORS = {
     background: 'rgba(14, 16, 22, 0.97)',
@@ -384,8 +385,68 @@ class WatchlistPanel {
             this.hide();
         });
 
-        header.append(title, this.headerCount, this.headerTotal, spacer, close);
+        // Both switches are here rather than in the body: they are about the
+        // panel's reach into the rest of the game rather than about any one
+        // item, and a row of tick boxes under a long table is a row nobody
+        // scrolls to. They are the same settings the settings page has, not
+        // copies, so the two can never disagree.
+        this.dotsBtn = this._toggle(
+            DOTS_SETTING,
+            () => (config.getSetting(DOTS_SETTING) ? 'Dots on' : 'Dots off'),
+            'A dot in the corner of every inventory tile holding a tracked item. Knowing what is on the list ' +
+                'while you are looking at your inventory is the point of having one — but it is another mark on a ' +
+                'busy grid, so it can go.'
+        );
+        this.menuBtn = this._toggle(
+            MENU_BUTTON_SETTING,
+            () => (config.getSetting(MENU_BUTTON_SETTING) ? 'Menu button on' : 'Menu button off'),
+            'Adds Track / Untrack beside Sell when you click an inventory item. Off by default, because it ' +
+                'changes a menu you open for other reasons and a misclick there is a sale.'
+        );
+
+        header.append(title, this.headerCount, this.headerTotal, spacer, this.dotsBtn, this.menuBtn, close);
         return header;
+    }
+
+    /**
+     * A header switch that says which way it is set.
+     *
+     * @param {string} setting - Which setting it writes
+     * @param {Function} label - Returns the current label
+     * @param {string} title - Hover explanation
+     * @returns {HTMLButtonElement}
+     */
+    _toggle(setting, label, title) {
+        const button = document.createElement('button');
+        button.title = title;
+        button.dataset.setting = setting;
+        button._label = label;
+        Object.assign(button.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '2px 7px',
+            whiteSpace: 'nowrap',
+        });
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            config.setSetting(setting, !config.getSetting(setting));
+            this._paintToggles();
+        });
+        return button;
+    }
+
+    /** Put the header switches in step with the settings they write */
+    _paintToggles() {
+        for (const button of [this.dotsBtn, this.menuBtn]) {
+            if (!button?._label) continue;
+            button.textContent = button._label();
+            const on = Boolean(config.getSetting(button.dataset.setting));
+            button.style.color = on ? COLORS.accent : COLORS.textDim;
+            button.style.opacity = on ? '1' : '0.7';
+        }
     }
 
     _render() {
@@ -397,13 +458,13 @@ class WatchlistPanel {
         this.headerCount.textContent = `${totals.held} / ${totals.items}`;
         this.headerCount.title = 'How many of the tracked items you hold any of.';
         this.headerTotal.textContent = `${formatKMB(totals.ask)} ask · ${formatKMB(totals.bid)} bid`;
+        this._paintToggles();
 
         this.bodyEl.replaceChildren();
         for (const build of [
             () => this._sets('zones', 'Zones', combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
             () => this._sets('chests', 'Chests', openableItems(dataManager.getInitClientData?.())),
             () => this._table(rows),
-            () => this._options(),
         ]) {
             // One section that cannot be drawn must not take the others with it
             try {
@@ -415,38 +476,6 @@ class WatchlistPanel {
                 this.bodyEl.appendChild(failed);
             }
         }
-    }
-
-    /**
-     * The switches that belong to this panel rather than to a set.
-     *
-     * The Track button is here as well as on the settings page because this is
-     * where you are when you decide you want it — and it is the same setting,
-     * not a copy, so the two can never disagree.
-     *
-     * @returns {HTMLElement}
-     */
-    _options() {
-        const card = this._card();
-
-        const label = document.createElement('label');
-        Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' });
-
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.dataset.menuButton = 'true';
-        box.checked = Boolean(config.getSetting(MENU_BUTTON_SETTING));
-        box.addEventListener('change', () => config.setSetting(MENU_BUTTON_SETTING, box.checked));
-
-        const text = document.createElement('span');
-        text.textContent = 'Track button in the item menu';
-        text.title =
-            'Adds Track / Untrack beside Sell when you click an inventory item. Off by default, because it ' +
-            'changes a menu you open for other reasons.';
-
-        label.append(box, text);
-        card.appendChild(label);
-        return card;
     }
 
     /**
@@ -768,6 +797,14 @@ export const watchlistPanel = new WatchlistPanel();
 function markTrackedItem(itemElem) {
     const existing = itemElem.querySelector(`.${DOT_CLASS}`);
 
+    // Checked per tile rather than by unregistering the provider, because the
+    // provider is what walks the grid — with it gone, the dots already drawn
+    // would sit there until the game happened to rebuild the tile
+    if (!config.getSetting(DOTS_SETTING)) {
+        existing?.remove();
+        return;
+    }
+
     const name = itemElem.querySelector('svg')?.getAttribute('aria-label');
     const hrid = name && hridForName(name);
     if (!hrid || !isWatched(hrid)) {
@@ -872,6 +909,14 @@ export default {
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
         applyMenuButtonSetting();
         config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
+        // Turning the dots off has to clear the ones already drawn; turning
+        // them on has to redraw without waiting for the grid to change
+        config.onSettingChange(DOTS_SETTING, () => {
+            if (!config.getSetting(DOTS_SETTING)) {
+                document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
+            }
+            inventoryBadgeManager.invalidateCache?.();
+        });
     },
     cleanup: () => {
         inventoryBadgeManager.unregisterProvider('watchlist-dot');
