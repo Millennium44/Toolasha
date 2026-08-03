@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Houses: rooms you can switch off, and the materials you are actually short of
+
+- **A checkbox per room, as JHouse has.** A room nobody intends to buy — a skill you do not train — sat in the denominator forever, so "14 of 17 affordable" was answering a question about somebody else's character. An unchecked room leaves _both_ halves of the count and stops being eligible as "cheapest"; it stays in the grid, dimmed, because you have to be able to switch it back on. Remembered across sessions.
+- **Materials say what is missing, not just what is needed.** Each row now carries the item's icon and a `−N` shortfall beside the have/need pair, and a line underneath totals what those missing materials would cost to buy at ask. That is a different number from the upgrade cost, which prices every material including the ones already in your bags.
+- **The material rows link through to the marketplace**, icon and name both, since going to buy the thing you are short of is the next move anyway. Coins are exempt — there is nowhere to click to.
+
 ### The overlay filled in on the next wave; now it fills in on load
 
 After a refresh every combat tile read "No loot tracked yet", "No combat yet", "Not in combat" until the next battle started. In a dungeon a battle is a wave, so that is tens of seconds of a blank overlay — and MCS has no such gap.

@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 
 const roomDetails = {
     '/house_rooms/dojo': { name: 'Dojo' },
@@ -18,8 +18,13 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
 vi.mock('../../utils/formatters.js', () => ({ formatLargeNumber: (n) => String(n) }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../core/storage.js', () => ({
+    default: { getJSON: async (_k, _s, fallback) => fallback, setJSON: async () => true },
+}));
 
-const { nextLevelCost, affordableUpgrades } = await import('./house-affordability.js');
+const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked } = await import('./house-affordability.js');
 
 describe('nextLevelCost', () => {
     test('is the difference between two cumulative totals, not a cumulative total', () => {
@@ -75,5 +80,43 @@ describe('affordableUpgrades', () => {
         // The common case for a new character, and the one that used to draw a
         // blank row
         expect(affordableUpgrades(null, 100000)).toMatchObject({ affordable: 2, total: 2 });
+    });
+});
+
+describe('rooms you are not saving for', () => {
+    const rooms = { '/house_rooms/dojo': { level: 3 }, '/house_rooms/gym': { level: 2 } };
+
+    afterEach(async () => {
+        await setRoomTracked('/house_rooms/gym', true);
+        await setRoomTracked('/house_rooms/dojo', true);
+    });
+
+    test('an untracked room leaves both halves of the count', () => {
+        // Not "1 of 2 affordable" with the gym permanently unaffordable — a room
+        // you have declined is not one you are failing to afford, and leaving it
+        // in the denominator makes the figure about somebody else's character
+        expect(affordableUpgrades(rooms, 500)).toMatchObject({ affordable: 1, total: 2 });
+
+        return setRoomTracked('/house_rooms/gym', false).then(() => {
+            expect(affordableUpgrades(rooms, 500)).toMatchObject({ affordable: 1, total: 1 });
+        });
+    });
+
+    test('and it stops being the cheapest, since it is not a candidate', async () => {
+        await setRoomTracked('/house_rooms/dojo', false);
+
+        expect(affordableUpgrades(rooms, 5000).cheapest).toEqual({ name: 'Gym', cost: 1000 });
+    });
+
+    test('everything counts until told otherwise', () => {
+        expect(isRoomTracked('/house_rooms/dojo')).toBe(true);
+        expect(isRoomTracked('/house_rooms/anything')).toBe(true);
+    });
+
+    test('switching one back on restores it', async () => {
+        await setRoomTracked('/house_rooms/gym', false);
+        await setRoomTracked('/house_rooms/gym', true);
+
+        expect(affordableUpgrades(rooms, 5000).total).toBe(2);
     });
 });

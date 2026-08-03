@@ -16,19 +16,24 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { rows, blank, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { getItemPrice } from '../../utils/market-data.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
 const PANEL_ID = 'toolasha-houses-panel';
 /** Where this panel's size and position are remembered */
 const GEOMETRY_KEY = 'housesPanel';
+/** Where the rooms you have switched off are remembered */
+const UNTRACKED_KEY = 'housesUntracked';
 /** What it opens at before anyone has resized it */
 const DEFAULT_PANEL = { width: 560, height: 420 };
 
@@ -43,6 +48,76 @@ const COLORS = {
     tooDear: 'rgba(120, 60, 60, 0.3)',
     maxed: 'rgba(60, 60, 70, 0.35)',
 };
+
+/**
+ * What one unit of a material costs to buy.
+ *
+ * The ask side, because this prices what is *missing* — the thing you would have
+ * to go and buy rather than something you are deciding whether to sell.
+ *
+ * @param {string} itemHrid - The material
+ * @returns {number} Price, or 0 when the market has no answer
+ */
+function priceOfMaterial(itemHrid) {
+    return getItemPrice(itemHrid, { context: 'cost', side: 'ask' }) || 0;
+}
+
+/**
+ * Rooms the player has said they are not saving for.
+ *
+ * Held in memory and mirrored to storage, because the affordability count is
+ * recomputed on a timer and on every overlay tick — an await per room per tick
+ * is not a thing to put behind a number that has to be there when it is drawn.
+ * `loadUntrackedRooms` fills it once at start-up.
+ */
+let untracked = new Set();
+
+/**
+ * @returns {Set<string>} Room hrids left out of the count
+ */
+export function untrackedRooms() {
+    return untracked;
+}
+
+/**
+ * @param {string} houseRoomHrid - A room
+ * @returns {boolean} Whether it counts towards "affordable"
+ */
+export function isRoomTracked(houseRoomHrid) {
+    return !untracked.has(houseRoomHrid);
+}
+
+/**
+ * Start or stop counting a room.
+ *
+ * @param {string} houseRoomHrid - The room
+ * @param {boolean} tracked - Whether it should count
+ * @returns {Promise<void>}
+ */
+export async function setRoomTracked(houseRoomHrid, tracked) {
+    if (tracked) untracked.delete(houseRoomHrid);
+    else untracked.add(houseRoomHrid);
+
+    try {
+        await storage.setJSON(UNTRACKED_KEY, [...untracked], 'settings');
+    } catch (error) {
+        console.error('[Houses] Saving which rooms to count failed:', error);
+    }
+}
+
+/**
+ * Read back which rooms were switched off.
+ * @returns {Promise<Set<string>>}
+ */
+export async function loadUntrackedRooms() {
+    try {
+        const saved = await storage.getJSON(UNTRACKED_KEY, 'settings', []);
+        if (Array.isArray(saved)) untracked = new Set(saved);
+    } catch (error) {
+        console.error('[Houses] Reading which rooms to count failed:', error);
+    }
+    return untracked;
+}
 
 /**
  * What the next level of one room costs, on its own.
@@ -77,12 +152,18 @@ export function affordableUpgrades(houseRooms, coins) {
     let affordable = 0;
     let total = 0;
     let cheapest = null;
+    const ignored = untrackedRooms();
 
     // Walk the game's full room list, not the character's. `characterHouseRoomMap`
     // holds only rooms you have already bought, so a character with one maxed
     // room and fifteen unbuilt ones looks like a character with nothing left to
     // buy — when the unbuilt ones are the whole point of the figure.
     for (const houseRoomHrid of Object.keys(roomDetails)) {
+        // A room you have said you are not saving for is not one you are failing
+        // to afford. Left out of both halves of the count, so "3 of 5" stays a
+        // sentence about rooms you actually want.
+        if (ignored.has(houseRoomHrid)) continue;
+
         const level = (houseRooms || {})[houseRoomHrid]?.level || 0;
         const cost = nextLevelCost(houseRoomHrid, level);
         // A maxed room, or one whose materials cannot be priced, is not an
@@ -376,18 +457,48 @@ class HousesPanel {
             ? `${room.name} is at the maximum level`
             : `${room.name} → level ${room.level + 1}: ${formatLargeNumber(Math.round(room.cost))}`;
 
+        const top = document.createElement('div');
+        Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '5px' });
+
+        // The switch that keeps a room out of the count. A room nobody intends
+        // to buy — a skill they do not train — otherwise sits in the denominator
+        // forever, so "14 of 17" is answering a question about somebody else's
+        // character.
+        const track = document.createElement('input');
+        track.type = 'checkbox';
+        track.checked = isRoomTracked(room.hrid);
+        Object.assign(track.style, { margin: '0', cursor: 'pointer', accentColor: COLORS.accent, flex: '0 0 auto' });
+        track.title = track.checked ? 'Counted — click to stop counting this room' : 'Not counted — click to count it';
+        track.addEventListener('click', async (event) => {
+            // Without this the click also selects the tile, so switching a room
+            // off jumps the detail pane to it
+            event.stopPropagation();
+            await setRoomTracked(room.hrid, track.checked);
+            this._render();
+        });
+
         const name = document.createElement('div');
         name.textContent = room.name;
-        name.style.whiteSpace = 'nowrap';
-        name.style.overflow = 'hidden';
-        name.style.textOverflow = 'ellipsis';
+        Object.assign(name.style, {
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            flex: '1',
+            minWidth: '0',
+        });
+
+        top.append(track, name);
 
         const level = document.createElement('div');
         level.textContent = room.maxed ? `Lv ${room.level} · max` : `Lv ${room.level} → ${room.level + 1}`;
         level.style.color = COLORS.textDim;
         level.style.fontSize = '11px';
 
-        tile.appendChild(name);
+        // An untracked room is still shown — you have to be able to switch it
+        // back on — but dimmed, so the grid reads as the set being counted
+        if (!isRoomTracked(room.hrid)) tile.style.opacity = '0.45';
+
+        tile.appendChild(top);
         tile.appendChild(level);
         tile.addEventListener('click', () => {
             this.selected = room.hrid;
@@ -438,13 +549,33 @@ class HousesPanel {
         this.detailEl.appendChild(heading);
 
         const inventory = dataManager.getCombinedData()?.characterItems || [];
+        let shortfall = 0;
+
         for (const material of room.materials) {
             const line = document.createElement('div');
-            Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
+            Object.assign(line.style, {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                padding: '1px 0',
+            });
 
+            const label = document.createElement('span');
+            Object.assign(label.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                minWidth: '0',
+                overflow: 'hidden',
+            });
+
+            const icon = itemIcon(material.itemHrid, 16);
             const name = document.createElement('span');
             name.textContent =
                 dataManager.getItemDetails?.(material.itemHrid)?.name || material.itemHrid.split('/').pop();
+            Object.assign(name.style, { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+            label.append(icon, name);
 
             const have =
                 material.itemHrid === '/items/coin'
@@ -452,16 +583,48 @@ class HousesPanel {
                     : inventory.find((item) => item.itemHrid === material.itemHrid && !item.enhancementLevel)?.count ||
                       0;
             const need = material.count || 0;
+            const missing = Math.max(0, need - have);
+
+            // Straight to the listing for the thing you are short of, which is
+            // the next thing you were going to do anyway. Coins are not bought.
+            if (material.itemHrid !== '/items/coin') {
+                linkToMarketplace(icon, material.itemHrid, navigateToMarketplace);
+                linkToMarketplace(name, material.itemHrid, navigateToMarketplace);
+            }
 
             const amount = document.createElement('span');
-            amount.textContent = `${formatLargeNumber(have)} / ${formatLargeNumber(need)}`;
-            amount.style.color = have >= need ? COLORS.accent : '#f87171';
+            amount.textContent = missing
+                ? `${formatLargeNumber(have)} / ${formatLargeNumber(need)}  −${formatLargeNumber(missing)}`
+                : `${formatLargeNumber(have)} / ${formatLargeNumber(need)}`;
+            amount.style.color = missing ? '#f87171' : COLORS.accent;
             amount.style.whiteSpace = 'nowrap';
 
-            line.appendChild(name);
-            line.appendChild(amount);
+            const price = missing && material.itemHrid !== '/items/coin' ? priceOfMaterial(material.itemHrid) : 0;
+            if (price > 0) shortfall += price * missing;
+
+            line.title = missing
+                ? `Short ${formatLargeNumber(missing)} ${name.textContent}` +
+                  (price > 0 ? `, about ${formatLargeNumber(Math.round(price * missing))} to buy.` : '.') +
+                  (material.itemHrid === '/items/coin' ? '' : '\nClick to open its marketplace listing.')
+                : `Enough ${name.textContent} in hand.`;
+
+            line.append(label, amount);
             this.detailEl.appendChild(line);
         }
+
+        // What finishing this level would actually cost from here, which is not
+        // the upgrade cost: that prices every material, and you already own some
+        const remaining = document.createElement('div');
+        remaining.textContent = shortfall
+            ? `Missing materials cost about ${formatLargeNumber(Math.round(shortfall))}`
+            : 'Every material is already in hand';
+        Object.assign(remaining.style, {
+            marginTop: '6px',
+            paddingTop: '4px',
+            borderTop: `1px solid ${COLORS.border}`,
+            color: shortfall ? COLORS.textDim : COLORS.accent,
+        });
+        this.detailEl.appendChild(remaining);
     }
 
     _remove() {
@@ -481,6 +644,12 @@ class HousesPanel {
 }
 
 export const housesPanel = new HousesPanel();
+
+// Read at module scope alongside the row registration, because this module has
+// no initialize of its own — it is imported for its side effects. Fire and
+// forget: until it lands every room counts, which is what an empty set means
+// anyway, and the row redraws every second.
+loadUntrackedRooms();
 
 registerRow({
     key: 'houses',
