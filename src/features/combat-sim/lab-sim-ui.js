@@ -895,6 +895,9 @@ class LabSimUI {
             upgradeContent.style.display = 'flex';
             tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
+            // Redrawn on the way in rather than only when the panel opens: an
+            // aura bought mid-session should not need a reload to be noticed
+            this._paintCritAura();
         } else if (tab === 'skilling') {
             skillingContent.style.display = 'flex';
             tabSkilling.style.cssText = activeStyle;
@@ -2340,14 +2343,14 @@ class LabSimUI {
      */
     _critAuraSwap(dto) {
         if (!config.getSetting('labSim_critAura')) return dto;
-        return withCriticalAura(dto, ownedCriticalAura());
+        return withCriticalAura(dto, criticalAuraAbility());
     }
 
     /**
-     * Show the Crit aura switch only to somebody who owns one.
+     * Draw the Crit Aura switch, and say which aura it means.
      *
-     * A switch that cannot do anything is worse than no switch: it reads as a
-     * feature that is broken rather than one that does not apply.
+     * Shown whether or not one is owned. Hidden only when the game data has no
+     * such item, which is not a state anybody is in.
      * @private
      */
     _paintCritAura() {
@@ -2355,16 +2358,19 @@ class LabSimUI {
         const box = this.panel?.querySelector('#mwi-labsim-crit-aura');
         if (!label || !box) return;
 
-        const owned = ownedCriticalAura();
-        label.style.display = owned ? 'inline-flex' : 'none';
-        if (!owned) return;
+        const aura = criticalAuraAbility();
+        label.style.display = aura ? 'inline-flex' : 'none';
+        if (!aura) return;
 
         box.checked = Boolean(config.getSetting('labSim_critAura'));
+        const which = aura.learned
+            ? `your Critical Aura at level ${aura.level}`
+            : 'Critical Aura at level 1 — you have not learned it, so this is what the book would get you';
         label.title =
-            `Analyse upgrades with your Critical Aura${owned.enhancementLevel ? ` +${owned.enhancementLevel}` : ''} ` +
-            'on, in place of whatever trinket you are wearing. An upgrade is worth a different amount depending on ' +
-            'what else is equipped, and a labyrinth fight is short enough to be decided by a crit — so the answer ' +
-            'to "what should I buy next" can change with the aura. Affects the Upgrade analysis only.';
+            `Analyse upgrades with ${which} in the ${aura.special ? 'special' : 'ability'} slot, in place of ` +
+            'whatever is there now. An upgrade is worth a different amount depending on what else is running, and ' +
+            'a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" ' +
+            'can change with the aura up. Affects the Upgrade analysis only.';
     }
 
     /**
@@ -2503,60 +2509,74 @@ class LabSimUI {
     }
 }
 
-/** Where an aura sits: the slot the game calls a trinket */
-const TRINKET_SLOT = '/equipment_types/trinket';
-
 /**
- * The Critical Aura the character actually owns, at the level they own it at.
+ * The Critical Aura you have learned, at the level you have it at.
  *
- * Found by equipment type and name rather than by a hardcoded hrid, so an aura
- * renamed or re-hrid'd by an update is still found. Equipped counts as owned —
- * somebody wearing it is the likeliest person to want this — and the best
- * enhancement level wins, since that is the one they would put on.
+ * It is an **ability**, not a trinket — a special-slot ability with a cooldown
+ * that buffs the party's critical rate and damage. The first version of this
+ * looked for it in the equipment, found nothing, and hid its own switch.
  *
- * @returns {{hrid: string, enhancementLevel: number}|null}
+ * Not gated on having learned it, which was the other mistake: the commonest
+ * reason to ask what a fight looks like with a crit aura up is that you are
+ * deciding whether to buy the book. Having learned it sets the level, since that
+ * is the aura you would actually cast; not having it simulates level 1, which is
+ * what the book would get you.
+ *
+ * Found by name in the ability data rather than by a hardcoded hrid, so one
+ * renamed by an update is still found.
+ *
+ * @returns {{hrid: string, level: number, special: boolean, learned: boolean}|null}
+ *   Null only when the game data has no such ability at all
  */
-export function ownedCriticalAura() {
-    const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-    const isCritAura = (hrid) => {
-        const detail = itemDetailMap[hrid];
-        if (detail?.equipmentDetail?.type !== TRINKET_SLOT) return false;
-        return /critical/i.test(detail.name || hrid);
-    };
+export function criticalAuraAbility() {
+    const abilityDetailMap = dataManager.getInitClientData()?.abilityDetailMap || {};
+    const hrid = Object.keys(abilityDetailMap).find((key) =>
+        /critical\s*aura/i.test(abilityDetailMap[key]?.name || key.split('/').pop().replace(/_/g, ' '))
+    );
+    if (!hrid) return null;
 
-    let best = null;
-    const consider = (hrid, enhancementLevel) => {
-        if (!isCritAura(hrid)) return;
-        const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
-        if (!best || level > best.enhancementLevel) best = { hrid, enhancementLevel: level };
+    const learned = (dataManager.characterData?.characterAbilities || []).find((entry) => entry?.abilityHrid === hrid);
+    return {
+        hrid,
+        level: Math.max(1, Math.floor(Number(learned?.level) || 1)),
+        special: Boolean(abilityDetailMap[hrid]?.isSpecialAbility),
+        learned: Boolean(learned),
     };
-
-    for (const item of dataManager.characterItems || []) {
-        if ((item.count || 0) > 0) consider(item.itemHrid, item.enhancementLevel);
-    }
-    for (const [, item] of dataManager.characterEquipment || []) {
-        consider(item.itemHrid, item.enhancementLevel);
-    }
-    return best;
 }
 
 /**
- * The same player, wearing their Critical Aura.
+ * The same player, with the Critical Aura slotted.
+ *
+ * A special ability replaces the special slot, which is the slot an aura lives
+ * in and holds exactly one thing — swapping it is precisely the "swap my aura"
+ * gesture. A non-special one takes the first free slot and, finding none, is
+ * left out rather than dropping a combat ability you chose on purpose.
  *
  * A copy rather than an edit: the DTOs handed out by the editor are the ones it
- * is still showing, and a swap made for a simulation must not turn into gear the
- * panel then claims you are wearing.
+ * is still showing, and a swap made for a simulation must not turn into a bar
+ * the panel then claims you are running.
  *
  * @param {Object} dto - A player DTO
- * @param {{hrid: string, enhancementLevel: number}} aura - From `ownedCriticalAura`
- * @returns {Object} A new DTO
+ * @param {{hrid: string, level: number, special: boolean}} aura - From `criticalAuraAbility`
+ * @returns {Object} A new DTO, or the same one when there was nowhere to put it
  */
 export function withCriticalAura(dto, aura) {
     if (!dto || !aura) return dto;
-    return {
-        ...dto,
-        equipment: { ...dto.equipment, [TRINKET_SLOT]: { hrid: aura.hrid, enhancementLevel: aura.enhancementLevel } },
-    };
+
+    const abilities = [...(dto.abilities || [])];
+    while (abilities.length < 5) abilities.push(null);
+
+    const slotted = { hrid: aura.hrid, level: aura.level, triggers: [] };
+    if (aura.special) {
+        abilities[0] = slotted;
+    } else {
+        const already = abilities.findIndex((ability) => ability?.hrid === aura.hrid);
+        const free = abilities.findIndex((ability, index) => index > 0 && !ability);
+        const target = already >= 0 ? already : free;
+        if (target < 0) return dto;
+        abilities[target] = slotted;
+    }
+    return { ...dto, abilities };
 }
 
 const labSimUI = new LabSimUI();

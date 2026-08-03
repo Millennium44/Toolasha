@@ -14,13 +14,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
 
-### And can analyse upgrades with your Critical Aura on
+### And can analyse upgrades with the Critical Aura up
 
-A **Crit Aura** switch on the **Upgrade** tab, beside Use Skip Levels, swaps whatever trinket you are wearing for your own Critical Aura at the level you own it at. An upgrade is worth a different amount depending on what else is equipped, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura on, and swapping gear to find out is a lot of clicking for a question the simulator can answer.
+A **Crit Aura** switch on the **Upgrade** tab, beside Use Skip Levels, puts the Critical Aura in the special ability slot at the level you have learned it to. An upgrade is worth a different amount depending on what else is running, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura up, and re-slotting abilities to find out is a lot of clicking for a question the simulator can answer.
 
-The Upgrade analysis only. Max Level asks how far your gear gets you, which is a question about the gear you actually have.
+Not learned it? It simulates level 1, which is what buying the book would get you. Gating this on having already learned it would answer the question only for people who no longer need to ask it.
 
-Yours only: you own one aura, so putting it on every party member would be simulating a party nobody could field. The switch is hidden when you do not own one, because a switch that cannot do anything reads as broken rather than as inapplicable. The aura is found by slot and name rather than a hardcoded hrid, so a Critical Pendant is not mistaken for one and a renamed aura is still found.
+The Upgrade analysis only. Max Level asks how far your build gets you, which is a question about the abilities you actually have slotted.
+
+Yours only: putting it on every party member would be simulating a party nobody could field. It is found by name in the ability data rather than a hardcoded hrid, so one renamed by an update is still found — and a bar with no free slot is left alone rather than losing an ability you chose on purpose.
 
 ### The Watchlist's switches moved to its top bar, and there is one more
 
