@@ -484,6 +484,7 @@ export const housesPanel = new HousesPanel();
 
 registerRow({
     key: 'houses',
+    empty: 'No house data',
     name: 'Houses',
     defaultSize: { width: 200, height: 50 },
     render: (container) => {

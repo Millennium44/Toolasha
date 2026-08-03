@@ -243,6 +243,7 @@ const networthFeature = new NetworthFeature();
 // the feature itself recalculates, on item and price changes.
 registerRow({
     key: 'netWorth',
+    empty: 'No net worth yet',
     name: 'Net Worth',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {

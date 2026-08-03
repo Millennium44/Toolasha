@@ -289,6 +289,7 @@ export const combatLogPanel = createPanel({
 
 registerRow({
     key: 'combatText',
+    empty: 'No combat text',
     name: 'Combat Log',
     defaultSize: { width: 240, height: 90 },
     defaultVisible: false,

@@ -439,6 +439,7 @@ export const charmPanel = createPanel({
 
 registerRow({
     key: 'charmValue',
+    empty: 'No charms held',
     name: 'Charm Value',
     defaultSize: { width: 230, height: 30 },
     render: (container) => {

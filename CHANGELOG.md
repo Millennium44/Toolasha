@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A tile with nothing to report says so
+
+Tiles went blank when their feature had nothing yet, which looks broken rather than idle — you cannot tell a feature waiting for its first measurement from one that has fallen over, and on an overlay of a dozen tiles the empty ones are exactly the ones your eye keeps returning to, because there is nothing there to finish reading.
+
+- **Every row can say what it would rather say when idle**, and twenty-six of them now do: "Not in combat", "No run measured yet", "Nothing watched", "No chests opened". Naming the condition rather than the absence is what tells idle apart from broken.
+- **A row that says nothing names itself** — "No drop luck data" — which at least identifies which tile is which while a layout is being arranged.
+- **A tile drawing only an icon is left alone.** A tile showing a coin and no words has drawn exactly what it meant to.
+
 ### Fixed: a small tile could not be made bigger again
 
 The text-size buttons sit in a tile's bottom-left corner and the resize grip in its bottom-right, which is fine until the tile is narrower than two buttons — a tile may be forty pixels wide, and two buttons are wider than that. The buttons then covered the grip, and the grip is the only thing that would have made the tile bigger again, so the tile was stuck at exactly the size that caused it.

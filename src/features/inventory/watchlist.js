@@ -885,6 +885,7 @@ export default {
 
 registerRow({
     key: 'watchlist',
+    empty: 'Nothing watched',
     name: 'Watchlist',
     defaultSize: { width: 230, height: 30 },
     render: (container) => {

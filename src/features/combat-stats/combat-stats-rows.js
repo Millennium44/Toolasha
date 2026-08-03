@@ -73,6 +73,7 @@ function currentStats() {
 
 registerRow({
     key: 'combatRevenue',
+    empty: 'No loot tracked yet',
     name: 'Combat Revenue',
     defaultSize: { width: 280, height: 40 },
     render: (container) => {
@@ -134,6 +135,7 @@ registerRow({
 
 registerRow({
     key: 'experiencePerHour',
+    empty: 'No experience yet',
     name: 'Experience/hr',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
@@ -155,6 +157,7 @@ registerRow({
 
 registerRow({
     key: 'deathsPerHour',
+    empty: 'No combat yet',
     name: 'Deaths/hr',
     defaultSize: { width: 130, height: 30 },
     render: (container) => {
@@ -183,6 +186,7 @@ registerRow({
  */
 registerRow({
     key: 'battleTimer',
+    empty: 'Not in combat',
     name: 'Session Timer / EPH',
     defaultSize: { width: 200, height: 30 },
     render: (container) => {
@@ -211,6 +215,7 @@ registerRow({
  */
 registerRow({
     key: 'totalProfit',
+    empty: 'No loot tracked yet',
     name: 'Total Profit',
     defaultSize: { width: 220, height: 30 },
     render: (container) => {
@@ -240,6 +245,7 @@ registerRow({
  */
 registerRow({
     key: 'consumables',
+    empty: 'Nothing slotted',
     name: 'Consumables',
     defaultSize: { width: 240, height: 58 },
     render: (container) => {
@@ -315,6 +321,7 @@ registerRow({
  */
 registerRow({
     key: 'combatStatus',
+    empty: 'Not in combat',
     name: 'Combat Status',
     defaultSize: { width: 160, height: 30 },
     render: (container) => {

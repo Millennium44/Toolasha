@@ -167,6 +167,7 @@ const buildScore = new BuildScore();
 
 registerRow({
     key: 'buildScore',
+    empty: 'No build score yet',
     name: 'Build Score',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
