@@ -251,14 +251,61 @@ export function summariseTally(tally, dropTables, priceOf) {
         return { chestHrid, perChestValue, ...performance };
     });
 
-    rows.sort((a, b) => {
+    return sortSummary(rows);
+}
+
+/**
+ * The orders the panel offers, in the order it offers them.
+ *
+ * `luck` is the default and the reason the panel exists. The rest are there
+ * because it lists every chest in the game — sixty-odd rows — and a ranking by
+ * how unlucky each was is the worst possible order for finding one chest you
+ * have in mind. `name` is that: the row is where the alphabet says it is.
+ */
+export const SORT_MODES = [
+    { key: 'luck', label: 'Luck (worst first)' },
+    { key: 'name', label: 'Name (A–Z)' },
+    { key: 'opened', label: 'Most opened' },
+    { key: 'value', label: 'Chest value' },
+    { key: 'profit', label: 'Coins up or down' },
+];
+
+/**
+ * Order the rows.
+ *
+ * Sorts a copy: the caller's array is usually the one on screen, and reordering
+ * it underneath a half-drawn table is how a row ends up drawn twice.
+ *
+ * @param {Array<Object>} rows - From `summariseTally`
+ * @param {string} [mode] - One of `SORT_MODES`
+ * @param {Function} [nameOf] - `(chestHrid) => string`, for the name order
+ * @returns {Array<Object>} A new, sorted array
+ */
+export function sortSummary(rows, mode = 'luck', nameOf = (chestHrid) => chestHrid) {
+    const sorted = [...(rows || [])];
+
+    if (mode === 'name') {
+        // Every chest, opened or not, in one alphabet — splitting them would put
+        // half the names in one place and half in another, which is the thing
+        // this order exists to avoid
+        sorted.sort((a, b) => String(nameOf(a.chestHrid)).localeCompare(String(nameOf(b.chestHrid))));
+        return sorted;
+    }
+
+    sorted.sort((a, b) => {
         // A chest you have never opened has no verdict to rank, so it waits
         // behind the ones that do
         if (!a.opened !== !b.opened) return a.opened ? -1 : 1;
-        if (a.opened) return (a.ratio ?? Infinity) - (b.ratio ?? Infinity);
-        return b.perChestValue - a.perChestValue;
+        if (!a.opened) return b.perChestValue - a.perChestValue;
+
+        if (mode === 'opened') return b.opened - a.opened;
+        if (mode === 'value') return b.perChestValue - a.perChestValue;
+        if (mode === 'profit') {
+            return b.actualValue - b.expectedValue - (a.actualValue - a.expectedValue);
+        }
+        return (a.ratio ?? Infinity) - (b.ratio ?? Infinity);
     });
-    return rows;
+    return sorted;
 }
 
 /**

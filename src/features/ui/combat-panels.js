@@ -41,7 +41,7 @@ import { takenBreakdown } from '../../features/combat/damage-taken-tracker.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
@@ -227,9 +227,7 @@ class CombatPanel {
      * moment after the page is exactly what a remembered panel looks like.
      */
     restore() {
-        wasOpen(this.id).then((open) => {
-            if (open) this.show({ remember: false });
-        });
+        reopenIfLeftOpen(this.id, () => this.show({ remember: false }));
     }
 
     hide({ remember = true } = {}) {

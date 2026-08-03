@@ -16,7 +16,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-const { formatReturn, itemName, worthShowing } = await import('./treasure-tracker.js');
+const { formatReturn, itemName, worthShowing, capHeightToWindow } = await import('./treasure-tracker.js');
 
 describe('formatReturn', () => {
     test('reads as a gain or a shortfall against expectation', () => {
@@ -73,5 +73,44 @@ describe('which drop-table rows are worth a line', () => {
     test('nothing at all is nothing, not a crash', () => {
         expect(worthShowing([])).toEqual([]);
         expect(worthShowing(null)).toEqual([]);
+    });
+});
+
+describe('the popup gets a height of its own', () => {
+    const popup = (natural) => ({
+        offsetHeight: natural,
+        getBoundingClientRect: () => ({ height: natural }),
+        style: {},
+    });
+
+    test('a short popup keeps the height it wants', () => {
+        const element = popup(220);
+        capHeightToWindow(element, 1000);
+
+        expect(element.style.height).toBe('220px');
+    });
+
+    test('a chest with thirty drop-table rows is cut to fit the window', () => {
+        const element = popup(2000);
+        capHeightToWindow(element, 600);
+
+        expect(element.style.height).toBe('420px');
+    });
+
+    test('and to the cap on a tall screen, so it does not run the full height', () => {
+        const element = popup(2000);
+        capHeightToWindow(element, 1600);
+
+        expect(element.style.height).toBe('560px');
+    });
+
+    test('it writes height rather than max-height', () => {
+        // The bug: the resize grip writes `height`, so a `max-height` above it
+        // meant dragging the corner downwards changed a number nothing rendered
+        const element = popup(2000);
+        capHeightToWindow(element, 1000);
+
+        expect(element.style.maxHeight).toBeUndefined();
+        expect(element.style.height).toBeTruthy();
     });
 });

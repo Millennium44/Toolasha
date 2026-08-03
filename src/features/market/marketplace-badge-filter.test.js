@@ -114,7 +114,7 @@ describe('anyFinished', () => {
 describe('starting up with listings already on the books', () => {
     const css = () => game.styles.get('mwi-marketplace-badge-filter') || '';
     /** Whether the badge is currently being hidden outright */
-    const hiding = () => css().includes('display: none');
+    const hiding = () => css().includes(') { display: none');
 
     beforeEach(() => {
         game.styles.clear();
@@ -178,7 +178,7 @@ describe('starting up with listings already on the books', () => {
 
 describe('what number the badge shows', () => {
     const css = () => game.styles.get('mwi-marketplace-badge-filter') || '';
-    const hiding = () => css().includes('display: none');
+    const hiding = () => css().includes(') { display: none');
 
     beforeEach(() => {
         game.styles.clear();
@@ -223,5 +223,15 @@ describe('what number the badge shows', () => {
         badgeFilter.initialize();
 
         expect(css()).toContain('font-size: 0');
+    });
+
+    test('and the element the game draws it in is removed, not just shrunk', () => {
+        // The badge read "2 2": the game puts the number in a nested element
+        // that sets its own font-size, which `font-size: 0` on the parent does
+        // nothing about
+        game.listings = [listing({ id: 1 }), listing({ id: 2 })];
+        badgeFilter.initialize();
+
+        expect(css()).toMatch(/\*\s*{\s*display: none/);
     });
 });

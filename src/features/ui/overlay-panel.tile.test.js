@@ -31,6 +31,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     allGeometry: async () => ({}),
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 vi.mock('../../utils/floating-panel.js', () => ({
     makeDraggable: () => () => {},

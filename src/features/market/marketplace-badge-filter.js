@@ -54,8 +54,13 @@ const BADGE =
 function badgeCss(count) {
     if (count === null) return `${BADGE} { display: none !important; }`;
 
+    // `font-size: 0` alone is not enough. The game draws the number inside a
+    // nested element that sets its own font-size, so the real count kept
+    // rendering beside ours and the badge read "2 2". Children are removed
+    // outright instead; a pseudo-element is not matched by `*`, so ours stays.
     return `
         ${BADGE} { font-size: 0 !important; }
+        ${BADGE} * { display: none !important; }
         ${BADGE}::after {
             content: "${count}";
             font-size: 12px;
