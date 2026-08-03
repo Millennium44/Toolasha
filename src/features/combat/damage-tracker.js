@@ -39,6 +39,7 @@ import {
     foldEvents,
     foldEnemies,
 } from '../../utils/damage-attribution.js';
+import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 
 /** The counters this tick is measured against */
@@ -244,6 +245,29 @@ export function actionLabel(action) {
     return String(action).split('/').pop().replace(/_/g, ' ');
 }
 
+/**
+ * Borrow the party's names from the last run, so a reload does not draw the
+ * party as "Player 1" through "Player 5".
+ *
+ * Damage arrives on `battle_updated`, which is constant, but names arrive on
+ * `new_battle`, which in a dungeon is a wave apart — so after a refresh the DPS
+ * table filled with real numbers against placeholder names until the next wave.
+ *
+ * The collector's snapshot is built from `new_battle`'s player list in order, so
+ * its index is this index. It is a guess only in that the party could have
+ * changed while the page was away, and the next `new_battle` overwrites it.
+ */
+function seedNames() {
+    try {
+        const players = combatStatsDataCollector.getLatestData()?.players || [];
+        players.forEach((player, index) => {
+            if (player?.name) names[index] = player.name;
+        });
+    } catch (error) {
+        console.error('[DamageTracker] Borrowing names from the last run failed:', error);
+    }
+}
+
 let onNewBattle = null;
 let onBattleUpdated = null;
 
@@ -251,6 +275,7 @@ export default {
     name: 'Damage Tracker',
     initialize: () => {
         resetDamageTracker();
+        seedNames();
 
         onNewBattle = (data) => {
             try {
