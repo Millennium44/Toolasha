@@ -11,6 +11,7 @@ import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.
 import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
 import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates } from './lab-armor-candidates.js';
+import { bestGearForSkill } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
@@ -3061,7 +3062,62 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
         }
     }
 
+    // Gear you are not wearing — the celestial tool and the skill's outfit,
+    // which the loop above can never reach because it only ever enhances what is
+    // already on. Each one belongs to one skill and is applied to that skill
+    // alone: a Milking outfit does nothing in a Crafting room, and a candidate
+    // with no skill on it would be applied to every room and appear to help.
+    const levels = new Map((dataManager.getSkills?.() || []).map((skill) => [skill.skillHrid, skill.level]));
+    for (const skill of targetSkill ? [targetSkill] : Object.keys(skillEquipmentMap)) {
+        const forSkill = bestGearForSkill({
+            skill,
+            equipment: skillEquipmentMap[skill] || editorDTO.equipment || {},
+            itemDetailMap,
+            levels,
+        });
+        for (const candidate of forSkill) {
+            const dedupKey = `gear:${skill}:${candidate.slot}:${candidate.upgradeHrid}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
+            candidate.cost = calculateUpgradeCost(candidate, gameData);
+            candidates.push(candidate);
+        }
+    }
+
     return candidates;
+}
+
+/**
+ * Put one candidate's item into the equipment it applies to.
+ *
+ * A candidate carrying a `skillKey` belongs to that skill and goes into that
+ * skill's equipment only — a Milking outfit put into every skill's kit would
+ * report a gain in rooms it cannot affect. One without a key is an enhancement
+ * of gear already worn, which is the same piece wherever it appears, so it is
+ * applied everywhere it is found.
+ *
+ * @param {Object} candidate - The upgrade
+ * @param {Object} payload - `{hrid, enhancementLevel}` to install
+ * @param {Object} dto - The editor's own player
+ * @param {Object} equipMap - Per-skill equipment overrides
+ * @param {string|null} targetSkill - The skill being analysed, when only one is
+ */
+function applyToEquipment(candidate, payload, dto, equipMap, targetSkill) {
+    const { skillKey, slot, currentHrid } = candidate;
+
+    if (skillKey) {
+        // The override map is where a skill's own kit lives; the editor's own
+        // equipment is only the right target when that skill is what is being
+        // analysed and it has no override of its own
+        if (equipMap[skillKey]) equipMap[skillKey][slot] = payload;
+        else if (targetSkill === skillKey && dto.equipment) dto.equipment[slot] = payload;
+        return;
+    }
+
+    if (dto.equipment?.[slot]?.hrid === currentHrid) dto.equipment[slot] = payload;
+    for (const skillEquip of Object.values(equipMap)) {
+        if (skillEquip?.[slot]?.hrid === currentHrid) skillEquip[slot] = payload;
+    }
 }
 
 /**
@@ -3148,25 +3204,11 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         const modifiedSkillEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
         const upgradePayload = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
 
-        if (modifiedDTO.equipment?.[candidate.slot]?.hrid === candidate.currentHrid) {
-            modifiedDTO.equipment[candidate.slot] = upgradePayload;
-        }
-        for (const skillEquip of Object.values(modifiedSkillEquipMap)) {
-            if (skillEquip?.[candidate.slot]?.hrid === candidate.currentHrid) {
-                skillEquip[candidate.slot] = upgradePayload;
-            }
-        }
+        applyToEquipment(candidate, upgradePayload, modifiedDTO, modifiedSkillEquipMap, targetSkill);
 
         const evaluate = (evalCandidate, dto, equipMap) => {
             const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
-            if (dto.equipment?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
-                dto.equipment[evalCandidate.slot] = payload;
-            }
-            for (const skillEquip of Object.values(equipMap)) {
-                if (skillEquip?.[evalCandidate.slot]?.hrid === evalCandidate.currentHrid) {
-                    skillEquip[evalCandidate.slot] = payload;
-                }
-            }
+            applyToEquipment(evalCandidate, payload, dto, equipMap, targetSkill);
             return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
                 skillEquipmentMap: equipMap,
                 targetSkill,
