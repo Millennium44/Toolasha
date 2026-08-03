@@ -105,16 +105,34 @@ export function countDungeonChests(lootMap, chests = DUNGEON_CHESTS) {
 /**
  * How many chests a completion is worth to one character.
  *
- * @param {Object} input - The party and the bonus
+ * The level gap enters here as a multiplier, the same way the quantity bonus
+ * does, and the consequence is the interesting part: a party of five with no
+ * quantity bonus is a mean of 1 each, and at a 90% penalty that becomes 0.1.
+ * A tenth of a chest is not a thing the game can hand over, so it is realised
+ * the same way 1.295 is — as a chance. Nine completions in ten pay that
+ * character nothing and the tenth pays one, which is exactly how a level-gapped
+ * character describes it.
+ *
+ * The *magnitude* is borrowed rather than measured: it is the debuff the
+ * simulator applies to per-monster drops, and nothing has confirmed a dungeon
+ * uses the same number. The structure is right and the multiplier is the best
+ * available guess, so callers are given the observed rate alongside it — a
+ * multiplier that is wrong shows up as the two disagreeing.
+ *
+ * @param {Object} input - The party and the bonuses
  * @param {number} input.partySize - How many are splitting the reward
  * @param {number} input.dropQuantity - `combatDropQuantity`, as a fraction
+ * @param {number} input.levelGap - The level-gap debuff, a negative fraction
  * @returns {number} Mean chests per completion
  */
-export function chestsPerCompletion({ partySize = 1, dropQuantity = 0 } = {}) {
+export function chestsPerCompletion({ partySize = 1, dropQuantity = 0, levelGap = 0 } = {}) {
     const party = partySize > 0 ? partySize : 1;
     const quantity = Number.isFinite(dropQuantity) ? dropQuantity : 0;
+    // An unknown gap is not a penalty. Clamped because a debuff past -1 would
+    // make a completion pay a negative number of chests.
+    const gap = Number.isFinite(levelGap) ? Math.min(0, Math.max(-1, levelGap)) : 0;
 
-    return (CHESTS_PER_COMPLETION / party) * (1 + Math.max(0, quantity));
+    return (CHESTS_PER_COMPLETION / party) * (1 + Math.max(0, quantity)) * (1 + gap);
 }
 
 /**

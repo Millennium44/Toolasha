@@ -232,15 +232,20 @@ describe('inside a dungeon', () => {
         expect(text()).toContain('no completion yet');
     });
 
-    test('a level-gapped player gets their count and no verdict', () => {
-        // The percentile would be about their party rather than their luck: the
-        // game cuts what drops for them by an amount the model does not know
+    test('a level-gapped player keeps their verdict and gains an explanation', () => {
+        // The cut is inside the expectation, so the percentile is about their
+        // luck again — but an expectation that looks oddly small should not have
+        // to be reverse-engineered from the number
         game.chests.players[0].levelGap = -0.9;
+        game.chests.players[0].mean = 0.1;
+        game.chests.players[0].observed = 0.08;
         partyLuckPanel.show();
 
-        expect(text()).toContain('level gap −90%');
-        expect(text()).toContain('16 over 12');
-        expect(text()).not.toContain('68th');
+        expect(text()).toContain('level gap');
+        expect(text()).toContain('−90%');
+        expect(text()).toContain('0.10 a completion');
+        expect(text()).toContain('0.08 seen');
+        expect(text()).toContain('68th');
         expect(text()).not.toContain(FAILED);
     });
 

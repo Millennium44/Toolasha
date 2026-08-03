@@ -43,6 +43,22 @@ describe('what a completion is worth', () => {
         expect(chestsPerCompletion()).toBe(5);
         expect(chestsPerCompletion({ partySize: 0, dropQuantity: -1 })).toBe(5);
     });
+
+    test('a level gap cuts it, and a mean below one becomes a chance', () => {
+        // One chest each at a 90% penalty is 0.1, and a tenth of a chest is not
+        // something the game can hand over — so nine completions in ten pay
+        // nothing and the tenth pays one. That is what being level-gapped looks
+        // like from the inside: not always zero, just usually.
+        expect(chestsPerCompletion({ partySize: 5, levelGap: -0.9 })).toBeCloseTo(0.1, 10);
+        expect(chestsPerCompletion({ partySize: 1, levelGap: -0.5 })).toBeCloseTo(2.5, 10);
+    });
+
+    test('an unknown gap is not a penalty, and a nonsense one cannot go negative', () => {
+        expect(chestsPerCompletion({ partySize: 5, levelGap: null })).toBe(1);
+        expect(chestsPerCompletion({ partySize: 5, levelGap: -4 })).toBe(0);
+        // Being above the party is not a bonus
+        expect(chestsPerCompletion({ partySize: 5, levelGap: 3 })).toBe(1);
+    });
 });
 
 describe('the binomial the extras come from', () => {
@@ -109,6 +125,17 @@ describe('placing a run of dungeons', () => {
         expect(chestLuck({ completions: 0, chests: 0, mean })).toBeNull();
         expect(chestLuck({ completions: 5, chests: 5, mean: 0 })).toBeNull();
         expect(chestLuck()).toBeNull();
+    });
+
+    test('a gapped character is placed among the runs they could have had', () => {
+        // Mean 0.1, so nothing is guaranteed and every chest is an extra. Two in
+        // ten is a shade above par; none in thirty is a genuinely bad run and
+        // reads as one rather than as the model being wrong.
+        const gapped = 0.1;
+
+        expect(chestLuck({ completions: 10, chests: 2, mean: gapped }).expected).toBeCloseTo(1, 10);
+        expect(chestLuck({ completions: 10, chests: 2, mean: gapped }).percentile).toBeGreaterThan(0.9);
+        expect(chestLuck({ completions: 30, chests: 0, mean: gapped }).percentile).toBeLessThan(0.06);
     });
 
     test('a chest seen before its completion does not go negative', () => {

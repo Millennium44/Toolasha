@@ -346,9 +346,13 @@ class CombatDropLuck {
         const fromTracker = tracked.completions > 0;
 
         const players = Object.entries(tracked.tallies).map(([name, tally]) => {
-            const mean = chestsPerCompletion({ partySize, dropQuantity: tally.quantity });
             const completions = fromTracker ? tracked.completions : tally.completions;
             const levelGap = gaps[name] ?? null;
+            // The gap belongs in the expectation rather than in a rule that
+            // refuses to give one. A party of five at a 90% penalty is a mean of
+            // 0.1, which the game realises as a 10% chance of a chest — usually
+            // nothing, occasionally one, which is what it looks like to play.
+            const mean = chestsPerCompletion({ partySize, dropQuantity: tally.quantity, levelGap });
 
             return {
                 name,
@@ -357,8 +361,10 @@ class CombatDropLuck {
                 mean,
                 levelGap,
                 // What actually arrived per completion, which is the figure that
-                // needs no model at all — and the only one that can show a
-                // completion paying nothing
+                // needs no model at all. Kept beside the modelled mean precisely
+                // because the debuff's size is borrowed from the monster-drop
+                // formula: if that number is wrong for chests, these two diverge
+                // and the divergence is on screen rather than buried.
                 observed: completions > 0 ? tally.chests / completions : null,
                 luck: chestLuck({ completions, chests: tally.chests, mean }),
             };
@@ -618,16 +624,22 @@ export function describeChestRun(player) {
 
     if (isLevelGapped(player.levelGap)) {
         lines.push(
-            `Level gap ${Math.round(Math.abs(player.levelGap) * 100)}%: they are far enough below the top of the ` +
-                'party for the game to cut what drops for them, so what they were owed is not what the model says ' +
-                'and no percentile here would be about their luck.'
+            `Level gap ${Math.round(Math.abs(player.levelGap) * 100)}%: far enough below the top of the party for ` +
+                'the game to cut what drops for them, and that cut is in the expectation above. The size of it is ' +
+                'the debuff the simulator uses for monster drops, so watch the two rates for disagreement.'
         );
-        return lines.join('\n');
     }
 
+    const guaranteed = Math.floor(player.mean);
     lines.push(
-        `Each completion pays ${Math.floor(player.mean)} guaranteed and ${(luck.chance * 100).toFixed(1)}% ` +
-            `of another; ${luck.extras} of those came against ${luck.expectedExtras.toFixed(1)} owed.`
+        guaranteed > 0
+            ? `Each completion pays ${guaranteed} guaranteed and ${(luck.chance * 100).toFixed(1)}% of another; ` +
+                  `${luck.extras} of those came against ${luck.expectedExtras.toFixed(1)} owed.`
+            : // Below one chest a completion there is no guaranteed part at all,
+              // and saying "0 guaranteed" invites the reading that they get
+              // nothing rather than that every chest is a coin flip they won
+              `Nothing is guaranteed at this rate — each completion is a ${(luck.chance * 100).toFixed(1)}% chance ` +
+                  `of a chest. ${luck.chests} came against ${luck.expectedExtras.toFixed(1)} owed.`
     );
     if (payouts) lines.push(`Completions by payout: ${payouts}.`);
     if (luck.percentile === null) {
@@ -701,10 +713,9 @@ registerRow({
                 container,
                 chest,
                 (player) => {
-                    // A level-gapped character is owed less than the model says.
-                    // Their percentile would read as terrible luck and would
-                    // actually be a description of their party.
-                    if (isLevelGapped(player.levelGap)) return { text: 'gap', bold: true, color: ROW_COLORS.bad };
+                    // The level gap is inside the expectation now, so the
+                    // percentile is about their luck again rather than about
+                    // their party
                     if (player.luck?.percentile == null) return { text: '—', bold: true, color: ROW_COLORS.dim };
 
                     return {
@@ -810,9 +821,6 @@ registerRow({
                 container,
                 chest,
                 (player) => {
-                    // Over *what*, for somebody the game is paying a reduced
-                    // share? The expectation is the part that stopped applying
-                    if (isLevelGapped(player.levelGap)) return { text: 'gap', color: ROW_COLORS.bad };
                     if (!player.luck || !(player.luck.expected > 0)) return { text: '—', color: ROW_COLORS.dim };
 
                     const over = signedPercent((player.luck.chests / player.luck.expected - 1) * 100);

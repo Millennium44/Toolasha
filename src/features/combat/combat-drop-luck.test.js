@@ -172,15 +172,34 @@ describe('watching a dungeon pay out', () => {
         expect(combatDropLuck.keys.samples.Theirs).toMatchObject({ spent: 3, runs: 1, unmeasurable: 1 });
     });
 
-    test('a character far below the party is measured but not judged', () => {
+    test('a character far below the party is owed less, and the model says so', () => {
+        // The gap goes into the expectation. Two players at +50% quantity split
+        // five chests: a mean of 3.75 each, and at a 90% penalty 0.375 — which
+        // the game realises as usually nothing and occasionally one.
         combatDropLuck._rememberContext(battle(1, [0, 0], [200, 100]));
         combatDropLuck._rememberContext(battle(2, [4, 1], [200, 100]));
 
         const [mine, theirs] = combatDropLuck.dungeonChestLuck().players;
 
         expect(mine.levelGap).toBe(0);
+        expect(mine.mean).toBeCloseTo(3.75, 6);
         expect(theirs.levelGap).toBe(-0.9);
-        expect(theirs.luck).not.toBeNull();
+        expect(theirs.mean).toBeCloseTo(0.375, 6);
+        // One chest against an owed 0.375 is a good run, not the catastrophe a
+        // full share would have called it
+        expect(theirs.luck.percentile).toBeGreaterThan(0.5);
+    });
+
+    test('the seen rate is kept beside the modelled one, so a wrong debuff shows', () => {
+        // The debuff's size is borrowed from the monster-drop formula and nothing
+        // has confirmed a dungeon uses it. If it is wrong these two diverge.
+        combatDropLuck._rememberContext(battle(1, [0, 0], [200, 100]));
+        combatDropLuck._rememberContext(battle(2, [4, 1], [200, 100]));
+
+        const theirs = combatDropLuck.dungeonChestLuck().players[1];
+
+        expect(theirs.observed).toBe(1);
+        expect(theirs.mean).toBeCloseTo(0.375, 6);
     });
 
     test('an unknown level is not reported as no gap', () => {
