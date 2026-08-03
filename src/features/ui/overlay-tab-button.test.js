@@ -139,6 +139,58 @@ describe('looking like the tabs beside it', () => {
         expect(theButton().querySelector('[class*="TabsComponent_badge"]').textContent).toBe('⧉ Overlay');
     });
 
+    test('it is not copied from a tab the game has hidden', () => {
+        // With "show Toolasha tab by default" on, the game's own Inventory tab
+        // is set to display: none — and it is the first in the strip, so it is
+        // exactly what a naive search picks. The clone carries that inline style
+        // with it, and the result is a button that is added, positioned, kept in
+        // place, and invisible.
+        const list = buildTabs(['Inventory', 'Equipment']);
+        list.children[0].style.display = 'none';
+        overlayTabButton.initialize();
+
+        expect(theButton().style.display).not.toBe('none');
+    });
+
+    test('every tab hidden means no button rather than an invisible one', () => {
+        const list = buildTabs(['Inventory']);
+        list.children[0].style.display = 'none';
+        overlayTabButton.initialize();
+
+        expect(theButton()).toBeNull();
+    });
+
+    test('it does not inherit the position of the tab it was copied from', () => {
+        // Tab Reorder lays the strip out with CSS order, and a clone brings that
+        // number along — parking this button on top of its own model
+        const list = buildTabs(['Inventory', 'Equipment']);
+        for (const tab of list.children) tab.style.order = '4';
+        overlayTabButton.initialize();
+
+        expect(theButton().style.order).toBe('');
+    });
+
+    test('it is not left draggable without the handlers that made it so', () => {
+        const list = buildTabs();
+        for (const tab of list.children) tab.setAttribute('draggable', 'true');
+        overlayTabButton.initialize();
+
+        expect(theButton().hasAttribute('draggable')).toBe(false);
+    });
+
+    test('an injected tab is not used as the model', () => {
+        // Cloning one would copy whatever that feature did to itself
+        const list = buildTabs(['Inventory']);
+        const ours = document.createElement('button');
+        ours.setAttribute('role', 'tab');
+        ours.className = 'toolasha-inv-tab injected-look';
+        ours.textContent = 'Toolasha';
+        list.insertBefore(ours, list.firstChild);
+        overlayTabButton.initialize();
+
+        expect(theButton().className).not.toContain('injected-look');
+    });
+
     test('it never claims the selection the real tabs share', () => {
         // It opens a panel instead of choosing what this column shows, so a
         // column showing Inventory with Overlay highlighted would be a lie

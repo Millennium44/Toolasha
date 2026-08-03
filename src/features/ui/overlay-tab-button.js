@@ -93,11 +93,7 @@ class OverlayTabButton {
         }
         this.button?.remove();
 
-        // Cloned from a real tab so it inherits whatever the game currently
-        // thinks a tab looks like, rather than a copy of it that drifts
-        const native = [...list.querySelectorAll('[role="tab"]')].find(
-            (tab) => !tab.id && !tab.classList.contains('toolasha-inv-tab')
-        );
+        const native = this.findModelTab(list);
         if (!native) return;
 
         const button = native.cloneNode(true);
@@ -115,7 +111,7 @@ class OverlayTabButton {
         button.classList.remove('Mui-selected');
         button.setAttribute('aria-selected', 'false');
         button.setAttribute('tabindex', '-1');
-        button.style.minWidth = 'auto';
+        this.stripInheritedState(button);
 
         button.addEventListener('click', (event) => {
             event.preventDefault();
@@ -128,6 +124,59 @@ class OverlayTabButton {
         this.button = button;
         this.keepBeforeOptimizer(list);
         this.sync();
+    }
+
+    /**
+     * The tab to copy the game's current look from.
+     *
+     * Cloned from a real tab rather than styled to match one, so it stays right
+     * through a game build that changes what a tab looks like. Which tab is not
+     * arbitrary:
+     *
+     * - **Not one of ours.** The Toolasha and Optimizer tabs are injected, and
+     *   cloning one would copy whatever it did to itself.
+     * - **Not a hidden one.** With "show Toolasha tab by default" on, the game's
+     *   Inventory tab is set to `display: none` — and it is the first tab in the
+     *   strip, so it is exactly the one a naive search picks. The clone carries
+     *   that inline style with it, and the result is a button that is added,
+     *   positioned, kept in place, and invisible.
+     *
+     * @param {HTMLElement} list - The tab strip
+     * @returns {HTMLElement|null}
+     */
+    findModelTab(list) {
+        return (
+            [...list.querySelectorAll('[role="tab"]')].find(
+                (tab) =>
+                    tab !== this.button &&
+                    tab.id !== BUTTON_ID &&
+                    !tab.classList.contains('toolasha-inv-tab') &&
+                    !tab.classList.contains('toolasha-skilling-opt-tab') &&
+                    tab.style.display !== 'none'
+            ) || null
+        );
+    }
+
+    /**
+     * Drop what belonged to the tab this was copied from.
+     *
+     * `cloneNode` brings the inline styles and attributes along, and three of
+     * them are actively wrong on a copy: `display`, which may be hiding it;
+     * `order`, which the tab-reorder feature writes and which would park this
+     * button on top of whichever tab it was cloned from; and `draggable`, which
+     * survives without the drag handlers that make it mean anything.
+     *
+     * @param {HTMLElement} button - The clone
+     */
+    stripInheritedState(button) {
+        button.style.removeProperty('display');
+        button.style.removeProperty('order');
+        button.style.removeProperty('opacity');
+        button.removeAttribute('draggable');
+        // Would name the panel the tab it was cloned from switches to
+        button.removeAttribute('aria-controls');
+        button.style.minWidth = 'auto';
+        button.style.cursor = 'pointer';
     }
 
     /**
