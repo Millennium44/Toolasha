@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: a refresh named the first monster of the wave and no others
+
+The battle panel is read for the monsters' names after a reload, because the client never receives the message that names them. That reading stopped as soon as it had found anything — and `mMap` is a delta, so a wave of two arrives across several ticks: the first monster reported on the very first tick, the second not for another two. The first got a name, the second never did, and every hit it landed went to Unknown Enemy for the rest of the fight.
+
+- **The panel is read on every tick until a battle is announced**, not merely while nothing is known, so a wave that arrives a monster at a time is named all the way through.
+- **A name once read is never overwritten.** The earlier reading was taken while that monster was actually on screen; a later health match could be a coincidence.
+- **The same fix applies to the kill tally**, which had the same guard and lost the same monsters.
+- **Confirmed against a recorded refresh** that had been reproducing the fault: nineteen points of damage sitting under Unknown Enemy move to the Eye that dealt them, and nothing is left unattributed. That recording is now a fixture, along with the snapshots of the battle panel it carries — so this is tested against the screen the browser actually had, not a reconstruction of it.
+- **The selectors were fine all along.** The snapshots show the monster area, the unit grid and every tile parsing correctly. It was the guard.
+
 ### The recorder can catch the refresh
 
 The Record button in the Damage panel can only start once a session is already running, which means it can never capture the seconds that matter most: reload mid-fight and the client never sees the message that names what you are fighting, and what arrives instead is not something to reason about from the outside.

@@ -60,6 +60,15 @@ let monsters = {};
 /** The wave currently being fought, so its damage lands in the right bucket */
 let currentWave = null;
 
+/**
+ * Whether this session has seen a battle begin.
+ *
+ * Until it has, the monster map is whatever could be read off the screen, and
+ * it has to keep being read: `mMap` is a delta, so the monsters arrive one at a
+ * time over several ticks rather than all at once.
+ */
+let announced = false;
+
 let encounters = 0;
 let startedAt = 0;
 let lastTickAt = 0;
@@ -156,9 +165,15 @@ export function takenBreakdown() {
 /**
  * Fill the monster map from what the game is drawing.
  *
- * Only ever called when the map is empty, which is only true after a reload
- * landed mid-battle. Once `new_battle` arrives the payload is authoritative and
- * this stops being consulted for the rest of the session.
+ * Called on every tick until a battle is announced, not just while the map is
+ * empty. `mMap` is a delta: a wave of three arrives over several ticks, one
+ * monster at a time. Stopping as soon as the map had anything in it named the
+ * first monster to report and left the rest of the wave Unknown for the whole
+ * fight — which on a recorded refresh was the difference between two monsters
+ * and one.
+ *
+ * Once `new_battle` arrives the payload is authoritative and this stops being
+ * consulted for the rest of the session.
  *
  * The wave keeps whatever name it was given, which after a reload is nothing —
  * a composition recovered halfway through is not the composition that was
@@ -168,7 +183,11 @@ export function takenBreakdown() {
  * @param {Object} mMap - The tick's monsters
  */
 function recoverNames(mMap) {
-    for (const [index, found] of Object.entries(recoverMonsterNames(mMap))) monsters[index] = found.name;
+    for (const [index, found] of Object.entries(recoverMonsterNames(mMap))) {
+        // Never overwrite: an earlier tick's reading was taken when that monster
+        // was actually on screen, and a later health match could be a coincidence
+        if (!monsters[index]) monsters[index] = found.name;
+    }
 }
 
 let onNewBattle = null;
@@ -181,6 +200,7 @@ export default {
 
         onNewBattle = (data) => {
             try {
+                announced = true;
                 for (const [index, player] of Object.entries(data?.players || {})) {
                     names[index] = player?.name || player?.character?.name || names[index];
                     // So a party member who has not been touched yet still gets
@@ -220,7 +240,7 @@ export default {
                 // so nothing here knows what it is fighting and the whole rest of
                 // the battle would be filed under Unknown Enemy. The game is
                 // drawing the names; they are matched back on health.
-                if (!Object.keys(monsters).length) recoverNames(data?.mMap);
+                if (!announced) recoverNames(data?.mMap);
 
                 const events = attributeIncoming(data, state);
                 foldTaken(tally, events);
@@ -257,6 +277,7 @@ export default {
         names = {};
         monsters = {};
         currentWave = null;
+        announced = false;
         resetDamageTaken();
     },
 };

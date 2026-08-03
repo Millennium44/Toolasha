@@ -65,6 +65,9 @@ let monsters = {};
 /** Monster name → its full health bar, which is what a kill is worth */
 let monsterHealth = {};
 
+/** Whether this session has seen a battle begin; see the taken tracker for why */
+let announced = false;
+
 let startedAt = 0;
 let lastTickAt = 0;
 let seconds = 0;
@@ -230,6 +233,7 @@ export default {
 
         onNewBattle = (data) => {
             try {
+                announced = true;
                 const players = data?.players || {};
                 noteActions(state, players);
                 for (const [index, player] of Object.entries(players)) {
@@ -271,8 +275,12 @@ export default {
                 // nothing here knows what it is fighting — and an unnamed enemy
                 // is dropped from the enemy tally rather than shown, which makes
                 // the kill counts quietly short. The game is drawing the names.
-                if (!Object.keys(monsters).length) {
+                // Every tick until a battle is announced, not just while the map
+                // is empty: `mMap` is a delta, so a wave arrives one monster at a
+                // time and stopping early names the first and no other
+                if (!announced) {
                     for (const [index, found] of Object.entries(recoverMonsterNames(data?.mMap))) {
+                        if (monsters[index]) continue;
                         monsters[index] = { name: found.name };
                         // What a kill is worth, which without this would have no
                         // figure at all for a monster first met after a reload
@@ -314,6 +322,7 @@ export default {
         names = {};
         monsters = {};
         monsterHealth = {};
+        announced = false;
         resetDamageTracker();
     },
 };

@@ -83,6 +83,27 @@ describe('a session that began mid-fight', () => {
         expect(enemies[0].damage).toBe(80);
     });
 
+    test('a wave arriving one monster at a time is named all the way through', () => {
+        // `mMap` is a delta, so the second monster of a wave may not report for
+        // several ticks. Reading the panel only while the map was empty named
+        // the first monster and left the rest of the wave Unknown for the whole
+        // fight — which on a recorded refresh cost exactly one hit.
+        drawPanel([
+            { name: 'Veyes', hp: 2395, max: 2395 },
+            { name: 'Eye', hp: 2035, max: 2035 },
+        ]);
+
+        // Two ticks that mention only the Veyes, then two that mention only the Eye
+        tick({ 0: { hp: 500, dmg: 3 } }, { 0: { hp: 2395 } });
+        tick({ 0: { hp: 480, dmg: 4 } }, { 0: { hp: 2395 } });
+        tick({ 0: { hp: 480, dmg: 4 } }, { 1: { hp: 2035 } });
+        tick({ 0: { hp: 400, dmg: 5 } }, { 1: { hp: 2035 } });
+
+        const names = tracker.takenBreakdown().enemies.map((enemy) => enemy.name);
+        expect(names).not.toContain('Unknown Enemy');
+        expect(names).toContain('Eye');
+    });
+
     test('with no panel to read it says Unknown Enemy, as before', () => {
         tick({ 0: { hp: 500, dmg: 3 } }, { 0: { hp: 2395 } });
         tick({ 0: { hp: 420, dmg: 4 } }, { 0: { hp: 2395 } });
