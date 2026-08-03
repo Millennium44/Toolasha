@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The accuracy list is in the game's order
+
+It was sorted by how often each room happened to be fought, which is no order at all if you are looking for a particular room — and it put every pooled row first and every per-level row after them, reading as two unrelated lists.
+
+Each room type's pooled reading is now followed by its own levels, indented under it, with room types in the game's own order and levels ascending inside each. The order comes from the client data's `sortIndex` rather than a list here, so a monster added by an update lands where the game puts it; one the data has never heard of sorts last rather than first, which is where an undefined would otherwise put it.
+
 ### Room timings are compared per clear, on both sides
 
 The calculator's `expectedSeconds` is **time per clear including the attempts you lose** — for a fight, the average fight length divided by the win rate; for a skilling room, the expected time of an attempt divided by the clear chance. A room you clear one visit in five is predicted to cost about five visits' worth of seconds.

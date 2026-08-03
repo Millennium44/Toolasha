@@ -1429,8 +1429,23 @@ class LabyrinthRoomLogs {
 
         this.lastAccuracy = snapshot;
         list.appendChild(this.renderAccuracySummary(summary));
-        for (const group of snapshot.bySubject || []) list.appendChild(this.renderSubjectRow(group));
-        for (const row of rows) list.appendChild(this.renderAccuracyRow(row));
+
+        // Each room type's pooled reading followed by its own levels, in the
+        // game's order and by level within it. Every pooled row first and every
+        // level after them read as two unrelated lists, and the levels were
+        // ordered by how often each happened to be fought — which is no order
+        // at all if you are looking for a particular room.
+        const drawn = new Set();
+        for (const group of snapshot.bySubject || []) {
+            list.appendChild(this.renderSubjectRow(group));
+            for (const row of rows) {
+                if (row.subjectHrid !== group.subjectHrid) continue;
+                list.appendChild(this.renderAccuracyRow(row));
+                drawn.add(row);
+            }
+        }
+        // Anything the pooling did not cover, rather than silently dropped
+        for (const row of rows) if (!drawn.has(row)) list.appendChild(this.renderAccuracyRow(row));
     }
 
     /**
@@ -1564,7 +1579,8 @@ class LabyrinthRoomLogs {
 
         const card = document.createElement('div');
         card.style.cssText =
-            'border:1px solid rgba(146,182,255,0.25); border-radius:5px; background:rgba(22,31,45,0.92); padding:6px 7px; font-size:11px; line-height:1.35;';
+            'border:1px solid rgba(146,182,255,0.25); border-radius:5px; background:rgba(22,31,45,0.92); ' +
+            'padding:6px 7px; font-size:11px; line-height:1.35; margin-left:10px;';
 
         const header = document.createElement('div');
         header.style.cssText =

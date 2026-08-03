@@ -444,12 +444,15 @@ export function compareToPrediction(clears, attempts, predicted, interval) {
  * is making any more.
  *
  * @param {Object} totals - The record
- * @param {Object} [options] - { predictedFor, interval }
+ * @param {Object} [options] - { predictedFor, interval, orderOf }
  * @param {Function} [options.predictedFor] - (monsterHrid, roomLevel) => rate or null
  * @param {Function} options.interval - wilsonInterval, injected to keep this pure
- * @returns {Array<Object>} Rows, most-fought first
+ * @param {Function} [options.orderOf] - (subjectHrid) => sort key, so the list can
+ *   follow the game's own order rather than the size of the sample
+ * @returns {Array<Object>} Rows, in the game's order when one is given and
+ *   most-fought first otherwise
  */
-export function accuracyRows(totals, { predictedFor, interval } = {}) {
+export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
     const rows = [];
     for (const bucket of Object.values(totals || {})) {
         const subjectHrid = bucketSubject(bucket);
@@ -478,8 +481,40 @@ export function accuracyRows(totals, { predictedFor, interval } = {}) {
             rates: actionRates(bucket, measured, interval),
         });
     }
-    rows.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
+    // The game's order, and within a room type by level, so a subject's rooms
+    // read as a progression rather than being scattered through the list by how
+    // often each happened to be fought
+    if (orderOf) {
+        rows.sort(
+            (a, b) =>
+                compareOrder(orderOf(a.subjectHrid), orderOf(b.subjectHrid)) ||
+                a.level - b.level ||
+                a.subjectHrid.localeCompare(b.subjectHrid)
+        );
+    } else {
+        rows.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
+    }
     return rows;
+}
+
+/**
+ * Compare two order keys, whatever the game gave us.
+ *
+ * `sortIndex` is a number when the client data has one and a name when it does
+ * not, and a room type the data has never heard of has neither — those go last
+ * rather than to the top, which is where an undefined would otherwise sort.
+ *
+ * @param {number|string|null} a - Order key
+ * @param {number|string|null} b - Order key
+ * @returns {number}
+ */
+function compareOrder(a, b) {
+    const missing = (value) => value === null || value === undefined;
+    if (missing(a) && missing(b)) return 0;
+    if (missing(a)) return 1;
+    if (missing(b)) return -1;
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b));
 }
 
 /**
@@ -635,9 +670,10 @@ export function accuracySummary(rows) {
  *
  * @param {Array<Object>} rows - Output of `accuracyRows`
  * @param {Function} interval - wilsonInterval, injected to keep this pure
- * @returns {Array<Object>} One per subject, most-fought first
+ * @param {Function} [orderOf] - (subjectHrid) => sort key, for the game's order
+ * @returns {Array<Object>} One per subject
  */
-export function accuracyBySubject(rows, interval) {
+export function accuracyBySubject(rows, interval, orderOf) {
     const groups = new Map();
 
     for (const row of Array.isArray(rows) ? rows : []) {
@@ -697,7 +733,15 @@ export function accuracyBySubject(rows, interval) {
         };
     });
 
-    out.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
+    if (orderOf) {
+        out.sort(
+            (a, b) =>
+                compareOrder(orderOf(a.subjectHrid), orderOf(b.subjectHrid)) ||
+                a.subjectHrid.localeCompare(b.subjectHrid)
+        );
+    } else {
+        out.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
+    }
     return out;
 }
 

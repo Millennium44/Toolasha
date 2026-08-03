@@ -1171,11 +1171,36 @@ class LabyrinthClearRate {
      */
     async accuracySnapshot() {
         await this.loadOutcomes();
+        const orderOf = (hrid) => this.subjectSortIndex(hrid);
         const rows = accuracyRows(this._outcomes, {
             predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
             interval: wilsonInterval,
+            orderOf,
         });
-        return { rows, summary: accuracySummary(rows), bySubject: accuracyBySubject(rows, wilsonInterval) };
+        return {
+            rows,
+            summary: accuracySummary(rows),
+            bySubject: accuracyBySubject(rows, wilsonInterval, orderOf),
+        };
+    }
+
+    /**
+     * Where the game itself puts a monster or a skill.
+     *
+     * Read from the client data rather than listed here, so a monster added by
+     * an update lands where the game puts it rather than at the bottom. A
+     * subject the data has never heard of returns null and sorts last, which is
+     * better than sorting to the top on an undefined.
+     *
+     * @param {string} subjectHrid - Monster or skill
+     * @returns {number|string|null}
+     */
+    subjectSortIndex(subjectHrid) {
+        const data = dataManager.getInitClientData();
+        const details = data?.combatMonsterDetailMap?.[subjectHrid] || data?.skillDetailMap?.[subjectHrid];
+        if (Number.isFinite(details?.sortIndex)) return details.sortIndex;
+        // No index, but a name still orders better than nothing
+        return details?.name || null;
     }
 
     /** Throw the fight record away and start counting again */

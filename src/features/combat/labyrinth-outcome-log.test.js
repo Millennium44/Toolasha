@@ -807,3 +807,56 @@ describe('how long a clear costs', () => {
         expect(timing([visit({ cleared: true, predictedSeconds: undefined })])).toBeNull();
     });
 });
+
+describe('the order the record is listed in', () => {
+    const bucket = (subjectHrid, roomLevel, attempts) => ({
+        subjectHrid,
+        roomLevel,
+        kind: subjectHrid.startsWith('/skills/') ? 'skilling' : 'combat',
+        attempts,
+        clears: 1,
+        predicted: 0.5,
+    });
+
+    const totals = {
+        a: bucket('/skills/brewing', 181, 4),
+        b: bucket('/monsters/mimic', 200, 40),
+        c: bucket('/skills/brewing', 120, 1),
+        d: bucket('/skills/milking', 203, 5),
+    };
+
+    // What the client data says, which is what the panel passes in
+    const ORDER = { '/skills/milking': 1, '/skills/brewing': 8, '/monsters/mimic': 30 };
+    const listed = (orderOf) =>
+        accuracyRows(totals, { interval: wilsonInterval, orderOf }).map((row) => `${row.monster}@${row.level}`);
+
+    test('the game’s order, and by level inside a room type', () => {
+        expect(listed((hrid) => ORDER[hrid])).toEqual(['milking@203', 'brewing@120', 'brewing@181', 'mimic@200']);
+    });
+
+    test('a room type the game data has never heard of goes last, not first', () => {
+        // An undefined sort key would otherwise win every comparison
+        expect(listed((hrid) => (hrid === '/monsters/mimic' ? undefined : ORDER[hrid]))).toEqual([
+            'milking@203',
+            'brewing@120',
+            'brewing@181',
+            'mimic@200',
+        ]);
+    });
+
+    test('a name is still an order when there is no index', () => {
+        const byName = { '/skills/brewing': 'Brewing', '/skills/milking': 'Milking', '/monsters/mimic': 'Mimic' };
+        expect(listed((hrid) => byName[hrid])).toEqual(['brewing@120', 'brewing@181', 'milking@203', 'mimic@200']);
+    });
+
+    test('with no order given it falls back to most-fought first', () => {
+        expect(listed(undefined)[0]).toBe('mimic@200');
+    });
+
+    test('and the pooled rows follow the same order as the rows under them', () => {
+        const rows = accuracyRows(totals, { interval: wilsonInterval, orderOf: (hrid) => ORDER[hrid] });
+        const pooled = accuracyBySubject(rows, wilsonInterval, (hrid) => ORDER[hrid]);
+
+        expect(pooled.map((group) => group.monster)).toEqual(['milking', 'brewing', 'mimic']);
+    });
+});
