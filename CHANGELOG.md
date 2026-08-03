@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: a party you left stayed in the DPS table, and your name appeared twice
+
+Both symptoms, one cause. The damage tally is keyed by **battle slot**, which is a position in this fight rather than an identity — fine while the fight keeps its shape, wrong the moment it does not.
+
+- **Leave a party of five and slots 1 to 4 stop being anybody**, but they were never cleared, so four people who had gone kept their rows.
+- **And slot 0 stops being who it was.** Alone you are slot 0; in that party you were slot 3. Both rows survived, both labelled with your name, which is the duplicate in the screenshot.
+- **A run is now identified by its roster and its start time together**, the way MCS names one. Either half alone is not enough: the same party in a new zone is a new run, and the same zone with somebody gone is a different run measuring different people. When the key changes the tally resets, because a slot-keyed tally genuinely cannot survive a reshuffle — carrying it over would hand one person's damage to whoever inherited their slot.
+- **Names are rebuilt every battle** rather than merged, for the same reason the monster map already was.
+
+### One set of glyphs for the overlay
+
+Emoji were chosen per file, so a coin was 🪙 in one row and 💰 in another and the overlay read as several tools stacked rather than one. They now come from a single `GLYPHS` vocabulary in `overlay-format.js`, following OPanel's choices where OPanel has an opinion — the two sit side by side on the same screen, and a reader should not have to learn two alphabets.
+
 ### Party Loot, behind the profit tile
 
 The Total Profit tile now carries a coin figure per character, and the question that raises is _what_ — a party does not split a dungeon evenly, because loot is rolled per character against their own drop gear. FLoot's answer, as a panel.

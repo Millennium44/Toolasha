@@ -108,6 +108,53 @@ export const ROW_COLORS = {
 };
 
 /**
+ * The overlay's glyphs, in one place, following OPanel's vocabulary.
+ *
+ * A tile has room for a symbol or a word, not both, so the symbol has to carry
+ * the label — which only works if it means the same thing everywhere. These were
+ * chosen per file before, so a coin was 🪙 in one row and 💰 in another and the
+ * overlay read as several tools stacked up rather than one.
+ *
+ * Matched to OPanel where OPanel has an opinion, because the two sit side by
+ * side on the same screen and a reader should not have to learn two alphabets.
+ * Where it does not — it draws some of these as game sprites rather than text —
+ * the nearest emoji is used.
+ */
+export const GLYPHS = {
+    /** Coins in hand */
+    coin: '🪙',
+    /** Market value, listings, anything priced */
+    market: '📈',
+    /** Bid orders waiting to fill */
+    bid: '📦',
+    /** The inventory as a whole */
+    inventory: '🎒',
+    /** Chests and other openables */
+    chest: '🎁',
+    /** Ability books */
+    books: '📖',
+    /** Mana */
+    mana: '💧',
+    /** Food and drink */
+    consumable: '🍴',
+    /** Damage dealt */
+    dealt: '⚔',
+    /** Damage taken */
+    taken: '🛡',
+    /** Watched items */
+    watch: '👁',
+    /** Locked and unlocked, as the overlay's own header uses them */
+    locked: '🔒',
+    unlocked: '🔓',
+    /** Settings */
+    settings: '⚙',
+    /** Close */
+    close: '✖',
+    /** Something is wrong with the figure rather than with the run */
+    warning: '⚠',
+};
+
+/**
  * A piece of a line.
  * @typedef {Object} Segment
  * @property {string} [text] - What it says

@@ -30,7 +30,7 @@
  */
 
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
-import { itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
@@ -136,7 +136,7 @@ function drawPlayer(body, stats) {
     });
 
     const coin = document.createElement('span');
-    coin.textContent = `🪙 ${formatKMB(banked)}`;
+    coin.textContent = `${GLYPHS.coin} ${formatKMB(banked)}`;
     coin.style.color = banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad;
 
     const rate = document.createElement('span');
@@ -201,7 +201,7 @@ export const partyLootPanel = createPanel({
             Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
 
             const banked = document.createElement('span');
-            banked.textContent = `🪙 ${formatKMB(total)}`;
+            banked.textContent = `${GLYPHS.coin} ${formatKMB(total)}`;
             banked.style.color = total >= 0 ? ROW_COLORS.good : ROW_COLORS.bad;
             banked.style.fontWeight = 'bold';
 

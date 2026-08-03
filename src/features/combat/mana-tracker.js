@@ -26,7 +26,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
-import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { row, blank, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { newManaTally, recordCast, recordFight, manaSummary } from '../../utils/mana-spend.js';
@@ -188,7 +188,7 @@ registerRow({
         if (summary.manaPerFight === null) return blank(container);
 
         row(container, [
-            { text: '💧', color: ROW_COLORS.dim },
+            { text: GLYPHS.mana, color: ROW_COLORS.dim },
             { text: `${formatWithSeparator(Math.round(summary.manaPerFight))}/fight`, color: ROW_COLORS.accent },
             { text: `${summary.castsPerFight.toFixed(1)} casts`, color: ROW_COLORS.dim, push: true },
             summary.incomplete ? { text: '⚠', color: ROW_COLORS.bad } : null,
