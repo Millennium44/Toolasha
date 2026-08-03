@@ -118,7 +118,11 @@ class BulkSellAssistant {
      */
     _watchlistItems() {
         try {
-            return new Set(watchlistEntries().map((entry) => entry.itemHrid));
+            // `hrid`, which is what a watchlist entry calls it. Reading
+            // `itemHrid` — what an inventory item calls it — produced a set of
+            // undefined, an empty source, and "no tradable items" against a
+            // list of seventy.
+            return new Set(watchlistEntries().map((entry) => entry.hrid));
         } catch (error) {
             console.error('[BulkSellAssistant] Reading the watchlist failed:', error);
             return new Set();
@@ -398,8 +402,9 @@ class BulkSellAssistant {
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
         tabSel.title =
-            'Only sell items assigned to this Toolasha inventory tab (a parent tab includes its child tabs). ' +
-            'Items also assigned to a tab above the selected one are kept, not sold.';
+            'What to sell. "Watchlist" is whatever the Watchlist is tracking, at every enhancement level. ' +
+            'A Toolasha inventory tab sells only the items assigned to it (a parent tab includes its child tabs), ' +
+            'and items also assigned to a tab above the selected one are kept rather than sold.';
         tabSel.style.cssText =
             'display:none; border:1px solid rgba(74,158,255,0.35); border-radius:5px; background:rgba(20,26,44,0.95); ' +
             'color:#cfd8ea; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; font-family:inherit;';

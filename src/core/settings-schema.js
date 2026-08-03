@@ -1162,6 +1162,13 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
             },
+            labSim_critAura: {
+                id: 'labSim_critAura',
+                label: 'Lab Simulator: Simulate with your Critical Aura equipped',
+                type: 'checkbox',
+                default: false,
+                help: 'Swaps whatever trinket the simulated character is wearing for your own Critical Aura, at the enhancement level you own it at. Labyrinth fights are short and often decided by a crit, so the aura you run outside the labyrinth is not always the one you would want inside it — this asks what the fight looks like with it on without making you change gear. Off when you do not own one. The Lab Simulator has the same switch',
+            },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',
                 label: 'Market: Bulk sell to vendor when market is no better',
