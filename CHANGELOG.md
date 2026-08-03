@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The chest popup says which side of the book it is pricing at
+
+TReasure always values loot at bid and labels the figure "bid". Toolasha values it through the profit pricing mode instead, which for most settings means ask — so the same chest reads 45.44K here and 43.1K there, and neither is wrong. Without the word there was no way to tell that apart from one of them being broken. The basis is now printed beside the figure, with the setting that controls it in the tooltip.
+
+### The target the Consumables panel was saving never came back
+
+The write was fine; the read was not. It happens at module scope, long before the database is open, so it came back with the default and there was no way to tell that from nothing having been stored — the same mistimed-read that stopped panels reopening. It waits for storage now.
+
+### The Treasure header caught up with its settings
+
+The header is built once, and a panel reopened at start-up builds it before the settings arrive — so it sat there claiming "Token value / Cowbells counted / Luck" whatever you had actually chosen, until it was closed and opened again. All three controls are refreshed on every redraw, and the sort picker is left alone while the pointer is in it.
+
 ### The Consumables panel remembers itself, and remembers the target
 
 It reopens if the page was left with it up, like the rest of them — and it keeps the duration you picked. That one matters more than a preference usually does: every figure in the panel is measured against it, so a panel that forgets shows you a day's shortfall when you asked for a week's, and looks perfectly right doing it.

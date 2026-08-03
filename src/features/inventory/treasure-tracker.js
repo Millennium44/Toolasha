@@ -25,7 +25,7 @@ import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { getItemPrice } from '../../utils/market-data.js';
+import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
 import {
     recordOpening,
     resetTally,
@@ -194,6 +194,19 @@ export function worthShowing(items) {
     return (items || []).filter(
         (item) => (item.actualCount || 0) > 0 || (item.expectedCount || 0) >= NEGLIGIBLE_EXPECTED
     );
+}
+
+/**
+ * Which side of the book loot is being valued at, as a word.
+ *
+ * Toolasha prices through the profit pricing mode rather than pinning to bid,
+ * so this is a setting rather than a constant — and a figure whose basis is not
+ * stated cannot be compared with anybody else's.
+ *
+ * @returns {string} `bid`, `ask` or `average`
+ */
+export function pricingBasis() {
+    return getPricingMode('profit', 'sell');
 }
 
 /** The tallest a freshly-opened popup is allowed to be */
@@ -598,9 +611,21 @@ class TreasureTracker {
         const verdict = formatReturn(opening.ratio);
         const summary = document.createElement('div');
         Object.assign(summary.style, { display: 'flex', justifyContent: 'space-between', marginBottom: '7px' });
+        // The side of the book the figure is on, said out loud, as TReasure
+        // does. Toolasha prices loot through the profit pricing mode rather than
+        // always at bid, so the same chest can be worth 45.44K here and 43.1K
+        // there — and without the word there is no way to tell that apart from
+        // one of them being wrong.
         const paid = document.createElement('span');
         paid.textContent = formatLargeNumber(Math.round(opening.actualValue));
         paid.style.color = verdict.color;
+        const basis = document.createElement('span');
+        basis.textContent = ` ${pricingBasis()}`;
+        basis.style.color = COLORS.textDim;
+        basis.title =
+            'Which side of the market these values are taken from. ' +
+            'Set by the profit pricing mode in Toolasha’s settings.';
+        paid.appendChild(basis);
         const pct = document.createElement('span');
         pct.textContent = verdict.text;
         pct.style.color = verdict.color;
@@ -927,7 +952,9 @@ class TreasureTracker {
             option.textContent = mode.label;
             picker.appendChild(option);
         }
-        picker.value = SORT_MODES.some((mode) => mode.key === this.settings.sortMode) ? this.settings.sortMode : 'luck';
+        // Its value is set by `_refreshToggles`, along with the other header
+        // controls, because the settings arrive after the header is built
+        this.sortPicker = picker;
 
         // The header is what you drag the panel by, so a pointer that came down
         // on the picker must not also start a drag
@@ -983,6 +1010,15 @@ class TreasureTracker {
             const counting = !/zero|No value/.test(button.textContent);
             button.style.color = counting ? COLORS.accent : COLORS.textDim;
             button.style.opacity = counting ? '1' : '0.7';
+        }
+
+        // The header is built once, and a panel reopened at start-up builds it
+        // before the settings have come back from storage — so it sat there
+        // claiming "Token value / Cowbells counted / Luck" whatever you had
+        // actually chosen, until it was closed and opened again.
+        if (this.sortPicker && this.sortPicker !== document.activeElement) {
+            const known = SORT_MODES.some((mode) => mode.key === this.settings.sortMode);
+            this.sortPicker.value = known ? this.settings.sortMode : 'luck';
         }
     }
 
@@ -1257,10 +1293,14 @@ class TreasureTracker {
         this.panel = null;
         this.contentEl = null;
         this.headerEl = null;
+        this.sortPicker = null;
     }
 
     _render() {
         if (!this.contentEl) return;
+        // The header carries settings too, and they arrive from storage after
+        // it is built
+        this._refreshToggles();
         this.contentEl.replaceChildren();
 
         const { rows, totals } = this._summary();

@@ -133,6 +133,11 @@ class ConsumablesPanel {
      */
     async loadSettings() {
         try {
+            // This runs at module scope, which is long before the database is
+            // open — an unguarded read there comes straight back with the
+            // default, and there is no way to tell that from nothing having been
+            // stored. Which is exactly what "it does not save the target" was.
+            await storage.ready;
             const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
             const index = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
             // A stored value from an older list must not win over the code's
