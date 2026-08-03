@@ -18,55 +18,51 @@
  * alone deliberately. Once you are in the marketplace, knowing there is
  * something to collect is useful; it is only the sidebar nag that isn't.
  *
- * Implemented as a stylesheet toggled by listing data rather than by clearing
- * the badge's text. React owns that node and rewrites it on every update, so
- * anything written into it would be overwritten within the second; a rule the
- * game does not know about survives every re-render.
+ * Hiding is a stylesheet, because a rule the game does not know about survives
+ * every re-render. Showing a *different number* is not: the badge is the game's
+ * own element, and a count printed in a pseudo-element is a bare digit sitting
+ * where a styled badge should be. So the digits are rewritten in place and put
+ * back whenever React writes its own over them, which leaves the badge exactly
+ * the badge — same shape, same colour, same position.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 
 const STYLE_ID = 'mwi-marketplace-badge-filter';
 
-/**
- * Hides only the sidebar's Marketplace badge. Scoped through the nav item's own
- * icon label rather than a position, so a reordered sidebar still matches, and
- * excluding the ocean variant the way the other badge features do.
- */
-const BADGE =
-    '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"]) ' +
-    '[class*="NavigationBar_badge"]:not([class*="NavigationBar_ocean"])';
+/** The sidebar item, found by its own icon label rather than by position */
+const NAV = '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.marketplace"])';
 
 /**
- * Hide it, or make it say a different number.
+ * The badge itself.
  *
- * The count has to come through CSS like the hiding does, and for the same
- * reason: React owns that node and rewrites its text on every update, so
- * anything written into it is gone within the second. A generated rule that
- * blanks the real text and prints ours in a pseudo-element survives every
- * re-render, because the game does not know the rule exists.
- *
- * @param {number|null} count - What it should say, or null to hide it entirely
- * @returns {string} A stylesheet
+ * `NavigationBar_badge__` with the trailing double underscore, which is where
+ * the CSS-module hash begins — so this is the whole class name rather than a
+ * prefix of it. Without those two characters it also matched the sidebar's
+ * other badge-ish elements, and the count was written into both: the
+ * Marketplace badge read "2 2". The ocean variant is excluded the way the other
+ * badge features do.
  */
-function badgeCss(count) {
-    if (count === null) return `${BADGE} { display: none !important; }`;
+const BADGE = `${NAV} [class*="NavigationBar_badge__"]:not([class*="NavigationBar_ocean"])`;
 
-    // `font-size: 0` alone is not enough. The game draws the number inside a
-    // nested element that sets its own font-size, so the real count kept
-    // rendering beside ours and the badge read "2 2". Children are removed
-    // outright instead; a pseudo-element is not matched by `*`, so ours stays.
-    return `
-        ${BADGE} { font-size: 0 !important; }
-        ${BADGE} * { display: none !important; }
-        ${BADGE}::after {
-            content: "${count}";
-            font-size: 12px;
-            line-height: 1;
-        }
-    `;
+/**
+ * The element the number actually lives in.
+ *
+ * Usually the badge itself, but a badge that wraps its text in a span would put
+ * the digits one level down — and writing over the badge instead would throw
+ * that span away along with whatever styling it carries. Descends only through
+ * only-children, which is as far as "the same box, drawn deeper" goes.
+ *
+ * @param {HTMLElement} badge - The badge element
+ * @returns {HTMLElement} Where to write the count
+ */
+export function countHolder(badge) {
+    let node = badge;
+    while (node.childNodes.length === 1 && node.children.length === 1) node = node.children[0];
+    return node;
 }
 
 /**
@@ -112,6 +108,11 @@ class MarketplaceBadgeFilter {
         this.unregister = null;
         /** The last non-empty listing array seen on the wire */
         this.lastSeen = null;
+        /** Undoes the shared observer registration, when there is one */
+        this.unwatchAdded = null;
+        /** Watches the sidebar item's own text, since React rewrites it */
+        this.textWatcher = null;
+        this.watchedNav = null;
     }
 
     initialize() {
@@ -197,6 +198,8 @@ class MarketplaceBadgeFilter {
             finished: finished.length,
             hidingBadge: this.hidden,
             styleInDocument: !!document.getElementById(STYLE_ID),
+            badgeOnScreen: !!document.querySelector(BADGE),
+            badgeSays: document.querySelector(BADGE)?.textContent ?? 'no badge',
         };
 
         console.log('[Toolasha] Marketplace badge filter:', report);
@@ -229,12 +232,77 @@ class MarketplaceBadgeFilter {
         // Removed first: `addStyles` appends a new element every call, so
         // toggling without this leaves a stack of them and the oldest wins
         removeStyles(STYLE_ID);
-        addStyles(badgeCss(finished > 0 ? finished : null), STYLE_ID);
+
+        if (finished === 0) {
+            this._stopWatching();
+            addStyles(`${BADGE} { display: none !important; }`, STYLE_ID);
+            return;
+        }
+        this._watch();
+        this._paint();
+    }
+
+    /**
+     * Write our count into the game's badge.
+     *
+     * Only when it differs, which is what keeps the observer that calls this
+     * from feeding itself: our own write produces a mutation, that mutation
+     * calls this again, and the text already says what it should.
+     *
+     * @returns {boolean} Whether there was a badge to write into
+     */
+    _paint() {
+        const badge = document.querySelector(BADGE);
+        if (!badge || this.showing === null || this.showing === 0) return false;
+
+        const holder = countHolder(badge);
+        const text = String(this.showing);
+        if (holder.textContent !== text) holder.textContent = text;
+        return true;
+    }
+
+    /**
+     * Keep it written.
+     *
+     * Two different things undo it, so it takes two watchers. React rewrites the
+     * digits in place, which is a `characterData` change and invisible to the
+     * shared observer — that needs one scoped to the sidebar item. And the item
+     * itself is torn down and rebuilt, which the shared observer is exactly for.
+     */
+    _watch() {
+        if (!this.unwatchAdded) {
+            this.unwatchAdded = domObserver.register('MarketplaceBadge', () => this._attach(), { debounce: true });
+        }
+        this._attach();
+    }
+
+    /** Point the scoped observer at the sidebar item currently on screen */
+    _attach() {
+        const badge = document.querySelector(BADGE);
+        const nav = badge?.closest('[class*="NavigationBar_nav__"]');
+        if (!nav) return;
+
+        if (this.watchedNav !== nav) {
+            this.textWatcher?.disconnect();
+            this.textWatcher = new MutationObserver(() => this._paint());
+            this.textWatcher.observe(nav, { childList: true, subtree: true, characterData: true });
+            this.watchedNav = nav;
+        }
+        this._paint();
+    }
+
+    _stopWatching() {
+        this.unwatchAdded?.();
+        this.unwatchAdded = null;
+        this.textWatcher?.disconnect();
+        this.textWatcher = null;
+        this.watchedNav = null;
     }
 
     disable() {
         this.unregister?.();
         this.unregister = null;
+        this._stopWatching();
         removeStyles(STYLE_ID);
         this.hidden = false;
         this.showing = null;

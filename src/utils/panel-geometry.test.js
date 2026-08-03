@@ -1,4 +1,5 @@
-/**
+/** @vitest-environment happy-dom
+ *
  * Remembering where a panel was, and whether it was anywhere.
  *
  * The open flag lives in the same record as the geometry, which is the whole
@@ -20,7 +21,8 @@ vi.mock('../core/storage.js', () => ({
     },
 }));
 
-const { saveGeometry, saveOpenState, wasOpen, allGeometry, reopenIfLeftOpen } = await import('./panel-geometry.js');
+const { saveGeometry, saveOpenState, wasOpen, allGeometry, reopenIfLeftOpen, clearPosition, restoreGeometry } =
+    await import('./panel-geometry.js');
 
 beforeEach(() => {
     store.data = {};
@@ -43,6 +45,33 @@ describe('whether a panel was open', () => {
         await saveOpenState('dps', true);
 
         await expect(wasOpen('partyLoot')).resolves.toBe(false);
+    });
+});
+
+describe('forgetting where a panel was but not how big', () => {
+    test('the position goes and the size stays', () => {
+        // The Treasure popup places itself beside the chest dialog and is only
+        // pinned by being moved. Unpinning has to drop the position; dropping
+        // the size with it would be a second change nobody asked for.
+        return (async () => {
+            await saveGeometry('popup', { left: 400, top: 90, width: 320, height: 500 });
+            await clearPosition('popup');
+
+            const all = await allGeometry();
+            expect(all.popup).toEqual({ width: 320, height: 500 });
+        })();
+    });
+
+    test('and the open flag survives it', async () => {
+        await saveOpenState('popup', true);
+        await saveGeometry('popup', { left: 10, top: 10 });
+        await clearPosition('popup');
+
+        await expect(wasOpen('popup')).resolves.toBe(true);
+    });
+
+    test('a panel with nothing stored is not a problem', () => {
+        return expect(clearPosition('never-seen')).resolves.toBeUndefined();
     });
 });
 
@@ -91,5 +120,35 @@ describe('the two halves of one record', () => {
         await saveGeometry('dps', { left: 10, top: 10 });
 
         await expect(wasOpen('dps')).resolves.toBe(true);
+    });
+});
+
+describe('putting a panel back', () => {
+    const panel = () => {
+        document.body.innerHTML = '<div id="panel"></div>';
+        return document.getElementById('panel');
+    };
+
+    test('size and position both, normally', async () => {
+        await saveGeometry('dps', { left: 120, top: 80, width: 400, height: 300 });
+        const element = panel();
+
+        await restoreGeometry(element, 'dps');
+
+        expect(element.style.width).toBe('400px');
+        expect(element.style.left).toBe('120px');
+    });
+
+    test('size only, for a panel that places itself', async () => {
+        // The Treasure popup opens beside the chest dialog. Reapplying a
+        // remembered position on every opening is what stopped it doing that —
+        // and if the dialog was not found in time it simply stayed there.
+        await saveGeometry('popup', { left: 900, top: 600, width: 320, height: 500 });
+        const element = panel();
+
+        await restoreGeometry(element, 'popup', undefined, { position: false });
+
+        expect(element.style.width).toBe('320px');
+        expect(element.style.left).toBe('');
     });
 });

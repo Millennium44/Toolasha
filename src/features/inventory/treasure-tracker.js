@@ -44,7 +44,7 @@ import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import {
     restoreGeometry,
     saveGeometry,
-    clearGeometry,
+    clearPosition,
     saveOpenState,
     reopenIfLeftOpen,
 } from '../../utils/panel-geometry.js';
@@ -300,17 +300,18 @@ class TreasureTracker {
         registerFloatingPanel(this.popup);
         capHeightToWindow(this.popup);
 
-        // Size is always remembered; where it goes is not, unless you have moved
-        // it. Auto-placement is the whole point of this popup, and a remembered
-        // position would silently switch that off the first time you nudged it
-        // out of the way — so only a deliberate drag pins it, and only a pinned
-        // popup has a position stored to restore.
+        // Size is always remembered; where it goes is not, unless you have
+        // pinned it by moving it. Asking for the position back regardless was
+        // most of why the popup stopped appearing beside the chest dialog — a
+        // stale position was reapplied on every opening, and if the dialog was
+        // not found within the retries the popup simply stayed there.
         //
         // Placed after the size is back rather than before, because placement
         // measures the popup and a width applied afterwards would move the edge
         // it was measured against.
-        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }).then(() => {
-            if (!this.settings.popupPinned) this._placeBesideDialog(0);
+        const pinned = this.settings.popupPinned;
+        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned }).then(() => {
+            if (!pinned) this._placeBesideDialog(0);
         });
     }
 
@@ -1003,18 +1004,25 @@ class TreasureTracker {
         buttons.appendChild(this._actionButton('Import', () => this._importHistory()));
         buttons.appendChild(this._actionButton('Import from Edible Tools', () => this._importEdibleTools()));
 
-        // Only offered once there is something to undo — a control that does
-        // nothing most of the time is a control you learn to ignore
-        if (this.settings.popupPinned) {
-            buttons.appendChild(
-                this._actionButton('Unpin popup', () => {
-                    this.settings.popupPinned = false;
-                    this._saveSettings();
-                    clearGeometry(POPUP_GEOMETRY_KEY);
-                    this._render();
-                })
-            );
-        }
+        // Always here, saying which way it is set. It used to appear only while
+        // the popup was pinned, so pressing it made the button itself disappear
+        // — which reads as the button breaking rather than as the setting
+        // changing.
+        const pin = this._actionButton(
+            this.settings.popupPinned ? 'Popup stays where you put it' : 'Popup follows the chest dialog',
+            () => {
+                this.settings.popupPinned = !this.settings.popupPinned;
+                this._saveSettings();
+                // Unpinning forgets where it was put, but not how big it was —
+                // dropping the size too would be an unasked-for second change
+                if (!this.settings.popupPinned) clearPosition(POPUP_GEOMETRY_KEY);
+                this._render();
+            }
+        );
+        pin.title =
+            'The popup normally opens beside the game’s Opened Loot dialog. ' +
+            'Dragging it says "stay here" instead; this puts it back to following.';
+        buttons.appendChild(pin);
 
         const wipe = this._actionButton('Delete all history', async () => {
             const confirmed = await askChoice({

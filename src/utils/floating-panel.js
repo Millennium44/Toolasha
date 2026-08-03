@@ -21,16 +21,19 @@ import { bringPanelToFront } from './panel-z-index.js';
  *
  * @param {HTMLElement} panel - The thing that moves
  * @param {HTMLElement} handle - The part you grab
- * @param {Function} [onDrop] - Called with `{left, top}` once the drag ends
+ * @param {Function} [onDrop] - Called with `{left, top}` once the panel has
+ *   actually been moved. A click that never moved is not a drag.
  * @returns {Function} Detaches the handle's listener
  */
 export function makeDraggable(panel, handle, onDrop) {
     let offsetX = 0;
     let offsetY = 0;
     let dragging = false;
+    let moved = false;
 
     const onMouseMove = (event) => {
         if (!dragging) return;
+        moved = true;
         // Anchored left/top from here on: a panel positioned from the right edge
         // would jump the moment the window is resized
         panel.style.left = `${event.clientX - offsetX}px`;
@@ -44,6 +47,13 @@ export function makeDraggable(panel, handle, onDrop) {
         dragging = false;
         document.removeEventListener('mousemove', onMouseMove);
         document.removeEventListener('mouseup', onMouseUp);
+
+        // A press that never moved is a click, not a drag. Saving one is
+        // harmless for a panel that only remembers where it is, and wrong for
+        // the Treasure popup, where being moved is how you tell it to stop
+        // following the chest dialog — clicking its header once silently
+        // pinned it somewhere and auto-placement appeared to stop working.
+        if (!moved) return;
         onDrop?.({ left: panel.style.left, top: panel.style.top });
     };
 
@@ -54,6 +64,7 @@ export function makeDraggable(panel, handle, onDrop) {
 
         bringPanelToFront(panel);
         dragging = true;
+        moved = false;
         const rect = panel.getBoundingClientRect();
         offsetX = event.clientX - rect.left;
         offsetY = event.clientY - rect.top;
