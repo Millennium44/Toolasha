@@ -106,4 +106,12 @@ toolashaRoot.Market = {
     milkywayMarketLink,
 };
 
+// Why the sidebar's Marketplace badge is or is not showing. The feature's only
+// output is the absence of a badge, which looks the same as the setting being
+// off, the game not badging, and every listing still working.
+toolashaRoot.Debug = {
+    ...(toolashaRoot.Debug || {}),
+    marketBadge: () => marketplaceBadgeFilter.describe(),
+};
+
 console.log('[Toolasha] Market library loaded');

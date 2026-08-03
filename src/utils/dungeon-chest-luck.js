@@ -82,9 +82,28 @@ export function dungeonChestItems(actionDetail, difficultyTier = 0) {
     const guaranteed = new Set();
     for (const drop of table) {
         const rate = (drop?.dropRate || 0) + (drop?.dropRatePerDifficultyTier ?? 0) * difficultyTier;
-        if (rate >= 1 && drop?.itemHrid) guaranteed.add(drop.itemHrid);
+        if (rate >= 1 && drop?.itemHrid && !isRefinementChest(drop.itemHrid)) guaranteed.add(drop.itemHrid);
     }
     return guaranteed.size ? guaranteed : DUNGEON_CHESTS;
+}
+
+/**
+ * Whether an item is a refinement chest.
+ *
+ * They are excluded from everything that counts completions or entry keys. A
+ * refinement chest is not what a completion pays — it takes a chest key to open
+ * like any other, but it does **not** take an entry key, because it is not the
+ * per-completion payout. Counting one as a completion would invent a run that
+ * never happened, and inflate both the chest tally and what it was owed.
+ *
+ * Matched by name rather than by a list, so a refinement chest for a dungeon
+ * added later is excluded without anybody remembering to add it.
+ *
+ * @param {string} itemHrid - An item
+ * @returns {boolean}
+ */
+export function isRefinementChest(itemHrid) {
+    return String(itemHrid || '').includes('_refinement_chest');
 }
 
 /**
@@ -97,7 +116,8 @@ export function dungeonChestItems(actionDetail, difficultyTier = 0) {
 export function countDungeonChests(lootMap, chests = DUNGEON_CHESTS) {
     let total = 0;
     for (const entry of Object.values(lootMap || {})) {
-        if (entry?.itemHrid && chests.has(entry.itemHrid)) total += entry.count || 0;
+        if (!entry?.itemHrid || isRefinementChest(entry.itemHrid)) continue;
+        if (chests.has(entry.itemHrid)) total += entry.count || 0;
     }
     return total;
 }

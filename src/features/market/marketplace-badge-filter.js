@@ -80,12 +80,22 @@ class MarketplaceBadgeFilter {
     constructor() {
         this.hidden = false;
         this.unregister = null;
+        /** The last non-empty listing array seen on the wire */
+        this.lastSeen = null;
     }
 
     initialize() {
         if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
 
-        const updateHandler = () => this.refresh();
+        // The payload is kept as well as read from the character's book, because
+        // the two have disagreed: whichever of them has listings is the one to
+        // believe. Trusting only the book meant that if it ever came back empty
+        // the badge was hidden with no way to tell from the outside why.
+        const updateHandler = (data) => {
+            const listings = data?.endMarketListings || data?.myMarketListings;
+            if (Array.isArray(listings) && listings.length) this.lastSeen = listings;
+            this.refresh();
+        };
         dataManager.on('character_initialized', updateHandler);
         dataManager.on('market_listings_updated', updateHandler);
         this.unregister = () => {
@@ -114,7 +124,64 @@ class MarketplaceBadgeFilter {
      * order that no longer exists.
      */
     refresh() {
-        this.apply(anyFinished(dataManager.characterData?.myMarketListings));
+        this.apply(anyFinished(this.book()));
+    }
+
+    /**
+     * The listings to judge, from whichever source has any.
+     *
+     * @returns {Array<Object>} Possibly empty
+     */
+    book() {
+        const held = dataManager.characterData?.myMarketListings;
+        if (Array.isArray(held) && held.length) return held;
+        return this.lastSeen || [];
+    }
+
+    /**
+     * Why the badge is or is not showing.
+     *
+     * The feature's only output is the absence of something, which is
+     * indistinguishable from it being switched off, from the game not badging,
+     * and from every listing genuinely still working. This says which.
+     *
+     * Console: `Toolasha.Debug.marketBadge()`
+     *
+     * @returns {Object} What it can see
+     */
+    describe() {
+        const listings = this.book();
+        const finished = listings.filter(isFinishedWithSpoils);
+
+        const report = {
+            settingOn: !!config.getSetting('market_badgeOnlyWhenFinished'),
+            listening: !!this.unregister,
+            fromCharacterData: Array.isArray(dataManager.characterData?.myMarketListings)
+                ? dataManager.characterData.myMarketListings.length
+                : 'absent',
+            fromLastMessage: this.lastSeen ? this.lastSeen.length : 'none seen',
+            finished: finished.length,
+            hidingBadge: this.hidden,
+            styleInDocument: !!document.getElementById(STYLE_ID),
+        };
+
+        console.log('[Toolasha] Marketplace badge filter:', report);
+        if (listings.length) {
+            console.table(
+                listings.map((listing) => ({
+                    id: listing.id,
+                    status: String(listing.status || '')
+                        .split('/')
+                        .pop(),
+                    ordered: listing.orderQuantity,
+                    filled: listing.filledQuantity,
+                    unclaimedItems: listing.unclaimedItemCount,
+                    unclaimedCoins: listing.unclaimedCoinCount,
+                    countsAsFinished: isFinishedWithSpoils(listing),
+                }))
+            );
+        }
+        return report;
     }
 
     /**

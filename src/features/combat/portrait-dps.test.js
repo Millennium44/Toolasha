@@ -9,15 +9,19 @@
  * tests are mostly about what happens when a name is not there to match.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, getSettingValue: () => 'above' } }));
-vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => ({ players: [] }) }));
+const opts = vi.hoisted(() => ({ position: 'above', players: [] }));
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => true, getSettingValue: () => opts.position },
+}));
+vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => ({ players: opts.players }) }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerInterval: () => {}, clearAll: () => {} }),
 }));
 
-const { matchPortraits, portraitName, meterText } = await import('./portrait-dps.js');
+const { matchPortraits, portraitName, meterText, default: portraitDps } = await import('./portrait-dps.js');
 
 /** A portrait tile as the game builds it, hashed class names and all */
 const portrait = (name) => {
@@ -93,5 +97,66 @@ describe('what a meter says', () => {
         expect(meter.text).toContain('—');
         expect(meter.text).not.toContain('0 dps');
         expect(meter.title).toContain('not yet long enough');
+    });
+});
+
+describe('putting a meter on the tile', () => {
+    /** The players area as the game builds it, with one portrait inside */
+    const battlePanel = (name) => {
+        document.body.innerHTML = '';
+        const area = document.createElement('div');
+        area.className = 'BattlePanel_playersArea__9xk2j';
+        const unit = portrait(name);
+        area.appendChild(unit);
+        document.body.appendChild(area);
+        return unit;
+    };
+
+    const meterOf = (unit) => unit.querySelector('[data-toolasha-portrait-dps]');
+
+    beforeEach(() => {
+        opts.position = 'above';
+        opts.players = [{ name: 'Millennium44', damage: 20_100, dps: 316 }];
+    });
+
+    afterEach(() => portraitDps.cleanup());
+
+    test('the meter is a child of the tile, not hung outside it', () => {
+        // The first version positioned it at `top: -14px`, outside the tile's
+        // box. The battle panel clips its children, so it drew nothing at all —
+        // present in the DOM and cropped away.
+        const unit = battlePanel('Millennium44');
+        portraitDps.initialize();
+
+        const meter = meterOf(unit);
+        expect(meter).not.toBeNull();
+        expect(meter.style.position).not.toBe('absolute');
+        expect(meter.textContent).toContain('316');
+    });
+
+    test('above puts it first, below puts it last', () => {
+        const unit = battlePanel('Millennium44');
+        portraitDps.initialize();
+        expect(unit.firstElementChild).toBe(meterOf(unit));
+
+        opts.position = 'below';
+        portraitDps.redraw();
+        expect(unit.lastElementChild).toBe(meterOf(unit));
+    });
+
+    test('a redraw does not leave two', () => {
+        const unit = battlePanel('Millennium44');
+        portraitDps.initialize();
+        portraitDps.redraw();
+        portraitDps.redraw();
+
+        expect(unit.querySelectorAll('[data-toolasha-portrait-dps]')).toHaveLength(1);
+    });
+
+    test('a portrait with nobody to match gets no meter', () => {
+        const unit = battlePanel('Stranger');
+        portraitDps.initialize();
+
+        expect(meterOf(unit)).toBeNull();
     });
 });

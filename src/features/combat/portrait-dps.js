@@ -182,30 +182,34 @@ class PortraitDps {
         if (!meter) {
             meter = document.createElement('div');
             meter.setAttribute(MARK, '1');
+            // In the flow of the tile rather than positioned over it. The first
+            // version hung the meter outside the tile's box at `top: -14px`,
+            // which drew nothing visible: the battle panel clips its children,
+            // so the meter was there and cropped away. MCS makes room for its
+            // own lines the same way — the tile simply gets taller.
             Object.assign(meter.style, {
-                position: 'absolute',
-                left: '0',
-                right: '0',
                 textAlign: 'center',
                 fontSize: '11px',
                 fontWeight: 'bold',
-                lineHeight: '1.2',
+                lineHeight: '1.25',
                 pointerEvents: 'none',
                 textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
-                zIndex: '2',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                padding: '1px 2px',
             });
-
-            // The tile positions its own children, so the meter needs a
-            // positioned ancestor — and the tile is the right one, since the
-            // meter has to travel with it
-            if (getComputedStyle(unit).position === 'static') unit.style.position = 'relative';
-            unit.appendChild(meter);
         }
 
-        meter.style.top = below ? '' : '-14px';
-        meter.style.bottom = below ? '-14px' : '';
+        // Re-seated on every draw, because the setting can move between renders
+        // and because React rebuilding the tile puts its own children back in
+        // whatever order it likes
+        const wanted = below ? unit.lastElementChild : unit.firstElementChild;
+        if (wanted !== meter) {
+            if (below) unit.appendChild(meter);
+            else unit.insertBefore(meter, unit.firstChild);
+        }
+
         meter.style.color = player.dps === null || player.dps === undefined ? ROW_COLORS.dim : ROW_COLORS.gold;
         if (meter.textContent !== text) meter.textContent = text;
         meter.title = title;
@@ -218,4 +222,6 @@ export default {
     name: 'Portrait DPS',
     initialize: () => portraitDps.initialize(),
     cleanup: () => portraitDps.disable(),
+    /** Draw now rather than on the next tick — for tests, and for a settings change */
+    redraw: () => portraitDps._draw(),
 };

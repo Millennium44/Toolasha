@@ -6,6 +6,28 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Portrait DPS was drawing, and being cropped away
+
+The meter was positioned at `top: -14px`, outside the portrait tile's own box. The battle panel clips its children, so it was present in the DOM and invisible. It sits **in the flow** of the tile now, as MCS's does — the tile simply gets taller — and is re-seated on every draw, since React rebuilding the tile puts its children back in whatever order it likes.
+
+### Refinement chests are not completions
+
+A refinement chest takes a chest key to open like any other, and **no entry key**, because it is not what a completion pays. The dungeon key costing already had this right; the chest-luck reading did not — it took the guaranteed entries from the zone's reward table, and a refinement chest listed there would have counted as a completion that never happened, inflating both the chest tally and what it was owed. Excluded by name, so a refinement chest for a dungeon added later needs no list edit.
+
+### Why the marketplace badge is hidden, on demand
+
+`Toolasha.Debug.marketBadge()` in the console reports what the filter can see: whether the setting is on, how many listings it found and from where, which of them count as finished, and whether the hiding style is actually in the document. The feature's only output is the _absence_ of a badge, which looks identical to the setting being off, to the game not badging at all, and to every listing genuinely still working — there was no way to tell those apart from the outside.
+
+It also now falls back to the last listing payload it saw when the character's book comes back empty, rather than treating an empty book as "nothing is finished".
+
+### Audited the rest of the codebase for the same start-up bug
+
+Sixteen features subscribe to `character_initialized`, and every one of them registers that listener from inside the handler for that same event — so none of them will ever receive its first firing.
+
+Only the marketplace badge filter was actually broken by it. The rest either seed themselves at start-up (`remaining-xp`, `xp-tracker`, `guild-xp-tracker`, `collection-filters`, `queue-monitor-ui`, `task-reroll-tracker`), are explicitly only interested in character _switches_ — which do fire the event again (`action-panel-sort`) — or are driven by a DOM observer and do not depend on the event at all (`market-order-totals`, `estimated-listing-age`, `listing-price-display`, `action-time-display`, `settings-ui`, `task-profit-display`, `expected-value-calculator`).
+
+One stale comment in `loadout-snapshot` claims its handler corrects a character id that was null when storage was first read. It cannot — the event has already gone — but the id is not null at that point either, so nothing is wrong beyond the comment.
+
 ### Fixed: the marketplace badge stayed down even for finished orders
 
 The filter that quietens the sidebar badge for still-working orders was quietening everything, including a fully filled order with coins waiting to be collected.
