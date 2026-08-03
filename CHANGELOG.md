@@ -6,6 +6,24 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Consumables panel remembers itself, and remembers the target
+
+It reopens if the page was left with it up, like the rest of them — and it keeps the duration you picked. That one matters more than a preference usually does: every figure in the panel is measured against it, so a panel that forgets shows you a day's shortfall when you asked for a week's, and looks perfectly right doing it.
+
+Going to the marketplace does not count as closing it. The panel gets out of the way because the marketplace opens underneath it; you went shopping, you did not put the panel away.
+
+### The cost lines on the consumables tile are left-aligned
+
+The tile centres its text. A flex line is unaffected by that and a plain `div` is not, so the two cost lines sat in the middle while everything above them started at the edge.
+
+### The Treasure tile shows a chest
+
+The overlay's generic chest glyph, replaced with the Large Treasure Chest's own art. The tile is about chests specifically, and item art says so at a glance where a symbol has to be learned first.
+
+### The Treasure panel had a second thing to wait for
+
+Its chest list arrives with the game's data; its **ledger** comes from storage, and that lands later still. A panel reopened at start-up drew the whole chest list against an empty ledger — "Nothing opened yet", against a real history — until it was closed and opened again. It redraws when the ledger arrives.
+
 ### The Treasure panel stopped waiting forever
 
 A panel reopened at start-up is drawn before the game has sent anything, so it drew "Waiting for the game to send its chest data…" — and nothing redrew it. The message stayed up for the rest of the session, which reads as a panel that has stopped working rather than one that is early. It now looks again until there is something to draw.
