@@ -20,7 +20,7 @@ vi.mock('../core/storage.js', () => ({
     },
 }));
 
-const { saveGeometry, saveOpenState, wasOpen, allGeometry } = await import('./panel-geometry.js');
+const { saveGeometry, saveOpenState, wasOpen, allGeometry, reopenIfLeftOpen } = await import('./panel-geometry.js');
 
 beforeEach(() => {
     store.data = {};
@@ -43,6 +43,35 @@ describe('whether a panel was open', () => {
         await saveOpenState('dps', true);
 
         await expect(wasOpen('partyLoot')).resolves.toBe(false);
+    });
+});
+
+describe('reopening at start-up', () => {
+    test('a panel left open is reopened', async () => {
+        await saveOpenState('dps', true);
+
+        const reopen = vi.fn();
+        await reopenIfLeftOpen('dps', reopen);
+
+        expect(reopen).toHaveBeenCalled();
+    });
+
+    test('a panel left closed is not', async () => {
+        const reopen = vi.fn();
+        await reopenIfLeftOpen('neverOpened', reopen);
+
+        expect(reopen).not.toHaveBeenCalled();
+    });
+
+    test('a panel that throws on reopening does not take the others with it', async () => {
+        // These are all fired off at module scope, one after another
+        await saveOpenState('dps', true);
+
+        await expect(
+            reopenIfLeftOpen('dps', () => {
+                throw new Error('no body yet');
+            })
+        ).resolves.toBeUndefined();
     });
 });
 

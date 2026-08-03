@@ -7,6 +7,7 @@ import {
     chestBreakdown,
     summariseTally,
     tallyTotals,
+    sortSummary,
 } from './chest-tally.js';
 
 const CHEST = '/items/small_chest';
@@ -187,6 +188,55 @@ describe('summariseTally', () => {
     test('survives an empty tally', () => {
         expect(summariseTally(null, dropTables, priceOf)).toHaveLength(2);
         expect(summariseTally(null, null, priceOf)).toEqual([]);
+    });
+});
+
+describe('sortSummary', () => {
+    const dropTables = { [CHEST]: dropTable, '/items/big_chest': dropTable };
+    const NAMES = { [CHEST]: 'Zebra Chest', '/items/big_chest': 'Aardvark Chest' };
+    const nameOf = (chestHrid) => NAMES[chestHrid] || chestHrid;
+
+    // The lucky one, the unlucky one, and one never opened
+    const tally = {
+        [CHEST]: { opened: 100, loot: { '/items/coin': 20000, '/items/rare': 2 } },
+        '/items/big_chest': { opened: 5, loot: { '/items/coin': 1000 } },
+    };
+    const rows = () => summariseTally(tally, dropTables, priceOf);
+    const order = (mode) => sortSummary(rows(), mode, nameOf).map((row) => row.chestHrid);
+
+    test('by name every chest is in one alphabet, opened or not', () => {
+        // Splitting them would put half the names in one place and half in
+        // another, which is the thing this order exists to avoid
+        expect(order('name')).toEqual(['/items/big_chest', CHEST]);
+    });
+
+    test('by most opened, the one you have actually been opening leads', () => {
+        expect(order('opened')[0]).toBe(CHEST);
+    });
+
+    test('by coins up or down, which is not the same question as luck', () => {
+        // A chest opened five times can be the unluckiest by ratio and still be
+        // nowhere near the biggest loss
+        expect(order('luck')[0]).toBe('/items/big_chest');
+        expect(order('profit')[0]).toBe(CHEST);
+    });
+
+    test('an unknown mode falls back to luck rather than to arbitrary', () => {
+        expect(order('nonsense')).toEqual(order('luck'));
+    });
+
+    test('the caller’s array is left alone', () => {
+        // It is usually the one on screen, and reordering it underneath a
+        // half-drawn table draws a row twice
+        const original = rows();
+        const before = original.map((row) => row.chestHrid);
+        sortSummary(original, 'name', nameOf);
+
+        expect(original.map((row) => row.chestHrid)).toEqual(before);
+    });
+
+    test('survives having nothing to sort', () => {
+        expect(sortSummary(null, 'name')).toEqual([]);
     });
 });
 

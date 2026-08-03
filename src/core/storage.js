@@ -15,6 +15,19 @@ class Storage {
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
+
+        /**
+         * Resolves once `initialize` has run, either way.
+         *
+         * Anything reading at module scope needs this. Features are initialized
+         * long after the libraries load, so a module-scope read lands before the
+         * database is open, gets the default back, and has no way to know the
+         * difference between "not stored" and "not asked yet" — which is how
+         * every remembered panel quietly forgot itself.
+         */
+        this.ready = new Promise((resolve) => {
+            this._markReady = resolve;
+        });
     }
 
     /**
@@ -25,10 +38,12 @@ class Storage {
         try {
             await this.openDatabase();
             this.available = true;
+            this._markReady(true);
             return true;
         } catch (error) {
             console.error('[Storage] Initialization failed:', error);
             this.available = false;
+            this._markReady(false);
             return false;
         }
     }

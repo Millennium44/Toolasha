@@ -23,7 +23,7 @@ import { rows, blank, itemIcon, skillIcon, linkToMarketplace, ROW_COLORS } from 
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
@@ -385,9 +385,7 @@ class HousesPanel {
 
     /** Reopen if the page was left with this panel up */
     restore() {
-        wasOpen(GEOMETRY_KEY).then((open) => {
-            if (open) this.show({ remember: false });
-        });
+        reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
     toggle() {

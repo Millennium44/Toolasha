@@ -8,6 +8,7 @@ vi.mock('./panel-geometry.js', () => ({
     saveGeometry: vi.fn(),
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 
 vi.mock('./panel-z-index.js', () => ({

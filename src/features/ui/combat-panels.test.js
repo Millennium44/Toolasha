@@ -44,6 +44,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 400000, bid: 380000 }) }));
 vi.mock('../../features/combat/combat-dps.js', () => ({

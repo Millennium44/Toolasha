@@ -39,6 +39,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 
 // The selection is persisted, and IndexedDB is not what this file is about

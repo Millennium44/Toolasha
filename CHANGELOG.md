@@ -6,6 +6,29 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The badge said "2 2"
+
+Blanking the game's own count with `font-size: 0` did not blank it: the number is drawn inside a nested element that sets its own size, so the real count rendered beside ours. The children are removed outright now — a pseudo-element is not matched by `*`, so ours is the only thing left to draw.
+
+### Remembered panels actually reopen
+
+They recorded being open and then never came back, which is the more annoying half of the bug. Two things were wrong, and both are about _when_ a panel asks:
+
+- **The database was not open yet.** Panels ask at module scope, which runs long before storage is initialised, so the read came back with the default — indistinguishable from having been closed. The storage module now hands out a promise that resolves once it has finished starting up, and the geometry store waits on it before its first read.
+- **There was nothing to draw into.** The script runs at `document-start`, so at that moment there is no `<body>` to append a panel to. Reopening now waits for one.
+
+Both waits live in a single `reopenIfLeftOpen`, which is what each panel calls, so there is one place for this rather than five.
+
+### The treasure popup resizes in every direction again
+
+It was capped with `max-height`, and the resize grip writes `height` — so dragging the corner downwards changed a number nothing rendered, and the popup could be made wider but never taller. It is measured once when it opens and given a plain height instead, which caps it just the same and leaves `height` as the only thing deciding how tall it is.
+
+### Sort the chest list
+
+The Treasure panel lists every chest in the game, ordered by how far each sits from expectation — which is the right answer to "which one let me down" and the worst possible one for "where is the chest I am looking for". A picker in the header offers luck, name, most opened, chest value, and coins up or down, and remembers which you chose.
+
+It is a `<select>` in the header rather than above the list because the header is built once; a control rebuilt by the panel's redraw would shut its own dropdown under the pointer.
+
 ### The marketplace badge counts the finished ones
 
 It said 2 for a filled sell order sitting beside a buy order that had taken 130 of 719 — and collecting those 130 does nothing except silence it until the next fill. It says 1.

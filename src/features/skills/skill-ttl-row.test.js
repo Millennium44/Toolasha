@@ -30,6 +30,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({

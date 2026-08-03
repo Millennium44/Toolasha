@@ -66,6 +66,10 @@ export function clampGeometry(geometry, viewport, min = { width: 200, height: 80
  * @returns {Promise<Object>} `{ [panelKey]: geometry }`
  */
 export async function allGeometry() {
+    // Module-scope callers run before the database is open, and an unguarded
+    // read there comes back with the default — indistinguishable from nothing
+    // having been stored
+    await storage.ready;
     if (cache) return cache;
     if (!loading) {
         loading = storage
@@ -175,5 +179,44 @@ export async function wasOpen(panelKey) {
     } catch (error) {
         console.error('[PanelGeometry] Reading whether a panel was open failed:', error);
         return false;
+    }
+}
+
+/**
+ * Resolves once there is a `<body>` to append a panel to.
+ *
+ * The script runs at `document-start`, so at the moment these modules are
+ * imported there is no body — a panel reopening itself then would throw on the
+ * append and take the rest of the module's start-up with it.
+ *
+ * @returns {Promise<void>}
+ */
+function bodyReady() {
+    if (typeof document === 'undefined' || document.body) return Promise.resolve();
+    return new Promise((resolve) => {
+        document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
+    });
+}
+
+/**
+ * Reopen a panel that was open when the page was last left.
+ *
+ * The waiting is the whole of it, and is why this is one function rather than a
+ * `wasOpen` call in each panel. Panels ask at module scope, which is before the
+ * database is open *and* before there is a body to draw into; asking then gets
+ * the default back, which is indistinguishable from having been closed. That is
+ * why remembering appeared to work and reopening never did.
+ *
+ * @param {string} panelKey - The panel's key
+ * @param {Function} reopen - Called only if it was open
+ * @returns {Promise<void>}
+ */
+export async function reopenIfLeftOpen(panelKey, reopen) {
+    try {
+        if (!(await wasOpen(panelKey))) return;
+        await bodyReady();
+        reopen();
+    } catch (error) {
+        console.error('[PanelGeometry] Reopening a panel failed:', error);
     }
 }

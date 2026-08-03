@@ -38,6 +38,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
+    reopenIfLeftOpen: async () => {},
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({

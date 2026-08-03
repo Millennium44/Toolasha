@@ -33,13 +33,21 @@ import {
     chestBreakdown,
     summariseTally,
     tallyTotals,
+    sortSummary,
+    SORT_MODES,
 } from '../../utils/chest-tally.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry, clearGeometry, saveOpenState, wasOpen } from '../../utils/panel-geometry.js';
+import {
+    restoreGeometry,
+    saveGeometry,
+    clearGeometry,
+    saveOpenState,
+    reopenIfLeftOpen,
+} from '../../utils/panel-geometry.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import {
     toExport,
@@ -106,7 +114,13 @@ const COWBELLS_PER_BAG = 10;
 /** The bag's own market tax, which you pay to turn cowbells into coins */
 const COWBELL_BAG_TAX = 0.18;
 
-const DEFAULT_SETTINGS = { capeValue: 'token', valueCowbells: true, hiddenChests: [], popupPinned: false };
+const DEFAULT_SETTINGS = {
+    capeValue: 'token',
+    valueCowbells: true,
+    hiddenChests: [],
+    popupPinned: false,
+    sortMode: 'luck',
+};
 
 /**
  * How a chest's return reads against expectation.
@@ -180,6 +194,33 @@ export function worthShowing(items) {
     return (items || []).filter(
         (item) => (item.actualCount || 0) > 0 || (item.expectedCount || 0) >= NEGLIGIBLE_EXPECTED
     );
+}
+
+/** The tallest a freshly-opened popup is allowed to be */
+const POPUP_MAX_HEIGHT = 560;
+
+/**
+ * Turn a content-sized popup into one with a height of its own.
+ *
+ * A chest with thirty drop-table rows makes a popup taller than the screen, and
+ * the rows that matter are the ones off the bottom — so it has to be capped. It
+ * used to be capped with `max-height`, which was the bug: the resize grip writes
+ * `height`, and a `max-height` sitting above it means dragging the corner
+ * downwards changes a number that nothing renders. The popup could be made
+ * wider and never taller.
+ *
+ * Measuring once and writing the result as a plain height caps it just the same
+ * and leaves `height` as the only thing deciding how tall it is.
+ *
+ * @param {HTMLElement} popup - Already in the document, so it can be measured
+ * @param {number} [viewportHeight] - The window, for tests
+ * @returns {number} The height it was given
+ */
+export function capHeightToWindow(popup, viewportHeight = window.innerHeight) {
+    const natural = popup.offsetHeight || popup.getBoundingClientRect().height;
+    const height = Math.min(natural, POPUP_MAX_HEIGHT, Math.round(viewportHeight * 0.7));
+    popup.style.height = `${height}px`;
+    return height;
 }
 
 class TreasureTracker {
@@ -257,6 +298,7 @@ class TreasureTracker {
         this.popup = this._buildPopup(chestHrid, opening, lifetime);
         document.body.appendChild(this.popup);
         registerFloatingPanel(this.popup);
+        capHeightToWindow(this.popup);
 
         // Size is always remembered; where it goes is not, unless you have moved
         // it. Auto-placement is the whole point of this popup, and a remembered
@@ -359,9 +401,7 @@ class TreasureTracker {
      * reappearing on load would be a stale answer to a question nobody asked.
      */
     restore() {
-        wasOpen(PANEL_GEOMETRY_KEY).then((open) => {
-            if (open) this.show({ remember: false });
-        });
+        reopenIfLeftOpen(PANEL_GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
     /**
@@ -371,7 +411,10 @@ class TreasureTracker {
     _summary() {
         const dropTables = dataManager.getInitClientData()?.openableLootDropMap || {};
         const rows = summariseTally(this.tally, dropTables, this._priceOf());
-        return { rows, totals: tallyTotals(rows) };
+        // Totals are taken before sorting, because they are the same figures
+        // whichever way the rows are ordered
+        const totals = tallyTotals(rows);
+        return { rows: sortSummary(rows, this.settings.sortMode, itemName), totals };
     }
 
     /**
@@ -508,10 +551,6 @@ class TreasureTracker {
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             color: COLORS.text,
             fontSize: '11px',
-            // Capped against the window rather than left to grow: a chest with
-            // thirty drop-table rows made a popup taller than the screen, and
-            // the rows that mattered were the ones off the bottom
-            maxHeight: 'min(560px, 70vh)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -841,9 +880,53 @@ class TreasureTracker {
         const closeBtn = this._headerButton('✕', () => this.hide());
         closeBtn.title = 'Close';
 
-        header.append(title, this.capeBtn, this.cowbellBtn, gear, spacer, closeBtn);
+        header.append(title, this.capeBtn, this.cowbellBtn, gear, spacer, this._sortPicker(), closeBtn);
         this._refreshToggles();
         return header;
+    }
+
+    /**
+     * How the chest list is ordered.
+     *
+     * In the header rather than above the list because the header is built once,
+     * and a `<select>` rebuilt by the panel's redraw would shut its own dropdown
+     * under the pointer.
+     *
+     * @returns {HTMLSelectElement}
+     */
+    _sortPicker() {
+        const picker = document.createElement('select');
+        picker.title =
+            'How to order the chests. Luck answers "which one let me down"; ' +
+            'the alphabet answers "where is the one I am looking for".';
+        Object.assign(picker.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.textDim,
+            cursor: 'pointer',
+            fontSize: '10px',
+            padding: '2px 4px',
+            maxWidth: '130px',
+        });
+
+        for (const mode of SORT_MODES) {
+            const option = document.createElement('option');
+            option.value = mode.key;
+            option.textContent = mode.label;
+            picker.appendChild(option);
+        }
+        picker.value = SORT_MODES.some((mode) => mode.key === this.settings.sortMode) ? this.settings.sortMode : 'luck';
+
+        // The header is what you drag the panel by, so a pointer that came down
+        // on the picker must not also start a drag
+        picker.addEventListener('mousedown', (event) => event.stopPropagation());
+        picker.addEventListener('change', () => {
+            this.settings.sortMode = picker.value;
+            this._saveSettings();
+            this._render();
+        });
+        return picker;
     }
 
     /**

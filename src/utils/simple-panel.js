@@ -15,7 +15,7 @@
 import config from '../core/config.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from './panel-z-index.js';
 import { makeDraggable, makeResizable } from './floating-panel.js';
-import { restoreGeometry, saveGeometry, saveOpenState, wasOpen } from './panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from './panel-geometry.js';
 import { ROW_COLORS } from './overlay-format.js';
 
 const DEFAULT_REFRESH_MS = 3000;
@@ -191,9 +191,7 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
     // this is module scope and a storage read has no business holding it up —
     // the panel appears a moment after the rest of the page, which is what a
     // remembered panel looks like anyway.
-    wasOpen(id).then((open) => {
-        if (open) api.show({ remember: false });
-    });
+    reopenIfLeftOpen(id, () => api.show({ remember: false }));
 
     return api;
 }
