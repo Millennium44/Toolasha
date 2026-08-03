@@ -32,7 +32,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import combatDropLuck, { formatOrdinal, describeLuck } from './combat-drop-luck.js';
+import combatDropLuck, { formatOrdinal, describeLuck, describeChestRun } from './combat-drop-luck.js';
 import { partyLuck } from './party-luck.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
@@ -251,6 +251,58 @@ function drawPlayerTable(body, player) {
 }
 
 /**
+ * A dungeon, which is measured by its chests rather than by its monsters.
+ *
+ * The per-monster model cannot place a dungeon haul — a dungeon pays once, from
+ * a reward table, on completion. But the drop-quantity bonus turns the
+ * guaranteed chest into a guaranteed chest plus a chance of another, and that
+ * chance is the only randomness in the payout, which makes it the whole of the
+ * luck. Completions are counted by watching the chest count rise, because the
+ * game never states them.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} chest - From `combatDropLuck.dungeonChestLuck()`
+ */
+function drawDungeonChests(body, chest) {
+    const card = panelCard(body, 'Dungeon chests', ACCENT);
+
+    for (const player of chest.players) {
+        const luck = player.luck;
+        if (!luck) {
+            card.appendChild(panelLine(player.name, 'no completion yet', ROW_COLORS.dim, describeChestRun(player)));
+            continue;
+        }
+
+        const verdict = signedPercent(luck.expected > 0 ? (luck.chests / luck.expected - 1) * 100 : 0);
+        const percentile = luck.percentile === null ? '—' : formatOrdinal(luck.percentile);
+
+        card.appendChild(
+            panelLine(
+                player.name,
+                `${formatWithSeparator(luck.chests)} of ${luck.expected.toFixed(1)}   ${verdict.text}   ${percentile}`,
+                verdict.color,
+                describeChestRun(player)
+            )
+        );
+    }
+
+    card.appendChild(
+        panelLine(
+            'Party',
+            String(chest.partySize),
+            ROW_COLORS.neutral,
+            'A completion pays five chests split across the party, so a bigger party is fewer each.'
+        )
+    );
+    card.appendChild(
+        panelNote(
+            'Completions are counted by watching the chests arrive, so a dungeon already in progress is measured ' +
+                'from the moment this saw it rather than from the start.'
+        )
+    );
+}
+
+/**
  * Every drop the run produced, against what it owed.
  */
 export const partyLuckPanel = createPanel({
@@ -261,6 +313,20 @@ export const partyLuckPanel = createPanel({
     refreshMs: 5000,
     draw: (body) => {
         const party = partyLuck(combatDropLuck.context);
+        const chest = combatDropLuck.dungeonChestLuck();
+
+        // A dungeon has no per-monster expectation to draw, so the chest card is
+        // the panel rather than a section of it
+        if (chest) {
+            drawDungeonChests(body, chest);
+            body.appendChild(
+                panelNote(
+                    'A dungeon pays from a reward table on completion, not per monster, so there is no per-drop ' +
+                        'expectation to compare against — only the chests.'
+                )
+            );
+            return;
+        }
 
         if (!party.players.length) {
             body.appendChild(panelNote('No run measured yet.'));

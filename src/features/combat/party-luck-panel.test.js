@@ -11,7 +11,14 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ players: [], actionDetail: null, monsters: {}, context: null, luck: null }));
+const game = vi.hoisted(() => ({
+    players: [],
+    actionDetail: null,
+    monsters: {},
+    context: null,
+    luck: null,
+    chests: null,
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -31,9 +38,11 @@ vi.mock('./combat-drop-luck.js', () => ({
         get lastResult() {
             return game.luck;
         },
+        dungeonChestLuck: () => game.chests || null,
     },
     formatOrdinal: (percentile) => `${Math.round(percentile * 100)}th`,
     describeLuck: (percentile) => ({ text: `${Math.round(percentile * 100)}th percentile`, tone: 'unlucky' }),
+    describeChestRun: (player) => `${player.name}: chests`,
 }));
 vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => ({ players: game.players }) },
@@ -46,6 +55,7 @@ const { partyLuckPanel } = await import('./party-luck-panel.js');
 const { partyLuck } = await import('./party-luck.js');
 
 beforeEach(() => {
+    game.chests = null;
     game.context = { actionHrid: '/actions/zone', difficultyTier: 2, battles: 100 };
     game.luck = { percentile: 0.15, income: 4_000_000, expected: 3_000_000, battles: 100, hasBonuses: true };
     game.monsters = {
@@ -175,5 +185,57 @@ describe('the panel renders', () => {
 
         expect(text()).toContain('No run measured yet');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('inside a dungeon', () => {
+    beforeEach(() => {
+        game.actionDetail = { combatZoneInfo: { isDungeon: true } };
+        game.chests = {
+            partySize: 5,
+            players: [
+                {
+                    name: 'Geared',
+                    isCurrentPlayer: true,
+                    mean: 1.295,
+                    byPayout: { 1: 8, 2: 4 },
+                    luck: {
+                        completions: 12,
+                        chests: 16,
+                        expected: 15.54,
+                        extras: 4,
+                        expectedExtras: 3.54,
+                        chance: 0.295,
+                        percentile: 0.68,
+                    },
+                },
+                { name: 'Bare', isCurrentPlayer: false, mean: 1, byPayout: {}, luck: null },
+            ],
+        };
+    });
+
+    test('the chests are the reading, in place of a percentile the model cannot give', () => {
+        partyLuckPanel.show();
+
+        expect(text()).toContain('Dungeon chests');
+        expect(text()).toContain('16 of 15.5');
+        expect(text()).toContain('68th');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('somebody with no completion yet says so rather than reading as a disaster', () => {
+        partyLuckPanel.show();
+
+        expect(text()).toContain('Bare');
+        expect(text()).toContain('no completion yet');
+    });
+
+    test('and the per-monster tables are not drawn, because there are none', () => {
+        // A dungeon pays on completion from a reward table; an item table built
+        // from monster drop rates would be a confident answer to another zone
+        partyLuckPanel.show();
+
+        expect(text()).not.toContain('Revenue');
+        expect(text()).not.toContain('Session Statistics');
     });
 });
