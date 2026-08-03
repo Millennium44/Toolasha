@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The budget plans for a whole run, not for one fight
+
+A labyrinth run is ten fights in ten loadouts, and a purchase only helps the rooms it reaches — so "one upgrade per slot" was answering a question about a single fight. The plan now buys **two chestpieces where they serve different rooms**: one for the melee loadouts, one for the casters, which is two purchases doing two jobs.
+
+What it still refuses is two pieces for the _same_ rooms, where the second is gold spent on something that never gets worn. Every candidate is valued at what it adds **beyond what is already picked**: within a slot a room wears whichever picked piece is best for it, so a second piece is worth exactly the rooms it improves on the first — no more. Each row says how many rooms it is there for, and the saving beside it is its own marginal contribution rather than a total that counts shared rooms twice.
+
+If a cheap early pick is later beaten in every room it covered, it is taken back out of the plan and its gold returned to the budget. Skill levels, ability levels and house rooms stay one-per-group, because there is no second copy of those to wear somewhere else.
+
+### Verify together says what it is wearing
+
+It always installed **every** pick that applies to a loadout, all at once — the tooltip just never said so. It now spells that out, and the result line reports how many were worn together. Where two picks share a slot, the room wears whichever is better _there_, which is exactly what the plan valued the second one at.
+
+### Fights simulate several at a time
+
+Every labyrinth fight is its own worker with its own seed and its own trial count, and they were being run one after another while the rest of the machine sat idle. The baseline pass and each candidate's pass now run up to `combatSim_maxThreads` (or core count) fights at once. Results are still collected in fight order, so every downstream figure is unchanged — this is wall-clock only.
+
 ### The simulator is about four times quicker at rebuilding stats, and fury feels it most
 
 Fury was the slowest damage type to simulate, and nothing about it was slow — it was just the only one that triggered a full stat rebuild on nearly every swing. Measured, one rebuild cost ~92 µs, and **72% of it was re-aggregating what the equipment contributes**: seventy stats, each an `Object.values` plus a filter, a map and a reduce over thirteen slots, arriving at numbers that cannot change during a fight. It is now ~23 µs.

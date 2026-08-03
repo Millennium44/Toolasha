@@ -1545,11 +1545,13 @@ class LabSimUI {
      * own error.
      *
      * @param {Array<Object>} results - Ranked results
+     * @param {Object} baseline - Baseline metrics, for valuing room coverage
      * @returns {string} HTML
      * @private
      */
-    _renderBudgetPlan(results) {
+    _renderBudgetPlan(results, baseline) {
         const budget = this._allFightsBudget ?? 0;
+        const baselineFights = baseline?.fights || [];
         const money = (value) => formatKMB(Math.round(value));
         const inputStyle =
             'width:90px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
@@ -1560,21 +1562,25 @@ class LabSimUI {
 
         let body = '';
         if (budget > 0) {
-            const plan = planWithinBudget(results, budget);
+            const plan = planWithinBudget(results, budget, { baselineFights });
             if (!plan.picks.length) {
                 body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${
                     plan.skipped.length ? ' — the cheapest measured upgrade costs more.' : '.'
                 }</div>`;
             } else {
                 const rows = plan.picks
-                    .map(
-                        (pick) =>
-                            `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
-                                <span style="color:#e0e0e0;">${pick.candidate.description}</span>
+                    .map((pick) => {
+                        // The saving credited to this pick is what it adds
+                        // *beyond the others* — a second piece for a slot is
+                        // worth only the rooms it improves on the first
+                        const rooms = pick.rooms ?? 0;
+                        return `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
+                                <span style="color:#e0e0e0;">${pick.candidate.description}
+                                    <span style="color:#666;">· ${rooms} room${rooms === 1 ? '' : 's'}</span></span>
                                 <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
-                                    <span style="color:#4caf50;">${pick.attemptsDelta.toFixed(1)} attempts</span></span>
-                            </div>`
-                    )
+                                    <span style="color:#4caf50;">−${(pick.marginalAttemptsSaved ?? -pick.attemptsDelta).toFixed(1)} attempts</span></span>
+                            </div>`;
+                    })
                     .join('');
                 const noise = plan.skipped.filter((s) => s.reason.startsWith('within the noise')).length;
                 body =
@@ -1582,9 +1588,9 @@ class LabSimUI {
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
                         ${plan.picks.length} upgrades · ${money(plan.totalCost)} of ${money(budget)} ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
-                        <span style="color:#666;"> if the gains add up</span>
+                        <span style="color:#666;"> if gains in different slots add up</span>
                         <button id="mwi-labsim-verify-combo" style="${btnStyle} margin-left:8px;"
-                            title="Run one more pass with all of these installed at once. Upgrades that fix the same failing room overlap, and the total above counts that room twice.">Verify together</button>
+                            title="Runs the whole run again with every pick installed at once — each loadout wearing all of the picks that apply to it, and the better one where two picks share a slot. Upgrades that fix the same failing room overlap, and the total above counts that room twice.">Verify together</button>
                     </div>` +
                     (noise
                         ? `<div style="color:#666; font-size:10px; margin-top:2px;">${noise} skipped as within the simulation's own error</div>`
@@ -1600,7 +1606,7 @@ class LabSimUI {
                 <input id="mwi-labsim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
                     value="${this._allFightsBudgetText || ''}" style="${inputStyle}">
                 <button id="mwi-labsim-budget-plan" style="${btnStyle}">Plan</button>
-                <span style="color:#555;">best set that fits, one per slot, skipping gains inside the noise</span>
+                <span style="color:#555;">best set that fits — most rooms covered per coin, skipping gains inside the noise</span>
             </div>
             ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
         </div>`;
@@ -1627,7 +1633,9 @@ class LabSimUI {
         container.querySelector('#mwi-labsim-verify-combo')?.addEventListener('click', async (event) => {
             const button = event.currentTarget;
             const output = container.querySelector('#mwi-labsim-combo-result');
-            const picks = planWithinBudget(results, this._allFightsBudget ?? 0).picks;
+            const picks = planWithinBudget(results, this._allFightsBudget ?? 0, {
+                baselineFights: baseline?.fights || [],
+            }).picks;
             if (!picks.length || !output) return;
 
             button.disabled = true;
@@ -1661,6 +1669,7 @@ class LabSimUI {
      * @private
      */
     _renderComboCheck(check) {
+        const worn = check.fights?.length ? Math.max(...check.fights.map((f) => f.installed?.length || 0)) : 0;
         const promised = -check.summedDelta;
         const actual = -check.attemptsDelta;
         // Overlap is the usual outcome and not a fault: two upgrades that both
@@ -1669,6 +1678,7 @@ class LabSimUI {
         const share = promised > 0 ? Math.round((lost / promised) * 100) : 0;
         const colour = lost > check.noise ? '#ff9800' : '#4caf50';
         return `<span style="color:#e0e0e0;">Together: <b>−${actual.toFixed(1)}</b> attempts</span>
+            <span style="color:#666;">(each loadout wearing every pick that fits it, up to ${worn} at once)</span>
             <span style="color:#888;">vs −${promised.toFixed(1)} promised by the parts</span>
             <span style="color:${colour};">${
                 lost > check.noise
@@ -1746,7 +1756,7 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = this._renderBudgetPlan(results);
+        let html = this._renderBudgetPlan(results, baseline);
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>

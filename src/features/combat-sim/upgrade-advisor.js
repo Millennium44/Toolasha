@@ -8,7 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
-import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
+import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates } from './lab-armor-candidates.js';
 import { bestGearForSkill } from './skilling-gear-candidates.js';
@@ -2714,13 +2714,17 @@ export function replacedIn(candidate, dto, gameData) {
 /**
  * What two upgrades have to share before buying both is wasteful.
  *
- * You wear one item per slot, so two upgrades to the same slot are alternatives
- * and not a shopping list — a plan that buys both has spent the second one's
- * gold for nothing. The same is true of two levels of one ability, or of one
- * combat skill: the higher target already includes the lower.
+ * Some pairs are genuinely alternatives: two targets for one ability, or two
+ * levels of one combat skill, where the higher already contains the lower.
+ * Buying both spends the second one's price for nothing.
+ *
+ * Equipment slots are *not* in that category, which is the whole point of a
+ * labyrinth run — a second chestpiece is wasteful only if it serves the same
+ * rooms as the first. Where it serves rooms the first cannot reach, it is a
+ * second purchase doing a second job, and the plan treats it that way.
  *
  * @param {Object} candidate - The upgrade
- * @returns {string} Key that conflicting candidates share
+ * @returns {string} Key that candidates in the same group share
  */
 export function conflictKey(candidate) {
     if (candidate.type === 'combat_level') return `skill:${candidate.skillKey}`;
@@ -2738,65 +2742,192 @@ export function conflictKey(candidate) {
 }
 
 /**
+ * Whether a group admits exactly one purchase, whatever the rooms say.
+ *
+ * A skill level, an ability level and a house room are one number the character
+ * carries everywhere. There is no second copy to wear in another room, so the
+ * higher target simply contains the lower and buying both is buying one twice.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {boolean}
+ */
+function isExclusive(candidate) {
+    return (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        Boolean(candidate.slot?.startsWith('ability_'))
+    );
+}
+
+/**
  * The best set of upgrades a budget will buy.
  *
- * Greedy by value per coin rather than an exact knapsack, deliberately: the
- * values are simulated estimates with real error bars on them, an optimum
- * computed from them is false precision, and a list whose order can be read off
- * the table is worth more than one that is a percent better and inexplicable.
+ * ## Why not simply the top few by value
  *
- * Two rules do the work. Only one upgrade per conflict group — you wear one
- * chestpiece — and nothing that failed the significance test, since spending a
- * budget on gains that were never measured is the specific mistake this is here
- * to prevent.
+ * A labyrinth run is ten fights in ten loadouts, and a purchase only helps the
+ * rooms it reaches. Ranking by total value and allowing one item per slot
+ * answers a question about a single fight; the question here is which purchases
+ * cover the most rooms most effectively, and the answer can be **two
+ * chestpieces** — one for the melee loadouts, one for the casters. What it must
+ * never be is two chestpieces for the same rooms, where the second is gold spent
+ * on a piece that never gets worn.
  *
- * The total assumes the gains add up, which is exactly what the combination
- * check is for: two upgrades that fix the same failing room overlap, and the
- * sum overstates them.
+ * So each candidate is valued at what it adds *beyond what is already bought*.
+ * Within a slot a room wears whichever picked piece is best for it, so a second
+ * piece is worth exactly the rooms it improves on the first — nothing more.
+ * Across slots the gains are taken as adding up, which is the assumption the
+ * combination check exists to test.
+ *
+ * Greedy rather than an exact optimum, deliberately: the values are simulated
+ * estimates with real error bars, an optimum computed from them is false
+ * precision, and a list whose order can be read off the table is worth more than
+ * one that is a percent better and inexplicable.
  *
  * @param {Array<Object>} results - Ranked analysis results
  * @param {number} budget - Coins available
- * @param {Object} [options] - `{ includeUnmeasured }` to spend on noise anyway
+ * @param {Object} [options] - `{ baselineFights, includeUnmeasured }`
  * @returns {{picks: Array<Object>, totalCost: number, attemptsSaved: number,
  *   skipped: Array<{result: Object, reason: string}>, budget: number}}
  */
-export function planWithinBudget(results, budget, { includeUnmeasured = false } = {}) {
-    const affordable = (results || [])
-        .filter((result) => Number.isFinite(result.cost) && result.cost >= 0)
-        .filter((result) => result.attemptsDelta < 0)
-        .sort((a, b) => (b.attemptsSavedPerMillion ?? 0) - (a.attemptsSavedPerMillion ?? 0));
+export function planWithinBudget(results, budget, { baselineFights = [], includeUnmeasured = false } = {}) {
+    const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
 
-    const picks = [];
+    /** What one candidate saves in each fight, in expected attempts */
+    const savingsOf = (result) => {
+        if (!baseTries.length || !result.fights?.length) {
+            // No per-fight detail to work from — value it at the run total, which
+            // is what a plan without a baseline can honestly say
+            return [Math.max(0, -result.attemptsDelta)];
+        }
+        return result.fights.map((fight, index) =>
+            fight.applied === false
+                ? 0
+                : Math.max(0, (baseTries[index] ?? 0) - expectedFightAttempts(fight.winRate || 0))
+        );
+    };
+
+    const eligible = [];
     const skipped = [];
-    const taken = new Set();
-    let spent = 0;
-
-    for (const result of affordable) {
+    for (const result of results || []) {
+        if (!Number.isFinite(result.cost) || result.cost < 0) continue;
+        if (!(result.attemptsDelta < 0)) continue;
         if (!includeUnmeasured && result.significant === false) {
             skipped.push({ result, reason: 'within the noise of the simulation' });
             continue;
         }
-        const key = conflictKey(result.candidate);
-        if (taken.has(key)) {
-            skipped.push({ result, reason: 'another upgrade already takes that slot' });
-            continue;
-        }
-        if (spent + result.cost > budget) {
-            skipped.push({ result, reason: 'over budget' });
-            continue;
-        }
-        taken.add(key);
-        picks.push(result);
-        spent += result.cost;
+        eligible.push({ result, savings: savingsOf(result), key: conflictKey(result.candidate) });
     }
 
-    return {
-        picks,
-        totalCost: spent,
-        attemptsSaved: picks.reduce((sum, result) => sum - result.attemptsDelta, 0),
-        skipped,
-        budget,
+    const picks = [];
+    const taken = new Set();
+    // The best saving reached so far in each group, per fight. A room wears one
+    // piece per slot, so this is what a further piece has to beat to be worth
+    // anything there.
+    const bestBySlot = new Map();
+    let spent = 0;
+
+    const marginalOf = (entry) => {
+        const standing = bestBySlot.get(entry.key);
+        if (!standing) return entry.savings.reduce((sum, saving) => sum + saving, 0);
+        let marginal = 0;
+        for (let i = 0; i < entry.savings.length; i++) {
+            marginal += Math.max(standing[i] || 0, entry.savings[i]) - (standing[i] || 0);
+        }
+        return marginal;
     };
+
+    const remaining = [...eligible];
+    while (remaining.length) {
+        let best = null;
+        for (const entry of remaining) {
+            if (isExclusive(entry.result.candidate) && taken.has(entry.key)) continue;
+            if (spent + entry.result.cost > budget) continue;
+            const marginal = marginalOf(entry);
+            if (marginal <= 0) continue;
+            const value = entry.result.cost > 0 ? marginal / entry.result.cost : Infinity;
+            if (!best || value > best.value) best = { entry, marginal, value };
+        }
+        if (!best) break;
+
+        const { entry, marginal } = best;
+        remaining.splice(remaining.indexOf(entry), 1);
+        taken.add(entry.key);
+        spent += entry.result.cost;
+        picks.push({
+            ...entry.result,
+            marginalAttemptsSaved: marginal,
+            rooms: entry.savings.filter((saving) => saving > 0).length,
+        });
+
+        const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
+        bestBySlot.set(
+            entry.key,
+            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+        );
+
+        // A piece nobody would now wear is gold spent on nothing: if an earlier
+        // pick in this group has been beaten in every room it covered, take it
+        // back out and give the budget back
+        for (let i = picks.length - 2; i >= 0; i--) {
+            const older = picks[i];
+            if (conflictKey(older.candidate) !== entry.key) continue;
+            const olderSavings = savingsOf(older);
+            if (olderSavings.every((saving, index) => saving <= (entry.savings[index] ?? 0) + 1e-9)) {
+                spent -= older.cost;
+                picks.splice(i, 1);
+                skipped.push({ result: older, reason: 'a later pick covers every room it did' });
+            }
+        }
+    }
+
+    for (const entry of remaining) {
+        skipped.push({
+            result: entry.result,
+            reason: spent + entry.result.cost > budget ? 'over budget' : 'adds nothing the picks do not already cover',
+        });
+    }
+
+    // What the set saves across the run, if gains in different slots add up
+    let attemptsSaved = 0;
+    for (const savings of bestBySlot.values()) {
+        for (const saving of savings) attemptsSaved += saving;
+    }
+
+    return { picks, totalCost: spent, attemptsSaved, skipped, budget };
+}
+
+/**
+ * Run a job per item, several at a time.
+ *
+ * A labyrinth fight is its own worker with its own seed and its own trial count,
+ * so ten fights are ten independent runs that were being done one after another
+ * on a machine with eight cores idle. Bounded rather than all at once: each
+ * worker gets its own copy of the game data, and a fleet of them competing for
+ * one core apiece is slower than a queue.
+ *
+ * Results come back in the order the items were given, whatever order they
+ * finished in — every figure downstream is indexed by fight.
+ *
+ * @param {Array} items - What to run
+ * @param {Function} run - `(item, index) => Promise`
+ * @param {number} [limit] - How many at once
+ * @returns {Promise<Array>} Results, in input order
+ */
+async function mapConcurrent(items, run, limit = getMaxWorkers()) {
+    const results = new Array(items.length);
+    const width = Math.max(1, Math.min(limit, items.length));
+    let next = 0;
+
+    const worker = async () => {
+        while (true) {
+            const index = next++;
+            if (index >= items.length) return;
+            results[index] = await run(items[index], index);
+        }
+    };
+
+    await Promise.all(Array.from({ length: width }, worker));
+    return results;
 }
 
 /** Expected labyrinth attempts to clear one fight (retry until win) */
@@ -2896,7 +3027,10 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // baseline, which is both the truth and a great deal less work
     const simsPerCandidate = candidates.reduce((sum, c) => sum + c.appliesTo.filter(Boolean).length, 0);
     const total = fights.length + simsPerCandidate;
-    let current = 0;
+    // An object rather than a counter variable: the fight passes run
+    // concurrently and close over it, and a plain `let` shared by closures
+    // inside a loop is exactly the shape lint is right to be suspicious of
+    const progress = { current: 0 };
 
     // Per-fight seeds derived from one analysis seed: fight N is simmed with the
     // same random draws in the baseline pass and in every candidate pass, so a
@@ -2934,55 +3068,59 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         loadoutName: fight.loadoutName,
     });
 
-    // Baseline pass: every fight with its current levels
-    const baselineFights = [];
-    for (let i = 0; i < fights.length; i++) {
-        const fight = fights[i];
-        if (abortSignal?.()) return { baseline: null, results: [] };
-        onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
+    // Baseline pass: every fight with its current levels. Fights are independent
+    // — their own worker, their own seed — so they run several at a time.
+    if (abortSignal?.()) return { baseline: null, results: [] };
+    onProgress?.({ current: progress.current, total, description: `Baseline: ${fights.length} fights` });
+    const baselineFights = await mapConcurrent(fights, async (fight, i) => {
+        if (abortSignal?.()) return { ...fightMeta(fight), winRate: 0, trials: 1 };
         const { winRate, trials } = await simFightWinRate(fight, null, fightSeed(i), i);
-        baselineFights.push({ ...fightMeta(fight), winRate, trials });
-        current++;
-    }
+        progress.current++;
+        onProgress?.({ current: progress.current, total, description: `Baseline: ${fight.monsterName}` });
+        return { ...fightMeta(fight), winRate, trials };
+    });
+    if (abortSignal?.()) return { baseline: null, results: [] };
     const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
     const baselineAttempts = baselineFights.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
 
     // One pass per candidate, over the fights that candidate is about
     const results = [];
     for (const candidate of candidates) {
-        const fightResults = [];
         let aborted = false;
-        for (let i = 0; i < fights.length; i++) {
+        const fightResults = await mapConcurrent(fights, async (fight, i) => {
             if (abortSignal?.()) {
                 aborted = true;
-                break;
+                return { ...fightMeta(fight), winRate: baselineFights[i].winRate, winRateDelta: 0, applied: false };
             }
             // A fight this upgrade does not reach keeps its baseline exactly —
             // no sim, because there is nothing to find out
             if (!candidate.appliesTo[i]) {
-                fightResults.push({
-                    ...fightMeta(fights[i]),
+                return {
+                    ...fightMeta(fight),
                     winRate: baselineFights[i].winRate,
                     winRateDelta: 0,
                     applied: false,
-                });
-                continue;
+                };
             }
-            onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
-            const boostedDTO = applyCandidateToDTO(fights[i].dto, candidate);
-            const { winRate, trials } = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
-            fightResults.push({
-                ...fightMeta(fights[i]),
+            const boostedDTO = applyCandidateToDTO(fight.dto, candidate);
+            const { winRate, trials } = await simFightWinRate(fight, boostedDTO, fightSeed(i), i);
+            progress.current++;
+            onProgress?.({
+                current: progress.current,
+                total,
+                description: `${candidate.description}: ${fight.monsterName}`,
+            });
+            return {
+                ...fightMeta(fight),
                 winRate,
                 trials,
                 winRateDelta: winRate - baselineFights[i].winRate,
                 applied: true,
                 // What it goes in place of *here* — with one purchase serving
                 // several loadouts, that is not the same piece in every room
-                replaced: replacedIn(candidate, fights[i].dto, gameData),
-            });
-            current++;
-        }
+                replaced: replacedIn(candidate, fight.dto, gameData),
+            };
+        });
         if (aborted) break;
 
         const applied = fightResults.filter((f) => f.applied);
@@ -3084,12 +3222,24 @@ export async function runLabyrinthCombinationCheck(params, onProgress, options =
         const fight = fights[i];
         onProgress?.({ current, total, description: `Together: ${fight.monsterName}` });
 
-        // Each upgrade goes on only where it belongs, exactly as it did when it
-        // was measured alone — a set is not an excuse to dress a loadout in
-        // something the single-candidate pass would have refused it
+        // Every pick that belongs in this loadout goes on at once — that is the
+        // whole question. Two picks for the same slot are not both worn: the
+        // room wears whichever of them is better *here*, which is exactly how
+        // the plan valued the second one.
+        const bySlot = new Map();
+        for (const pick of picks) {
+            if (!candidateAppliesToDTO(pick.candidate, fight.dto, gameData)) continue;
+            const key = conflictKey(pick.candidate);
+            const standing = bySlot.get(key);
+            const gain = pick.fights?.[i]?.winRateDelta ?? 0;
+            if (!standing || gain > standing.gain) bySlot.set(key, { pick, gain });
+        }
+
         let dto = fight.dto;
         const installed = [];
-        for (const pick of picks) {
+        for (const { pick } of bySlot.values()) {
+            // Re-checked against the loadout as it now stands: a swap can fill a
+            // hand that was empty when the picks were chosen
             if (!candidateAppliesToDTO(pick.candidate, dto, gameData)) continue;
             dto = applyCandidateToDTO(dto, pick.candidate);
             installed.push(pick.candidate.description);
