@@ -15,6 +15,18 @@ After a refresh every combat tile read "No loot tracked yet", "No combat yet", "
 - **The DPS table borrows the party's names too.** Damage arrives on `battle_updated`, which is constant, but names arrive on `new_battle`, which is a wave apart — so a reload drew real numbers against "Player 1" through "Player 5". The names come from the restored snapshot, which is built from the same player list in the same order.
 - **A test that fails without the fix**, since nothing here throws: the failure is a tile quietly saying it has nothing.
 
+### A restored run is dropped when it stops describing anything
+
+The other half of restoring a snapshot: knowing when to stop. A finished run left on the overlay is worse than a blank one, because its per-day rates keep dividing by a clock nobody stopped — they decay toward zero and read as a run going badly rather than as a run that is not happening.
+
+- **Elapsed time is the wrong test, and it is the obvious one.** A snapshot can be twelve hours old for two opposite reasons: the character has been fighting all night with the tab shut, or combat stopped last night. The first is the correct run, slightly behind, and blanking it reintroduces the very gap this was meant to close. The second is history. The clock cannot tell them apart.
+- **The current action decides it.** A combat action in progress means the run is live and the snapshot is shown whatever its age. No combat action means it is over.
+- **A different zone in progress means it is somebody else's run**, and it is dropped even if it is a minute old — the clock would have called that fresh.
+- **The clock is only the fallback**, for when combat has stopped or the character's actions have not loaded yet. Ten minutes, so the run you just finished stays up while you read it, then it belongs to the popup — which still shows it on demand, because the popup falls back to reading storage directly.
+- **Snapshots now record the zone they were fought in.** One written by an earlier version has none, so it falls back to the clock rather than crashing or silently passing.
+
+Both degraded versions were checked against the tests: removing the cutoff fails three, and a naive time-only cutoff fails two — including the overnight run, which is the case that matters.
+
 ### A refresh no longer throws the dungeon away, and Total Profit shows the party
 
 Two unrelated faults, both visible in the same screenshot.
