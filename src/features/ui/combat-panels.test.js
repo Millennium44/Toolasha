@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
     luck: null,
     stats: null,
     breakdown: { seconds: 0, players: [] },
+    taken: null,
     filtering: true,
     inventory: [],
 }));
@@ -77,6 +78,13 @@ vi.mock('../../features/combat/damage-tracker.js', () => ({
     },
 }));
 
+// The taken tracker is a stateful singleton fed by the websocket, so it lives in
+// the Combat bundle and the panel reaches it through the global rather than
+// importing a second copy that would sit there receiving nothing
+window.Toolasha = {
+    Combat: { damageTakenTracker: { takenBreakdown: () => state.taken } },
+};
+
 const { dpsPanel, deathsPanel, profitPanel, combatProfitView } = await import('./combat-panels.js');
 
 const panels = () => [dpsPanel, deathsPanel, profitPanel];
@@ -128,6 +136,39 @@ beforeEach(() => {
             { name: 'Wolf', damage: 300000, hits: 30, crits: 6, misses: 4, kills: 5, maxHP: 8800, dps: 1000 },
         ],
     };
+    state.taken = {
+        seconds: 300,
+        encounters: 40,
+        players: [
+            { index: '0', name: 'You', damage: 3400, regen: 3600, hits: 60, misses: 5, dps: 11.3, hps: 12 },
+            { index: '1', name: 'Ally', damage: 900, regen: 400, hits: 20, misses: 2, dps: 3, hps: 1.3 },
+        ],
+        enemies: [
+            {
+                name: 'Veyes',
+                damage: 3100,
+                hits: 50,
+                min: 66,
+                max: 88,
+                players: [
+                    { index: '0', name: 'You', damage: 2800, hits: 44, min: 66, max: 88 },
+                    { index: '1', name: 'Ally', damage: 300, hits: 6, min: 40, max: 60 },
+                ],
+            },
+            {
+                name: 'Unknown Enemy',
+                damage: 8,
+                hits: 1,
+                min: 8,
+                max: 8,
+                players: [{ index: '0', name: 'You', damage: 8, hits: 1, min: 8, max: 8 }],
+            },
+        ],
+        waves: [
+            { name: 'Veyes x2', encounters: 1, damage: 171, average: 171, min: 83, max: 88 },
+            { name: 'Eye x2 + Veyes', encounters: 2, damage: 230, average: 115, min: 49, max: 66 },
+        ],
+    };
     state.luck = { percentile: 0.51, income: 5_000_000, expected: 4_000_000, battles: 300, hasBonuses: true };
     state.stats = {
         durationSeconds: 3600,
@@ -165,6 +206,9 @@ describe('every panel draws', () => {
         state.luck = null;
         state.stats = null;
         state.breakdown = { seconds: 0, logging: 0, players: [], enemies: [] };
+        // Null rather than empty: before its feature has started, the tracker is
+        // not there to be asked at all
+        state.taken = null;
 
         for (const panel of panels()) {
             panel.show();
@@ -355,21 +399,94 @@ describe('what the panels add over their tiles', () => {
         expect(dpsPanel.panel.textContent).toContain('needs a cast to start');
     });
 
-    test('Deaths breaks the party down by player, as IHurt does', () => {
+    test('IHurt leads with deaths per player and for the party', () => {
         // A party figure says the group is dying and not who, and "who" is the
         // whole question when one member is under-geared for the zone
         deathsPanel.show();
         const text = deathsPanel.panel.textContent;
 
+        expect(text).toContain('Session Deaths:');
+        expect(text).toContain('Session Deaths/hr:');
         expect(text).toContain('Ally');
         expect(text).toContain('You');
         // Two plus four across an hour
         expect(text).toContain('6');
     });
 
-    test('and does not claim to know what killed anybody', () => {
+    test('damage taken and healed are shown side by side, never netted', () => {
+        // A net figure of −200 describes both a comfortable zone and one you
+        // barely survive; the pair is what tells them apart
         deathsPanel.show();
-        expect(deathsPanel.panel.textContent).toContain('counts rather than causes');
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Total dmg');
+        expect(text).toContain('Total regen');
+        expect(text).toContain('Damage/s');
+        expect(text).toContain('Regen/s');
+    });
+
+    test('deaths come from the server even when the tracker has never seen the player', () => {
+        // Two sources for one number is two numbers that eventually disagree
+        state.taken = { seconds: 0, encounters: 0, players: [], enemies: [], waves: [] };
+        deathsPanel.show();
+
+        expect(deathsPanel.panel.textContent).toContain('Ally');
+        expect(deathsPanel.panel.textContent).not.toContain(FAILED);
+    });
+
+    test('it breaks the damage down by what dealt it, with hit ranges', () => {
+        // An average of forty with a maximum of two hundred is a zone that kills
+        // you, and the average alone says it is comfortable
+        deathsPanel.show();
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Enemy Damage to Party:');
+        expect(text).toContain('Veyes');
+        expect(text).toContain('[66-88]');
+    });
+
+    test('and by wave, so a composition can be recognised again', () => {
+        deathsPanel.show();
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Damage Profiles');
+        expect(text).toContain('Eye x2 + Veyes');
+        expect(text).toContain('Avg/Encounter');
+    });
+
+    test('the sections start open, since collapsed there is nothing to read', () => {
+        deathsPanel.show();
+        expect(deathsPanel.panel.textContent).toContain('▼');
+    });
+
+    test('a section closes and stays closed through a repaint', () => {
+        deathsPanel.show();
+        const header = [...deathsPanel.panel.querySelectorAll('div')].find((element) =>
+            element.textContent.startsWith('▼Enemy Damage to Party:')
+        );
+        header.click();
+
+        expect(deathsPanel.panel.textContent).not.toContain('[66-88]');
+        deathsPanel.refresh();
+        expect(deathsPanel.panel.textContent).not.toContain('[66-88]');
+    });
+
+    test('an unattributed hit is named rather than dropped', () => {
+        // Dropping it would make the enemy totals disagree with the party total
+        deathsPanel.show();
+        expect(deathsPanel.panel.textContent).toContain('Unknown Enemy');
+    });
+
+    test('and it says why an attacker can be unknown', () => {
+        deathsPanel.show();
+        expect(deathsPanel.panel.textContent).toContain('auto-attack spends none');
+    });
+
+    test('with nothing having hit the party it says so rather than showing nothing', () => {
+        state.taken = { seconds: 0, encounters: 0, players: [], enemies: [], waves: [] };
+        deathsPanel.show();
+
+        expect(deathsPanel.panel.textContent).toContain('Nothing has hit the party yet');
     });
 
     test('Profit names the three cases HWhat names', () => {

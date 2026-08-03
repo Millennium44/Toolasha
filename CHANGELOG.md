@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Deaths panel is IHurt now
+
+It showed a death count and a rate, which is the tile with more decimal places. The question a deaths panel exists to answer is not "how many" but "can this zone be idled overnight", and a count cannot answer it — you find out by dying.
+
+- **Damage taken and health regenerated, side by side and never netted.** A net figure of −200 describes both a comfortable zone and one you barely survive. 3,400 taken against 3,600 healed is sustainable; 3,400 against 200 is a run that ends while you are asleep.
+- **Broken out by what is dealing it**, with the hit range for each. A wave whose average hit is forty is comfortable until one of its members hits for two hundred, and only the maximum says so. In a party, each monster's damage is split by who it landed on.
+- **And by wave composition** — `Eye x2 + Veyes` — with encounters, total and average per encounter. Sorted and counted rather than taken in spawn order, so the same three monsters handed over in a different order are recognised as the same wave rather than filed under six names that never accumulate enough encounters to average.
+- **Deaths still come from the server.** This can see a health bar cross zero and does, but two sources for one number is two numbers that eventually disagree, and the server's is the one that is right. Each source supplies only what it knows.
+- **A hit is the damage counter rising, not health falling.** Health moves for regeneration, for bleeds and for food. The counter also gives the one event a health diff can never express: a **miss** is the counter rising with the health unchanged.
+- **Which monster hit you is a guess above a certain party size, and it says so.** A monster casting is identified by its mana, exactly as the outgoing side identifies a caster — but an auto-attack spends none, and most of what hits you is auto-attacks. So there is a ladder: a monster that cast, then a lone monster, then the weak proxy IHurt uses, then nobody. Unattributed damage is shown as **Unknown Enemy** rather than credited to a guess, and the enemy totals still add up to the party total.
+- **Verified against a real recorded fight**, the same sixty-eight seconds on Planet of the Eyes the outgoing side replays, read from the other end: 703 taken against 936 healed, the enemy breakdown adding up to the total, and the shortfall in the wave breakdown being exactly the ticks recorded before the first battle started.
+
 ### Fixed: the Overlay switch was invisible
 
 It was added to the strip, positioned, kept in place, and could not be seen. The switch is a clone of one of the game's own tabs, so that it looks like whatever the game currently thinks a tab looks like — and it was cloning a hidden one.

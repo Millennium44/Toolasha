@@ -145,6 +145,7 @@ const combatFeatureExternals = new Map([
     [normalize(join(__dirname, 'src/features/combat/combat-dps.js')), 'Toolasha.Combat.combatDPS'],
     [normalize(join(__dirname, 'src/features/combat/combat-drop-luck.js')), 'Toolasha.Combat.combatDropLuck'],
     [normalize(join(__dirname, 'src/features/combat/damage-tracker.js')), 'Toolasha.Combat.damageTracker'],
+    [normalize(join(__dirname, 'src/features/combat/damage-taken-tracker.js')), 'Toolasha.Combat.damageTakenTracker'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

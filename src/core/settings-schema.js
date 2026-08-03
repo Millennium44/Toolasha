@@ -566,6 +566,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'The game attributes nothing, so the caster is worked out from whose mana fell each tick. Feeds the Damage panel behind the DPS tile',
             },
+            damageTakenTracker: {
+                id: 'damageTakenTracker',
+                label: 'Damage Taken Tracker: What is hitting you, and for how much',
+                type: 'checkbox',
+                default: true,
+                help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
+            },
             manaTracker: {
                 id: 'manaTracker',
                 label: 'Mana Tracker: Count what your abilities cost per fight',
