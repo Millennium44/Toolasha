@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: everything went to Unknown Enemy, and the fixture was why
+
+The previous change sent every hit of a live session to Unknown Enemy while three replay tests passed. It had been measured against a recording that was **hand-trimmed to five fields per monster** when it became a fixture, and the rung derived from it — "a monster in the delta with nothing changed is the one that swung" — held on thirty-seven of that recording's forty-two hits only because the trimming had removed everything that changes. Against a real payload it fires never.
+
+- **`atkCounter` is what identifies the attacker**, and it was there the whole time — a counter that goes up when a monster attacks, sitting in a field the old fixture had thrown away. On an untrimmed dungeon recording it names the attacker on thirty-two of the thirty-eight ticks the character was hit; the other six are a monster's first appearance in the delta, alone, which is now its own rung.
+- **Thirteen hits, thirteen named, no Unknown Enemy** on that recording — against Veyes, Eye and Eyes, in waves of two and three.
+- **The fixture keeps every field a tick carries.** That is the whole point of the new one, and a test asserts `atkCounter` is still in it, so trimming it later would fail loudly rather than quietly weaken the attribution.
+- **The old recording is kept and labelled.** It is still a good check that the arithmetic holds on a thin payload, and it now says in as many words that nothing may be derived from it.
+
 ### The payload names the attacker after all
 
 Unknown Enemy kept turning up in waves even after the reload fix, because that fix was for a different cause. Going back to the recorded run to measure rather than reason turned up something better: **`mMap` is a delta**. A tick does not carry the wave, it carries the units the server touched — nought or one entry per tick against rosters of three.
