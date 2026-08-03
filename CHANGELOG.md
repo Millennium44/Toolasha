@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The double rate was being divided by the wrong thing
+
+A double rolls on a **successful** action; the record counted them against every action. Every skilling room therefore reported about a quarter of the rate the server states — Crafting Lv.202 read "18.0% calc, 18.0% server, 2.3% seen" — which looked like the loudest fault in the whole record and was a denominator.
+
+Over the twenty largest samples in one real record, 1,438 actions: 102.7 doubles observed against 385.6 expected per action (−18.6 sd) and 100.7 expected per success (+0.1 sd). The rate was never wrong.
+
+### And the success rate is now measured per room rather than per action
+
+A skilling room ends the moment you clear it. A lucky room therefore contributes four actions and an unlucky one contributes the full two minutes of them, so pooling every action across rooms builds a sample made mostly of the rooms that went badly — and reads several points below the rate the server states for no reason but the stopping rule. In that same record it came out 3.6 sd low, which is exactly the sort of thing that starts a hunt for a bug that is not there.
+
+Each room's own rate is now recorded, and the reading is the mean across rooms with an interval taken from how much the rooms actually differed. The pooled figure is kept beside it, because the gap between the two _is_ the size of the effect. Rooms that happen to agree exactly do not pin the rate to a point: the interval never narrows past the ordinary binomial error over the same draws.
+
+Records written before this hold no per-room sums, so they fall back to the pooled figure and say so.
+
 ### The sim accuracy record can leave the browser
 
 An **Export** button on the Sim accuracy tab copies the whole record as text. The record is the only thing that can say whether the model is wrong, and until now it sat in one browser's IndexedDB where nobody could look at it.
