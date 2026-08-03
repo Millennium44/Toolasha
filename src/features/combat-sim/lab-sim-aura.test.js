@@ -1,127 +1,141 @@
 /** @vitest-environment happy-dom
  *
- * Simulating a fight with the Critical Aura on.
+ * Simulating a fight with the Critical Aura up.
  *
- * A labyrinth fight is short and often decided by a crit, so the aura worn
- * outside is not always the one worth wearing inside — and swapping gear to
- * find out is a lot of clicking for a question the simulator can answer.
+ * It is an ability, not a trinket — a special-slot cast that buffs the party's
+ * critical rate and damage. A labyrinth fight is short enough to be decided by
+ * a crit, so what an upgrade is worth can change with the aura running, and
+ * re-slotting abilities to find out is a lot of clicking for a question the
+ * simulator can answer.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: [], equipment: new Map(), details: {} }));
+const game = vi.hoisted(() => ({ abilities: {}, learned: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (_k, d) => d, setSetting: () => {} },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: game.details }),
-        get characterItems() {
-            return game.items;
+        getInitClientData: () => ({ abilityDetailMap: game.abilities }),
+        characterItems: [],
+        characterEquipment: new Map(),
+        get characterData() {
+            return { characterAbilities: game.learned };
         },
-        get characterEquipment() {
-            return game.equipment;
-        },
-        characterData: null,
     },
 }));
 
-const { ownedCriticalAura, withCriticalAura } = await import('./lab-sim-ui.js');
+const { criticalAuraAbility, withCriticalAura } = await import('./lab-sim-ui.js');
 
-const TRINKET = '/equipment_types/trinket';
+const CRIT = '/abilities/critical_aura';
 
 beforeEach(() => {
-    game.details = {
-        '/items/critical_aura': { name: 'Critical Aura', equipmentDetail: { type: TRINKET } },
-        '/items/fierce_aura': { name: 'Fierce Aura', equipmentDetail: { type: TRINKET } },
-        '/items/critical_pendant': { name: 'Critical Pendant', equipmentDetail: { type: '/equipment_types/neck' } },
+    game.abilities = {
+        [CRIT]: { name: 'Critical Aura', isSpecialAbility: true },
+        '/abilities/fierce_aura': { name: 'Fierce Aura', isSpecialAbility: true },
+        '/abilities/precision': { name: 'Precision', isSpecialAbility: true },
+        '/abilities/smack': { name: 'Smack', isSpecialAbility: false },
     };
-    game.items = [];
-    game.equipment = new Map();
+    game.learned = [];
 });
 
-describe('finding the aura you own', () => {
-    test('one in the inventory counts', () => {
-        game.items = [{ itemHrid: '/items/critical_aura', count: 1, enhancementLevel: 4 }];
+describe('which aura the simulation casts', () => {
+    test('the one you have learned, at the level you have it', () => {
+        game.learned = [{ abilityHrid: CRIT, level: 20 }];
 
-        expect(ownedCriticalAura()).toEqual({ hrid: '/items/critical_aura', enhancementLevel: 4 });
+        expect(criticalAuraAbility()).toMatchObject({ hrid: CRIT, level: 20, learned: true });
     });
 
-    test('and one already being worn, since that is the likeliest person to want this', () => {
-        game.equipment = new Map([[TRINKET, { itemHrid: '/items/critical_aura', enhancementLevel: 7 }]]);
-
-        expect(ownedCriticalAura().enhancementLevel).toBe(7);
+    test('and not having learned it still answers the question, at level 1', () => {
+        // The commonest reason to ask what a fight looks like with the aura up
+        // is that you are deciding whether to buy the book
+        expect(criticalAuraAbility()).toMatchObject({ level: 1, learned: false });
     });
 
-    test('the best level wins, because that is the one you would put on', () => {
-        game.items = [
-            { itemHrid: '/items/critical_aura', count: 1, enhancementLevel: 2 },
-            { itemHrid: '/items/critical_aura', count: 1, enhancementLevel: 9 },
-        ];
+    test('it is found by name rather than a hardcoded hrid', () => {
+        game.abilities = { '/abilities/renamed_thing': { name: 'Critical Aura', isSpecialAbility: true } };
 
-        expect(ownedCriticalAura().enhancementLevel).toBe(9);
+        expect(criticalAuraAbility().hrid).toBe('/abilities/renamed_thing');
     });
 
-    test('a different aura is not it', () => {
-        game.items = [{ itemHrid: '/items/fierce_aura', count: 1, enhancementLevel: 5 }];
+    test('another aura is never mistaken for it', () => {
+        game.learned = [{ abilityHrid: '/abilities/fierce_aura', level: 40 }];
 
-        expect(ownedCriticalAura()).toBeNull();
+        expect(criticalAuraAbility()).toMatchObject({ hrid: CRIT, level: 1 });
     });
 
-    test('nor is something else with "critical" in its name', () => {
-        // Matched on the slot as well as the name, so a Critical Pendant is not
-        // mistaken for an aura
-        game.items = [{ itemHrid: '/items/critical_pendant', count: 1, enhancementLevel: 3 }];
+    test('a game with no such ability is null rather than a guess', () => {
+        game.abilities = { '/abilities/smack': { name: 'Smack' } };
 
-        expect(ownedCriticalAura()).toBeNull();
-    });
-
-    test('owning none is null rather than a guess', () => {
-        expect(ownedCriticalAura()).toBeNull();
-    });
-
-    test('a stack you have none of is not owned', () => {
-        game.items = [{ itemHrid: '/items/critical_aura', count: 0, enhancementLevel: 4 }];
-
-        expect(ownedCriticalAura()).toBeNull();
+        expect(criticalAuraAbility()).toBeNull();
     });
 });
 
-describe('putting it on for the simulation', () => {
-    const dto = () => ({
+describe('slotting it for the simulation', () => {
+    const bar = (special, ...rest) => ({
         hrid: '/players/me',
-        equipment: {
-            [TRINKET]: { hrid: '/items/speed_aura', enhancementLevel: 3 },
-            '/equipment_types/head': { hrid: '/items/hat', enhancementLevel: 1 },
-        },
+        abilities: [special, ...rest, null, null, null].slice(0, 5),
     });
-    const aura = { hrid: '/items/critical_aura', enhancementLevel: 6 };
+    const ability = (hrid, level = 10) => ({ hrid, level, triggers: [] });
+    const aura = { hrid: CRIT, level: 20, special: true, learned: true };
 
-    test('the trinket is replaced and nothing else is', () => {
-        const swapped = withCriticalAura(dto(), aura);
+    test('a special ability replaces the special slot, which is where an aura lives', () => {
+        const swapped = withCriticalAura(bar(ability('/abilities/fierce_aura'), ability('/abilities/smack')), aura);
 
-        expect(swapped.equipment[TRINKET]).toEqual(aura);
-        expect(swapped.equipment['/equipment_types/head'].hrid).toBe('/items/hat');
+        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT, level: 20 });
+        expect(swapped.abilities[1].hrid).toBe('/abilities/smack');
     });
 
-    test('an empty trinket slot is filled rather than left', () => {
-        const bare = { hrid: '/players/me', equipment: {} };
+    test('an empty special slot is filled rather than left', () => {
+        const swapped = withCriticalAura(bar(null, ability('/abilities/smack')), aura);
 
-        expect(withCriticalAura(bare, aura).equipment[TRINKET]).toEqual(aura);
+        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT });
     });
 
-    test('the character the panel is showing is left alone', () => {
+    test('a bar shorter than five slots is not a reason to fail', () => {
+        const swapped = withCriticalAura({ hrid: '/players/me', abilities: [] }, aura);
+
+        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT });
+        expect(swapped.abilities).toHaveLength(5);
+    });
+
+    test('a non-special one takes a free slot instead of the special one', () => {
+        const normal = { ...aura, special: false };
+        const swapped = withCriticalAura(bar(ability('/abilities/precision'), ability('/abilities/smack')), normal);
+
+        expect(swapped.abilities[0].hrid).toBe('/abilities/precision');
+        expect(swapped.abilities[2]).toMatchObject({ hrid: CRIT });
+    });
+
+    test('and a full bar is left alone rather than losing an ability you chose', () => {
+        const normal = { ...aura, special: false };
+        const full = {
+            hrid: '/players/me',
+            abilities: [
+                ability('/abilities/precision'),
+                ability('/abilities/a'),
+                ability('/abilities/b'),
+                ability('/abilities/c'),
+                ability('/abilities/d'),
+            ],
+        };
+
+        expect(withCriticalAura(full, normal)).toBe(full);
+    });
+
+    test('the bar the panel is showing is left alone', () => {
         // The editor hands out the DTOs it is still displaying, so a swap made
-        // for one simulation must not become gear the panel claims you wear
-        const original = dto();
+        // for one simulation must not become a bar the panel claims you run
+        const original = bar(ability('/abilities/fierce_aura'));
         withCriticalAura(original, aura);
 
-        expect(original.equipment[TRINKET].hrid).toBe('/items/speed_aura');
+        expect(original.abilities[0].hrid).toBe('/abilities/fierce_aura');
     });
 
-    test('owning none changes nothing at all', () => {
-        const original = dto();
+    test('no aura at all changes nothing', () => {
+        const original = bar(ability('/abilities/fierce_aura'));
 
         expect(withCriticalAura(original, null)).toBe(original);
     });
