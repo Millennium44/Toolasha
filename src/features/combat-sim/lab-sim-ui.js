@@ -207,6 +207,10 @@ class LabSimUI {
                 <option value="/items/advanced_food_crate">Advanced</option>
                 <option value="/items/expert_food_crate" selected>Expert</option>
             </select>
+            <label id="mwi-labsim-crit-aura-label" style="color:#888; display:none; align-items:center; gap:5px; cursor:pointer;">
+                <input id="mwi-labsim-crit-aura" type="checkbox">
+                <span>Crit aura</span>
+            </label>
         `;
 
         const editorArea = document.createElement('div');
@@ -635,6 +639,12 @@ class LabSimUI {
             .addEventListener('click', () => this._switchTab('skilling'));
 
         // Configure listeners
+        const critAura = this.panel.querySelector('#mwi-labsim-crit-aura');
+        if (critAura) {
+            critAura.checked = Boolean(config.getSetting('labSim_critAura'));
+            critAura.addEventListener('change', () => config.setSetting('labSim_critAura', critAura.checked));
+        }
+
         this.panel.querySelector('#mwi-labsim-monster').addEventListener('change', (e) => {
             this._onMonsterChange(e.target.value);
         });
@@ -954,7 +964,7 @@ class LabSimUI {
             return;
         }
 
-        const playerDTOs = [selfDTO];
+        const playerDTOs = [this._critAuraSwap(selfDTO)];
 
         const communityBuffs = getCommunityBuffs();
         const zones = getCombatZones();
@@ -1171,6 +1181,11 @@ class LabSimUI {
             this._setStatus('No player data available.');
             return;
         }
+
+        // Yours only. You own one aura, so putting it on every party member
+        // would be simulating a party nobody could field.
+        const selfHrid = this._editor?.getSelfHrid();
+        playerDTOs = playerDTOs.map((dto) => (!selfHrid || dto?.hrid === selfHrid ? this._critAuraSwap(dto) : dto));
 
         const communityBuffs = getCommunityBuffs();
         const labyrinthCombatBuffs = labyrinthClearRate.getLabyrinthCombatBuffs();
@@ -2296,10 +2311,57 @@ class LabSimUI {
         if (!visible) {
             bringPanelToFront(this.panel);
             this._populateMonsters();
+            this._paintCritAura();
             if (!this._editor.isInitialized()) {
                 this._editor.initEditor();
+                // The first monster in the list is selected but was never
+                // chosen, so the handler that applies its labyrinth loadout
+                // never ran — the default monster opened on whatever gear
+                // happened to be on, which is the one case where the panel
+                // silently disagreed with every other monster in the list.
+                //
+                // Only on the first initialization: reapplying on every open
+                // would throw away gear changed by hand since.
+                this._whenEditorReady().then(() => {
+                    const selected = this.panel?.querySelector('#mwi-labsim-monster')?.value;
+                    if (selected) this._onMonsterChange(selected);
+                });
             }
         }
+    }
+
+    /**
+     * The DTO the simulation should use, given the Crit aura switch.
+     * @private
+     * @param {Object} dto - A player DTO
+     * @returns {Object} The same one, or a copy wearing the aura
+     */
+    _critAuraSwap(dto) {
+        if (!config.getSetting('labSim_critAura')) return dto;
+        return withCriticalAura(dto, ownedCriticalAura());
+    }
+
+    /**
+     * Show the Crit aura switch only to somebody who owns one.
+     *
+     * A switch that cannot do anything is worse than no switch: it reads as a
+     * feature that is broken rather than one that does not apply.
+     * @private
+     */
+    _paintCritAura() {
+        const label = this.panel?.querySelector('#mwi-labsim-crit-aura-label');
+        const box = this.panel?.querySelector('#mwi-labsim-crit-aura');
+        if (!label || !box) return;
+
+        const owned = ownedCriticalAura();
+        label.style.display = owned ? 'inline-flex' : 'none';
+        if (!owned) return;
+
+        box.checked = Boolean(config.getSetting('labSim_critAura'));
+        label.title =
+            `Simulate wearing your Critical Aura${owned.enhancementLevel ? ` +${owned.enhancementLevel}` : ''} ` +
+            'in place of whatever trinket the character has on. Labyrinth fights are short and often decided by a ' +
+            'crit, so the aura you run outside is not always the one you would want inside.';
     }
 
     /**
@@ -2436,6 +2498,62 @@ class LabSimUI {
             document.addEventListener('mouseup', onUp);
         });
     }
+}
+
+/** Where an aura sits: the slot the game calls a trinket */
+const TRINKET_SLOT = '/equipment_types/trinket';
+
+/**
+ * The Critical Aura the character actually owns, at the level they own it at.
+ *
+ * Found by equipment type and name rather than by a hardcoded hrid, so an aura
+ * renamed or re-hrid'd by an update is still found. Equipped counts as owned —
+ * somebody wearing it is the likeliest person to want this — and the best
+ * enhancement level wins, since that is the one they would put on.
+ *
+ * @returns {{hrid: string, enhancementLevel: number}|null}
+ */
+export function ownedCriticalAura() {
+    const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+    const isCritAura = (hrid) => {
+        const detail = itemDetailMap[hrid];
+        if (detail?.equipmentDetail?.type !== TRINKET_SLOT) return false;
+        return /critical/i.test(detail.name || hrid);
+    };
+
+    let best = null;
+    const consider = (hrid, enhancementLevel) => {
+        if (!isCritAura(hrid)) return;
+        const level = Math.max(0, Math.floor(Number(enhancementLevel) || 0));
+        if (!best || level > best.enhancementLevel) best = { hrid, enhancementLevel: level };
+    };
+
+    for (const item of dataManager.characterItems || []) {
+        if ((item.count || 0) > 0) consider(item.itemHrid, item.enhancementLevel);
+    }
+    for (const [, item] of dataManager.characterEquipment || []) {
+        consider(item.itemHrid, item.enhancementLevel);
+    }
+    return best;
+}
+
+/**
+ * The same player, wearing their Critical Aura.
+ *
+ * A copy rather than an edit: the DTOs handed out by the editor are the ones it
+ * is still showing, and a swap made for a simulation must not turn into gear the
+ * panel then claims you are wearing.
+ *
+ * @param {Object} dto - A player DTO
+ * @param {{hrid: string, enhancementLevel: number}} aura - From `ownedCriticalAura`
+ * @returns {Object} A new DTO
+ */
+export function withCriticalAura(dto, aura) {
+    if (!dto || !aura) return dto;
+    return {
+        ...dto,
+        equipment: { ...dto.equipment, [TRINKET_SLOT]: { hrid: aura.hrid, enhancementLevel: aura.enhancementLevel } },
+    };
 }
 
 const labSimUI = new LabSimUI();

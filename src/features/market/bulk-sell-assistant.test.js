@@ -46,8 +46,11 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: () => ({ start: () => {}, stop: () => {} }),
 }));
+// The real shape a watchlist entry has. Getting this wrong is what made the
+// source read as empty while the panel showed seventy items, and a fixture that
+// invents its own field cannot catch that.
 vi.mock('../inventory/watchlist.js', () => ({
-    watchlistEntries: () => game.watched,
+    watchlistEntries: () => game.watched.map((hrid) => ({ hrid, name: hrid.split('/').pop() })),
 }));
 
 const { default: bulkSell } = await import('./bulk-sell-assistant.js');
@@ -67,7 +70,7 @@ beforeEach(() => {
         '/items/bound': { isTradable: false },
     };
     game.items = [inventory('/items/cheese'), inventory('/items/milk'), inventory('/items/sword', 1, 3)];
-    game.watched = [{ itemHrid: '/items/cheese' }, { itemHrid: '/items/sword' }];
+    game.watched = ['/items/cheese', '/items/sword'];
     bulkSell.queue = [];
     bulkSell.state = 'idle';
     bulkSell.statusNote = '';
@@ -125,7 +128,7 @@ describe('selling what the watchlist is tracking', () => {
 
     test('untradable items are never in scope', async () => {
         game.items.push(inventory('/items/bound'));
-        game.watched.push({ itemHrid: '/items/bound' });
+        game.watched.push('/items/bound');
         bulkSell.selectedTabId = 'watchlist';
         await bulkSell._start();
 
