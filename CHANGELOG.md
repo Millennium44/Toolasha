@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### All Fights only sims a piece against the loadouts that wear it
+
+The all-fights analysis pooled candidates from every fight and then measured each of them against every fight. That is right for a combat level — one number the whole character carries into every room — and wrong for a piece of gear. A sword upgrade generated from the melee loadout, installed into the magic loadout, replaced the staff with a sword: not an upgrade, a costume change, and it came back as a large negative win-rate delta for a room nobody would ever have applied it to. Those deltas went straight into the aggregate the ranking is built on, so a good weapon could be pushed down the list by rooms it has nothing to do with.
+
+A candidate is now measured only against the fights it is about: gear where the loadout wears the piece it replaces, an ability level where the loadout actually casts that ability, a cross-slot swap where every piece it removes is worn, an enhancement only where the piece is not already at that level. Combat levels and house rooms still apply everywhere, because they are not held in a loadout. Rooms it does not reach keep their baseline exactly and are not simulated at all — which is both the honest answer and a good deal less work, so the runs are shorter as well.
+
+A new **Rooms** column says how many fights each upgrade reaches, the expanded breakdown marks the others "not in this loadout" rather than showing them as a flat 0.00%, and **Avg ΔWin** is now averaged over the rooms an upgrade reaches — a weapon that goes in two of eight loadouts is not a quarter as good at its job.
+
+Levelling an ability also now follows the ability rather than its slot number, so a loadout that keeps the same ability in a different slot is no longer given the upgrade in the wrong place.
+
 ### Every sim says how long is left
 
 The progress bars said how far in a run was, which is not what anyone watching an upgrade analysis wants to know. They now also carry a time remaining — `47 / 132 · ~3m 15s left` — on every sim in both panels: the single labyrinth run and the max-level finder, the labyrinth upgrade, all-fights and skilling analyses, and the combat panel's single sim, all-zones, item seek and upgrade analysis.

@@ -1508,7 +1508,8 @@ class LabSimUI {
                 <th style="${thStyle}" title="Attempts saved across a whole run per billion coins spent — the value figure. Blank where there is no coin price.">Per 1B</th>
                 <th style="${thStyle}" title="Expected combat attempts to clear every fight once (retrying failed rooms)">Attempts</th>
                 <th style="${thStyle}" title="Change in expected attempts vs baseline — negative is better">ΔAttempts</th>
-                <th style="${thStyle}" title="Average per-fight win rate change">Avg ΔWin</th>
+                <th style="${thStyle}" title="How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.">Rooms</th>
+                <th style="${thStyle}" title="Average win rate change across the rooms it reaches">Avg ΔWin</th>
             </tr></thead><tbody>`;
 
         results.forEach((r, i) => {
@@ -1518,6 +1519,11 @@ class LabSimUI {
             // level is not free, it is paid for in experience, and a zero here
             // would read as "costs nothing" instead of "not a coin question"
             const cost = r.cost > 0 ? formatKMB(r.cost) : r.cost === 0 ? 'free' : '—';
+            // How many rooms it reaches — a sword upgrade is only about the
+            // loadouts carrying that sword, and a row that does not say so
+            // reads as an upgrade to the whole run
+            const reach = r.appliedFights ?? r.fights.length;
+            const total = r.fights.length;
             const perGold =
                 r.attemptsSavedPerBillion === null
                     ? '—'
@@ -1528,6 +1534,7 @@ class LabSimUI {
                 <td style="${tdStyle} color:${r.attemptsSavedPerBillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
                 <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
                 <td style="${tdStyle} color:${attemptsDeltaColor(r.attemptsDelta)}; ${isBest ? 'font-weight:700;' : ''}">${fmtAttemptsDelta(r.attemptsDelta)}</td>
+                <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
                 <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
             </tr>`;
 
@@ -1538,15 +1545,22 @@ class LabSimUI {
                 const base = baseline.fights[f];
                 const triesBase = expectedTries(base.winRate);
                 const triesNew = expectedTries(fight.winRate);
+                // Untouched rooms are named rather than dropped: "this upgrade
+                // does nothing here" is an answer, and a fight missing from the
+                // list looks like a fight that was not run
+                const outcome =
+                    fight.applied === false
+                        ? `<span style="color:#666;">not in this loadout — ${pct(base.winRate)} unchanged</span>`
+                        : `${pct(base.winRate)} → ${pct(fight.winRate)}
+                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
+                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries</span>`;
                 fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
-                    <span style="white-space:nowrap;">${pct(base.winRate)} → ${pct(fight.winRate)}
-                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
-                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries</span></span>
+                    <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
             }
             html += `<tr data-allfights-detail="${i}" style="display:none;">
-                <td colspan="6" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
+                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
             </tr>`;
         });
 

@@ -52,6 +52,7 @@ const {
     describeHouseScan,
     resolveCandidateModes,
     candidateAssignmentKey,
+    candidateAppliesToDTO,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -522,6 +523,230 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(result.results).toHaveLength(1);
         expect(result.results[0].candidate.skillKey).toBe('meleeLevel');
         expect(result.results[0].candidate.upgradeLevel).toBe(60);
+    });
+
+    test('a weapon upgrade is only simmed against the loadouts carrying that weapon', async () => {
+        // Installing a melee sword into a ranged loadout replaces the bow with a
+        // sword: not an upgrade, a costume change, and it comes back as a large
+        // negative for a room nobody would ever have applied it to
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_bow'] = {
+            name: 'Fine Bow',
+            itemLevel: 50,
+            sortIndex: 5,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { rangedDamage: 12 } },
+        };
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+
+        const meleeDTO = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+            meleeLevel: 50,
+        };
+        const rangedDTO = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/fine_bow', enhancementLevel: 0 } },
+            rangedLevel: 50,
+        };
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: meleeDTO },
+                    { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 110, dto: rangedDTO },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                abilityTargetLevel: 5,
+                modes: ['equipment'],
+            },
+            null,
+            {}
+        );
+
+        const sword = result.results.find((r) => r.candidate.currentHrid === '/items/fine_sword');
+        expect(sword.appliedFights).toBe(1);
+        expect(sword.fights[0].applied).toBe(true);
+        expect(sword.fights[1]).toMatchObject({ applied: false, winRateDelta: 0 });
+    });
+
+    test('and the room it does not reach keeps its baseline exactly', async () => {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        // The ranged room would come back at a different rate if it were simmed
+        // with a sword in hand; it must not be simmed at all
+        // The wisp room reads completely differently with a sword in hand — so
+        // if it were simmed with one, the baseline comparison would say so
+        runLabyrinthSimulation.mockImplementation(async ({ monsterHrid, playerDTOs }) => {
+            if (monsterHrid !== '/monsters/wisp') return { labyAttemptCount: 100, encounters: 50 };
+            const armed = Boolean(playerDTOs[0].equipment?.[MAIN_HAND]);
+            return { labyAttemptCount: 100, encounters: armed ? 90 : 20 };
+        });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    {
+                        monsterHrid: '/monsters/goblin',
+                        monsterName: 'Goblin',
+                        roomLevel: 100,
+                        dto: { equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } } },
+                    },
+                    {
+                        monsterHrid: '/monsters/wisp',
+                        monsterName: 'Wisp',
+                        roomLevel: 110,
+                        dto: { equipment: { [BACK]: { hrid: '/items/plain_cape', enhancementLevel: 0 } } },
+                    },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['equipment'],
+            },
+            null,
+            {}
+        );
+
+        const sword = result.results.find((r) => r.candidate.slot === MAIN_HAND);
+        expect(sword.fights[1].winRate).toBe(result.baseline.fights[1].winRate);
+    });
+
+    test('the progress total counts the sims it will actually run', async () => {
+        // A total that assumed every candidate against every fight would leave
+        // the bar stuck short of the end, which reads as a run that hung
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        runLabyrinthSimulation.mockClear();
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        const seen = [];
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    {
+                        monsterHrid: '/monsters/goblin',
+                        monsterName: 'Goblin',
+                        roomLevel: 100,
+                        dto: { equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } } },
+                    },
+                    {
+                        monsterHrid: '/monsters/wisp',
+                        monsterName: 'Wisp',
+                        roomLevel: 110,
+                        dto: { equipment: { [BACK]: { hrid: '/items/plain_cape', enhancementLevel: 0 } } },
+                    },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['equipment'],
+            },
+            (progress) => seen.push(progress),
+            {}
+        );
+        const candidateCount = result.results.length;
+
+        const { total } = seen[seen.length - 1];
+        const everyCandidateEverywhere = 2 * (candidateCount + 1);
+        expect(runLabyrinthSimulation.mock.calls.length).toBe(total);
+        expect(total).toBeLessThan(everyCandidateEverywhere);
+    });
+});
+
+describe('whether an upgrade is about this loadout at all', () => {
+    const swordDTO = {
+        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 3 } },
+        abilities: [{ hrid: '/abilities/fierce_aura', level: 10 }, { hrid: '/abilities/smack', level: 20 }, null],
+    };
+
+    test('a combat level is every fight, because levels are not worn', () => {
+        expect(candidateAppliesToDTO({ type: 'combat_level', skillKey: 'meleeLevel' }, swordDTO)).toBe(true);
+    });
+
+    test('a tier upgrade only where the piece it replaces is worn', () => {
+        const candidate = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+        };
+
+        expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(true);
+        expect(candidateAppliesToDTO(candidate, { equipment: {} })).toBe(false);
+    });
+
+    test('an enhancement not once the piece is already at that level', () => {
+        const candidate = {
+            type: 'enhancement',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            upgradeHrid: '/items/fine_sword',
+            upgradeLevel: 3,
+        };
+
+        expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(false);
+        expect(candidateAppliesToDTO({ ...candidate, upgradeLevel: 7 }, swordDTO)).toBe(true);
+    });
+
+    test('filling a bare slot only where the slot is bare', () => {
+        const candidate = { type: 'tier', slot: BACK, currentHrid: '', upgradeHrid: '/items/plain_cape' };
+
+        expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(true);
+        expect(candidateAppliesToDTO(candidate, { equipment: { [BACK]: { hrid: '/items/plain_cape' } } })).toBe(false);
+    });
+
+    test('an ability level only where the loadout casts it', () => {
+        const candidate = {
+            type: 'ability_level',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/smack',
+            upgradeLevel: 30,
+        };
+
+        expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(true);
+        expect(candidateAppliesToDTO({ ...candidate, upgradeHrid: '/abilities/fireball' }, swordDTO)).toBe(false);
+    });
+
+    test('but an ability swap brings its own, so it applies anywhere it is not already up', () => {
+        const swap = {
+            type: 'ability_swap',
+            slot: 'ability_0',
+            upgradeHrid: '/abilities/critical_aura',
+            upgradeLevel: 20,
+        };
+
+        expect(candidateAppliesToDTO(swap, swordDTO)).toBe(true);
+        expect(candidateAppliesToDTO(swap, { abilities: [{ hrid: '/abilities/critical_aura', level: 20 }] })).toBe(
+            false
+        );
+    });
+
+    test('a cross-slot swap needs every piece it would remove', () => {
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/two_hand': { hrid: '/items/fine_bow' } },
+            clearedSlots: [MAIN_HAND],
+            removedItems: [{ hrid: '/items/fine_sword' }],
+        };
+
+        expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(true);
+        expect(candidateAppliesToDTO(candidate, { equipment: {} })).toBe(false);
+    });
+
+    test('nothing to apply it to is not an application', () => {
+        expect(candidateAppliesToDTO({ type: 'tier', slot: MAIN_HAND }, null)).toBe(false);
+        expect(candidateAppliesToDTO(null, swordDTO)).toBe(false);
     });
 });
 
