@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A kill is priced from the tick, not from the screen
+
+Every monster a tick mentions states its own full health as `mHP` — on all 292 monster entries across two recorded runs, agreeing with what the battle said each time.
+
+- **The DPs panel takes it from there.** It prices a kill by the health bar it took to empty, and previously had that only from the start of a battle — so a monster first met after a reload had no figure at all until the battle-panel reading supplied one.
+- **The battle-panel reading gives up trying.** It only ever needed the current health, to match a tile against a monster; the maximum was a second and worse source for a number the payload already gives. Reading it also meant untangling two health bars that flatten into one string, which is a hazard now gone.
+- **`isActive` was measured and left alone.** It looked like a cleaner death signal than health crossing zero, and it is not: across both recordings the two always fire on the same tick — five times and thirteen times, neither ever alone. Nothing to gain.
+
 ### Fixed: in a party, the Damage panel was throwing away nine hits in ten
 
 The same recordings that fixed the incoming side turned out to carry the answer for the outgoing one. Every player has an `atkCounter`, and it goes up when they attack — across two recorded runs it rose on **every** tick that dealt damage, sixty-nine of sixty-nine.

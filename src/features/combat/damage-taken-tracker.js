@@ -183,10 +183,10 @@ export function takenBreakdown() {
  * @param {Object} mMap - The tick's monsters
  */
 function recoverNames(mMap) {
-    for (const [index, found] of Object.entries(recoverMonsterNames(mMap))) {
+    for (const [index, name] of Object.entries(recoverMonsterNames(mMap))) {
         // Never overwrite: an earlier tick's reading was taken when that monster
         // was actually on screen, and a later health match could be a coincidence
-        if (!monsters[index]) monsters[index] = found.name;
+        if (!monsters[index]) monsters[index] = name;
     }
 }
 

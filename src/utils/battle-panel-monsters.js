@@ -81,13 +81,13 @@ function leafTexts(tile) {
  * first and `Auto Attack` have no digits — so first wins. Reaching for an inner
  * class instead would be one more thing to break at the next patch.
  *
- * The bar's denominator comes along because it is the monster's full health,
- * which is what a kill is worth — the DPs panel prices kills by it and would
- * otherwise have no figure for a monster it only ever met after a reload.
+ * Only the current health is taken. The bar's denominator is the monster's full
+ * health, which is what a kill is worth — but every tick states that as `mHP`,
+ * on every monster it mentions, so reading it off the screen would be a second
+ * and worse source for a number the payload already gives.
  *
  * @param {Array<string>} texts - The tile's parts, in order
- * @returns {{name: string, hp: number, max: number|null}|null} Null when it is
- *   not a unit tile. `max` is null when the bars could not be read apart.
+ * @returns {{name: string, hp: number}|null} Null when it is not a unit tile
  */
 export function parseUnitTexts(texts) {
     const parts = (texts || []).map((text) => String(text).trim()).filter(Boolean);
@@ -95,23 +95,18 @@ export function parseUnitTexts(texts) {
     if (!name) return null;
 
     const exact = parts.map((text) => text.match(BAR)).find(Boolean);
-    if (exact) return { name, hp: toNumber(exact[1]), max: toNumber(exact[2]) };
+    const bar = exact || parts.join(' ').match(LOOSE_BAR);
+    if (!bar) return null;
 
-    // The bars were not their own elements. The health is still readable from
-    // the first one; the maximum is not, and a wrong maximum would price every
-    // kill of this monster wrongly for the rest of the session.
-    const loose = parts.join(' ').match(LOOSE_BAR);
-    if (!loose) return null;
-
-    const hp = toNumber(loose[1]);
-    return Number.isFinite(hp) ? { name, hp, max: null } : null;
+    const hp = toNumber(bar[1]);
+    return Number.isFinite(hp) ? { name, hp } : null;
 }
 
 /**
  * One tile, read from the page.
  *
  * @param {HTMLElement} tile - A unit tile
- * @returns {{name: string, hp: number, max: number|null}|null}
+ * @returns {{name: string, hp: number}|null}
  */
 export function parseUnit(tile) {
     const texts = leafTexts(tile);
@@ -122,7 +117,7 @@ export function parseUnit(tile) {
  * The monsters the game is currently drawing.
  *
  * @param {Document|HTMLElement} [root] - Where to look
- * @returns {Array<{name: string, hp: number, max: number|null}>} Empty when the panel is not up
+ * @returns {Array<{name: string, hp: number}>} Empty when the panel is not up
  */
 export function readMonsterUnits(root = document) {
     const area = root.querySelector?.(MONSTER_AREA);
@@ -135,10 +130,9 @@ export function readMonsterUnits(root = document) {
 /**
  * Which drawn monster is which slot of the tick, joined on health.
  *
- * @param {Array<{name: string, hp: number, max: number|null}>} units - From `readMonsterUnits`
+ * @param {Array<{name: string, hp: number}>} units - From `readMonsterUnits`
  * @param {Object} mMap - The tick's monsters
- * @returns {Object<string, {name: string, max: number|null}>} Monster index → what
- *   it is and what its full bar is worth, for the ones it is sure of
+ * @returns {Object<string, string>} Monster index → name, for the ones it is sure of
  */
 export function matchMonsterNames(units, mMap) {
     const names = {};
@@ -154,21 +148,11 @@ export function matchMonsterNames(units, mMap) {
         // Several at the same health is only a problem when they disagree; three
         // Eyes at full health are all called Eyes whichever one this is
         const distinct = new Set(candidates.map((unit) => unit.name));
-        if (distinct.size !== 1) continue;
-
-        const max = candidates.find((unit) => Number.isFinite(unit.max))?.max ?? null;
-        names[index] = { name: candidates[0].name, max };
+        if (distinct.size === 1) names[index] = candidates[0].name;
     }
     return names;
 }
 
-/**
- * Names for a battle whose `new_battle` was missed, or nothing.
- *
- * @param {Object} mMap - The tick's monsters
- * @param {Document|HTMLElement} [root] - Where to read the panel from
- * @returns {Object<string, {name: string, max: number|null}>} Monster index → what it is
- */
 /**
  * What the battle panel looks like right now, for a recording to carry.
  *
@@ -196,6 +180,13 @@ export function describeMonsterPanel(root = document) {
     }
 }
 
+/**
+ * Names for a battle whose `new_battle` was missed, or nothing.
+ *
+ * @param {Object} mMap - The tick's monsters
+ * @param {Document|HTMLElement} [root] - Where to read the panel from
+ * @returns {Object<string, string>} Monster index → name
+ */
 export function recoverMonsterNames(mMap, root = document) {
     try {
         return matchMonsterNames(readMonsterUnits(root), mMap);

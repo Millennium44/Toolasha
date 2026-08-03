@@ -210,6 +210,27 @@ function monsterName(monster) {
 }
 
 /**
+ * What a kill of each monster is worth, from the tick rather than the roster.
+ *
+ * Every monster a tick mentions carries `mHP`, its full health — on all 292
+ * monster entries across two recorded runs, agreeing with `new_battle` every
+ * time. Taking it here rather than only at the start of a battle means a monster
+ * first met after a reload is priced like any other, without the battle panel
+ * having to be read for it.
+ *
+ * @param {Object} mMap - The tick's monsters
+ */
+function noteMonsterHealth(mMap) {
+    for (const [index, monster] of Object.entries(mMap || {})) {
+        const name = monsters[index]?.name;
+        const max = Number(monster?.mHP);
+
+        // The largest seen, since a weakened spawn would understate the bar
+        if (name && Number.isFinite(max) && max > (monsterHealth[name] || 0)) monsterHealth[name] = max;
+    }
+}
+
+/**
  * @param {string} action - `auto`, `idle`, or an ability hrid
  * @returns {string} Something readable
  */
@@ -279,14 +300,12 @@ export default {
                 // is empty: `mMap` is a delta, so a wave arrives one monster at a
                 // time and stopping early names the first and no other
                 if (!announced) {
-                    for (const [index, found] of Object.entries(recoverMonsterNames(data?.mMap))) {
-                        if (monsters[index]) continue;
-                        monsters[index] = { name: found.name };
-                        // What a kill is worth, which without this would have no
-                        // figure at all for a monster first met after a reload
-                        if (found.max > (monsterHealth[found.name] || 0)) monsterHealth[found.name] = found.max;
+                    for (const [index, name] of Object.entries(recoverMonsterNames(data?.mMap))) {
+                        if (!monsters[index]) monsters[index] = { name };
                     }
                 }
+
+                noteMonsterHealth(data?.mMap);
 
                 const events = attributeTick(data, state);
                 const nameOf = (index) => monsters[index]?.name || null;
