@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: a small tile could not be made bigger again
+
+The text-size buttons sit in a tile's bottom-left corner and the resize grip in its bottom-right, which is fine until the tile is narrower than two buttons — a tile may be forty pixels wide, and two buttons are wider than that. The buttons then covered the grip, and the grip is the only thing that would have made the tile bigger again, so the tile was stuck at exactly the size that caused it.
+
+- **The grip is drawn above the buttons.** Whichever is on top takes the mouse, and it has to be the one that gets you out.
+- **It carries its own backdrop and is a little larger**, because on a small tile it is now drawn over a button, and a bare triangle on top of one reads as neither.
+- **The buttons keep clear of the corner where there is room**, so on a tile with space nothing overlaps at all.
+
 ### The DPS, Over Expected and Luck tiles line up
 
 They sit in a row beside each other and were laid out as if each were alone, so nothing agreed with anything: columns within a tile, and lines across the three of them.
