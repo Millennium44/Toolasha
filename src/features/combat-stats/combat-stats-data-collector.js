@@ -6,6 +6,7 @@
 import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
+import { sessionKey, archiveSession } from './combat-session-history.js';
 
 /**
  * How long a finished run stays on the overlay.
@@ -24,6 +25,8 @@ class CombatStatsDataCollector {
         this.consumableEventHandler = null;
         this.latestCombatData = null;
         this.currentBattleId = null;
+        /** Which run the snapshot belongs to; a change means the last one ended */
+        this.sessionKey = null;
 
         // Consumable tracking state for current player (persisted to storage like MCS)
         this.consumableTracker = {
@@ -630,6 +633,16 @@ class CombatStatsDataCollector {
                     };
                 }),
             };
+
+            // A different run means the one before it has ended, which is the
+            // first moment that is knowable — nothing on the wire announces it.
+            // Archived before the snapshot is replaced, so what goes into the
+            // history is that session's final state.
+            const key = sessionKey(combatData);
+            if (this.sessionKey && key && key !== this.sessionKey && this.latestCombatData) {
+                archiveSession(this.latestCombatData);
+            }
+            if (key) this.sessionKey = key;
 
             // Store in memory
             this.latestCombatData = combatData;

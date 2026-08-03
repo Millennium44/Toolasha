@@ -118,7 +118,13 @@ registerRow({
         // "not yet measurable" but reads the same on one line — the tooltip
         // carries the difference
         row(container, [
-            { text: `${training.name} ${training.level}:`, color: ROW_COLORS.gold, ellipsis: true },
+            // The level being worked towards, not the one in hand — the time
+            // beside it is time until that number
+            {
+                text: `${training.name} ${training.seconds === null ? training.level : training.level + 1}:`,
+                color: ROW_COLORS.gold,
+                ellipsis: true,
+            },
             {
                 text: training.seconds === null ? '—' : shortDuration(training.seconds),
                 color: ROW_COLORS.accent,
@@ -138,16 +144,22 @@ registerRow({
 /**
  * Draw the row for a target chosen in the panel.
  *
- * The target is only spelled out when it is not simply the next level, so the
- * ordinary case reads exactly as it did before rather than gaining an arrow that
- * says nothing.
+ * The number is the level being *worked towards*, never the one already held.
+ * It used to show the current level whenever the target was simply the next one,
+ * on the reasoning that an arrow saying "135 → 136" adds nothing — but the
+ * consequence was a tile reading "Melee 135" beside a time, for a level you have
+ * already got. The duration is the giveaway: it is time until the number, so the
+ * number has to be the one you do not have yet.
+ *
+ * The arrow is still kept for a target further off, because "→ 140" and "136"
+ * are different claims and the arrow is what distinguishes them.
  *
  * @param {HTMLElement} container - The tile
  * @param {Object} chosen - From `selectedTarget`
  */
 function drawChosen(container, chosen) {
     const label =
-        chosen.target === chosen.level + 1 ? `${chosen.name} ${chosen.level}:` : `${chosen.name} → ${chosen.target}:`;
+        chosen.target === chosen.level + 1 ? `${chosen.name} ${chosen.target}:` : `${chosen.name} → ${chosen.target}:`;
 
     row(container, [
         { text: label, color: ROW_COLORS.gold, ellipsis: true },

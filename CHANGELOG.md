@@ -6,6 +6,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the time-to-level tile named the level you already have
+
+It read "Melee 135" beside a time, for a level long since earned. The number is now the level being worked _towards_, in both the automatic case and a chosen target one level ahead.
+
+The old reasoning was that "135 → 136" gains an arrow saying nothing, so the arrow was dropped and the current level kept — which quietly swapped the number for the wrong one. The duration is the giveaway: it is time until the number, so the number has to be the one you do not have yet. A target further off still gets its arrow, because "→ 140" and "136" are different claims.
+
+### Past sessions in the loot panel
+
+FLoot's top bar, on our drop list. The panel answered "how is this run going"; the question people come back with is "what did last night earn", and that needs the run to be choosable.
+
+- **A picker across the top**: the live run, every stored run by start time and length, and a combined view of the lot.
+- **A run is archived when a different one starts**, because that is the first moment it is knowable to be over — nothing on the wire announces an ending, and a timer would be guessing. So the newest finished run appears as the next one begins, and the run in progress is never in the list. It does not need to be: it is the live session.
+- **A session is its roster and its start time together**, the same identity the damage tally uses. Twenty are kept.
+- **The combined view merges on the item, not on the game's slot key.** Two sessions number their loot slots independently, so merging on the raw key would put the same item in two rows — the same trap the per-player item table fell into once. Characters are followed by name for the same reason: position means nothing between runs.
+- **The session timer / EPH tile opens it** on a double-click, since what a session timer raises is what the session produced. Total Profit still opens it too.
+- **A chosen run that has since fallen off the list falls back to live**, rather than leaving the panel pointing at nothing.
+
 ### The game's own artwork, where the game has some
 
 Emoji beside the game's UI look pasted on: an emoji is whatever font the browser picked, at whatever weight, in whatever palette its designer chose. The game's coin is _the_ coin.

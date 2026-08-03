@@ -30,11 +30,12 @@
  */
 
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
-import { itemIcon, linkToMarketplace, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
+import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
+import { loadSessions, combineSessions, describeSession } from '../combat-stats/combat-session-history.js';
 
 const ACCENT = '#e0b978';
 
@@ -42,13 +43,52 @@ const ACCENT = '#e0b978';
 const MAX_ITEMS = 14;
 
 /**
+ * Which run the panel is showing.
+ *
+ * Kept on the module rather than in the panel so it survives the panel being
+ * closed and reopened — having to re-find last night's session every time you
+ * glance at it is the difference between a history and a novelty.
+ */
+let viewing = 'live';
+
+/** Archived runs, newest first; refilled whenever the panel draws */
+let sessions = [];
+
+/**
+ * Take a fresh copy of the archive.
+ *
+ * Async and fire-and-forget, because `draw` is synchronous and a storage read
+ * has no business blocking a redraw. The picker is a frame behind on the first
+ * open and correct on every one after, which nobody notices.
+ */
+async function refreshSessions() {
+    try {
+        sessions = await loadSessions();
+    } catch (error) {
+        console.error('[PartyLoot] Reading the session list failed:', error);
+    }
+}
+
+/**
+ * The snapshot the panel should be reading.
+ *
+ * @returns {Object|null}
+ */
+function chosenSnapshot() {
+    if (viewing === 'live') return combatStatsDataCollector.getLatestData();
+    if (viewing === 'combined') return combineSessions(sessions);
+
+    return sessions.find((session) => session.key === viewing) || null;
+}
+
+/**
  * Everybody's run, yours first.
  *
- * @returns {Array<Object>} From `calculatePlayerStats`, empty until a run has
- *   produced data
+ * @returns {Array<Object>} From `calculatePlayerStats`, empty until the chosen
+ *   run has produced data
  */
 function partyRuns() {
-    const data = combatStatsDataCollector.getLatestData();
+    const data = chosenSnapshot();
     const players = data?.players || [];
     if (!players.length) return [];
 
@@ -163,6 +203,78 @@ function drawPlayer(body, stats) {
 }
 
 /**
+ * The bar across the top: which run, how long it ran, and how fast.
+ *
+ * FLoot's arrangement, because the picker is the point — a loot list of the run
+ * in progress answers "how is this going", and the question people actually come
+ * back with is "what did last night earn", which needs the run to be choosable.
+ *
+ * @param {HTMLElement} body - Where it goes
+ */
+function drawTopBar(body) {
+    const bar = document.createElement('div');
+    Object.assign(bar.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        paddingBottom: '6px',
+        marginBottom: '6px',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.10)',
+    });
+
+    const picker = document.createElement('select');
+    Object.assign(picker.style, {
+        background: 'rgba(255, 255, 255, 0.06)',
+        color: ROW_COLORS.neutral,
+        border: '1px solid rgba(255, 255, 255, 0.15)',
+        borderRadius: '4px',
+        padding: '2px 4px',
+        fontSize: '11px',
+        maxWidth: '190px',
+    });
+
+    const option = (value, label) => {
+        const element = document.createElement('option');
+        element.value = value;
+        element.textContent = label;
+        element.selected = viewing === value;
+        picker.appendChild(element);
+    };
+
+    option('live', 'Live Session');
+    for (const session of sessions) option(session.key, describeSession(session, shortDuration));
+    if (sessions.length > 1) option('combined', `Combined (${sessions.length})`);
+
+    // A stored run that has since fallen off the end of the list would otherwise
+    // leave the picker showing "Live Session" while the body showed nothing
+    if (viewing !== 'live' && viewing !== 'combined' && !sessions.some((session) => session.key === viewing)) {
+        viewing = 'live';
+        picker.value = 'live';
+    }
+
+    picker.addEventListener('change', () => {
+        viewing = picker.value;
+        partyLootPanel.render();
+    });
+
+    const snapshot = chosenSnapshot();
+    const meta = document.createElement('span');
+    meta.style.color = ROW_COLORS.dim;
+    meta.textContent = snapshot?.durationSeconds ? shortDuration(snapshot.durationSeconds) : '';
+
+    bar.append(picker, meta);
+    if (viewing === 'combined') {
+        const note = document.createElement('span');
+        note.style.color = ROW_COLORS.dim;
+        note.textContent = `${snapshot?.sessionCount || 0} runs`;
+        note.title = 'Loot summed per item across every stored run, and the durations added.';
+        bar.appendChild(note);
+    }
+
+    body.appendChild(bar);
+}
+
+/**
  * What everyone picked up.
  */
 export const partyLootPanel = createPanel({
@@ -172,6 +284,9 @@ export const partyLootPanel = createPanel({
     accent: ACCENT,
     refreshMs: 5000,
     draw: (body) => {
+        refreshSessions();
+        drawTopBar(body);
+
         const party = partyRuns();
 
         if (!party.length) {

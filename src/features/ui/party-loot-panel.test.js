@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ data: null }));
+const game = vi.hoisted(() => ({ data: null, sessions: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: { Z_FLOATING_PANEL: 1100, getSetting: () => true, getSettingValue: () => 'full' },
@@ -31,6 +31,14 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+// Mocked outright rather than through importOriginal: the real module is
+// exercised by its own tests, and pulling it in here recurses through the mock
+// factory while the graph is still being built
+vi.mock('../combat-stats/combat-session-history.js', () => ({
+    loadSessions: async () => game.sessions,
+    combineSessions: (list) => (list.length ? { ...list[0], combined: true, sessionCount: list.length } : null),
+    describeSession: (session) => `run ${session.key}`,
+}));
 
 const { partyLootPanel } = await import('./party-loot-panel.js');
 
@@ -38,6 +46,7 @@ const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest',
 const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 1, totalValue: 0 };
 
 beforeEach(() => {
+    game.sessions = [];
     game.data = {
         combatStartTime: '2026-08-03T01:00:00Z',
         players: [
@@ -51,6 +60,20 @@ afterEach(() => partyLootPanel.hide());
 
 const text = () => partyLootPanel.panel.textContent;
 const FAILED = 'could not be drawn';
+
+/**
+ * Let the archive read land and draw again.
+ *
+ * The panel fires its storage read off `draw` rather than awaiting it, so the
+ * picker is always one frame behind the archive. Twice, because the read started
+ * by the *previous* draw is what the first render consumes.
+ */
+const settle = async () => {
+    for (let i = 0; i < 2; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        partyLootPanel.render();
+    }
+};
 
 describe('the panel renders', () => {
     test('a card per character, and none of them fails', () => {
@@ -113,5 +136,74 @@ describe('the panel renders', () => {
 
         expect(text()).toContain('No run measured yet');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('the top bar', () => {
+    const archived = (key, start) => ({
+        key,
+        combatStartTime: start,
+        durationSeconds: 3600,
+        players: [{ name: 'Millennium44', isCurrentPlayer: true, income: 1_000_000, lootList: [CHEST] }],
+    });
+
+    const values = () => [...partyLootPanel.panel.querySelectorAll('option')].map((option) => option.value);
+
+    const choose = (value) => {
+        const picker = partyLootPanel.panel.querySelector('select');
+        picker.value = value;
+        picker.dispatchEvent(new Event('change'));
+    };
+
+    test('the live run is what it opens on', () => {
+        partyLootPanel.show();
+
+        expect(partyLootPanel.panel.querySelector('select')?.value).toBe('live');
+    });
+
+    test('an archived run is offered once it has been read back', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+
+        expect(values()).toContain('a|1');
+    });
+
+    test('a combined view appears only when there is more than one run', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+        expect(values()).not.toContain('combined');
+
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z'), archived('b|2', '2026-08-02T20:00:00Z')];
+        await settle();
+        expect(values()).toContain('combined');
+    });
+
+    test('choosing an archived run shows that run rather than the live one', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+
+        choose('a|1');
+
+        // The archived run is solo, so the live run's second character is gone
+        expect(text()).not.toContain('Briggsy99');
+        expect(text()).toContain('Millennium44');
+    });
+
+    test('a chosen run that has since fallen off the list falls back to live', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+        choose('a|1');
+
+        // Twenty runs later it has been pushed out. The panel must not sit on an
+        // empty body pointing at a run that no longer exists.
+        game.sessions = [];
+        await settle();
+
+        expect(partyLootPanel.panel.querySelector('select').value).toBe('live');
+        expect(text()).toContain('Briggsy99');
     });
 });

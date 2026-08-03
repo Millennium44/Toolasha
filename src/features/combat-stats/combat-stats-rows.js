@@ -221,7 +221,13 @@ registerRow({
             { text: '|', color: ROW_COLORS.dim },
             { text: `${eph.toFixed(2)} EPH`, color: ROW_COLORS.accent },
         ]);
+        container.title =
+            'How long this run has been going, and encounters per hour.\n' +
+            'Double-click for the loot, including the runs before this one.';
     },
+    // The session's own loot list, and the picker for earlier sessions — the
+    // question a session timer raises is what the session produced
+    onOpen: () => window.Toolasha?.UI?.partyLootPanel?.toggle(),
 });
 
 /**
