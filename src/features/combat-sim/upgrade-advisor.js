@@ -2649,6 +2649,11 @@ function expectedFightAttempts(winRate) {
  * Candidates are the union of style-relevant skills across all fight loadouts
  * (loadouts can differ in style, e.g. a ranged loadout for one monster and a
  * melee loadout for another), so a skill shows if any assigned loadout trains it.
+ *
+ * Each is then measured only against the fights it is actually about — see
+ * `candidateAppliesToDTO`. A combat level is every fight; a piece of gear is the
+ * fights whose loadout wears what it replaces, and the rest keep their baseline
+ * untouched rather than being simulated wearing something they would never wear.
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel, combatLevelTargets }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
  * @param {Function} onProgress - Called with { current, total, description }
@@ -2708,12 +2713,22 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const key = candidateAssignmentKey(candidate);
         if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
     }
-    const candidates = [...candidatesByKey.values()].map((candidate) => ({
-        ...candidate,
-        cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
-    }));
+    // Which fights each candidate is actually about. A combat level is every
+    // fight; a piece of gear is only the fights whose loadout wears the piece it
+    // replaces — installing a melee sword into a magic loadout measures a
+    // costume change, not an upgrade, and drags the aggregate with it.
+    const candidates = [...candidatesByKey.values()]
+        .map((candidate) => ({
+            ...candidate,
+            cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
+            appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto)),
+        }))
+        .filter((candidate) => candidate.appliesTo.some(Boolean));
 
-    const total = fights.length * (candidates.length + 1);
+    // Only the fights a candidate touches are simulated; the rest keep their
+    // baseline, which is both the truth and a great deal less work
+    const simsPerCandidate = candidates.reduce((sum, c) => sum + c.appliesTo.filter(Boolean).length, 0);
+    const total = fights.length + simsPerCandidate;
     let current = 0;
 
     // Per-fight seeds derived from one analysis seed: fight N is simmed with the
@@ -2765,7 +2780,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
     const baselineAttempts = baselineFights.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
 
-    // One pass per combat-level candidate across every fight
+    // One pass per candidate, over the fights that candidate is about
     const results = [];
     for (const candidate of candidates) {
         const fightResults = [];
@@ -2775,6 +2790,17 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 aborted = true;
                 break;
             }
+            // A fight this upgrade does not reach keeps its baseline exactly —
+            // no sim, because there is nothing to find out
+            if (!candidate.appliesTo[i]) {
+                fightResults.push({
+                    ...fightMeta(fights[i]),
+                    winRate: baselineFights[i].winRate,
+                    winRateDelta: 0,
+                    applied: false,
+                });
+                continue;
+            }
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
             const boostedDTO = applyCandidateToDTO(fights[i].dto, candidate);
             const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
@@ -2782,14 +2808,19 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 ...fightMeta(fights[i]),
                 winRate,
                 winRateDelta: winRate - baselineFights[i].winRate,
+                applied: true,
             });
             current++;
         }
         if (aborted) break;
 
+        const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
         const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
-        const avgWinDelta = fightResults.reduce((sum, f) => sum + f.winRateDelta, 0) / (fightResults.length || 1);
+        // Averaged over the rooms it reaches rather than every room: a weapon
+        // that only goes in two of eight loadouts is not a quarter as good at
+        // its job, and dividing by eight would say it was
+        const avgWinDelta = applied.reduce((sum, f) => sum + f.winRateDelta, 0) / (applied.length || 1);
         const attemptsDelta = expectedAttempts - baselineAttempts;
         const cost = candidate.cost;
         // Attempts saved across a whole run, per billion coins. The figure the
@@ -2803,6 +2834,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         results.push({
             candidate,
             fights: fightResults,
+            appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
             expectedAttempts,
@@ -3125,6 +3157,69 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
 }
 
 /**
+ * Whether an upgrade is even about this loadout.
+ *
+ * The all-fights analysis pools candidates from every fight and then measures
+ * each against every fight, which is right for a combat level — one number the
+ * whole character carries — and wrong for a piece of gear. A sword upgrade
+ * generated from the melee loadout, installed into the magic loadout, replaces
+ * the staff with a sword: not an upgrade, a costume change, and it comes back as
+ * a large negative that drags the aggregate for every room the buyer would never
+ * have applied it to.
+ *
+ * The honest answer for a room the piece does not belong to is that nothing
+ * happens there, which is also the cheap one — no simulation is needed to work
+ * out that a fight is unchanged.
+ *
+ * @param {Object} candidate - From `generateCandidates`
+ * @param {Object} dto - The loadout a fight is assigned
+ * @returns {boolean} Whether applying it to this loadout means anything
+ */
+export function candidateAppliesToDTO(candidate, dto) {
+    if (!candidate || !dto) return false;
+
+    // The character's own, wherever they are worn: skills and rooms are not
+    // held in a loadout and change every fight at once
+    if (candidate.type === 'combat_level' || candidate.type === 'house') return true;
+
+    if (candidate.slot?.startsWith('ability_')) {
+        const abilities = dto.abilities || [];
+        if (candidate.type === 'ability_level') {
+            // Only where it is actually cast — levelling an ability this
+            // loadout does not slot changes nothing about the fight
+            return abilities.some(
+                (ability) => ability?.hrid === candidate.upgradeHrid && (ability.level || 0) < candidate.upgradeLevel
+            );
+        }
+        // A swap brings a new ability in, so it applies unless this loadout is
+        // already running it at least that high
+        const slotIdx = parseInt(candidate.slot.split('_')[1]);
+        const existing = abilities[slotIdx];
+        return !(existing?.hrid === candidate.upgradeHrid && (existing.level || 0) >= candidate.upgradeLevel);
+    }
+
+    const equipment = dto.equipment || {};
+
+    if (candidate.type === 'cross_slot') {
+        const removed = candidate.removedItems || (candidate.currentHrid ? [{ hrid: candidate.currentHrid }] : []);
+        // A swap that empties nothing is filling empty slots, so it only
+        // applies where they are in fact empty
+        if (!removed.length) return Object.keys(candidate.addedSlots || {}).every((slot) => !equipment[slot]);
+        return removed.every((item) => Object.values(equipment).some((worn) => worn?.hrid === item.hrid));
+    }
+
+    const worn = equipment[candidate.slot];
+    // A bare slot is only bare in the loadouts where it is bare
+    if (!candidate.currentHrid) return !worn?.hrid;
+    if (worn?.hrid !== candidate.currentHrid) return false;
+    // Same item: an enhancement, and nothing to measure at or above the target
+    if (candidate.upgradeHrid === candidate.currentHrid) {
+        return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+    }
+    return true;
+}
+
+/**
  * The same player, with one candidate applied.
  *
  * A deep copy, always: the caller's DTO is the character the panel is showing
@@ -3144,7 +3239,15 @@ export function applyCandidateToDTO(playerDTO, candidate) {
     const dto = JSON.parse(JSON.stringify(playerDTO));
 
     if (candidate.slot?.startsWith('ability_')) {
-        const slotIdx = parseInt(candidate.slot.split('_')[1]);
+        // Levelling an ability follows the ability, not the slot number it
+        // happened to sit in on the loadout the candidate came from — another
+        // loadout can cast the same ability from a different slot, and writing
+        // to the index would overwrite whatever that one keeps there
+        const byName =
+            candidate.type === 'ability_level'
+                ? (dto.abilities || []).findIndex((ability) => ability?.hrid === candidate.upgradeHrid)
+                : -1;
+        const slotIdx = byName >= 0 ? byName : parseInt(candidate.slot.split('_')[1]);
         const existing = dto.abilities[slotIdx];
         dto.abilities[slotIdx] =
             existing?.hrid === candidate.upgradeHrid
