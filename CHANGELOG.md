@@ -18,6 +18,11 @@ Every panel built from MCS — DPs, IHurt, Profit, Party Luck, Party Loot, and t
 
 Stored beside the geometry, because it is the same question: where a panel was, and whether it was anywhere at all. The read is fired off at module scope rather than awaited, so a panel appears a moment after the page — which is what a remembered panel looks like anyway.
 
+The Houses and Treasure panels roll their own show/hide rather than using either shared base, so they were brought in by hand. Two details there worth naming:
+
+- **A feature being disabled does not count as closing a panel.** The Treasure panel's teardown and its close button used the same method; only the button should stop it reopening, so they are now separate.
+- **The chest popup is deliberately not restored.** It is a reaction to opening something, and a popup about a chest opened yesterday reappearing on load would be a stale answer to a question nobody asked.
+
 ### The treasure popup, closer to TReasure
 
 - **Rows that say nothing are gone.** A chest's drop table runs to thirty-odd entries, most of them equipment at rates so long that a lifetime of opening owes you a hundredth of one. Listed, they read "0, 0.00 expected, −100%" — three figures agreeing that nothing happened, pushing the rows that did happen off the bottom. Anything that actually dropped is kept however unlikely it was, because that is exactly the row worth seeing.
