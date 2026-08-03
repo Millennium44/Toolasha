@@ -31,6 +31,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { newTakenState, attributeIncoming, foldTaken, foldTakenByEnemy, waveKey } from '../../utils/damage-taken.js';
+import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 
 /** The counters this tick is measured against */
 let state = newTakenState();
@@ -152,6 +153,24 @@ export function takenBreakdown() {
     return { seconds, encounters, startedAt, players, enemies, waves: waveList };
 }
 
+/**
+ * Fill the monster map from what the game is drawing.
+ *
+ * Only ever called when the map is empty, which is only true after a reload
+ * landed mid-battle. Once `new_battle` arrives the payload is authoritative and
+ * this stops being consulted for the rest of the session.
+ *
+ * The wave keeps whatever name it was given, which after a reload is nothing —
+ * a composition recovered halfway through is not the composition that was
+ * fought, and filing part of a battle under a full wave's name would make the
+ * per-encounter average wrong for that wave from then on.
+ *
+ * @param {Object} mMap - The tick's monsters
+ */
+function recoverNames(mMap) {
+    for (const [index, found] of Object.entries(recoverMonsterNames(mMap))) monsters[index] = found.name;
+}
+
 let onNewBattle = null;
 let onBattleUpdated = null;
 
@@ -196,6 +215,12 @@ export default {
                     battleId = data?.battleId;
                     state = newTakenState();
                 }
+
+                // A page reloaded mid-fight never saw this battle's `new_battle`,
+                // so nothing here knows what it is fighting and the whole rest of
+                // the battle would be filed under Unknown Enemy. The game is
+                // drawing the names; they are matched back on health.
+                if (!Object.keys(monsters).length) recoverNames(data?.mMap);
 
                 const events = attributeIncoming(data, state);
                 foldTaken(tally, events);

@@ -39,6 +39,7 @@ import {
     foldEvents,
     foldEnemies,
 } from '../../utils/damage-attribution.js';
+import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -264,6 +265,19 @@ export default {
                     state.monstersHP = {};
                     state.dmgCounter = {};
                     state.critCounter = {};
+                }
+
+                // A reload mid-fight never saw this battle's `new_battle`, so
+                // nothing here knows what it is fighting — and an unnamed enemy
+                // is dropped from the enemy tally rather than shown, which makes
+                // the kill counts quietly short. The game is drawing the names.
+                if (!Object.keys(monsters).length) {
+                    for (const [index, found] of Object.entries(recoverMonsterNames(data?.mMap))) {
+                        monsters[index] = { name: found.name };
+                        // What a kill is worth, which without this would have no
+                        // figure at all for a monster first met after a reload
+                        if (found.max > (monsterHealth[found.name] || 0)) monsterHealth[found.name] = found.max;
+                    }
                 }
 
                 const events = attributeTick(data, state);
