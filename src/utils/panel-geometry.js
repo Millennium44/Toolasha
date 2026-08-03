@@ -117,6 +117,28 @@ export async function clearGeometry(panelKey) {
 }
 
 /**
+ * Forget where a panel was, but not how big it was.
+ *
+ * For a panel that places itself and is only pinned by being moved: unpinning
+ * has to drop the position, and dropping the size with it would be an unasked-for
+ * second change.
+ *
+ * @param {string} panelKey - Which panel
+ */
+export async function clearPosition(panelKey) {
+    const all = await allGeometry();
+    if (!all[panelKey]) return;
+
+    const { left: _left, top: _top, ...rest } = all[panelKey];
+    all[panelKey] = rest;
+    try {
+        await storage.setJSON(STORAGE_KEY, all, 'settings');
+    } catch (error) {
+        console.error('[PanelGeometry] Clearing a panel position failed:', error);
+    }
+}
+
+/**
  * Put a panel back where it was left.
  *
  * Applied after the panel is on screen rather than before, because the geometry
@@ -127,16 +149,18 @@ export async function clearGeometry(panelKey) {
  * @param {HTMLElement} panel - The panel
  * @param {string} panelKey - Which panel
  * @param {{width: number, height: number}} [min] - Smallest allowed size
+ * @param {Object} [options] - `position: false` to restore the size only, for a
+ *   panel that places itself and only remembers how big it was
  * @returns {Promise<void>}
  */
-export async function restoreGeometry(panel, panelKey, min) {
+export async function restoreGeometry(panel, panelKey, min, { position = true } = {}) {
     const all = await allGeometry();
     const clamped = clampGeometry(all[panelKey], { width: window.innerWidth, height: window.innerHeight }, min);
     if (!clamped || !panel?.isConnected) return;
 
     if (clamped.width) panel.style.width = `${clamped.width}px`;
     if (clamped.height) panel.style.height = `${clamped.height}px`;
-    if (clamped.left !== undefined) {
+    if (position && clamped.left !== undefined) {
         panel.style.left = `${clamped.left}px`;
         panel.style.top = `${clamped.top}px`;
         // Anchored from the left from here on; a panel positioned from the right

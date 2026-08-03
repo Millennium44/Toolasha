@@ -6,9 +6,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
-### The badge said "2 2"
+### The marketplace badge is the game's badge, with our number in it
 
-Blanking the game's own count with `font-size: 0` did not blank it: the number is drawn inside a nested element that sets its own size, so the real count rendered beside ours. The children are removed outright now — a pseudo-element is not matched by `*`, so ours is the only thing left to draw.
+Two things were wrong, and the first explains the second.
+
+The selector matched `NavigationBar_badge` as a _prefix_, so it also caught the element sitting beside the badge in the same sidebar item — the count was written into both, and the badge read "2 2". It now matches `NavigationBar_badge__`, with the two underscores that begin the CSS-module hash, which is the whole class name rather than a prefix of it.
+
+And the count no longer comes through CSS at all. A number printed in a pseudo-element is a bare digit sitting where a styled badge should be; blanking the real text to make room for it meant hiding whatever was carrying the badge's shape and colour. The digits are rewritten in place instead, and put back whenever React writes its own over them — so the badge stays exactly the badge, and only the number differs. Hiding it outright is still a stylesheet, which is the one case where a rule the game does not know about is the right tool.
+
+### A click is not a drag
+
+Dragging a panel by its header fires an "it was moved" callback on release — and it fired on a press that never moved, which for most panels means saving the position it already had, and for the Treasure popup means being told to stay put. So **one click on the popup's header silently pinned it**, and it stopped appearing beside the chest dialog with nothing to say why.
+
+The other half of that: the popup asked for its remembered position back on every opening whether or not it was pinned. A stale position was reapplied each time, and if the dialog was not found within the retries the popup simply stayed there. It now restores its size only unless it has been pinned.
+
+### The unpin button no longer disappears when you press it
+
+It was only drawn while the popup was pinned, so pressing it removed the button — which reads as the button breaking rather than as the setting changing. It is always there now, saying which way it is set: _Popup follows the chest dialog_ or _Popup stays where you put it_. Unpinning forgets where the popup was put and keeps how big it was, since only the position is what pinning is about.
 
 ### Remembered panels actually reopen
 
