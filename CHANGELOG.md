@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: IHurt showed zeroes, and DPs was broken in the release build
+
+IHurt reported nothing at all — no damage taken, no regeneration, no enemies, and "nothing has hit the party yet" through a fight that was plainly hitting the party. The tracker was working; the panel could not reach it.
+
+- **The panel now imports the tracker instead of reaching for a global.** It was reading `Toolasha.Combat.damageTakenTracker.takenBreakdown`, and what sits at that global is the tracker's _feature_ object — the thing with `initialize` and `cleanup` on it. So the lookup was `undefined`, the optional call returned nothing, and every figure defaulted to zero.
+- **The same mistake had already broken the DPs panel in the release build**, which is the more serious half of this. A module in rollup's externals map is not bundled into the libraries that import it — every import compiles to a property read off one global. The Combat library was publishing `damage-tracker.js`'s default export there, so `damageBreakdown` and its neighbours resolved to `undefined` in the production bundles. It never showed up in testing because the dev standalone build has no externals: it bundles everything, imports resolve normally, and it works. Both trackers are now published as modules.
+- **A test reads the rollup config, walks the real import graph, and checks every cross-bundle named import against what its library actually publishes.** Sixty-nine of them. It accepts any shape that works — a namespace import, a hand-built object, a top-level re-export — because several are already written each of those ways and all of them are correct. What it rejects is a default export sitting where a module should be.
+
 ### The Deaths panel is IHurt now
 
 It showed a death count and a rate, which is the tile with more decimal places. The question a deaths panel exists to answer is not "how many" but "can this zone be idled overnight", and a count cannot answer it — you find out by dying.

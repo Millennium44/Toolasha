@@ -37,6 +37,7 @@ import {
     setFilterNonDamaging,
     resetDamageTracker,
 } from '../../features/combat/damage-tracker.js';
+import { takenBreakdown } from '../../features/combat/damage-taken-tracker.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -1076,7 +1077,7 @@ export const deathsPanel = new CombatPanel({
     title: 'IHurt',
     size: { width: 460, height: 420 },
     draw: (body) => {
-        const taken = window.Toolasha?.Combat?.damageTakenTracker?.takenBreakdown?.() || null;
+        const taken = takenBreakdown();
         const data = combatStatsDataCollector.getLatestData?.();
         const statPlayers = data?.players || [];
 

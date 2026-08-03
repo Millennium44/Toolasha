@@ -78,12 +78,10 @@ vi.mock('../../features/combat/damage-tracker.js', () => ({
     },
 }));
 
-// The taken tracker is a stateful singleton fed by the websocket, so it lives in
-// the Combat bundle and the panel reaches it through the global rather than
-// importing a second copy that would sit there receiving nothing
-window.Toolasha = {
-    Combat: { damageTakenTracker: { takenBreakdown: () => state.taken } },
-};
+vi.mock('../../features/combat/damage-taken-tracker.js', () => ({
+    default: {},
+    takenBreakdown: () => state.taken,
+}));
 
 const { dpsPanel, deathsPanel, profitPanel, combatProfitView } = await import('./combat-panels.js');
 

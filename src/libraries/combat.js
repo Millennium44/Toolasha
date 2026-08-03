@@ -42,8 +42,12 @@ import * as combatStatsCalculator from '../features/combat-stats/combat-stats-ca
 // Abilities
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
 import manaTracker from '../features/combat/mana-tracker.js';
-import damageTracker from '../features/combat/damage-tracker.js';
-import damageTakenTracker from '../features/combat/damage-taken-tracker.js';
+// Namespaces, not default exports: both are in rollup's externals map, so
+// another bundle importing `{ damageBreakdown }` from one of them compiles to
+// `Toolasha.Combat.damageTracker.damageBreakdown` — which is undefined unless
+// what sits at that global is the module itself
+import * as damageTracker from '../features/combat/damage-tracker.js';
+import * as damageTakenTracker from '../features/combat/damage-taken-tracker.js';
 import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
 
 // Profile (combat score)
