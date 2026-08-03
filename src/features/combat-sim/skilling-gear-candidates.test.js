@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { relevantStats, skillScore, canEquip, bestGearForSkill } from './skilling-gear-candidates.js';
+import { relevantStats, skillScore, canEquip, bestGearForSkill, NEW_GEAR_LEVEL } from './skilling-gear-candidates.js';
 
 const gear = (type, stats, over = {}) => ({
     name: over.name,
@@ -147,8 +147,18 @@ describe('the shape the analysis expects', () => {
         const candidate = forSkill('milking').find((c) => c.slot === '/equipment_types/milking_tool');
 
         expect(candidate.currentHrid).toBe('');
-        expect(candidate.upgradeLevel).toBe(0);
         expect(candidate.type).toBe('skilling_gear');
+    });
+
+    test('a piece you do not own is offered at +5, not +0', () => {
+        // Nobody buys a celestial tool and leaves it there, so +0 answers a
+        // question nobody asked — and understates both its cost and its gain
+        // against candidates judged at the level they would actually be run
+        const candidate = forSkill('milking').find((c) => c.slot === '/equipment_types/milking_tool');
+
+        expect(NEW_GEAR_LEVEL).toBe(5);
+        expect(candidate.upgradeLevel).toBe(5);
+        expect(candidate.description).toContain('+5');
     });
 
     test('nothing in the game data is nothing offered, rather than a throw', () => {

@@ -2503,40 +2503,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         onProgress?.({ current, total, description: `Simulating: ${candidate.description}` });
 
-        const modifiedDTO = JSON.parse(JSON.stringify(playerDTOs[playerIndex]));
-
-        if (candidate.slot.startsWith('ability_')) {
-            const slotIdx = parseInt(candidate.slot.split('_')[1]);
-            const existingAbility = modifiedDTO.abilities[slotIdx];
-            if (existingAbility?.hrid === candidate.upgradeHrid) {
-                // Keep configured triggers when leveling the equipped ability
-                modifiedDTO.abilities[slotIdx] = {
-                    ...existingAbility,
-                    level: candidate.upgradeLevel,
-                };
-            } else {
-                modifiedDTO.abilities[slotIdx] = {
-                    hrid: candidate.upgradeHrid,
-                    level: candidate.upgradeLevel,
-                    triggers: null,
-                };
-            }
-        } else if (candidate.type === 'combat_level') {
-            // Combat skill level boost (simulated charm)
-            modifiedDTO[candidate.skillKey] = candidate.upgradeLevel;
-        } else if (candidate.type === 'cross_slot') {
-            for (const slot of candidate.clearedSlots) {
-                modifiedDTO.equipment[slot] = null;
-            }
-            for (const [slot, item] of Object.entries(candidate.addedSlots)) {
-                modifiedDTO.equipment[slot] = item;
-            }
-        } else {
-            modifiedDTO.equipment[candidate.slot] = {
-                hrid: candidate.upgradeHrid,
-                enhancementLevel: candidate.upgradeLevel,
-            };
-        }
+        const modifiedDTO = applyCandidateToDTO(playerDTOs[playerIndex], candidate);
 
         const simResult = await runLabyrinthSimulation({
             gameData,
@@ -2668,6 +2635,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         labyrinthCombatBuffs = [],
         abilityTargetLevel,
         combatLevelTargets,
+        abilityTargets,
+        modes = ['combat_level'],
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -2676,25 +2646,42 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const zoneHrid =
         Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
 
-    // Union of combat-level candidates across the fight loadouts
+    // The union of candidates across every fight's loadout.
+    //
+    // Union rather than per-fight, because the question is what to buy — one
+    // thing, once, that has to serve every room. A candidate generated from the
+    // Cyclops loadout is still worth simming against the Mimic, and the two
+    // loadouts usually differ in only a slot or two.
+    //
+    // Keyed by what the candidate actually changes rather than by skill, since
+    // combat levels are one per skill but equipment is many per slot.
     const candidatesByKey = new Map();
     for (const fight of fights) {
-        const fightCandidates = generateCandidates(
-            fight.dto,
-            gameData,
-            'combat_level',
-            abilityTargetLevel,
-            'increment',
-            false,
-            combatLevelTargets
-        );
-        for (const candidate of fightCandidates) {
-            if (!candidatesByKey.has(candidate.skillKey)) {
-                candidatesByKey.set(candidate.skillKey, candidate);
+        for (const mode of modes) {
+            const fightCandidates = generateCandidates(
+                fight.dto,
+                gameData,
+                mode,
+                abilityTargetLevel,
+                'increment',
+                false,
+                combatLevelTargets,
+                abilityTargets
+            );
+            for (const candidate of fightCandidates) {
+                const key = candidateAssignmentKey(candidate);
+                if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
             }
         }
     }
-    const candidates = [...candidatesByKey.values()];
+    for (const candidate of extraCandidates) {
+        const key = candidateAssignmentKey(candidate);
+        if (!candidatesByKey.has(key)) candidatesByKey.set(key, candidate);
+    }
+    const candidates = [...candidatesByKey.values()].map((candidate) => ({
+        ...candidate,
+        cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
+    }));
 
     const total = fights.length * (candidates.length + 1);
     let current = 0;
@@ -2759,8 +2746,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 break;
             }
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
-            const boostedDTO = JSON.parse(JSON.stringify(fights[i].dto));
-            boostedDTO[candidate.skillKey] = candidate.upgradeLevel;
+            const boostedDTO = applyCandidateToDTO(fights[i].dto, candidate);
             const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
             fightResults.push({
                 ...fightMeta(fights[i]),
@@ -2774,19 +2760,40 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
         const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
         const avgWinDelta = fightResults.reduce((sum, f) => sum + f.winRateDelta, 0) / (fightResults.length || 1);
+        const attemptsDelta = expectedAttempts - baselineAttempts;
+        const cost = candidate.cost;
+        // Attempts saved across a whole run, per billion coins. The figure the
+        // question actually asks: a cheap thing that helps a little can beat an
+        // expensive thing that helps a lot, and a ranking by raw gain never
+        // says so. Candidates with no gold price — a combat level costs
+        // experience — get null rather than a zero that would sort them last.
+        const attemptsSaved = -attemptsDelta;
+        const perGold = cost > 0 ? (attemptsSaved / cost) * 1e9 : null;
+
         results.push({
             candidate,
             fights: fightResults,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
             expectedAttempts,
-            attemptsDelta: expectedAttempts - baselineAttempts,
+            attemptsDelta,
             avgWinDelta,
+            cost,
+            attemptsSavedPerBillion: perGold,
         });
     }
 
-    // Biggest attempts reduction (most negative delta) first
-    results.sort((a, b) => a.attemptsDelta - b.attemptsDelta);
+    // Best value first where there is a price, then the priceless ones by raw
+    // gain — a combat level and a helmet cannot be ranked against each other in
+    // coins, and pretending otherwise would bury one of them
+    results.sort((a, b) => {
+        const priced = (result) => (result.attemptsSavedPerBillion === null ? 1 : 0);
+        return (
+            priced(a) - priced(b) ||
+            (b.attemptsSavedPerBillion ?? 0) - (a.attemptsSavedPerBillion ?? 0) ||
+            a.attemptsDelta - b.attemptsDelta
+        );
+    });
 
     return {
         baseline: { fights: baselineFights, runClearChance: baselineRunClear, expectedAttempts: baselineAttempts },
@@ -3085,6 +3092,51 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
     }
 
     return candidates;
+}
+
+/**
+ * The same player, with one candidate applied.
+ *
+ * A deep copy, always: the caller's DTO is the character the panel is showing
+ * and a dozen candidates measured against a DTO that kept the last one's change
+ * would each be measuring the pile rather than the piece.
+ *
+ * Shared by the single-fight and all-fights analyses so a candidate means the
+ * same thing in both. They diverged once, and a candidate that applies one way
+ * in one view and another way in the other is worse than a candidate that does
+ * not work at all — only one of those is visible.
+ *
+ * @param {Object} playerDTO - The player to change
+ * @param {Object} candidate - From `generateCandidates`
+ * @returns {Object} A new DTO
+ */
+export function applyCandidateToDTO(playerDTO, candidate) {
+    const dto = JSON.parse(JSON.stringify(playerDTO));
+
+    if (candidate.slot?.startsWith('ability_')) {
+        const slotIdx = parseInt(candidate.slot.split('_')[1]);
+        const existing = dto.abilities[slotIdx];
+        dto.abilities[slotIdx] =
+            existing?.hrid === candidate.upgradeHrid
+                ? // Keep configured triggers when levelling the equipped ability
+                  { ...existing, level: candidate.upgradeLevel }
+                : { hrid: candidate.upgradeHrid, level: candidate.upgradeLevel, triggers: null };
+        return dto;
+    }
+
+    if (candidate.type === 'combat_level') {
+        dto[candidate.skillKey] = candidate.upgradeLevel;
+        return dto;
+    }
+
+    if (candidate.type === 'cross_slot') {
+        for (const slot of candidate.clearedSlots) dto.equipment[slot] = null;
+        for (const [slot, item] of Object.entries(candidate.addedSlots)) dto.equipment[slot] = item;
+        return dto;
+    }
+
+    dto.equipment[candidate.slot] = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
+    return dto;
 }
 
 /**

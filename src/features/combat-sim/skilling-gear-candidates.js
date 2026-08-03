@@ -25,6 +25,17 @@
  * have to be updated for on every content patch.
  */
 
+/**
+ * The enhancement level a piece you do not own yet is offered at.
+ *
+ * Not +0. Nobody buys a celestial tool and leaves it there, so pricing and
+ * simulating one at +0 answers a question nobody is asking — and understates
+ * both the cost and the gain against every other candidate, which are judged at
+ * the level you would actually run them. The same +5 the philosopher's
+ * accessories are offered at, for the same reason.
+ */
+export const NEW_GEAR_LEVEL = 5;
+
 /** Skills whose gathering quantity is worth counting */
 const GATHERING_SKILLS = new Set(['milking', 'foraging', 'woodcutting']);
 
@@ -150,8 +161,8 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
         const worn = equipment[slot];
         if (worn?.hrid === winner.hrid) continue;
 
-        // Worn gear is judged at the level it is worn at; the replacement at +0,
-        // which is what buying one gets you before any enhancing
+        // Worn gear is judged at the level it is worn at; the replacement on its
+        // own stats, since the enhancement it would be bought at applies to both
         const wornScore = worn ? skillScore(itemDetailMap[worn.hrid], stats) : 0;
         if (wornScore >= winner.score) continue;
 
@@ -166,8 +177,8 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
             currentHrid: worn?.hrid || '',
             currentLevel: worn?.enhancementLevel || 0,
             upgradeHrid: winner.hrid,
-            upgradeLevel: 0,
-            description: `${from}${name} (${skill})`,
+            upgradeLevel: NEW_GEAR_LEVEL,
+            description: `${from}${name} +${NEW_GEAR_LEVEL} (${skill})`,
             type: 'skilling_gear',
         });
     }
