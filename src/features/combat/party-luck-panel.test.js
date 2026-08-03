@@ -211,6 +211,8 @@ describe('inside a dungeon', () => {
                 },
                 { name: 'Bare', isCurrentPlayer: false, mean: 1, byPayout: {}, luck: null },
             ],
+            counted: 'chests',
+            entryKey: null,
         };
     });
 
@@ -228,6 +230,50 @@ describe('inside a dungeon', () => {
 
         expect(text()).toContain('Bare');
         expect(text()).toContain('no completion yet');
+    });
+
+    test('a level-gapped player gets their count and no verdict', () => {
+        // The percentile would be about their party rather than their luck: the
+        // game cuts what drops for them by an amount the model does not know
+        game.chests.players[0].levelGap = -0.9;
+        partyLuckPanel.show();
+
+        expect(text()).toContain('level gap −90%');
+        expect(text()).toContain('16 over 12');
+        expect(text()).not.toContain('68th');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a player with no gap is unaffected by somebody else having one', () => {
+        game.chests.players[0].levelGap = 0;
+        partyLuckPanel.show();
+
+        expect(text()).toContain('16 of 15.5');
+        expect(text()).not.toContain('level gap');
+    });
+
+    test('where the completions came from is said, because the two see different things', () => {
+        partyLuckPanel.show();
+        expect(text()).toContain('inferred from chests');
+
+        partyLuckPanel.hide();
+        game.chests.counted = 'tracker';
+        partyLuckPanel.show();
+        expect(text()).toContain('from the dungeon tracker');
+    });
+
+    test('entry keys are shown as spent, not netted against keys bought', () => {
+        game.chests.entryKey = { itemHrid: '/items/chimerical_entry_key', spent: 12, gained: 200 };
+        partyLuckPanel.show();
+
+        expect(text()).toContain('Entry keys spent');
+        expect(text()).toContain('12');
+        expect(text()).not.toContain('-188');
+    });
+
+    test('and the section is absent when nothing has been spent', () => {
+        partyLuckPanel.show();
+        expect(text()).not.toContain('Entry keys spent');
     });
 
     test('and the per-monster tables are not drawn, because there are none', () => {

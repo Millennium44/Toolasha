@@ -13,6 +13,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
+vi.mock('./dungeon-tracker.js', () => ({ default: { onUpdate: () => {}, offUpdate: () => {} } }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
@@ -68,11 +69,11 @@ describe('watching a dungeon pay out', () => {
      * @param {Array<number>} counts - Chests, mine first
      * @returns {Object}
      */
-    const battle = (battleId, counts) => ({
+    const battle = (battleId, counts, levels = [100, 100]) => ({
         battleId,
         players: counts.map((count, index) => ({
             character: { id: index === 0 ? 'me' : 'them', name: index === 0 ? 'Mine' : 'Theirs' },
-            combatDetails: { combatStats: { combatDropQuantity: 0.5 } },
+            combatDetails: { combatLevel: levels[index], combatStats: { combatDropQuantity: 0.5 } },
             totalLootMap: {
                 1: { itemHrid: '/items/chimerical_chest', count },
                 2: { itemHrid: '/items/coin', count: 999 },
@@ -90,6 +91,7 @@ describe('watching a dungeon pay out', () => {
         };
         combatDropLuck.chests = null;
         combatDropLuck.context = null;
+        combatDropLuck.keys = { counts: {}, spent: {}, gained: {}, samples: {} };
         // The live percentile is throttled and this test is not about it
         combatDropLuck.liveAt = Date.now();
     });
@@ -135,6 +137,56 @@ describe('watching a dungeon pay out', () => {
         combatDropLuck._rememberContext(battle(1, [0, 0]));
 
         expect(combatDropLuck.dungeonChestLuck()).toBeNull();
+    });
+
+    test('the tracker outranks the chest count, and can see a run that paid nothing', () => {
+        // The case the chest count cannot reach: a completion that gave somebody
+        // no chest produces no rise, so inference sees no run at all
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        combatDropLuck._rememberContext(battle(2, [4, 0]));
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: {} });
+
+        const [mine, theirs] = combatDropLuck.dungeonChestLuck().players;
+
+        expect(combatDropLuck.dungeonChestLuck().counted).toBe('tracker');
+        expect(theirs.luck.completions).toBe(1);
+        expect(theirs.luck.chests).toBe(0);
+        expect(mine.observed).toBe(4);
+        expect(theirs.observed).toBe(0);
+    });
+
+    test('without the tracker it falls back to watching the chests', () => {
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        combatDropLuck._rememberContext(battle(2, [4, 3]));
+
+        expect(combatDropLuck.dungeonChestLuck().counted).toBe('chests');
+        expect(combatDropLuck.dungeonChestLuck().players[0].luck.completions).toBe(1);
+    });
+
+    test('a completion samples what the party spent, and only when it falls', () => {
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: { Theirs: 50 } });
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: { Theirs: 47 } });
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: { Theirs: 90 } });
+
+        expect(combatDropLuck.keys.samples.Theirs).toMatchObject({ spent: 3, runs: 1, unmeasurable: 1 });
+    });
+
+    test('a character far below the party is measured but not judged', () => {
+        combatDropLuck._rememberContext(battle(1, [0, 0], [200, 100]));
+        combatDropLuck._rememberContext(battle(2, [4, 1], [200, 100]));
+
+        const [mine, theirs] = combatDropLuck.dungeonChestLuck().players;
+
+        expect(mine.levelGap).toBe(0);
+        expect(theirs.levelGap).toBe(-0.9);
+        expect(theirs.luck).not.toBeNull();
+    });
+
+    test('an unknown level is not reported as no gap', () => {
+        combatDropLuck._rememberContext(battle(1, [0, 0], [undefined, undefined]));
+
+        expect(combatDropLuck.dungeonChestLuck().players[0].levelGap).toBeNull();
     });
 
     test('starting the dungeon again starts the count again', () => {
