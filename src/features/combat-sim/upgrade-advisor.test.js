@@ -795,6 +795,80 @@ describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
     });
 });
 
+describe('the off-hand a two-hander is traded for', () => {
+    const TWO_HAND = '/equipment_types/two_hand';
+    const MAIN = '/equipment_types/main_hand';
+    const OFF = '/equipment_types/off_hand';
+
+    function weaponGameData() {
+        return {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/cursed_bow': {
+                    name: 'Cursed Bow',
+                    itemLevel: 80,
+                    equipmentDetail: { type: TWO_HAND, combatStats: { rangedDamage: 30, rangedAccuracy: 10 } },
+                },
+                '/items/sundering_crossbow': {
+                    name: 'Sundering Crossbow',
+                    itemLevel: 90,
+                    equipmentDetail: { type: MAIN, combatStats: { rangedDamage: 25, rangedAccuracy: 8 } },
+                },
+                '/items/manticore_shield': {
+                    name: 'Manticore Shield',
+                    itemLevel: 70,
+                    equipmentDetail: { type: OFF, combatStats: { rangedAccuracy: 5, armor: 2 } },
+                },
+                '/items/knights_aegis': {
+                    name: "Knight's Aegis",
+                    itemLevel: 85,
+                    equipmentDetail: { type: OFF, combatStats: { slashAccuracy: 9, armor: 12 } },
+                },
+                '/items/plain_buckler': {
+                    name: 'Plain Buckler',
+                    itemLevel: 75,
+                    equipmentDetail: { type: OFF, combatStats: { armor: 8 } },
+                },
+            },
+        };
+    }
+
+    const offHandsOffered = (gameData) => {
+        const player = { equipment: { [TWO_HAND]: { hrid: '/items/cursed_bow', enhancementLevel: 10 } } };
+        return generateCandidates(player, gameData, 'equipment')
+            .filter((c) => c.type === 'cross_slot' && c.addedSlots?.[OFF])
+            .map((c) => c.addedSlots[OFF].hrid);
+    };
+
+    test('never one built for another style, however high its item level', () => {
+        // A shield with melee accuracy paired with a crossbow offers a ranged
+        // build a piece whose whole offensive contribution is dead weight
+        expect(offHandsOffered(weaponGameData())).not.toContain('/items/knights_aegis');
+    });
+
+    test('the one that matches the weapon is offered', () => {
+        expect(offHandsOffered(weaponGameData())).toContain('/items/manticore_shield');
+    });
+
+    test('and a purely defensive one, which suits anybody', () => {
+        expect(offHandsOffered(weaponGameData())).toContain('/items/plain_buckler');
+    });
+
+    test('a melee weapon is offered the melee shield, which is what it is for', () => {
+        const gameData = weaponGameData();
+        gameData.itemDetailMap['/items/cursed_bow'].equipmentDetail.combatStats = {
+            slashDamage: 30,
+            slashAccuracy: 10,
+        };
+        gameData.itemDetailMap['/items/sundering_crossbow'].equipmentDetail.combatStats = {
+            slashDamage: 25,
+            slashAccuracy: 8,
+        };
+
+        expect(offHandsOffered(gameData)).toContain('/items/knights_aegis');
+    });
+});
+
 describe('where a skilling upgrade lands', () => {
     const TOOL = '/equipment_types/milking_tool';
     const BODY = '/equipment_types/body';

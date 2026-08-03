@@ -93,8 +93,8 @@ class LabSimUI {
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid ${ACCENT_BORDER};
             border-radius: 10px;
-            width: 560px;
-            height: 600px;
+            width: 900px;
+            height: 700px;
             min-width: 400px;
             min-height: 300px;
             max-width: 90vw;
@@ -614,20 +614,28 @@ class LabSimUI {
         this.panel.appendChild(skillingContent);
         this.panel.appendChild(status);
 
-        const resizeHandle = document.createElement('div');
-        resizeHandle.style.cssText = `
-            position: absolute;
-            bottom: 0;
-            right: 0;
-            width: 16px;
-            height: 16px;
-            cursor: nwse-resize;
-            background: linear-gradient(135deg, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
-            border-radius: 0 0 8px 0;
-            z-index: 1;
-        `;
-        this.panel.appendChild(resizeHandle);
-        this._setupResize(resizeHandle);
+        // Both bottom corners: a panel docked against the right of the screen
+        // can only be widened by dragging its left edge, and the right-hand grip
+        // just pushes it off the screen
+        const grip = (corner) => {
+            const handle = document.createElement('div');
+            const onLeft = corner === 'left';
+            handle.style.cssText = `
+                position: absolute;
+                bottom: 0;
+                ${onLeft ? 'left' : 'right'}: 0;
+                width: 16px;
+                height: 16px;
+                cursor: ${onLeft ? 'nesw-resize' : 'nwse-resize'};
+                background: linear-gradient(${onLeft ? '225deg' : '135deg'}, transparent 50%, rgba(74, 158, 255, 0.4) 50%);
+                border-radius: ${onLeft ? '0 0 0 8px' : '0 0 8px 0'};
+                z-index: 1;
+            `;
+            this.panel.appendChild(handle);
+            this._setupResize(handle, corner);
+        };
+        grip('right');
+        grip('left');
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
@@ -1541,6 +1549,10 @@ class LabSimUI {
             return;
         }
 
+        // Kept so a header click can re-render without re-running the analysis
+        this._allFightsResult = analysisResult;
+        this._allFightsContainer = container;
+
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
         const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
@@ -1554,6 +1566,38 @@ class LabSimUI {
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
         const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
 
+        // What each column sorts by, and which way round is "good" — clicking
+        // Cost wants the cheapest first, clicking Avg ΔWin the biggest gain
+        const SORTS = {
+            upgrade: { get: (r) => r.candidate?.description || '', dir: 'asc' },
+            cost: { get: (r) => r.cost, dir: 'asc' },
+            perBillion: { get: (r) => r.attemptsSavedPerBillion, dir: 'desc' },
+            attempts: { get: (r) => r.expectedAttempts, dir: 'asc' },
+            attemptsDelta: { get: (r) => r.attemptsDelta, dir: 'asc' },
+            rooms: { get: (r) => r.appliedFights ?? r.fights.length, dir: 'desc' },
+            avgWinDelta: { get: (r) => r.avgWinDelta, dir: 'desc' },
+        };
+        const sort = this._allFightsSort;
+        const sorted = results.slice();
+        if (sort && SORTS[sort.key]) {
+            const { get } = SORTS[sort.key];
+            const sign = sort.dir === 'asc' ? 1 : -1;
+            sorted.sort((a, b) => {
+                const av = get(a);
+                const bv = get(b);
+                // A candidate with no coin price sorts last either way rather
+                // than pretending to be free or infinitely expensive
+                if (av === null || av === undefined) return bv === null || bv === undefined ? 0 : 1;
+                if (bv === null || bv === undefined) return -1;
+                if (typeof av === 'string') return sign * av.localeCompare(bv);
+                return sign * (av - bv);
+            });
+        }
+        const arrow = (key) => (sort?.key === key ? (sort.dir === 'asc' ? ' \u25B2' : ' \u25BC') : '');
+        const th = (key, label, title) =>
+            `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
+            `${label}${arrow(key)}</th>`;
+
         let html = `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -1562,16 +1606,16 @@ class LabSimUI {
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
-                <th style="${thStyle}">Upgrade</th>
-                <th style="${thStyle}" title="What it would cost in coins. Combat levels cost experience, not gold.">Cost</th>
-                <th style="${thStyle}" title="Attempts saved across a whole run per billion coins spent — the value figure. Blank where there is no coin price.">Per 1B</th>
-                <th style="${thStyle}" title="Expected combat attempts to clear every fight once (retrying failed rooms)">Attempts</th>
-                <th style="${thStyle}" title="Change in expected attempts vs baseline — negative is better">ΔAttempts</th>
-                <th style="${thStyle}" title="How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.">Rooms</th>
-                <th style="${thStyle}" title="Average win rate change across the rooms it reaches">Avg ΔWin</th>
+                ${th('upgrade', 'Upgrade', 'Sort by name')}
+                ${th('cost', 'Cost', 'What it would cost in coins. Combat levels cost experience, not gold.')}
+                ${th('perBillion', 'Per 1B', 'Attempts saved across a whole run per billion coins spent — the value figure. Blank where there is no coin price.')}
+                ${th('attempts', 'Attempts', 'Expected combat attempts to clear every fight once (retrying failed rooms)')}
+                ${th('attemptsDelta', 'ΔAttempts', 'Change in expected attempts vs baseline — negative is better')}
+                ${th('rooms', 'Rooms', 'How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.')}
+                ${th('avgWinDelta', 'Avg ΔWin', 'Average win rate change across the rooms it reaches')}
             </tr></thead><tbody>`;
 
-        results.forEach((r, i) => {
+        sorted.forEach((r, i) => {
             const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
             const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
             // A dash rather than a zero where there is no coin price: a combat
@@ -1639,7 +1683,7 @@ class LabSimUI {
             ],
             // Raw numbers rather than the formatted cells: a spreadsheet cannot
             // sort "1.2B" or sum "+0.32%"
-            rows: results.map((r) => ({
+            rows: sorted.map((r) => ({
                 upgrade: r.candidate?.description || '',
                 cost: r.cost ?? null,
                 perBillion: r.attemptsSavedPerBillion ?? null,
@@ -1657,6 +1701,19 @@ class LabSimUI {
                 if (detail) {
                     detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                 }
+            });
+        });
+
+        container.querySelectorAll('[data-af-sort]').forEach((header) => {
+            header.addEventListener('click', () => {
+                const key = header.dataset.afSort;
+                // Second click on the same column reverses it; a new column
+                // starts at whichever end of it is the good news
+                this._allFightsSort =
+                    this._allFightsSort?.key === key
+                        ? { key, dir: this._allFightsSort.dir === 'asc' ? 'desc' : 'asc' }
+                        : { key, dir: SORTS[key].dir };
+                this._renderAllFightsResults(this._allFightsResult, container);
             });
         });
 
@@ -2702,7 +2759,7 @@ class LabSimUI {
     }
 
     /** @private */
-    _setupResize(handle) {
+    _setupResize(handle, corner = 'right') {
         handle.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2710,11 +2767,21 @@ class LabSimUI {
             const startY = e.clientY;
             const startWidth = this.panel.offsetWidth;
             const startHeight = this.panel.offsetHeight;
+            // The panel opens anchored to the right of the window; growing it
+            // leftwards means moving its left edge, so pin the position it is
+            // at now and drive it from the left from here on
+            const startLeft = this.panel.getBoundingClientRect().left;
+            this.panel.style.left = `${startLeft}px`;
+            this.panel.style.right = 'auto';
             bringPanelToFront(this.panel);
 
             const onMove = (ev) => {
-                const newWidth = Math.max(400, startWidth + (ev.clientX - startX));
+                const dx = ev.clientX - startX;
+                const newWidth = Math.max(400, corner === 'left' ? startWidth - dx : startWidth + dx);
                 const newHeight = Math.max(300, startHeight + (ev.clientY - startY));
+                // Clamped at the minimum the left edge stops moving too, rather
+                // than sliding the panel along while it refuses to shrink
+                if (corner === 'left') this.panel.style.left = `${startLeft + (startWidth - newWidth)}px`;
                 this.panel.style.width = `${newWidth}px`;
                 this.panel.style.height = `${newHeight}px`;
             };
