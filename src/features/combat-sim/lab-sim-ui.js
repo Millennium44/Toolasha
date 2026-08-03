@@ -1774,6 +1774,21 @@ class LabSimUI {
             return parts.join('');
         }
 
+        // An ability is paid for in books, and nothing comes back — it is not an
+        // item, so there is no listing at a level to buy and nothing to sell back
+        if (detail.books) {
+            const books = detail.books;
+            const each =
+                books.bookPrice === null
+                    ? '<span style="color:#ff9800;">no price found</span>'
+                    : `${money(books.bookPrice)} each`;
+            parts.push(line(`Buy ${formatWithSeparator(Math.ceil(books.books))} × ${books.bookName} — ${each}`));
+            if (books.learnBook) {
+                parts.push(line('Includes the one book that learns it, on top of the levels.', '#888'));
+            }
+            parts.push(line('Abilities cannot be sold back, so nothing is credited against this.', '#888'));
+        }
+
         for (const buy of detail.buys) {
             const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
             parts.push(line(`Buy ${buy.name} +${buy.enhancementLevel} — ${price}`));
@@ -1782,8 +1797,11 @@ class LabSimUI {
         if (detail.unpriced.length > 0) {
             parts.push(
                 line(
-                    `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing at that ` +
-                        'enhancement and no priced path to reach it. The win-rate delta is still accurate.',
+                    detail.books
+                        ? `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing ` +
+                              'right now. The win-rate delta is still accurate.'
+                        : `Cost shows as \u2014 because ${detail.unpriced.join(' and ')} has no market listing at ` +
+                              'that enhancement and no priced path to reach it. The win-rate delta is still accurate.',
                     '#ff9800'
                 )
             );

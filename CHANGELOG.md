@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Ability upgrades are priced in books, and credit nothing back
+
+An expanded "Fireball Lv48 → Lv53" row read `Buy fireball +53 — no price found` and `Sell fireball +48 — 0 back`. Both were the equipment breakdown talking about something that is not equipment: it asked the market for a listing of the ability at an enhancement level, which does not exist for anything anyone can buy books for today, and then credited the resale of the level being left behind, which cannot happen — an ability is not an item and cannot be sold back.
+
+Ability rows now show the actual purchase — how many of which book, at what the book is going for — and say plainly that nothing is credited against it. A level-up is priced from where the ability is now; a swap is priced from scratch, including the one book that learns it. An ability whose book has no listing costs _unknown_ rather than zero, so it can no longer sit at the top of a list sorted by gold.
+
 ### Bulk Sell read the wrong field off the watchlist
 
 `hrid` is what a watchlist entry calls the item; `itemHrid` is what an inventory item calls it. Reading the latter off the former produced a set of `undefined`, an empty source, and "No tradable items in Watchlist" against a list of seventy. The test fixture invented its own shape, so it passed for the wrong reason — it uses the real one now.
