@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Reloading mid-fight no longer costs you the monsters' names
+
+A combat tick carries each monster's health, mana and two counters — and nothing that says what the monster is. Identity arrives once, in the message that starts a battle, and a page reloaded mid-fight never sees it. So everything that hit you for the rest of that battle went to "Unknown Enemy", and everything you killed in it went nowhere at all. MCS has the same hole for the same reason.
+
+- **The names are recovered from the battle panel**, which is drawing them the whole time.
+- **Matched on health, not on position.** The obvious join is that the first tile is monster 0, which is an assumption about how the panel handles a dead monster — the kind that holds until a game update and then silently mis-attributes everything. Health is a number both sides state.
+- **Two monsters at the same health resolve themselves.** If they have the same name it does not matter which is which, and if they do not, nothing is claimed. A wave of three Eyes at full health is the common case and it is the harmless one.
+- **The kill counts stop coming up short too.** An unnamed enemy was dropped from the DPs panel's kill tally rather than shown, so a reload quietly lost a fight's worth of kills. The monster's full health bar comes back with the name, which is what a kill is priced by.
+- **The half-battle is not filed as a wave.** Part of an encounter is not the composition that was fought, and counting it as one would make that wave's per-encounter average wrong from then on.
+- **Every part of it fails closed.** A missing panel, a renamed class, a tile whose shape changed — each produces nothing, and nothing means "Unknown Enemy" exactly as before. It cannot put a wrong name where a right one would have been.
+
 ### Encounters & Kills, against what the zone owed you
 
 IHurt's last section. A kill count on its own is not a fact about a run — seven Eyes is a lot or a little depending entirely on how often the zone spawns them, and that is not a number anybody carries around.
