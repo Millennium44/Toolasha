@@ -70,8 +70,9 @@ function buildColumn() {
 
 beforeEach(() => {
     overlayPanel.settings.docked = false;
-    overlayPanel.settings.dockHeight = 220;
+    overlayPanel.settings.dockHeightPx = null;
     overlayPanel.settings.locked = true;
+    window.innerHeight = 900;
 });
 
 afterEach(() => {
@@ -111,6 +112,42 @@ describe('docked into the character column', () => {
         expect(css).toContain('min-height: 0');
     });
 
+    test('the column is given a height measured against the window', () => {
+        // This is the whole fix. The sheet first said `max-height: 100%`, which
+        // resolves against a parent with no definite height and so constrains
+        // nothing at all — the column grew and the panel hung off the bottom of
+        // the screen with its tiles cut in half.
+        const column = buildColumn();
+        window.innerHeight = 900;
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+
+        expect(Number.parseInt(column.style.height, 10)).toBeGreaterThan(0);
+        expect(document.getElementById('toolasha-overlay-dock').textContent).not.toContain('max-height: 100%');
+    });
+
+    test('a shorter window gives the column less', () => {
+        const column = buildColumn();
+        window.innerHeight = 900;
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        const tall = Number.parseInt(column.style.height, 10);
+
+        window.innerHeight = 500;
+        overlayPanel._fitDock();
+
+        expect(Number.parseInt(column.style.height, 10)).toBeLessThan(tall);
+    });
+
+    test('the column is handed back its own height when the panel leaves', () => {
+        const column = buildColumn();
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        overlayPanel.hide();
+
+        expect(column.style.height).toBe('');
+    });
+
     test('it is not dragged, since it has nowhere to be dragged to', () => {
         buildColumn();
         overlayPanel.settings.docked = true;
@@ -122,22 +159,43 @@ describe('docked into the character column', () => {
 
     test('it takes the height it was left at', () => {
         buildColumn();
+        window.innerHeight = 2000;
         overlayPanel.settings.docked = true;
-        overlayPanel.settings.dockHeight = 300;
+        overlayPanel.settings.dockHeightPx = 300;
         overlayPanel.show();
 
         expect(overlayPanel.panel.style.height).toBe('300px');
     });
 
-    test('an absurd saved height is brought back into range', () => {
-        // A column cannot give 40,000 pixels, and a panel that asks for them
-        // leaves no inventory at all
+    test('it never takes so much that the inventory has nowhere to draw', () => {
+        // A height remembered from a tall window, reopened in a short one, would
+        // otherwise leave a column that is entirely overlay
         buildColumn();
+        window.innerHeight = 500;
         overlayPanel.settings.docked = true;
-        overlayPanel.settings.dockHeight = 40000;
+        overlayPanel.settings.dockHeightPx = 40000;
         overlayPanel.show();
 
-        expect(Number.parseInt(overlayPanel.panel.style.height, 10)).toBeLessThanOrEqual(900);
+        const column = Number.parseInt(document.getElementById('column').style.height, 10);
+        const panel = Number.parseInt(overlayPanel.panel.style.height, 10);
+        expect(column - panel).toBeGreaterThanOrEqual(140);
+    });
+
+    test('until the edge is dragged the height follows the tiles', () => {
+        // A fixed starting height is a guess about a layout it has never seen,
+        // and a guess that is too small cuts the bottom row of tiles in half —
+        // which is exactly what docking used to do
+        buildColumn();
+        window.innerHeight = 2000;
+        overlayPanel.settings.docked = true;
+        overlayPanel.settings.dockHeightPx = null;
+        overlayPanel.show();
+
+        // happy-dom measures nothing, so the canvas is the only real figure here
+        overlayPanel.canvasEl.style.height = '640px';
+        overlayPanel._fitDock();
+
+        expect(Number.parseInt(overlayPanel.panel.style.height, 10)).toBeGreaterThanOrEqual(640);
     });
 
     test('closing it puts the column back the way it was', () => {

@@ -92,6 +92,10 @@ const ZOOM_STEP = 10;
 const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
 const DOCK_STYLE_ID = 'toolasha-overlay-dock';
 const DOCK_HEIGHT = { min: 90, max: 900, default: 220 };
+/** Never take so much of the column that the tab body has nowhere to draw */
+const DOCK_MIN_BODY = 140;
+/** Clear of the bottom of the window, so the panel's edge is not the screen's */
+const DOCK_BOTTOM_GAP = 8;
 
 /** Fired on `document` whenever the panel opens or closes */
 export const VISIBILITY_EVENT = 'toolasha:overlay-visibility';
@@ -108,13 +112,19 @@ export const VISIBILITY_EVENT = 'toolasha:overlay-visibility';
  * `min-height: 0` is what actually allows that: a flex item refuses to shrink
  * below its content without it, so the body would keep its full height and push
  * the panel out of view regardless of the flex factors.
+ *
+ * There is no height here. `max-height: 100%` was the obvious thing to write and
+ * it does nothing: the column's own height is not definite, so a percentage of it
+ * resolves to no constraint at all, and the column simply grew until the panel
+ * hung off the bottom of the window. The height is measured against the window
+ * instead — see `_fitDock`.
  */
 const DOCK_CSS = `
     .${DOCK_HOST_CLASS} {
         display: flex !important;
         flex-direction: column !important;
-        max-height: 100%;
         min-height: 0;
+        overflow: hidden;
     }
     .${DOCK_HOST_CLASS} > [class*="TabsComponent_tabsContainer"] {
         flex: 0 0 auto;
@@ -158,11 +168,17 @@ class OverlayPanel {
             open: false,
             /** In the character column rather than floating over the game */
             docked: false,
-            dockHeight: DOCK_HEIGHT.default,
+            // Null until the edge is dragged, and null means "as tall as the
+            // tiles need". A fixed starting height is a guess about a layout it
+            // has never seen, and a guess that is too small cuts the bottom row
+            // of tiles in half the moment it docks
+            dockHeightPx: null,
         };
         this.panel = null;
         /** The container the docked panel was put into, so it can be put back */
         this.dockHost = null;
+        /** Re-measures the dock when the window changes shape */
+        this.onWindowResize = null;
         this.canvasEl = null;
         this.pickerEl = null;
         this.timerRegistry = createTimerRegistry();
@@ -286,6 +302,9 @@ class OverlayPanel {
         else this._placeFloating();
 
         this._renderBody();
+        // Again after drawing: how tall the tiles came out is the thing a docked
+        // panel sizes itself to, and it is not known until they are laid out
+        this._fitDock();
         this._startRefreshing();
     }
 
@@ -346,6 +365,7 @@ class OverlayPanel {
             zIndex: 'auto',
             width: 'auto',
             height: `${this._dockHeight()}px`,
+            minHeight: '0',
             marginTop: '4px',
             boxShadow: 'none',
         });
@@ -354,8 +374,72 @@ class OverlayPanel {
         host.classList.add(DOCK_HOST_CLASS);
         host.appendChild(this.panel);
         this.dockHost = host;
+        this._fitDock();
+
+        this.onWindowResize = () => this._fitDock();
+        window.addEventListener('resize', this.onWindowResize);
 
         this.detachResize = this._makeDockResizable();
+    }
+
+    /**
+     * Give the column a height it can actually divide up.
+     *
+     * The first attempt at this was a stylesheet saying `max-height: 100%`, which
+     * silently does nothing — a percentage resolves against the parent's height,
+     * the parent's height is not definite, so there is no constraint and the
+     * column grows to fit its contents. That put the docked panel below the
+     * bottom of the window with its tiles cut in half.
+     *
+     * So the height is measured against the one box that is always definite: the
+     * window. From the column's own top to the bottom of the screen is exactly
+     * what there is to share, and once the column has that as a real height, the
+     * flex rules divide it — the panel takes what it asks for and the tab body
+     * takes the rest and scrolls.
+     *
+     * The panel's request is trimmed to leave the tab body something to draw in.
+     * A column is not always tall — a short window, a wrapped tab strip — and a
+     * remembered 400px panel in a 300px column would otherwise leave an inventory
+     * of nothing, which is worse than a shorter overlay.
+     */
+    _fitDock() {
+        if (!this.dockHost || !this.panel) return;
+
+        const top = this.dockHost.getBoundingClientRect().top;
+        const available = Math.max(DOCK_HEIGHT.min + DOCK_MIN_BODY, window.innerHeight - top - DOCK_BOTTOM_GAP);
+        const height = `${Math.round(available)}px`;
+        if (this.dockHost.style.height !== height) this.dockHost.style.height = height;
+
+        const asked = this.settings.dockHeightPx === null ? this._contentHeight() : this._dockHeight();
+        const wanted = `${Math.round(Math.min(Math.max(DOCK_HEIGHT.min, asked), available - DOCK_MIN_BODY))}px`;
+        if (this.panel.style.height !== wanted) this.panel.style.height = wanted;
+    }
+
+    /**
+     * How tall the panel would have to be to show every tile.
+     *
+     * A fixed starting height is a guess about a layout it has never seen: the
+     * tiles keep the arrangement they were given, and any arrangement taller than
+     * the guess is cut off at the bottom the moment it docks. Following the tiles
+     * cannot be wrong in that way. The edge is still there to drag once you have
+     * an opinion, and dragging it is what fixes the height.
+     *
+     * @returns {number} Pixels, or the default before anything has been drawn
+     */
+    _contentHeight() {
+        const content = Number.parseFloat(this.canvasEl?.style.height);
+        if (!Number.isFinite(content) || content <= 0) return DOCK_HEIGHT.default;
+
+        // Header, grab bar and borders: everything of the panel that is not the
+        // scroller. Constant while the scroller flexes, so this cannot run away
+        const chrome = this.panel.offsetHeight - (this.scrollEl?.clientHeight || 0);
+        return content + Math.max(0, chrome) + 4;
+    }
+
+    /** How tall the panel may be dragged, given what the column has to give */
+    _dockCeiling() {
+        const host = this.dockHost?.getBoundingClientRect().height || 0;
+        return Math.max(DOCK_HEIGHT.min, Math.min(DOCK_HEIGHT.max, host - DOCK_MIN_BODY));
     }
 
     /**
@@ -381,9 +465,9 @@ class OverlayPanel {
         return null;
     }
 
-    /** The saved dock height, kept inside what a column can actually give */
+    /** The dragged-to dock height, kept inside what a column can actually give */
     _dockHeight() {
-        const saved = Number(this.settings.dockHeight);
+        const saved = Number(this.settings.dockHeightPx);
         if (!Number.isFinite(saved)) return DOCK_HEIGHT.default;
         return Math.min(DOCK_HEIGHT.max, Math.max(DOCK_HEIGHT.min, Math.round(saved)));
     }
@@ -415,14 +499,16 @@ class OverlayPanel {
         const onMove = (event) => {
             if (!resizing) return;
             const wanted = startHeight - (event.clientY - startY);
-            this.panel.style.height = `${Math.min(DOCK_HEIGHT.max, Math.max(DOCK_HEIGHT.min, wanted))}px`;
+            // Against what the column has, not an arbitrary maximum: dragged
+            // past this the tab body would have nothing left to draw in
+            this.panel.style.height = `${Math.min(this._dockCeiling(), Math.max(DOCK_HEIGHT.min, wanted))}px`;
         };
         const onUp = () => {
             if (!resizing) return;
             resizing = false;
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            this.settings.dockHeight = Math.round(this.panel.getBoundingClientRect().height);
+            this.settings.dockHeightPx = Math.round(this.panel.getBoundingClientRect().height);
             this._save();
             this._renderBody();
             this._placePicker();
@@ -1542,6 +1628,7 @@ class OverlayPanel {
         host.classList.add(DOCK_HOST_CLASS);
         host.appendChild(this.panel);
         this.dockHost = host;
+        this._fitDock();
     }
 
     _startRefreshing() {
@@ -1549,6 +1636,7 @@ class OverlayPanel {
         this.refreshId = setInterval(() => {
             this._ensureDocked();
             this._renderBody();
+            this._fitDock();
         }, REFRESH_MS);
         this.timerRegistry.registerInterval(this.refreshId);
     }
@@ -1567,8 +1655,17 @@ class OverlayPanel {
         this.pickerEl?.remove();
         this.pickerEl = null;
 
-        // Left behind, the column keeps a flex layout with nothing to fill it
-        this.dockHost?.classList.remove(DOCK_HOST_CLASS);
+        if (this.onWindowResize) {
+            window.removeEventListener('resize', this.onWindowResize);
+            this.onWindowResize = null;
+        }
+
+        // Left behind, the column keeps a flex layout and a measured height with
+        // nothing to fill them
+        if (this.dockHost) {
+            this.dockHost.classList.remove(DOCK_HOST_CLASS);
+            this.dockHost.style.height = '';
+        }
         this.dockHost = null;
 
         if (this.panel) {

@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: docking cut the bottom row of tiles off
+
+The column did not shrink to make room — it grew, so the docked panel hung off the bottom of the window with its last row of tiles sliced in half.
+
+- **The column is measured against the window rather than against its parent.** The rule that was supposed to constrain it said `max-height: 100%`, which quietly does nothing: a percentage resolves against the parent's height, that height is not definite, so there was no constraint at all and the column grew to fit whatever was in it. From the column's own top to the bottom of the screen is a real number, and once the column has one the flex rules divide it as intended.
+- **It re-measures when the window changes shape**, and once a second, so a wrapping tab strip or a resized window does not leave it stale.
+- **The panel starts as tall as its tiles**, instead of at a fixed 220 pixels. A fixed starting height is a guess about a layout it has never seen, and a guess that is too small is precisely what cut the tiles off. Drag the top edge once and that height is what it keeps.
+- **It will not take so much of the column that the inventory has nowhere to draw.** A height remembered from a tall window and reopened in a short one would otherwise leave a column that is entirely overlay.
+
 ### An Overlay switch in the character tabs, and somewhere for the overlay to live
 
 The overlay was opened from a button inside the settings dialog. That is two clicks and a scroll away from something people turn on and off several times an hour, and the cost of that is not the clicks — it is that everybody leaves it up permanently and works around whatever it covers.
