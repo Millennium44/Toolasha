@@ -197,7 +197,7 @@ function drawPerPlayer(container, breakdown) {
 
         lines.push([
             { text: player.name, color: ROW_COLORS.gold, ellipsis: true },
-            { text: dpsFigure(player.dps), color: ROW_COLORS.good, push: true },
+            { text: dpsFigure(player.dps), color: ROW_COLORS.good },
             {
                 // Null accuracy is no swings seen, which is not a 0% hit rate
                 text: player.accuracy === null ? '--' : `${(player.accuracy * 100).toFixed(1)}%`,
@@ -208,10 +208,13 @@ function drawPerPlayer(container, breakdown) {
 
     lines.push([
         { text: 'Total DPS', color: ROW_COLORS.neutral, bold: true },
-        { text: dpsFigure(total), color: ROW_COLORS.good, bold: true, push: true },
+        { text: dpsFigure(total), color: ROW_COLORS.good, bold: true },
     ]);
 
-    rows(container, lines);
+    // Aligned: the player rows and the total are the same measurement, and a
+    // total sitting a few pixels off the figure above it makes a reader check
+    // whether it is even the same kind of number
+    rows(container, lines, { align: true });
     container.title =
         'Damage per second and hit rate, per player, from attributed hits.\n' +
         'The caster is whoever’s mana fell on the tick, since the game attributes nothing.\n' +

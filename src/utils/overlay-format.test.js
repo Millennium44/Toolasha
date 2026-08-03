@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, test, expect } from 'vitest';
-import { signedPercent, shortDuration, drawLine, ROW_COLORS } from './overlay-format.js';
+import { signedPercent, shortDuration, drawLine, rows, ROW_COLORS } from './overlay-format.js';
 
 describe('signedPercent', () => {
     test('signs both directions', () => {
@@ -81,5 +81,77 @@ describe('drawLine', () => {
 
         expect(host.children[0].style.textOverflow).toBe('ellipsis');
         expect(host.children[1].style.flex).toBe('0 0 auto');
+    });
+});
+
+describe('aligned rows', () => {
+    /**
+     * @param {Array} lines - Segment arrays
+     * @param {Object} [options] - Passed through
+     * @returns {HTMLElement}
+     */
+    const build = (lines, options) => {
+        const container = document.createElement('div');
+        rows(container, lines, options);
+        return container;
+    };
+
+    test('the lines share columns, so a short line still lines up', () => {
+        // A player row carries three figures and the total carries two; the
+        // total belongs under the figure it totals, not at the far edge
+        const container = build(
+            [
+                [{ text: 'You' }, { text: '539.5' }, { text: '96.8%' }],
+                [{ text: 'Total' }, { text: '539.5' }],
+            ],
+            { align: true }
+        );
+
+        expect(container.style.display).toBe('grid');
+        // Three columns, six cells: the short line is padded rather than ragged
+        expect(container.children).toHaveLength(6);
+        expect(container.children[4].textContent).toBe('539.5');
+        expect(container.children[5].textContent).toBe('');
+    });
+
+    test('the first column takes the slack and the figures sit right', () => {
+        const container = build([[{ text: 'You' }, { text: '1' }]], { align: true });
+
+        expect(container.style.gridTemplateColumns).toContain('minmax(0, 1fr)');
+        expect(container.children[0].style.textAlign).toBe('left');
+        expect(container.children[1].style.textAlign).toBe('right');
+    });
+
+    test('only the name may be cut, never a figure', () => {
+        // "1.2…" reads as a number rather than as a truncation
+        const container = build([[{ text: 'A very long name indeed' }, { text: '539.5' }]], { align: true });
+
+        expect(container.children[0].style.textOverflow).toBe('ellipsis');
+        expect(container.children[1].style.textOverflow).toBe('clip');
+    });
+
+    test('the lines start at the top rather than centred', () => {
+        // These tiles sit beside each other with different numbers of lines;
+        // centring puts the one line of a Luck tile halfway down the two lines
+        // of the DPS tile next to it
+        expect(build([[{ text: 'a' }, { text: '1' }]], { align: true }).style.alignContent).toBe('start');
+    });
+
+    test('digits are one width, so a column does not shift as it counts', () => {
+        expect(build([[{ text: 'a' }, { text: '1' }]], { align: true }).style.fontVariantNumeric).toBe('tabular-nums');
+    });
+
+    test('a tile with an icon keeps the independent layout', () => {
+        // An icon has no width until it loads, so it cannot size a column
+        const container = build([[{ icon: '/items/coin' }, { text: '5' }], [{ text: 'x' }]], { align: true });
+
+        expect(container.style.display).toBe('flex');
+    });
+
+    test('without the option nothing changes', () => {
+        const container = build([[{ text: 'a' }], [{ text: 'b' }]]);
+
+        expect(container.style.display).toBe('flex');
+        expect(container.children).toHaveLength(2);
     });
 });
