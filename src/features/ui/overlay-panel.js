@@ -979,6 +979,7 @@ class OverlayPanel {
 
             try {
                 row.render(tile._content);
+                this._fillEmptyTile(tile._content, row);
             } catch (error) {
                 console.error(`[OverlayPanel] Row "${row.key}" failed to render:`, error);
                 tile._content.textContent = `${row.name}: unavailable`;
@@ -989,6 +990,38 @@ class OverlayPanel {
         const bounds = contentBounds(laid);
         this.canvasEl.style.width = `${bounds.width}px`;
         this.canvasEl.style.height = `${bounds.height}px`;
+    }
+
+    /**
+     * Say something in a tile that drew nothing.
+     *
+     * A blank tile looks broken rather than idle. You cannot tell a feature
+     * that has nothing to report from one that has fallen over, and on an
+     * overlay of a dozen tiles the empty ones are exactly the ones your eye
+     * keeps returning to — there is nothing there to finish reading.
+     *
+     * The row says what it would rather say; naming itself is the fallback,
+     * which at least identifies which tile is which while the layout is being
+     * arranged.
+     *
+     * @param {HTMLElement} content - The tile's content element
+     * @param {Object} row - The resolved row
+     */
+    _fillEmptyTile(content, row) {
+        // An icon is content even with no text beside it — a tile showing only
+        // a coin has drawn what it meant to
+        if (content.textContent.trim() || content.querySelector('svg, img')) return;
+
+        const note = document.createElement('div');
+        note.textContent = row.empty || `No ${row.name.toLowerCase()} data`;
+        Object.assign(note.style, {
+            color: COLORS.textDim,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+        });
+
+        content.replaceChildren(note);
     }
 
     /**

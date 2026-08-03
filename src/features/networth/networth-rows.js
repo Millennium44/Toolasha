@@ -42,6 +42,7 @@ function fromNetworth(pick) {
 
 registerRow({
     key: 'coins',
+    empty: 'No coins counted',
     name: 'Coins',
     defaultSize: { width: 160, height: 30 },
     render: (container) => {
@@ -58,6 +59,7 @@ registerRow({
 
 registerRow({
     key: 'marketListings',
+    empty: 'No listings',
     name: 'Market Listings',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
@@ -73,6 +75,7 @@ registerRow({
 
 registerRow({
     key: 'inventoryValue',
+    empty: 'No inventory value yet',
     name: 'Inventory Value',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {
@@ -96,6 +99,7 @@ registerRow({
  */
 registerRow({
     key: 'skillBooks',
+    empty: 'No books held',
     name: 'Skill Books',
     defaultSize: { width: 180, height: 30 },
     render: (container) => {

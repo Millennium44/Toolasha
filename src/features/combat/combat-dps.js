@@ -223,6 +223,7 @@ function drawPerPlayer(container, breakdown) {
 
 registerRow({
     key: 'dps',
+    empty: 'No damage tracked yet',
     name: 'DPS',
     defaultSize: { width: 200, height: 46 },
     render: (container) => {

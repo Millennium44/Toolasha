@@ -1548,6 +1548,7 @@ export const combatLevelPanel = new CombatLevelPanel();
 
 registerRow({
     key: 'combatLevel',
+    empty: 'No combat data',
     name: 'Combat Level',
     defaultSize: { width: 220, height: 30 },
     render: (container) => {
@@ -1575,6 +1576,7 @@ registerRow({
 
 registerRow({
     key: 'combatSession',
+    empty: 'No session yet',
     name: 'Combat Session',
     defaultSize: { width: 220, height: 30 },
     render: (container) => {

@@ -1895,6 +1895,7 @@ export default {
 registerRow({
     // EWatch's own tile. One tile, not a second one beside the old name.
     key: 'equipmentWatch',
+    empty: 'Nothing watched',
     name: 'Equipment Watch',
     defaultSize: { width: 240, height: 46 },
     render: (container) => {

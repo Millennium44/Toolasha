@@ -380,6 +380,7 @@ const combatDropLuck = new CombatDropLuck();
 // order. Shows the last session analysed, and nothing before there is one.
 registerRow({
     key: 'luck',
+    empty: 'No run measured yet',
     name: 'Drop Luck',
     defaultSize: { width: 200, height: 40 },
     // LYuck behind the tile that carries its headline: a percentile cannot say
@@ -465,6 +466,7 @@ registerRow({
  */
 registerRow({
     key: 'overExpected',
+    empty: 'No run measured yet',
     name: 'Over Expected %',
     defaultSize: { width: 200, height: 40 },
     render: (container) => {

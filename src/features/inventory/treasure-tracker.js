@@ -1458,6 +1458,7 @@ const treasureTracker = new TreasureTracker();
 // feature has started yet. It draws nothing until a chest has been opened.
 registerRow({
     key: 'treasure',
+    empty: 'No chests opened',
     name: 'Treasure',
     defaultSize: { width: 200, height: 30 },
     render: (container) => {

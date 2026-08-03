@@ -50,6 +50,11 @@ const rows = [];
  *   needs before anyone has resized it. A row knows how much it draws; the panel
  *   does not, and guessing one size for all of them leaves half of them clipped.
  * @param {number} [row.defaultZoom] - Starting text size, as a percentage
+ * @param {string} [row.empty] - What the tile says when the row draws nothing.
+ *   A tile that goes blank looks broken rather than idle — you cannot tell a
+ *   feature with nothing to report from one that has fallen over, and on an
+ *   overlay of a dozen tiles the blank ones are the ones you end up staring at.
+ *   Defaults to naming the row.
  */
 export function registerRow({
     key,
@@ -59,13 +64,14 @@ export function registerRow({
     onOpen = null,
     defaultSize = null,
     defaultZoom = null,
+    empty = '',
 }) {
     if (!key || typeof render !== 'function') {
         console.error('[OverlayPanel] A row needs a key and a render function:', key);
         return;
     }
 
-    const definition = { key, name: name || key, render, defaultVisible, onOpen, defaultSize, defaultZoom };
+    const definition = { key, name: name || key, render, defaultVisible, onOpen, defaultSize, defaultZoom, empty };
     const existing = rows.findIndex((row) => row.key === key);
     if (existing >= 0) rows[existing] = definition;
     else rows.push(definition);

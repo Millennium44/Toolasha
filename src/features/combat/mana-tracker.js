@@ -178,6 +178,7 @@ export const manaPanel = createPanel({
 
 registerRow({
     key: 'manaPerFight',
+    empty: 'No casts yet',
     name: 'Mana/fight',
     defaultSize: { width: 200, height: 30 },
     render: (container) => {

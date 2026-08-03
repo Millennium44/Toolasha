@@ -97,6 +97,7 @@ export function trainingSkill() {
 
 registerRow({
     key: 'timeToLevel',
+    empty: 'No experience rate yet',
     name: 'Time to Level',
     defaultSize: { width: 200, height: 30 },
     render: (container) => {

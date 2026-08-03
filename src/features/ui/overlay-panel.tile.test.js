@@ -34,8 +34,10 @@ vi.mock('../../utils/floating-panel.js', () => ({
     makeDraggable: () => () => {},
     makeResizable: () => () => {},
 }));
+const rowDef = vi.hoisted(() => ({ current: null }));
+
 vi.mock('../../utils/overlay-rows.js', () => ({
-    registeredRows: () => [{ key: 'luck', name: 'Drop Luck', render: (el) => (el.textContent = '27.3%') }],
+    registeredRows: () => [rowDef.current],
     resolveRows: (available) => available.map((row) => ({ ...row, visible: true })),
     moveRow: (order) => order,
 }));
@@ -53,6 +55,7 @@ function findTile() {
 }
 
 beforeEach(() => {
+    rowDef.current = { key: 'luck', name: 'Drop Luck', render: (el) => (el.textContent = '27.3%') };
     overlayPanel.settings.locked = false;
     overlayPanel.show();
 });
@@ -91,5 +94,52 @@ describe('a tile too small for its own controls', () => {
         const element = findTile();
         expect(element._grip.style.display).toBe('none');
         expect(element._zoom.style.display).toBe('none');
+    });
+});
+
+describe('a tile with nothing to report', () => {
+    /**
+     * Draw the panel with a row that renders whatever is given.
+     * @param {Object} definition - Row fields to use
+     * @returns {string} The tile's text
+     */
+    function drawWith(definition) {
+        overlayPanel.hide();
+        rowDef.current = { key: 'luck', name: 'Drop Luck', render: () => {}, ...definition };
+        overlayPanel.show();
+        return findTile()._content.textContent;
+    }
+
+    test('it says what it is rather than going blank', () => {
+        // A blank tile looks broken rather than idle, and on an overlay of a
+        // dozen tiles the empty ones are the ones your eye keeps returning to
+        expect(drawWith({ empty: 'No run measured yet' })).toBe('No run measured yet');
+    });
+
+    test('without a line of its own it names itself', () => {
+        // Which at least says which tile is which while a layout is arranged
+        expect(drawWith({})).toBe('No drop luck data');
+    });
+
+    test('a tile that drew something is left alone', () => {
+        expect(drawWith({ render: (el) => (el.textContent = '27.3%') })).toBe('27.3%');
+    });
+
+    test('an icon counts as having drawn something', () => {
+        // A tile showing only a coin has drawn exactly what it meant to
+        const text = drawWith({
+            render: (el) => el.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'svg')),
+        });
+        expect(text).toBe('');
+    });
+
+    test('a row that throws still says so, rather than saying nothing', () => {
+        expect(
+            drawWith({
+                render: () => {
+                    throw new Error('boom');
+                },
+            })
+        ).toContain('unavailable');
     });
 });
