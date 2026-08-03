@@ -153,6 +153,35 @@ export function smallCount(count) {
     return count.toExponential(1);
 }
 
+/**
+ * Below this, an expected count rounds to nothing on the row.
+ *
+ * Two decimals is what the row shows, so anything under 0.005 would print as
+ * "0.00 expected" — a line claiming the chest owed you nothing, which is both
+ * wrong and the least interesting thing on screen.
+ */
+const NEGLIGIBLE_EXPECTED = 0.005;
+
+/**
+ * Drop the rows that say nothing.
+ *
+ * A chest's drop table runs to thirty-odd entries, most of them equipment at
+ * rates so long that a lifetime of opening owes you a hundredth of one. Listed,
+ * they read "0, 0.00 expected, -100%" — three figures agreeing that nothing
+ * happened, pushing the rows that did happen off the bottom.
+ *
+ * Anything that actually dropped is kept however unlikely it was, because that
+ * is precisely the row worth seeing.
+ *
+ * @param {Array<Object>} items - From `chestPerformance`
+ * @returns {Array<Object>} The ones worth a line
+ */
+export function worthShowing(items) {
+    return (items || []).filter(
+        (item) => (item.actualCount || 0) > 0 || (item.expectedCount || 0) >= NEGLIGIBLE_EXPECTED
+    );
+}
+
 class TreasureTracker {
     constructor() {
         this.isInitialized = false;
@@ -448,13 +477,17 @@ class TreasureTracker {
             top: '80px',
             right: '40px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '340px',
+            width: '288px',
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             color: COLORS.text,
-            fontSize: '12px',
+            fontSize: '11px',
+            // Capped against the window rather than left to grow: a chest with
+            // thirty drop-table rows made a popup taller than the screen, and
+            // the rows that mattered were the ones off the bottom
+            maxHeight: 'min(560px, 70vh)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -483,7 +516,7 @@ class TreasureTracker {
         const body = document.createElement('div');
         // Scrolls rather than grows, so a chest that paid out twenty items does
         // not make a popup taller than the window
-        Object.assign(body.style, { padding: '8px 11px 10px', flex: '1', overflow: 'auto', minHeight: '0' });
+        Object.assign(body.style, { padding: '6px 9px 8px', flex: '1', overflow: 'auto', minHeight: '0' });
         popup.appendChild(body);
 
         const subtitle = document.createElement('div');
@@ -505,7 +538,7 @@ class TreasureTracker {
         summary.appendChild(pct);
         body.appendChild(summary);
 
-        for (const item of opening.items) body.appendChild(this._openingRow(item));
+        for (const item of worthShowing(opening.items)) body.appendChild(this._openingRow(item));
 
         const total = document.createElement('div');
         Object.assign(total.style, {
@@ -538,8 +571,11 @@ class TreasureTracker {
             cursor: 'pointer',
             fontSize: '12px',
         });
-        full.addEventListener('click', () => {
-            this._removePopup();
+        full.addEventListener('click', (event) => {
+            // The popup stays. It is the thing you were reading when you decided
+            // you wanted more, and closing it to answer that is taking away the
+            // question along with it.
+            event.stopPropagation();
             this.show();
         });
         body.appendChild(full);
@@ -552,10 +588,26 @@ class TreasureTracker {
             saveGeometry(POPUP_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
         this._detachPopupResize = makeResizable(popup, {
-            minWidth: 260,
+            minWidth: 240,
             minHeight: 120,
             onResize: (size) => saveGeometry(POPUP_GEOMETRY_KEY, size),
         });
+
+        // Dismissed by clicking away from it, the way the game's own loot dialog
+        // and MCS's treasure pane both behave. Deferred by a tick so the click
+        // that *opened* it does not immediately close it again, and ignored once
+        // the popup has been dragged — moving it is how you say "stay".
+        this._onOutsideClick = (event) => {
+            if (!this.popup || this.popup.contains(event.target)) return;
+            // The full-stats panel is this popup's own offspring; clicking in it
+            // is not clicking away
+            if (this.panel?.contains(event.target)) return;
+            if (this.settings.popupPinned) return;
+            this._removePopup();
+        };
+        const arm = setTimeout(() => document.addEventListener('mousedown', this._onOutsideClick, true), 0);
+        this._popupArm = arm;
+
         return popup;
     }
 
@@ -571,14 +623,28 @@ class TreasureTracker {
      */
     _openingRow(item) {
         const row = document.createElement('div');
-        Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start', padding: '2px 0' });
-        if (item.unpriced) row.title = 'Nothing will price this, so it counts towards neither side of the verdict.';
+        Object.assign(row.style, { display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '1px 0' });
+        if (item.unpriced) {
+            row.title =
+                'Nothing will price this, so it counts towards neither side of the total — but the count against ' +
+                'what was owed still holds, and that is what the percentage here is.';
+        }
         row.appendChild(this._icon(item.itemHrid));
 
         const columns = document.createElement('div');
         Object.assign(columns.style, { flex: '1', display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
 
-        const ratio = item.expectedValue > 0 ? item.actualValue / item.expectedValue : null;
+        // Value where there is a price, counts where there is not. An item
+        // nothing will price still has a drop rate, and "four when you were owed
+        // two and a quarter" is the same fact whether or not the market has an
+        // opinion — it is only the *total* it cannot join.
+        const ratio = item.unpriced
+            ? item.expectedCount > 0
+                ? item.actualCount / item.expectedCount
+                : null
+            : item.expectedValue > 0
+              ? item.actualValue / item.expectedValue
+              : null;
         const verdict = formatReturn(ratio);
 
         const actual = document.createElement('div');
@@ -593,8 +659,8 @@ class TreasureTracker {
         actualValue.style.color = item.unpriced ? COLORS.textDim : COLORS.good;
         actualValue.style.marginLeft = 'auto';
         const diff = document.createElement('span');
-        diff.textContent = item.unpriced ? 'no price' : verdict.text;
-        diff.style.color = item.unpriced ? COLORS.textDim : verdict.color;
+        diff.textContent = verdict.text;
+        diff.style.color = verdict.color;
         diff.style.minWidth = '62px';
         diff.style.textAlign = 'right';
         actual.appendChild(actualCount);
@@ -614,7 +680,8 @@ class TreasureTracker {
         expectedCount.textContent =
             item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatLargeNumber(Math.round(item.expectedCount));
         const expectedValue = document.createElement('span');
-        expectedValue.textContent = item.unpriced ? '' : formatLargeNumber(Math.round(item.expectedValue));
+        expectedValue.textContent = item.unpriced ? 'no price' : formatLargeNumber(Math.round(item.expectedValue));
+        if (item.unpriced) expectedValue.style.color = COLORS.textDim;
         expectedValue.style.marginLeft = 'auto';
         const word = document.createElement('span');
         word.textContent = 'expected';
@@ -633,6 +700,12 @@ class TreasureTracker {
     _removePopup() {
         clearTimeout(this._dialogRetry);
         this._dialogRetry = null;
+        clearTimeout(this._popupArm);
+        this._popupArm = null;
+        if (this._onOutsideClick) {
+            document.removeEventListener('mousedown', this._onOutsideClick, true);
+            this._onOutsideClick = null;
+        }
         this._detachPopupDrag?.();
         this._detachPopupDrag = null;
         this._detachPopupResize?.();

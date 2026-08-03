@@ -16,7 +16,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-const { formatReturn, itemName } = await import('./treasure-tracker.js');
+const { formatReturn, itemName, worthShowing } = await import('./treasure-tracker.js');
 
 describe('formatReturn', () => {
     test('reads as a gain or a shortfall against expectation', () => {
@@ -46,5 +46,32 @@ describe('itemName', () => {
     test('falls back to the hrid so an unknown item still reads as something', () => {
         // Drop tables outrun the item map after a game update
         expect(itemName('/items/mystery_box')).toBe('mystery box');
+    });
+});
+
+describe('which drop-table rows are worth a line', () => {
+    const row = (actualCount, expectedCount) => ({ actualCount, expectedCount });
+
+    test('a rare that came is kept however unlikely it was', () => {
+        // Precisely the row worth seeing — one in eight thousand, and it landed
+        expect(worthShowing([row(1, 0.0001)])).toHaveLength(1);
+    });
+
+    test('an expectation that rounds to nothing and did not drop is dropped', () => {
+        // It would read "0, 0.00 expected, -100%" — three figures agreeing that
+        // nothing happened, pushing the rows that did happen off the bottom
+        expect(worthShowing([row(0, 0.004)])).toHaveLength(0);
+        expect(worthShowing([row(0, 0)])).toHaveLength(0);
+    });
+
+    test('an expectation big enough to print is kept even at zero', () => {
+        // "0 of 0.12 expected" is a real statement about a rare not turning up
+        expect(worthShowing([row(0, 0.12)])).toHaveLength(1);
+        expect(worthShowing([row(0, 0.005)])).toHaveLength(1);
+    });
+
+    test('nothing at all is nothing, not a crash', () => {
+        expect(worthShowing([])).toEqual([]);
+        expect(worthShowing(null)).toEqual([]);
     });
 });
