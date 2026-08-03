@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A dungeon is measured by its chests
+
+Party Luck and the Luck and Over Expected tiles showed nothing at all in a dungeon, for everybody, with no explanation. The drop model declines dungeons on purpose — they pay from a reward table on completion rather than per monster — but there is a question a dungeon _can_ answer, and it is the one people ask: how many chests came, against how many were owed.
+
+- **The drop-quantity bonus is the whole of the randomness.** A completion pays five chests split across the party, scaled by Combat Drop Quantity. Five people at +29.5% is a mean of 1.295 each: one chest guaranteed and a 29.5% chance of a second — the buff people describe as "double chests sometimes". Everything else about a dungeon payout is fixed, so the extras are the only thing luck can be measured on.
+- **Completions are counted, not assumed.** The game never states how many dungeons finished; only the simulator has ever had that number, and only for runs it simulated. So each player's chest count is watched, and every rise is one completion that paid what it rose by. The first sighting starts the count rather than paying out, so somebody who walked in holding yesterday's chests is not a windfall.
+- **Which item is the chest comes from the zone**, not from a list: the reward table's guaranteed entries are the chests, which is the same test the simulator applies. A named list is the fallback for when the zone data has not loaded.
+- **The percentile is over the extras**, from an exactly-summed binomial. A hundred completions that each paid their guaranteed chest and nothing more is not a hundred pieces of bad luck.
+- **Where it shows.** The Luck tile carries the percentile per player, Over Expected carries chests against chests owed, and the Party Luck panel gets a Dungeon chests card with the completions, the split, and each run's payout. A player with no completion yet says so instead of reading as a disaster.
+- **A whole-number mean says there is no luck in it**, rather than inventing a percentile for something that never varied.
+
 ### The Profit panel answers for the whole party
 
 It only ever asked the calculator about one character. Loot is rolled per character against their own drop gear, so five people splitting a zone do not split it evenly — and who is actually being paid is a coarser question than which price to sell at.
@@ -17,7 +28,7 @@ It only ever asked the calculator about one character. Loot is rolled per charac
 
 ### Party Luck cannot measure a dungeon, and should say so
 
-Not yet fixed, and worth writing down: the drop model declines dungeons deliberately — they pay from a reward table on completion rather than per monster, so a spawn table is the wrong model rather than an imprecise one. The result is that Party Luck and the Luck and Over Expected tiles show nothing at all in a dungeon, for everybody, with no explanation. Saying why would be better than being blank.
+Written down as a known gap, and fixed by the chest reading above. Kept here because the reason still holds: the drop model declines dungeons deliberately — they pay from a reward table on completion rather than per monster, so a spawn table is the wrong model rather than an imprecise one.
 
 ### Fixed: in a five-person party, whoever tanked collected everyone else's damage
 

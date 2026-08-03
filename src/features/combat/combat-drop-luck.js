@@ -23,9 +23,11 @@
  *
  * Two limits worth knowing, both shown rather than hidden:
  *
- * - **Dungeons are skipped.** They pay from a reward table on completion, not per
- *   monster, which is a different distribution. A number built from the wrong
- *   model would look just as convincing as a right one.
+ * - **Dungeons get a different question.** They pay from a reward table on
+ *   completion, not per monster, so the per-monster model declines to measure
+ *   one. What a dungeon *can* be asked is how many chests it paid against how
+ *   many it owed — the Combat Drop Quantity bonus is the whole of the randomness
+ *   in a dungeon payout — and `utils/dungeon-chest-luck.js` answers that instead.
  * - **Unpriced drops are left out of both sides.** An item with no market price is
  *   dropped from the model and from the session's income, so the comparison stays
  *   like for like.
@@ -42,6 +44,14 @@ import { partyLuck } from './party-luck.js';
 import { registerRow, rowOption } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
+import {
+    chestLuck,
+    chestsPerCompletion,
+    countDungeonChests,
+    dungeonChestItems,
+    newChestTally,
+    noteChestCount,
+} from '../../utils/dungeon-chest-luck.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -102,6 +112,9 @@ class CombatDropLuck {
         // battle panel that normally carries this is gone the moment you leave
         this.lastResult = null;
         this.liveAt = 0;
+        // A dungeon is measured by watching its chests rather than by modelling
+        // its monsters; `_noteChests` fills this in and nothing else touches it
+        this.chests = null;
     }
 
     initialize() {
@@ -133,6 +146,7 @@ class CombatDropLuck {
         this.context = null;
         this.lastResult = null;
         this.liveAt = 0;
+        this.chests = null;
         this.isInitialized = false;
     }
 
@@ -154,6 +168,7 @@ class CombatDropLuck {
             this.context = {
                 actionHrid: combatAction.actionHrid,
                 difficultyTier: combatAction.difficultyTier || 0,
+                isDungeon: dataManager.getActionDetails(combatAction.actionHrid)?.combatZoneInfo?.isDungeon === true,
                 // battleId numbers the fight in progress, so the one before it is
                 // the last that actually finished and paid out
                 battles: Math.max((data?.battleId || 0) - 1, 0),
@@ -168,6 +183,8 @@ class CombatDropLuck {
                 hasBonuses: !!stats,
             };
 
+            this._noteChests(data);
+
             // The running loot total rides along on the same message, so the
             // percentile can be kept current during a run rather than waiting
             // for the battle panel that only appears once you leave
@@ -175,6 +192,84 @@ class CombatDropLuck {
         } catch (error) {
             console.error('[CombatDropLuck] Reading battle context failed:', error);
         }
+    }
+
+    /**
+     * Watch every player's chest count for the moments it rises.
+     *
+     * A dungeon does not report its completions — only the simulator has ever had
+     * that number, and only for runs it simulated — so they are observed. Each
+     * rise in a player's chest count is one completion that paid what it rose by,
+     * which gives the completions and the extras together with nothing assumed.
+     *
+     * Done from `new_battle` rather than from the collector because the loot map
+     * for *every* player rides along on it, and a completion has to be seen the
+     * battle it lands on or two of them merge into one.
+     *
+     * @param {Object} data - `new_battle` message
+     */
+    _noteChests(data) {
+        if (!this.context?.isDungeon) {
+            this.chests = null;
+            return;
+        }
+
+        const { actionHrid, difficultyTier } = this.context;
+        const battleId = data?.battleId || 0;
+        const players = data?.players || [];
+
+        // A different dungeon, or the same one begun again, is a different run —
+        // and its loot map starts back at nothing, which would otherwise read as
+        // everybody opening their chests at once
+        if (!this.chests || this.chests.actionHrid !== actionHrid || battleId < this.chests.battleId) {
+            this.chests = { actionHrid, battleId, partySize: players.length || 1, tallies: {} };
+        }
+        this.chests.battleId = battleId;
+        this.chests.partySize = players.length || this.chests.partySize;
+
+        const chestItems = dungeonChestItems(dataManager.getActionDetails(actionHrid), difficultyTier);
+        const characterId = dataManager.getCurrentCharacterId();
+
+        for (const player of players) {
+            const name = player?.character?.name;
+            if (!name) continue;
+
+            if (!this.chests.tallies[name]) this.chests.tallies[name] = newChestTally();
+            const tally = this.chests.tallies[name];
+
+            tally.isCurrentPlayer = player.character.id === characterId;
+            // Read each time rather than once: gear and buffs change mid-run, and
+            // the expectation should follow what is actually worn
+            tally.quantity = player.combatDetails?.combatStats?.combatDropQuantity || 0;
+            noteChestCount(tally, countDungeonChests(player.totalLootMap, chestItems));
+        }
+    }
+
+    /**
+     * How the dungeon's chests have fallen, per player.
+     *
+     * @returns {{partySize: number, players: Array<Object>}|null} Null outside a
+     *   dungeon, or before a completion has been seen
+     */
+    dungeonChestLuck() {
+        const tracked = this.chests;
+        if (!tracked) return null;
+
+        const partySize = tracked.partySize || 1;
+        const players = Object.entries(tracked.tallies).map(([name, tally]) => ({
+            name,
+            isCurrentPlayer: Boolean(tally.isCurrentPlayer),
+            byPayout: tally.byPayout,
+            mean: chestsPerCompletion({ partySize, dropQuantity: tally.quantity }),
+            luck: chestLuck({
+                completions: tally.completions,
+                chests: tally.chests,
+                mean: chestsPerCompletion({ partySize, dropQuantity: tally.quantity }),
+            }),
+        }));
+
+        if (!players.length) return null;
+        return { partySize, players };
     }
 
     /**
@@ -376,6 +471,72 @@ class CombatDropLuck {
 
 const combatDropLuck = new CombatDropLuck();
 
+/**
+ * A dungeon run in words, for a tooltip.
+ *
+ * @param {Object} player - One entry from `dungeonChestLuck().players`
+ * @returns {string}
+ */
+export function describeChestRun(player) {
+    const luck = player.luck;
+    if (!luck) {
+        return (
+            `${player.name}: no completion seen yet. A dungeon pays on completion, so this fills in ` +
+            'when the first one does.'
+        );
+    }
+
+    const payouts = Object.entries(player.byPayout || {})
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([count, times]) => `${times}×${count}`)
+        .join(', ');
+
+    const lines = [
+        `${player.name}: ${luck.chests} chests over ${luck.completions} completions, ` +
+            `${luck.expected.toFixed(1)} expected.`,
+        `Each completion pays ${Math.floor(player.mean)} guaranteed and ${(luck.chance * 100).toFixed(1)}% ` +
+            `of another; ${luck.extras} of those came against ${luck.expectedExtras.toFixed(1)} owed.`,
+    ];
+    if (payouts) lines.push(`Completions by payout: ${payouts}.`);
+    if (luck.percentile === null) {
+        lines.push('Nothing about this payout is random, so there is no luck in it to place.');
+    }
+    return lines.join('\n');
+}
+
+/**
+ * The chest rows a dungeon shows in place of a percentile it cannot compute.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} chest - From `dungeonChestLuck`
+ * @param {Function} figureOf - A player to `{text, color}`
+ * @param {string} keyPrefix - Which tile's row options to honour
+ */
+function drawChestRows(container, chest, figureOf, keyPrefix) {
+    const onlyNumbers = rowOption(`${keyPrefix}OnlyNumbers`);
+    const onlyPlayer = rowOption(`${keyPrefix}OnlyPlayer`);
+
+    const shown = onlyPlayer ? chest.players.filter((player) => player.isCurrentPlayer) : chest.players;
+    rows(
+        container,
+        shown.map((player) => {
+            const figure = figureOf(player);
+            if (onlyNumbers) return [figure];
+            return [
+                { text: player.name, color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true },
+                figure,
+            ];
+        }),
+        { align: true }
+    );
+
+    container.title = [
+        'Dungeon: chests dropped against chests owed. The per-monster model does not fit a dungeon, ' +
+            'but the drop-quantity bonus — the chance of a second chest — is the whole of the randomness in one.',
+        ...chest.players.map(describeChestRun),
+    ].join('\n\n');
+}
+
 // Registered at module scope so the overlay has the row regardless of start-up
 // order. Shows the last session analysed, and nothing before there is one.
 registerRow({
@@ -387,6 +548,28 @@ registerRow({
     // which drop is the reason, and that is the question a long run raises
     onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
     render: (container) => {
+        // A dungeon first, because it has an answer where the per-monster model
+        // has none — and because a stale percentile from the zone fought before
+        // the dungeon is worse than no percentile at all
+        const chest = combatDropLuck.dungeonChestLuck();
+        if (chest) {
+            return drawChestRows(
+                container,
+                chest,
+                (player) => ({
+                    text: player.luck?.percentile == null ? '—' : `${(player.luck.percentile * 100).toFixed(1)}%`,
+                    bold: true,
+                    color:
+                        player.luck?.percentile == null
+                            ? ROW_COLORS.dim
+                            : { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
+                                  describeLuck(player.luck.percentile).tone
+                              ],
+                }),
+                'luck'
+            );
+        }
+
         const result = combatDropLuck.lastResult;
         if (!result) return blank(container);
 
@@ -470,6 +653,22 @@ registerRow({
     name: 'Over Expected %',
     defaultSize: { width: 200, height: 40 },
     render: (container) => {
+        // In a dungeon the same question is chests against chests owed, which is
+        // the one figure a dungeon payout can honestly be held to
+        const chest = combatDropLuck.dungeonChestLuck();
+        if (chest) {
+            return drawChestRows(
+                container,
+                chest,
+                (player) => {
+                    if (!player.luck || !(player.luck.expected > 0)) return { text: '—', color: ROW_COLORS.dim };
+                    const over = signedPercent((player.luck.chests / player.luck.expected - 1) * 100);
+                    return { text: over.text, color: over.color };
+                },
+                'expected'
+            );
+        }
+
         const result = combatDropLuck.lastResult;
         if (!result || !(result.expected > 0)) return blank(container);
 
