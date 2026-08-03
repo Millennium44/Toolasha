@@ -6,6 +6,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Watchlist's switches moved to its top bar, and there is one more
+
+Both are in the header now: **Dots on/off** and **Menu button on/off**. The Track-button switch used to be a tick box under the table, which on a list of seventy items is a row nobody scrolls to — and these are settings about the panel's reach into the rest of the game rather than about any one item on it.
+
+The new one turns off the dot the Watchlist puts on inventory tiles. Knowing what is on the list while you are looking at your inventory is the point of having one, but it is another mark on an already busy grid.
+
+Turning the dots off clears the ones already drawn rather than waiting for the game to rebuild each tile. Both switches write the same settings the settings page does — not copies, so the two can never disagree.
+
+### Bulk Sell can sell the watchlist
+
+A **Watchlist** entry in the source picker, beside All items and your inventory tabs. It is offered only when the list has something in it, since an empty source would build an empty run and look like a broken button.
+
+Matched on the item rather than the item-at-a-level, unlike a tab: the watchlist tracks Cheese, not Cheese +3, so every level of a tracked item is in scope. Holds still apply — another script's claim on an item is not overruled by a source choosing it.
+
+### And its rules are editable from its own panel
+
+A gear on the Bulk Sell panel opens the three insta-sell thresholds and the vendor switch. The moment you want to change one of these is the moment you are watching it make the wrong call, which is not the moment you want to be looking for the settings page.
+
+They write the settings the decision already reads, so this is the same switch rather than a copy — there is no third place for them to disagree in. Values are taken on change rather than on every keystroke, since half a typed number is also a number.
+
 ### The headline figures come with a scale
 
 Two numbers on the summary card had no way of being read.

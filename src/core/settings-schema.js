@@ -538,6 +538,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Track / Untrack button beside Sell when you click an inventory item. Off by default because it changes a menu you use for other things — the Watchlist panel has the same switch',
             },
+            watchlist_inventoryDots: {
+                id: 'watchlist_inventoryDots',
+                label: 'Watchlist: Dot tracked items in the inventory',
+                type: 'checkbox',
+                default: true,
+                help: 'Puts a small dot in the corner of every inventory tile holding a tracked item. The point of a watchlist is knowing what is on it while you are looking at your inventory rather than while you are looking at the list — but it is one more mark on a busy grid, so it can be turned off. The Watchlist panel has the same switch',
+            },
             equipmentSavings_menuButton: {
                 id: 'equipmentSavings_menuButton',
                 label: 'Equipment Savings: Add a Save for button to the item menu',

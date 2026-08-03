@@ -15,6 +15,7 @@ const game = vi.hoisted(() => ({ data: {}, inventory: [], prices: {} }));
 const settings = vi.hoisted(() => ({}));
 const listeners = vi.hoisted(() => ({}));
 const observed = vi.hoisted(() => []);
+const badges = vi.hoisted(() => ({ provider: null }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -38,7 +39,15 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('./inventory-badge-manager.js', () => ({
-    default: { registerProvider: () => {}, unregisterProvider: () => {}, invalidateCache: () => {} },
+    default: {
+        registerProvider: (_name, provide) => {
+            badges.provider = provide;
+        },
+        unregisterProvider: () => {
+            badges.provider = null;
+        },
+        invalidateCache: () => {},
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -384,18 +393,20 @@ describe('the Track button in the item menu', () => {
         expect(observed).toHaveLength(0);
     });
 
+    const headerSwitch = (setting) => watchlistPanel.panel.querySelector(`button[data-setting="${setting}"]`);
+
     test('the panel\u2019s switch is the same setting, not a copy of it', () => {
         // Two switches that disagree is worse than one switch in the wrong place
         watchlist.initialize();
         watchlistPanel.show();
 
-        const box = watchlistPanel.panel.querySelector('[data-menu-button]');
-        expect(box.checked).toBe(false);
+        const button = headerSwitch('watchlist_menuButton');
+        expect(button.textContent).toBe('Menu button off');
 
-        box.checked = true;
-        box.dispatchEvent(new Event('change'));
+        button.click();
 
         expect(settings.watchlist_menuButton).toBe(true);
+        expect(button.textContent).toBe('Menu button on');
         expect(trackButton(openMenu('Cheese'))).not.toBeNull();
     });
 
@@ -404,6 +415,73 @@ describe('the Track button in the item menu', () => {
         watchlist.initialize();
         watchlistPanel.show();
 
-        expect(watchlistPanel.panel.querySelector('[data-menu-button]').checked).toBe(true);
+        expect(headerSwitch('watchlist_menuButton').textContent).toBe('Menu button on');
+    });
+
+    test('and it is in the top bar, where a switch about the whole panel belongs', () => {
+        // It used to be a tick box under the table, which is a row nobody
+        // scrolls to on a list of seventy items
+        watchlist.initialize();
+        watchlistPanel.show();
+
+        expect(watchlistPanel.headerEl.contains(headerSwitch('watchlist_menuButton'))).toBe(true);
+        expect(watchlistPanel.headerEl.contains(headerSwitch('watchlist_inventoryDots'))).toBe(true);
+    });
+});
+
+describe('the dot on tracked items', () => {
+    const tile = (name) => {
+        const element = document.createElement('div');
+        element.innerHTML = `<svg aria-label="${name}"></svg>`;
+        document.body.appendChild(element);
+        return element;
+    };
+    const dots = (element) => element.querySelectorAll('.toolasha-watchlist-dot');
+    /** The badge manager hands the panel one tile at a time */
+    const provider = (element) => badges.provider?.(element);
+
+    beforeEach(() => {
+        settings.watchlist_inventoryDots = true;
+        watchItem('/items/cheese', 'Cheese');
+    });
+
+    test('is drawn on a tracked item', () => {
+        watchlist.initialize();
+        const element = tile('Cheese');
+        provider(element);
+
+        expect(dots(element)).toHaveLength(1);
+    });
+
+    test('and not on an untracked one', () => {
+        watchlist.initialize();
+        const element = tile('Bread');
+        provider(element);
+
+        expect(dots(element)).toHaveLength(0);
+    });
+
+    test('the setting turns it off', () => {
+        settings.watchlist_inventoryDots = false;
+        watchlist.initialize();
+        const element = tile('Cheese');
+        provider(element);
+
+        expect(dots(element)).toHaveLength(0);
+    });
+
+    test('and turning it off clears the ones already drawn', () => {
+        // The provider is what walks the grid, so simply not drawing any more
+        // would leave every existing dot sitting there until the game happened
+        // to rebuild the tile
+        watchlist.initialize();
+        const element = tile('Cheese');
+        provider(element);
+        expect(dots(element)).toHaveLength(1);
+
+        settings.watchlist_inventoryDots = false;
+        for (const cb of listeners.watchlist_inventoryDots || []) cb(false);
+
+        expect(dots(element)).toHaveLength(0);
     });
 });
