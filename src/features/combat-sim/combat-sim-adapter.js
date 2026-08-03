@@ -745,34 +745,20 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
 
     const itemDetailMap = gameData.itemDetailMap || {};
     const abilityDetailMap = gameData.abilityDetailMap || {};
+    const characterData = dataManager.characterData;
 
     // Convert equipment: snapshot uses itemHrid, DTO keys by equipmentDetail.type.
-    // When useExactEnhancement=false, the wearable hash may store 0 for enhancement.
-    // Resolve by finding the highest enhancement of each item across all owned inventory,
-    // matching how the game treats "highest owned" loadout mode.
-    const characterData = dataManager.characterData;
-    const maxEnhancementByItem = new Map();
-    for (const item of characterData?.characterItems || []) {
-        if (!item?.itemHrid || !(item.count > 0)) continue;
-        const level = item.enhancementLevel || 0;
-        const existing = maxEnhancementByItem.get(item.itemHrid);
-        if (existing === undefined || level > existing) {
-            maxEnhancementByItem.set(item.itemHrid, level);
-        }
-    }
-
+    // The levels come from resolveEquipment rather than the stored ones — a
+    // loadout in "highest owned" mode wears whatever the best copy is now, and
+    // the stored level is only a reading from when it was last saved.
     const newEquipment = {};
-    for (const equip of snapshot.equipment || []) {
+    for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
         const itemDetail = itemDetailMap[equip.itemHrid];
         const equipType = itemDetail?.equipmentDetail?.type;
         if (equipType) {
-            let enhancementLevel = equip.enhancementLevel || 0;
-            if (enhancementLevel === 0) {
-                enhancementLevel = maxEnhancementByItem.get(equip.itemHrid) || 0;
-            }
             newEquipment[equipType] = {
                 hrid: equip.itemHrid,
-                enhancementLevel,
+                enhancementLevel: equip.enhancementLevel,
             };
         }
     }

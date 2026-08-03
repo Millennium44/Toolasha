@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Loadouts are read at the enhancement levels they actually wear
+
+A loadout snapshot is parsed from the game's wearable hash, and that hash carries the enhancement level from the moment the loadout was last saved — for a loadout using "Use highest enhancement level" (the default) it is usually 0, because the level is not part of what the loadout stores. The game resolves it at equip time by putting on the best copy you own. Reading the stored number back reported a Refined Gatherer Cape at +0 while the character was standing there wearing it at +10, and every number computed from that loadout was wrong in the same direction.
+
+The old fallback only helped in one case: it filled a stored 0 from whatever was equipped **right now**, so the active loadout looked right and every other one read +0. A stale non-zero level — the loadout saved at +10, the cape enhanced to +14 since — was never corrected at all.
+
+Levels now come from the loadout's own rule: a loadout pinned to an exact enhancement wears exactly what it says, and every other loadout wears the highest copy you own, counting worn pieces as well as inventory. It never resolves _downward_ from a known level, so an inventory that has not loaded yet leaves a stored +10 alone rather than reporting +0.
+
+This runs through everything reading a loadout: the Skilling analysis and its per-skill loadouts, the labyrinth combat fights and All Fights, the Lab and Combat simulators' loadout dropdown, the combat score export and the character card.
+
 ### Export any of the three Lab Simulator analyses to CSV
 
 The Upgrade table, the All Fights table and the Skilling Upgrade table each carry an **Export CSV** button now. The file holds raw numbers rather than the panel's formatting — `1200000000` and `0.0032`, not `1.2B` and `+0.32%` — because a spreadsheet cannot sort or sum a display string, and a CSV of them is a screenshot with extra steps. Filenames carry the date and time, since exporting the same table before and after buying something is the normal case.

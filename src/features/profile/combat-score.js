@@ -1058,19 +1058,11 @@ class CombatScore {
             const playerObj = exportData.exportObj;
             const clientObj = dataManager.getInitClientData();
 
-            // Override equipment from snapshot, cross-referencing live data for
-            // accurate enhancement levels (loadouts with useExactEnhancement=false
-            // store 0 for most enhancement levels in the wearable hash)
-            const liveEquipment = dataManager.characterEquipment;
-            playerObj.player.equipment = (snapshot.equipment || []).map((item) => {
-                if (item.enhancementLevel > 0 || !liveEquipment) return item;
-                for (const [, liveItem] of liveEquipment) {
-                    if (liveItem.itemHrid === item.itemHrid) {
-                        return { ...item, enhancementLevel: liveItem.enhancementLevel || 0 };
-                    }
-                }
-                return item;
-            });
+            // Override equipment from snapshot. The levels come from the
+            // loadout's own rule rather than the wearable hash: a loadout in
+            // "highest owned" mode wears the best copy owned now, and the hash
+            // holds whatever it was when the loadout was last saved — usually 0.
+            playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
 
             // Override abilities from snapshot
             // Build ability level lookup from all learned abilities (not just currently equipped)
