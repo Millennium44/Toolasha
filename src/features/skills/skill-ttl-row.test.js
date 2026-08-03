@@ -119,16 +119,17 @@ describe('with a target chosen in the panel', () => {
         expect(drawn).not.toContain('Melee');
     });
 
-    test('a target beyond the next level is spelled out', () => {
+    test('a target several levels off is the number on the tile', () => {
         train('melee', 1000000);
         select({ skill: 'defense', level: 130, focus: 'defense' });
 
-        expect(draw()).toContain('Defense → 130');
+        expect(draw()).toContain('Defense 130');
     });
 
-    test('the next level is not spelled out, since the arrow would say nothing', () => {
+    test('no arrow, because it cost the number it was introducing', () => {
+        // "Defense → 130:" ellipsised to "Defense → 1…" on a tile this narrow
         train('melee', 1000000);
-        select({ skill: 'defense', level: 121, focus: 'defense' });
+        select({ skill: 'defense', level: 130, focus: 'defense' });
 
         expect(draw()).not.toContain('→');
     });
@@ -149,7 +150,7 @@ describe('with a target chosen in the panel', () => {
         select({ skill: 'combat', level: 130, focus: 'melee' });
 
         const drawn = draw();
-        expect(drawn).toContain('Combat → 130');
+        expect(drawn).toContain('Combat 130');
         expect(drawn).not.toContain('Melee');
     });
 
