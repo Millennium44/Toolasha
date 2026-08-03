@@ -44,6 +44,7 @@ import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { expectedKills, killComparison } from '../../utils/expected-kills.js';
 
 const REFRESH_MS = 2000;
 
@@ -356,6 +357,7 @@ const expandedRows = new Set([
     // banners and a card and nothing about what is doing the hitting.
     'hurt:enemies',
     'hurt:waves',
+    'hurt:kills',
 ]);
 
 /**
@@ -1200,6 +1202,8 @@ export const deathsPanel = new CombatPanel({
             }
         }
 
+        drawEncountersAndKills(body, taken.encounters);
+
         body.appendChild(
             note(
                 'A monster casting is identified by its mana; an auto-attack spends none, so in a wave the ' +
@@ -1208,6 +1212,94 @@ export const deathsPanel = new CombatPanel({
         );
     },
 });
+
+/**
+ * What died, against what the zone owed you.
+ *
+ * The count on its own is not a fact about the run: seven Eyes is a lot or a
+ * little entirely depending on how often the zone spawns them, and nobody
+ * carries that number around. Against the expectation it becomes "+21%", which
+ * is something you can act on — it is the same reading Drop Luck gives for coins,
+ * applied to the spawns that produced them.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {number} encounters - Battles entered this run
+ */
+function drawEncountersAndKills(body, encounters) {
+    const killed = (damageBreakdown().enemies || []).filter((enemy) => enemy.kills > 0);
+    if (!killed.length) return;
+
+    const action = dataManager.getCurrentActions?.()?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/'));
+    const expected = action
+        ? expectedKills({
+              actionDetail: dataManager.getActionDetails?.(action.actionHrid),
+              monsterDetailMap: dataManager.getInitClientData?.()?.combatMonsterDetailMap,
+              battles: encounters,
+          })
+        : {};
+
+    const rows = killComparison(killed, expected);
+    const total = killed.reduce((sum, enemy) => sum + enemy.kills, 0);
+
+    body.appendChild(
+        hurtSectionHeader(
+            'hurt:kills',
+            'Encounters & Kills:',
+            `Encounters: ${formatWithSeparator(encounters)} | Kills: ${formatWithSeparator(total)}`,
+            COLORS.accent,
+            () => deathsPanel.refresh()
+        )
+    );
+    if (!expandedRows.has('hurt:kills')) return;
+
+    const grid = document.createElement('div');
+    Object.assign(grid.style, {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+        gap: '6px',
+    });
+
+    for (const row of rows) {
+        const tile = document.createElement('div');
+        Object.assign(tile.style, {
+            borderLeft: `3px solid ${COLORS.accent}`,
+            borderRadius: '4px',
+            background: 'rgba(143, 180, 255, 0.08)',
+            padding: '5px 8px',
+            fontSize: '11px',
+            fontVariantNumeric: 'tabular-nums',
+            // A monster the zone owes you and has not produced is the row worth
+            // noticing, but it is not a measurement of anything yet
+            opacity: row.kills === 0 ? '0.65' : '1',
+        });
+
+        const name = document.createElement('div');
+        name.textContent = row.name;
+        Object.assign(name.style, { color: COLORS.accent, fontWeight: 'bold', fontSize: '11.5px' });
+
+        const stats = document.createElement('div');
+        Object.assign(stats.style, { display: 'flex', flexWrap: 'wrap', gap: '7px', alignItems: 'baseline' });
+        const actual = piece(`Actual: ${formatWithSeparator(row.kills)}`, COLORS.text);
+        actual.style.fontWeight = 'bold';
+        stats.appendChild(actual);
+
+        if (row.expected !== null) {
+            stats.appendChild(piece(`Expected: ${row.expected.toFixed(1)}`, COLORS.textDim));
+            if (row.share !== null) {
+                const share = piece(
+                    `(${row.share >= 0 ? '+' : ''}${(row.share * 100).toFixed(1)}%)`,
+                    row.share >= 0 ? ROW_COLORS.good : ROW_COLORS.bad
+                );
+                share.style.fontWeight = 'bold';
+                stats.appendChild(share);
+            }
+        }
+
+        tile.append(name, stats);
+        grid.appendChild(tile);
+    }
+    body.appendChild(grid);
+}
 
 /**
  * How the profit is being read: which case, and what is subtracted.

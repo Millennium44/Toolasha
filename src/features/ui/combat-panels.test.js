@@ -17,12 +17,21 @@ const state = vi.hoisted(() => ({
     stats: null,
     breakdown: { seconds: 0, players: [] },
     taken: null,
+    actions: [],
+    actionDetail: null,
     filtering: true,
     inventory: [],
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getInventory: () => state.inventory } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInventory: () => state.inventory,
+        getCurrentActions: () => state.actions,
+        getActionDetails: () => state.actionDetail,
+        getInitClientData: () => ({ combatMonsterDetailMap: { '/monsters/rat': { name: 'Rat' } } }),
+    },
+}));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: (panel, id, fallback) => {
@@ -166,6 +175,18 @@ beforeEach(() => {
             { name: 'Veyes x2', encounters: 1, damage: 171, average: 171, min: 83, max: 88 },
             { name: 'Eye x2 + Veyes', encounters: 2, damage: 230, average: 115, min: 49, max: 66 },
         ],
+    };
+    state.actions = [{ actionHrid: '/actions/combat/rats' }];
+    state.actionDetail = {
+        combatZoneInfo: {
+            fightInfo: {
+                randomSpawnInfo: {
+                    maxSpawnCount: 1,
+                    maxTotalStrength: 10,
+                    spawns: [{ combatMonsterHrid: '/monsters/rat', rate: 1, strength: 1 }],
+                },
+            },
+        },
     };
     state.luck = { percentile: 0.51, income: 5_000_000, expected: 4_000_000, battles: 300, hasBonuses: true };
     state.stats = {
@@ -473,6 +494,41 @@ describe('what the panels add over their tiles', () => {
         // Dropping it would make the enemy totals disagree with the party total
         deathsPanel.show();
         expect(deathsPanel.panel.textContent).toContain('Unknown Enemy');
+    });
+
+    test('it counts kills against what the zone owed', () => {
+        // Seven Rats is a lot or a little depending entirely on how often the
+        // zone spawns them, and nobody carries that number around
+        deathsPanel.show();
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Encounters & Kills:');
+        expect(text).toContain('Kills: 25');
+        expect(text).toContain('Actual: 20');
+        expect(text).toContain('Expected:');
+        expect(text).toMatch(/[+-]\d+\.\d%/);
+    });
+
+    test('a monster the zone spawns but which has not died is still listed', () => {
+        // A rare spawn you have not seen once is what somebody checking this is
+        // looking for, and an absent row reads as "not in this zone"
+        state.breakdown.enemies = [
+            { name: 'Wolf', damage: 1, hits: 1, crits: 0, misses: 0, kills: 3, maxHP: 100, dps: 1 },
+        ];
+        deathsPanel.show();
+
+        expect(deathsPanel.panel.textContent).toContain('Rat');
+    });
+
+    test('off a modelled zone it shows the counts and no comparison', () => {
+        // Rather than comparing against zero, which would call every kill
+        // infinitely lucky
+        state.actionDetail = null;
+        deathsPanel.show();
+        const text = deathsPanel.panel.textContent;
+
+        expect(text).toContain('Actual: 20');
+        expect(text).not.toContain('Expected:');
     });
 
     test('and it says why an attacker can be unknown', () => {

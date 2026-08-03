@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Encounters & Kills, against what the zone owed you
+
+IHurt's last section. A kill count on its own is not a fact about a run — seven Eyes is a lot or a little depending entirely on how often the zone spawns them, and that is not a number anybody carries around.
+
+- **Actual against expected, per monster, with the difference as a percentage.** The same reading Drop Luck gives for coins, applied to the spawns that produced them.
+- **The expectation is solved rather than sampled.** A wave is drawn from a weighted table until the next draw would break its strength budget, so a heavy monster turns up less often than its weight suggests and a light one more. The arithmetic for that was already here for Drop Luck; this is the layer that turns per-wave expectations into per-run ones.
+- **The battle in progress is not counted.** Its monsters are partly dead and partly not, and counting it in full makes every zone look unlucky by about one wave — which at seven battles is fifteen per cent of the reading.
+- **A boss wave replaces an ordinary one rather than joining it**, so twenty battles with a boss every ten is eighteen ordinary waves and two bosses, not twenty and two.
+- **A monster the zone owes you and has not produced is listed at zero**, dimmed. A rare spawn you have not seen once is exactly what somebody checking this is looking for, and a row that is simply absent reads as "not in this zone".
+- **A zone that cannot be modelled shows counts and no comparison** — a dungeon runs a script and pays out at the end, so a spawn table would be the wrong model rather than an imprecise one. Comparing against nothing would call every kill infinitely lucky.
+
 ### Fixed: IHurt showed zeroes, and DPs was broken in the release build
 
 IHurt reported nothing at all — no damage taken, no regeneration, no enemies, and "nothing has hit the party yet" through a fight that was plainly hitting the party. The tracker was working; the panel could not reach it.
