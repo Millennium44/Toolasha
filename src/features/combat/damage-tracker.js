@@ -51,6 +51,9 @@ let tally = {};
 /** Player index → display name, from `new_battle` */
 let names = {};
 
+/** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
+let sessionKey = null;
+
 /** Monster name → damage, hits, crits, misses and kills */
 let enemyTally = {};
 
@@ -104,6 +107,7 @@ export function setFilterNonDamaging(value) {
 /** Forget the run and measure again from here */
 export function resetDamageTracker() {
     state = newAttributionState();
+    sessionKey = null;
     tally = {};
     enemyTally = {};
     seconds = 0;
@@ -246,6 +250,25 @@ export function actionLabel(action) {
 }
 
 /**
+ * Which run this is: who is in it, and when it started.
+ *
+ * Either half alone is not enough. The same party starting a new zone is a new
+ * run, and the same zone with somebody gone is a different run measuring
+ * different people — and a tally keyed by battle slot cannot survive the second
+ * without handing one person's damage to whoever inherits their slot.
+ *
+ * @param {Object} data - `new_battle` message
+ * @returns {string|null} A key, or null when the message cannot say
+ */
+export function sessionKeyFor(data) {
+    const players = Object.values(data?.players || {});
+    if (!players.length) return null;
+
+    const roster = players.map((player) => player?.name || player?.character?.name || '?').join(',');
+    return `${roster}|${data?.combatStartTime || ''}`;
+}
+
+/**
  * Borrow the party's names from the last run, so a reload does not draw the
  * party as "Player 1" through "Player 5".
  *
@@ -281,9 +304,28 @@ export default {
             try {
                 announced = true;
                 const players = data?.players || {};
+
+                // Leaving a party is a new session, and the run before it is not
+                // this run. The tally is keyed by battle slot, so without this
+                // the four people who left stayed in the DPS table forever — and
+                // worse, your own name landed on two rows, because you were slot
+                // 3 in the party and slot 0 alone. The roster and the start time
+                // together are the session, which is how MCS names one too.
+                const key = sessionKeyFor(data);
+                if (key && key !== sessionKey) {
+                    resetDamageTracker();
+                    names = {};
+                }
+                sessionKey = key || sessionKey;
+
                 noteActions(state, players);
+
+                // Rebuilt rather than merged, for the same reason the monster map
+                // below is: an index is a slot in this fight. Every battle names
+                // every player, so nothing is lost by starting fresh.
+                names = {};
                 for (const [index, player] of Object.entries(players)) {
-                    names[index] = player?.name || player?.character?.name || names[index];
+                    names[index] = player?.name || player?.character?.name || null;
                 }
 
                 // Rebuilt rather than merged: an index is a slot in this fight,
