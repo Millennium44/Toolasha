@@ -26,6 +26,7 @@ import {
 } from './upgrade-advisor.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { createEtaTracker } from '../../utils/progress-eta.js';
 import { SimEditor } from './sim-editor.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -997,6 +998,10 @@ class LabSimUI {
         progressText.textContent = '0%';
 
         const simStartTime = Date.now();
+        // What is left of the run, measured from the run itself — the only
+        // source for it, since the same sim takes wildly different times by
+        // hours, party size and machine
+        const eta = createEtaTracker();
 
         try {
             if (this._labyFindMaxMode) {
@@ -1019,8 +1024,12 @@ class LabSimUI {
                     },
                     (progress) => {
                         const percent = Math.round((progress.step / progress.totalSteps) * 100);
+                        const { text: remaining } = eta.update(progress.step / progress.totalSteps);
                         progressFill.style.width = `${percent}%`;
-                        progressText.textContent = `Level ${progress.level} — ${(progress.winRate * 100).toFixed(0)}% (step ${progress.step}/${progress.totalSteps})`;
+                        progressText.textContent =
+                            `Level ${progress.level} — ${(progress.winRate * 100).toFixed(0)}% ` +
+                            `(step ${progress.step}/${progress.totalSteps})` +
+                            (remaining ? ` · ${remaining}` : '');
                     }
                 );
 
@@ -1054,8 +1063,9 @@ class LabSimUI {
                         labyrinthCombatBuffs,
                     },
                     (percent) => {
+                        const { text: remaining } = eta.update(percent / 100);
                         progressFill.style.width = `${percent}%`;
-                        progressText.textContent = `${percent}%`;
+                        progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
                     }
                 );
 
@@ -1207,6 +1217,8 @@ class LabSimUI {
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
+        // One tracker per run: it starts its clock where it is made
+        const eta = createEtaTracker();
 
         const upgradeMode = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value || 'equipment';
         const abilityLevelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.value || 'increment';
@@ -1256,8 +1268,12 @@ class LabSimUI {
                         if (this._upgradeAborted) return;
                         const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
                         const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                        const { text: remaining } = eta.update(total > 0 ? current / total : 0);
                         if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                        if (text) text.textContent = `${current} / ${total}: ${description}`;
+                        if (text) {
+                            text.textContent =
+                                `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                        }
                     },
                     { abortSignal: () => this._upgradeAborted }
                 );
@@ -1298,8 +1314,12 @@ class LabSimUI {
                     if (this._upgradeAborted) return;
                     const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
                     const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
                     if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                    if (text) text.textContent = `${current} / ${total}: ${description}`;
+                    if (text) {
+                        text.textContent =
+                            `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                    }
                 },
                 { abortSignal: () => this._upgradeAborted }
             );
@@ -2156,6 +2176,7 @@ class LabSimUI {
         upgradeBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._skillingAborted = false;
+        const eta = createEtaTracker();
 
         try {
             const analysisResult = await runSkillingUpgradeAnalysis(
@@ -2164,8 +2185,12 @@ class LabSimUI {
                     if (this._skillingAborted) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
                     const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
+                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
                     if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                    if (text) text.textContent = `${current} / ${total}: ${description}`;
+                    if (text) {
+                        text.textContent =
+                            `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                    }
                 },
                 { abortSignal: () => this._skillingAborted }
             );
