@@ -416,14 +416,16 @@ function registerFeatures() {
             key: 'damageTracker',
             name: 'Damage Tracker',
             category: 'Combat',
-            module: Combat.damageTracker,
+            // `.default` because the global is the module namespace — see
+            // the note in libraries/combat.js
+            module: Combat.damageTracker.default,
             async: false,
         },
         {
             key: 'damageTakenTracker',
             name: 'Damage Taken Tracker',
             category: 'Combat',
-            module: Combat.damageTakenTracker,
+            module: Combat.damageTakenTracker.default,
             async: false,
         },
         {
