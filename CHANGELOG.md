@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Room timings are compared per clear, on both sides
+
+The calculator's `expectedSeconds` is **time per clear including the attempts you lose** — for a fight, the average fight length divided by the win rate; for a skilling room, the expected time of an attempt divided by the clear chance. A room you clear one visit in five is predicted to cost about five visits' worth of seconds.
+
+It was being compared against the mean duration of the visits that ended in a clear, which differs in two compounding ways: it threw away every second spent on visits that ended in defeat — the term the prediction is mostly made of — and then selected on the outcome, keeping the visits that happened to go well. The two errors do not cancel. They point opposite ways depending on how the room went, which is why one record showed first-try clears finishing in a third of the predicted time and multi-attempt rooms taking three times it, and neither figure meant anything.
+
+The measurement is now every second spent in the room, whatever came of the visit, over the clears those seconds bought. Nothing conditioned on, nothing discarded, so it estimates the same ratio the prediction is. The old per-visit figure is kept beside it — the gap between the two is the time a room has cost you in attempts that came to nothing.
+
+A room never cleared has no figure rather than a zero: what a clear costs when you have not had one is unknown, and the calculator's own prediction for such a room is infinite.
+
 ### The double rate was being divided by the wrong thing
 
 A double rolls on a **successful** action; the record counted them against every action. Every skilling room therefore reported about a quarter of the rate the server states — Crafting Lv.202 read "18.0% calc, 18.0% server, 2.3% seen" — which looked like the loudest fault in the whole record and was a denominator.

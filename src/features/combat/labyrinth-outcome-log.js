@@ -334,6 +334,11 @@ export function roomMeasurements(bucket) {
         // How long the room takes to finish — a question only the rooms you
         // finished can answer
         secondsPerRoom: clearedRooms > 0 && clearedSeconds > 0 ? clearedSeconds / clearedRooms : null,
+        // How long a clear costs: every second spent in the room, whether the
+        // visit ended in a clear or not, divided by the clears it bought. This
+        // is the figure the calculator's `expectedSeconds` is, and it is the one
+        // that can be compared with it — see `roomTiming`.
+        secondsPerClear: clearedRooms > 0 && seconds > 0 ? seconds / clearedRooms : null,
         // Measured throughput: real experience over all the time it cost,
         // including the attempts that paid nothing
         xpPerHour: seconds > 0 && xp > 0 ? (xp / seconds) * 3600 : null,
@@ -477,19 +482,55 @@ export function accuracyRows(totals, { predictedFor, interval } = {}) {
     return rows;
 }
 
-/** How long the calculator said a room takes against how long it took */
+/**
+ * How long the calculator said a clear costs, against how long one cost.
+ *
+ * The prediction is `expectedSeconds`, and what that means is the whole of this
+ * function. It is **time per clear including the attempts you lose** — for a
+ * fight, the average fight length divided by the win rate; for a skilling room,
+ * the expected time of an attempt divided by the clear chance. A room you clear
+ * one time in five is predicted to cost roughly five attempts' worth of
+ * seconds, not one.
+ *
+ * It used to be compared against the mean duration of the visits that ended in
+ * a clear, which is a different quantity in two compounding ways. It threw away
+ * every second spent on visits that ended in defeat — the exact term the
+ * prediction is mostly made of — and then it selected on the outcome, keeping
+ * the visits that happened to go well. The two errors do not cancel; they point
+ * opposite ways depending on how the room went, which is why the same record
+ * showed first-try clears finishing in a third of the predicted time and
+ * multi-attempt rooms taking three times it.
+ *
+ * The comparable measurement is every second spent in the room, whatever came
+ * of the visit, divided by the clears those seconds bought. Nothing is
+ * conditioned on and nothing is discarded, so it estimates the same ratio the
+ * prediction is: total time ÷ total clears.
+ *
+ * A room never cleared has no figure — the cost of a clear you have not had is
+ * not zero and not the time you wasted, it is unknown — and the prediction for
+ * such a room is infinite anyway.
+ *
+ * @param {Object} bucket - Accumulator bucket
+ * @param {Object} measured - From `roomMeasurements`
+ * @returns {Object|null}
+ */
 function roomTiming(bucket, measured) {
     const predicted = rateOrNaN(bucket.predictedSeconds);
-    if (!measured?.secondsPerRoom || !Number.isFinite(predicted) || predicted <= 0) return null;
+    if (!measured?.secondsPerClear || !Number.isFinite(predicted) || predicted <= 0) return null;
 
-    const actual = measured.secondsPerRoom;
+    const actual = measured.secondsPerClear;
     return {
         predicted,
         actual,
         ratio: actual / predicted,
-        // Only rooms that were finished have a meaningful duration, and the
-        // sample is small enough that a factor is more honest than a verdict
-        rooms: measured.clearedRooms,
+        // What the figure is made of, because a ratio from two clears is a
+        // different claim from one built out of forty
+        clears: measured.clearedRooms,
+        visits: measured.rooms,
+        seconds: measured.seconds,
+        // The old reading, kept so the two can be seen apart. Where they differ
+        // a lot, the room is one you have been losing.
+        perFinishedVisit: measured.secondsPerRoom,
     };
 }
 
@@ -713,7 +754,12 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
 
     out.push('');
     out.push('BY ROOM AND LEVEL');
-    out.push('subject\tlevel\tattempts\tclears\tsim\tactual\t95% band\tverdict\tlikelihood\tsim secs\treal secs');
+    out.push('Seconds are per clear and include the attempts you lose, on both sides — that is');
+    out.push('what the calculator predicts, so it is what the measurement has to be.');
+    out.push(
+        'subject\tlevel\tattempts\tclears\tsim\tactual\t95% band\tverdict\tlikelihood\t' +
+            'sim secs/clear\treal secs/clear\tsecs in a winning visit'
+    );
     for (const row of rows) {
         out.push(
             [
@@ -728,6 +774,7 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
                 row.likelihood === null ? '—' : row.likelihood.toFixed(4),
                 row.timing ? row.timing.predicted.toFixed(0) : '—',
                 row.timing ? row.timing.actual.toFixed(0) : '—',
+                row.timing?.perFinishedVisit ? row.timing.perFinishedVisit.toFixed(0) : '—',
             ].join('\t')
         );
     }

@@ -746,3 +746,64 @@ describe('judging the per-action rates', () => {
         expect(rates(bucket).double.formulaOff).toBe(false);
     });
 });
+
+describe('how long a clear costs', () => {
+    const visit = (over = {}) => ({
+        subjectHrid: '/skills/brewing',
+        roomLevel: 181,
+        kind: 'skilling',
+        cleared: false,
+        seconds: 120,
+        actions: 40,
+        successes: 10,
+        doubles: 2,
+        predictedSeconds: 137,
+        ...over,
+    });
+    const fold = (visits) => visits.reduce((totals, next) => foldRoomResult(totals, next), {});
+    const timing = (visits) => accuracyRows(fold(visits), { interval: wilsonInterval })[0].timing;
+
+    test('every second in the room counts, not only the winning visit', () => {
+        // Three failed attempts at the two-minute cap and a fourth that landed
+        // in 40s: a clear cost 400s, not 40
+        const t = timing([visit(), visit(), visit(), visit({ cleared: true, seconds: 40 })]);
+
+        expect(t.actual).toBeCloseTo(400, 6);
+        expect(t.perFinishedVisit).toBeCloseTo(40, 6);
+    });
+
+    test('which is the same thing the calculator predicts', () => {
+        // `expectedSeconds` is time per clear across attempts — a room cleared
+        // one visit in four is predicted to cost about four visits of seconds.
+        // Compared against the winning visit alone it read 3.4x too fast.
+        const t = timing([visit(), visit(), visit(), visit({ cleared: true, seconds: 40 })]);
+
+        expect(t.ratio).toBeCloseTo(400 / 137, 6);
+        expect(t.perFinishedVisit / t.predicted).toBeLessThan(0.5);
+    });
+
+    test('a room cleared first time is not credited with being four times fast', () => {
+        // The other half of the same error: conditioning on the visits that went
+        // well made lucky rooms look like the calculator was wildly pessimistic
+        const t = timing([visit({ cleared: true, seconds: 100 })]);
+
+        expect(t.actual).toBeCloseTo(100, 6);
+        expect(t.ratio).toBeCloseTo(100 / 137, 6);
+    });
+
+    test('the sample is carried, because a ratio off two clears is not a claim', () => {
+        const t = timing([visit(), visit({ cleared: true, seconds: 60 })]);
+
+        expect(t).toMatchObject({ clears: 1, visits: 2, seconds: 180 });
+    });
+
+    test('a room never cleared has no cost per clear rather than a zero', () => {
+        // What a clear costs when you have not had one is unknown, and the
+        // calculator's own figure for such a room is infinite
+        expect(timing([visit(), visit()])).toBeNull();
+    });
+
+    test('and a room with no prediction is not judged on timing at all', () => {
+        expect(timing([visit({ cleared: true, predictedSeconds: undefined })])).toBeNull();
+    });
+});
