@@ -22,6 +22,7 @@ import {
     newChestTally,
     countDungeonChests,
     dungeonChestItems,
+    isRefinementChest,
 } from './dungeon-chest-luck.js';
 
 describe('what a completion is worth', () => {
@@ -272,5 +273,40 @@ describe('asking the zone which item is the chest', () => {
         expect(
             dungeonChestItems(zone([{ itemHrid: '/items/coin', dropRate: 0.1 }])).has('/items/enchanted_chest')
         ).toBe(true);
+    });
+});
+
+describe('refinement chests are not completions', () => {
+    test('they are not counted as the chest a completion pays', () => {
+        // A refinement chest takes a chest key to open like any other, and no
+        // entry key at all, because it is not the per-completion payout.
+        // Counting one would invent a run that never happened.
+        const loot = {
+            a: { itemHrid: '/items/chimerical_chest', count: 3 },
+            b: { itemHrid: '/items/chimerical_refinement_chest', count: 4 },
+        };
+
+        expect(countDungeonChests(loot)).toBe(3);
+    });
+
+    test('and the zone cannot volunteer one either', () => {
+        const zone = {
+            combatZoneInfo: {
+                dungeonInfo: {
+                    rewardDropTable: [
+                        { itemHrid: '/items/pirate_chest', dropRate: 1 },
+                        { itemHrid: '/items/pirate_refinement_chest', dropRate: 1 },
+                    ],
+                },
+            },
+        };
+
+        expect([...dungeonChestItems(zone)]).toEqual(['/items/pirate_chest']);
+    });
+
+    test('matched by name, so a dungeon added later needs no list edit', () => {
+        expect(isRefinementChest('/items/newly_added_refinement_chest')).toBe(true);
+        expect(isRefinementChest('/items/newly_added_chest')).toBe(false);
+        expect(isRefinementChest(null)).toBe(false);
     });
 });

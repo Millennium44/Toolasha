@@ -154,9 +154,11 @@ class LoadoutSnapshot {
         // UI, so storage is always the source of snapshots at startup.
         if (Object.keys(this.snapshots).length === 0) {
             const storageKey = getStorageKey();
-            // NOTE: getCurrentCharacterId() may be null at this point (before init_character_data
-            // arrives), so getStorageKey() may return 'loadout_snapshots_default'. We will reload
-            // from the correct key once character_initialized fires.
+            // NOTE: getCurrentCharacterId() is set by the time this runs, because
+            // features are initialized from inside the character_initialized
+            // handler — so the key here is already character-scoped. The listener
+            // below cannot correct it if it ever were not: that event has already
+            // fired and will only come again on a character switch.
             this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
 
             // Fallback for Steam users: if storage is also empty, bootstrap from
