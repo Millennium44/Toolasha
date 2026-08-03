@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A recorded party, and what it settled
+
+Every recording until now was solo, and solo cannot exercise the question attribution exists to answer: when a monster loses health, which of the party did it. A rule that always names the same character passes every solo test there is.
+
+- **Two characters, twelve battles, two minutes**, now a fixture. The names in it are replaced with Player One and Player Two.
+- **Damage dealt is split between them**, damage taken is kept per character, and every hit taken is attributed to one of eleven named monsters with the per-player split inside each enemy card — the thing solo can never produce.
+- **The enemy breakdown adds up to what the party took**, 1,515 across both of them.
+- **It corrected a claim rather than confirming one**, which is the main reason it was worth taking; see the entry below.
+- **A guard on the fixture** asserts the attack counter is still in it, so trimming it later fails loudly rather than quietly weakening the attribution — the same trap an earlier fixture fell into.
+
 ### A kill is priced from the tick, not from the screen
 
 Every monster a tick mentions states its own full health as `mHP` — on all 292 monster entries across two recorded runs, agreeing with what the battle said each time.
@@ -14,13 +24,13 @@ Every monster a tick mentions states its own full health as `mHP` — on all 292
 - **The battle-panel reading gives up trying.** It only ever needed the current health, to match a tile against a monster; the maximum was a second and worse source for a number the payload already gives. Reading it also meant untangling two health bars that flatten into one string, which is a hazard now gone.
 - **`isActive` was measured and left alone.** It looked like a cleaner death signal than health crossing zero, and it is not: across both recordings the two always fire on the same tick — five times and thirteen times, neither ever alone. Nothing to gain.
 
-### Fixed: in a party, the Damage panel was throwing away nine hits in ten
+### The caster is identified by an attack counter
 
-The same recordings that fixed the incoming side turned out to carry the answer for the outgoing one. Every player has an `atkCounter`, and it goes up when they attack — across two recorded runs it rose on **every** tick that dealt damage, sixty-nine of sixty-nine.
+Every player carries `atkCounter` and it goes up when they attack. Across three recorded runs it rose on every tick that dealt damage, and on a recorded two-character party it named one character and never both.
 
-- **The caster is identified by that counter now**, not by mana. Mana was the original answer and a much weaker one: only an ability costs any, so `cMP` falling named the actor on eight of those sixty-nine ticks.
-- **Solo, this changed nothing** — a single player was already credited directly whatever the payload said, which is why the fault never showed.
-- **In a party it changed everything.** With nobody identified, a hit is dropped, so the panel was losing every auto-attack. Replaying a recording with a second party member spliced in who does nothing: the totals are now identical with and without them, and on a payload carrying no attack counter the same replay loses four fifths of the run. That second figure is what a real party used to see.
+- **The caster is identified by that counter now**, not by mana. Only an ability costs mana, so `cMP` falling named the actor on eight of sixty-nine solo damage ticks.
+- **Correcting what was claimed here first.** The entry that shipped with this change said a party was losing nine hits in ten. That was measured by splicing a bystander into _every_ tick of a solo recording, and a real party does not look like that: `pMap` is a delta exactly as `mMap` is, so a character who did nothing is not in the tick at all. On a genuine two-character recording — twelve battles, a hundred and thirty-seven damage ticks — the old rule and the new one pick the _same_ character every single time, including the eight ticks that carried both.
+- **So this is a better-founded answer, not a rescue.** The actor is named because a counter of attacks went up, rather than inferred from being the only one the payload mentioned. The inference was right here; nothing guarantees it stays right.
 - **Mana is kept below the counter**, for the tick where two people act at once and one of them cast, and for a payload that carries no counter at all.
 
 ### The auto-record switch turns itself off
