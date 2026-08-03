@@ -6,8 +6,26 @@
  * cannot do anything about.
  */
 
-import { describe, test, expect } from 'vitest';
-import { isFinishedWithSpoils, anyFinished } from './marketplace-badge-filter.js';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const game = vi.hoisted(() => ({ listings: null, styles: new Set() }));
+
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        get characterData() {
+            return game.listings === null ? null : { myMarketListings: game.listings };
+        },
+        on: () => {},
+        off: () => {},
+    },
+}));
+vi.mock('../../utils/dom.js', () => ({
+    addStyles: (_css, id) => game.styles.add(id),
+    removeStyles: (id) => game.styles.delete(id),
+}));
+
+const { isFinishedWithSpoils, anyFinished, default: badgeFilter } = await import('./marketplace-badge-filter.js');
 
 const listing = (over = {}) => ({
     id: 1,
@@ -90,5 +108,67 @@ describe('anyFinished', () => {
     test('an empty book badges nothing', () => {
         expect(anyFinished({})).toBe(false);
         expect(anyFinished(null)).toBe(false);
+    });
+});
+
+describe('starting up with listings already on the books', () => {
+    /** Whether the badge is currently being hidden */
+    const hiding = () => game.styles.has('mwi-marketplace-badge-filter');
+
+    beforeEach(() => {
+        game.styles.clear();
+        game.listings = null;
+        badgeFilter.hidden = false;
+        badgeFilter.unregister = null;
+    });
+
+    test('a filled order sitting there through a reload still badges', () => {
+        // The reported bug. Features are initialized from inside the
+        // `character_initialized` handler, so subscribing to that event and
+        // waiting is subscribing to something that has already happened — the
+        // badge stayed hidden until an unrelated listing happened to change.
+        game.listings = [listing()];
+
+        badgeFilter.initialize();
+
+        expect(hiding()).toBe(false);
+    });
+
+    test('and a book of working orders is still quietened at start-up', () => {
+        game.listings = [listing({ filledQuantity: 30, unclaimedItemCount: 30 })];
+
+        badgeFilter.initialize();
+
+        expect(hiding()).toBe(true);
+    });
+
+    test('no character data yet hides, and says nothing it cannot know', () => {
+        badgeFilter.initialize();
+
+        expect(hiding()).toBe(true);
+    });
+
+    test('a later update is still followed', () => {
+        game.listings = [listing({ filledQuantity: 30, unclaimedItemCount: 30 })];
+        badgeFilter.initialize();
+        expect(hiding()).toBe(true);
+
+        game.listings = [listing()];
+        badgeFilter.refresh();
+
+        expect(hiding()).toBe(false);
+    });
+
+    test('a listing that leaves the book stops badging for it', () => {
+        // Which a privately accumulated copy could not do: the listing would
+        // linger at whatever state it was last seen in
+        game.listings = [listing()];
+        badgeFilter.initialize();
+        expect(hiding()).toBe(false);
+
+        game.listings = [];
+        badgeFilter.refresh();
+
+        expect(hiding()).toBe(true);
     });
 });

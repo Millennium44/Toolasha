@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the marketplace badge stayed down even for finished orders
+
+The filter that quietens the sidebar badge for still-working orders was quietening everything, including a fully filled order with coins waiting to be collected.
+
+- **It was subscribing to an event that had already fired.** Features are initialized from _inside_ the `character_initialized` handler, so a feature that registers its own listener for that event never receives it. The filter hid the badge on start-up and then waited to be told otherwise — and the telling had already happened. A filled order that survived a page reload stayed unbadged until some unrelated listing happened to change and trigger a `market_listings_updated`.
+- **It now reads what is already known** at start-up instead of waiting.
+- **And reads it from the data manager** rather than from a copy it accumulated itself. The data manager already merges every listing update into the character's book; a private copy could only drift from it, and would keep badging for a listing that had left the book entirely — the opposite failure, and one nobody would have connected to this.
+- **The rule about which orders count has not changed.** A partly filled order that is still working is still not a reason to badge the sidebar.
+
 ### Fixed: the time-to-level tile named the level you already have
 
 It read "Melee 135" beside a time, for a level long since earned. The number is now the level being worked _towards_, in both the automatic case and a chosen target one level ahead.
