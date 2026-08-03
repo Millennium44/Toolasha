@@ -1625,7 +1625,7 @@ class LabyrinthRoomLogs {
 
         const throughput = [];
         if (row.timing)
-            throughput.push(`${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s est`);
+            throughput.push(`${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s est per clear`);
         if (row.measured?.xpPerHour) throughput.push(`${formatKMB(row.measured.xpPerHour)} xp/h`);
         if (row.measured?.rooms) throughput.push(`${row.measured.rooms} finished`);
         if (throughput.length) {
@@ -1677,9 +1677,17 @@ class LabyrinthRoomLogs {
         }
         if (row.timing) {
             lines.push(
-                `Took ${Math.round(row.timing.actual)}s on average over ${row.timing.rooms} finished room(s), ` +
-                    `against ${Math.round(row.timing.predicted)}s expected — ${row.timing.ratio.toFixed(2)}x`
+                `A clear cost ${Math.round(row.timing.actual)}s — every second of the ${row.timing.visits} visit(s) ` +
+                    `to this room, ${Math.round(row.timing.seconds)}s in all, over the ${row.timing.clears} clear(s) ` +
+                    `they bought. The calculator expects ${Math.round(row.timing.predicted)}s, which is also a ` +
+                    `figure per clear and includes the attempts you lose — ${row.timing.ratio.toFixed(2)}x`
             );
+            if (row.timing.perFinishedVisit) {
+                lines.push(
+                    `A visit that ended in a clear took ${Math.round(row.timing.perFinishedVisit)}s of that. The gap ` +
+                        'between the two figures is the time this room has cost you in attempts that came to nothing'
+                );
+            }
         }
         if (row.measured?.xpPerHour) {
             lines.push(
