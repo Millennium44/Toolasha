@@ -12,6 +12,9 @@ vi.mock('./combat-sim-adapter.js', () => ({
 vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
     runLabyrinthSimulation: vi.fn(),
+    // Fights run several at a time; one at a time in tests keeps the order of
+    // the mock's calls readable
+    getMaxWorkers: () => 4,
 }));
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
@@ -671,6 +674,44 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(row.significant).toBe(false);
     });
 
+    test('fights run several at a time rather than one after another', async () => {
+        // Each fight is its own worker with its own seed, so running them in
+        // series left the rest of the machine idle for the length of the run
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        let running = 0;
+        let peak = 0;
+        runLabyrinthSimulation.mockImplementation(async () => {
+            running++;
+            peak = Math.max(peak, running);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            running--;
+            return { labyAttemptCount: 100, encounters: 50 };
+        });
+
+        const fights = [0, 1, 2, 3].map((i) => ({
+            monsterHrid: `/monsters/m${i}`,
+            monsterName: `M${i}`,
+            roomLevel: 100,
+            dto: { staminaLevel: 50, meleeLevel: 50 },
+        }));
+
+        await runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { meleeLevel: 60 },
+            },
+            null,
+            {}
+        );
+
+        expect(peak).toBeGreaterThan(1);
+    });
+
     test('the progress total counts the sims it will actually run', async () => {
         // A total that assumed every candidate against every fight would leave
         // the bar stuck short of the end, which reads as a run that hung
@@ -1074,6 +1115,44 @@ describe('what a set of upgrades is worth together', () => {
         expect(check.fights[0].installed).toEqual(['Melee 50 → 55']);
     });
 
+    test('two picks for one slot are not both worn — the room gets the better one', async () => {
+        // The plan buys a second chestpiece for the rooms the first cannot
+        // reach; a room that both fit wears whichever is better *there*, which
+        // is exactly what the second one was valued at
+        const setup = comboSetup();
+        setup.picks = [
+            {
+                candidate: {
+                    type: 'tier',
+                    slot: MAIN,
+                    currentHrid: '/items/fine_sword',
+                    upgradeHrid: '/items/regal_sword_refined',
+                    upgradeLevel: 10,
+                    description: 'Regal Sword',
+                },
+                attemptsDelta: -1,
+                fights: [{ winRateDelta: 0.02 }],
+            },
+            {
+                candidate: {
+                    type: 'tier',
+                    slot: MAIN,
+                    currentHrid: '/items/fine_sword',
+                    upgradeHrid: '/items/grand_cape_refined',
+                    upgradeLevel: 10,
+                    description: 'Other Sword',
+                },
+                attemptsDelta: -1,
+                fights: [{ winRateDelta: 0.11 }],
+            },
+        ];
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 60 });
+
+        const check = await runLabyrinthCombinationCheck(setup, null, {});
+
+        expect(check.fights[0].installed).toEqual(['Other Sword']);
+    });
+
     test('nothing to check is an error rather than a confident zero', async () => {
         const setup = comboSetup();
 
@@ -1181,29 +1260,93 @@ describe('what a budget buys', () => {
         significant: over.significant ?? true,
     });
 
+    // Three rooms, all at a 50% win rate, so each is two expected attempts
+    const BASELINE = [0, 1, 2].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
+    /** A candidate that lifts the named rooms to `winRate` and misses the rest */
+    const covering = (rooms, over = {}) => ({
+        ...pick(over),
+        fights: BASELINE.map((fight, i) =>
+            rooms.includes(i) ? { ...fight, winRate: over.winRate ?? 1, applied: true } : { ...fight, applied: false }
+        ),
+        attemptsDelta: -1,
+    });
+    const planFor = (results, budget) => planWithinBudget(results, budget, { baselineFights: BASELINE });
+
     test('best value first, until the money runs out', () => {
         const plan = planWithinBudget(
             [
-                pick({ per: 5, cost: 100, slot: '/equipment_types/head' }),
-                pick({ per: 20, cost: 100, slot: '/equipment_types/feet' }),
+                pick({ cost: 100, attemptsDelta: -0.5, slot: '/equipment_types/head' }),
+                pick({ cost: 100, attemptsDelta: -2, slot: '/equipment_types/feet' }),
             ],
             100
         );
 
         expect(plan.picks).toHaveLength(1);
-        expect(plan.picks[0].attemptsSavedPerMillion).toBe(20);
+        expect(plan.picks[0].candidate.slot).toBe('/equipment_types/feet');
         expect(plan.skipped.some((s) => s.reason === 'over budget')).toBe(true);
     });
 
-    test('never two things for one slot', () => {
-        // You wear one pair of boots; the second is gold spent on nothing
-        const plan = planWithinBudget(
-            [pick({ per: 20, cost: 10, hrid: '/items/a' }), pick({ per: 15, cost: 10, hrid: '/items/b' })],
+    test('two pieces for one slot, when they serve different rooms', () => {
+        // One chestpiece for the melee loadouts and one for the casters is two
+        // purchases doing two jobs, not a mistake
+        const plan = planFor([covering([0], { hrid: '/items/a' }), covering([1, 2], { hrid: '/items/b' })], 1000);
+
+        expect(plan.picks).toHaveLength(2);
+        expect(plan.picks.map((p) => p.rooms).sort()).toEqual([1, 2]);
+    });
+
+    test('but not a second piece for the rooms the first already covers', () => {
+        const plan = planFor(
+            [covering([0, 1, 2], { hrid: '/items/a', cost: 10 }), covering([0, 1], { hrid: '/items/b', cost: 10 })],
             1000
         );
 
         expect(plan.picks).toHaveLength(1);
-        expect(plan.skipped[0].reason).toContain('slot');
+        expect(plan.skipped.some((s) => s.reason.includes('already cover'))).toBe(true);
+    });
+
+    test('a second piece is valued only at what it adds', () => {
+        // The cheap piece is the best thing room 0 can wear; the broad one is
+        // better than nothing in room 1 and worse than the first in room 0, so
+        // only room 1 is its to claim
+        const plan = planFor(
+            [
+                covering([0], { hrid: '/items/sharp', cost: 5, winRate: 1 }),
+                covering([0, 1], { hrid: '/items/broad', cost: 20, winRate: 0.75 }),
+            ],
+            1000
+        );
+
+        expect(plan.picks.map((p) => p.candidate.upgradeHrid)).toEqual(['/items/sharp', '/items/broad']);
+        // 2 tries at 50% down to 1.333 at 75% — and only in room 1
+        expect(plan.picks[1].marginalAttemptsSaved).toBeCloseTo(2 - 1 / 0.75, 3);
+    });
+
+    test('and a piece nobody would wear any more is taken back out', () => {
+        // Bought early because it was cheap, then beaten everywhere it applied:
+        // leaving it in the plan spends gold on a piece that never gets worn
+        const plan = planFor(
+            [
+                covering([0], { hrid: '/items/cheap', cost: 1, winRate: 0.6 }),
+                covering([0, 1, 2], { hrid: '/items/better', cost: 20, winRate: 1 }),
+            ],
+            1000
+        );
+
+        expect(plan.picks.map((p) => p.candidate.upgradeHrid)).toEqual(['/items/better']);
+        expect(plan.totalCost).toBe(20);
+        expect(plan.skipped.some((s) => s.reason.includes('covers every room'))).toBe(true);
+    });
+
+    test('a skill level is still one purchase, however many rooms it touches', () => {
+        const level = (upgradeLevel, cost) => ({
+            ...covering([0, 1, 2], { cost }),
+            candidate: { type: 'combat_level', skillKey: 'meleeLevel', upgradeLevel },
+        });
+
+        const plan = planFor([level(55, 10), level(60, 10)], 1000);
+
+        expect(plan.picks).toHaveLength(1);
     });
 
     test('nothing whose gain is inside the noise', () => {
@@ -1242,6 +1385,17 @@ describe('what a budget buys', () => {
 
         expect(plan.totalCost).toBe(350);
         expect(plan.attemptsSaved).toBe(3);
+    });
+
+    test('and the saving counts each room once, not once per piece', () => {
+        // Two pieces both lifting room 0 from two attempts to one is still one
+        // attempt saved there, whichever of them the room wears
+        const plan = planFor(
+            [covering([0], { hrid: '/items/a', cost: 10 }), covering([0, 1], { hrid: '/items/b', cost: 10 })],
+            1000
+        );
+
+        expect(plan.attemptsSaved).toBeCloseTo(2, 5);
     });
 });
 
