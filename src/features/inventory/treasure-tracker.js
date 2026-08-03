@@ -659,14 +659,18 @@ class TreasureTracker {
 
         // Dismissed by clicking away from it, the way the game's own loot dialog
         // and MCS's treasure pane both behave. Deferred by a tick so the click
-        // that *opened* it does not immediately close it again, and ignored once
-        // the popup has been dragged — moving it is how you say "stay".
+        // that *opened* it does not immediately close it again.
+        //
+        // Pinning does not disable this, though it used to. The two are separate
+        // questions — pinning says where the popup opens, not that it should
+        // stay on screen — and conflating them meant that pinning it once, which
+        // for a while a single click on its header was enough to do, silently
+        // took the dismissal away as well.
         this._onOutsideClick = (event) => {
             if (!this.popup || this.popup.contains(event.target)) return;
             // The full-stats panel is this popup's own offspring; clicking in it
             // is not clicking away
             if (this.panel?.contains(event.target)) return;
-            if (this.settings.popupPinned) return;
             this._removePopup();
         };
         const arm = setTimeout(() => document.addEventListener('mousedown', this._onOutsideClick, true), 0);
@@ -1236,6 +1240,7 @@ class TreasureTracker {
     }
 
     _removePanel() {
+        this._stopWaiting();
         this._detachDrag?.();
         this._detachDrag = null;
         this._detachResize?.();
@@ -1261,8 +1266,15 @@ class TreasureTracker {
             // every chest in the game, not only the ones you have opened
             empty.textContent = 'Waiting for the game to send its chest data…';
             this.contentEl.appendChild(empty);
+
+            // And look again shortly. A panel reopened at start-up is drawn
+            // before the game has sent anything, and nothing else redraws it —
+            // so the message stayed up for the rest of the session and read as
+            // a panel that had stopped working.
+            this._waitForChestData();
             return;
         }
+        this._stopWaiting();
 
         if (this.configMode) this.contentEl.appendChild(this._configSection());
         this.contentEl.appendChild(this._totalsRow(totals));
@@ -1274,6 +1286,28 @@ class TreasureTracker {
             if (!this.configMode && hidden.has(row.chestHrid)) continue;
             this.contentEl.appendChild(this._chestRow(row, hidden.has(row.chestHrid)));
         }
+    }
+
+    /**
+     * Draw again once the game has sent its chest data.
+     *
+     * A timer rather than an event, because the drop tables arrive with the
+     * client data rather than with a message of their own, and the one event
+     * that would do — `character_initialized` — has usually already fired by the
+     * time a restored panel asks. It stops itself the moment there is something
+     * to draw, and when the panel closes.
+     */
+    _waitForChestData() {
+        if (this._dataWait) return;
+        this._dataWait = setInterval(() => {
+            if (!this.contentEl) return this._stopWaiting();
+            if (this._summary().rows.length) this._render();
+        }, 1000);
+    }
+
+    _stopWaiting() {
+        clearInterval(this._dataWait);
+        this._dataWait = null;
     }
 
     /**

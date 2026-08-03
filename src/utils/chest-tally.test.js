@@ -110,10 +110,23 @@ describe('chestPerformance', () => {
         expect(result.ratio).toBeCloseTo(20000 / 120000, 6);
     });
 
-    test('rows are ordered by what they were supposed to be worth', () => {
+    test('rows are ordered by how much the chest owes you, commonest first', () => {
         const entry = { opened: 100, loot: { '/items/coin': 20000, '/items/rare': 1 } };
         const [first] = chestPerformance(entry, dropTable, priceOf).items;
-        expect(first.itemHrid).toBe('/items/rare');
+        expect(first.itemHrid).toBe('/items/coin');
+    });
+
+    test('and by nothing else, so a price change cannot rearrange the list', () => {
+        // Ordered by worth, the rows moved whenever a price moved and whenever
+        // the cape or cowbell valuation was changed — a list you had learned the
+        // shape of rearranging itself for reasons unrelated to the chest
+        const entry = { opened: 100, loot: { '/items/coin': 20000, '/items/rare': 1 } };
+        const order = (prices) =>
+            chestPerformance(entry, dropTable, (hrid) => prices[hrid]).items.map((i) => i.itemHrid);
+
+        expect(order({ '/items/coin': 1, '/items/rare': 100000 })).toEqual(
+            order({ '/items/coin': 1, '/items/rare': 1 })
+        );
     });
 
     test('an item with no price sits out of both sides but is still a row', () => {
@@ -132,12 +145,13 @@ describe('chestPerformance', () => {
         expect(result.actualValue).toBe(2000);
     });
 
-    test('unpriced rows sort last, so they cannot lead the verdict', () => {
-        const withJunk = [...dropTable, { itemHrid: '/items/junk', dropRate: 1, minCount: 5, maxCount: 5 }];
-        const entry = { opened: 10, loot: { '/items/coin': 2000, '/items/junk': 50 } };
-        const items = chestPerformance(entry, withJunk, priceOf).items;
+    test('an item that dropped but is not in the table is owed nothing and goes last', () => {
+        // Drop tables change between updates; the row is kept, but it has no
+        // expectation to be ranked by
+        const entry = { opened: 10, loot: { '/items/coin': 2000, '/items/removed': 3 } };
+        const items = chestPerformance(entry, dropTable, priceOf).items;
 
-        expect(items[items.length - 1].itemHrid).toBe('/items/junk');
+        expect(items[items.length - 1].itemHrid).toBe('/items/removed');
     });
 
     test('nothing opened yet is not a verdict', () => {
@@ -289,7 +303,7 @@ describe('chestBreakdown', () => {
         tally = recordOpening(tally, CHEST, 1, [{ itemHrid: '/items/rare', count: 1 }]);
 
         const { items, total, last } = chestBreakdown(tally[CHEST], dropTable, priceOf);
-        expect(items.map((i) => i.itemHrid)).toEqual(['/items/rare', '/items/coin']);
+        expect(items.map((i) => i.itemHrid)).toEqual(['/items/coin', '/items/rare']);
         expect(total.opened).toBe(10);
         expect(last.opened).toBe(1);
     });

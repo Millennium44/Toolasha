@@ -6,6 +6,27 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Treasure panel stopped waiting forever
+
+A panel reopened at start-up is drawn before the game has sent anything, so it drew "Waiting for the game to send its chest data…" — and nothing redrew it. The message stayed up for the rest of the session, which reads as a panel that has stopped working rather than one that is early. It now looks again until there is something to draw.
+
+### Chest contents keep their order
+
+The item rows inside a chest were ordered by what each was worth, which meant they rearranged whenever a price moved and whenever the cape or cowbell valuation was changed — a list you had learned the shape of reordering itself for reasons that had nothing to do with the chest.
+
+They are now ordered by how much of each the chest owes you, commonest first, and by nothing else. A drop table does not change, so neither does the order. This is unrelated to the sort picker, which only ever ordered the chests in the main list, and it is also the order TReasure lists them in.
+
+### The chest popup closes on a click away again
+
+Pinning it used to switch that off, on the reasoning that a moved popup wants to stay. But pinning says where the popup opens, not that it should stay on screen — and while a single click on its header was enough to pin it, that quietly took the dismissal away too.
+
+### The consumables tile reads like CRack's
+
+- **The item is named.** "3.17K remaining" never said _which_ consumable, which is the one thing the tile is for — you cannot top up a number.
+- **The count is exact.** It is a stock figure, not a sum of money: `3,170`, not `3.17K`.
+- **Count, icon, name, in that order**, with the count bold and coloured by how soon it runs out.
+- **`Total Cost/Day:` gets its own line** above the two sides of the book. On a tile this narrow they never fitted on one line anyway; they ran together instead of admitting it.
+
 ### The marketplace badge is the game's badge, with our number in it
 
 Two things were wrong, and the first explains the second.
