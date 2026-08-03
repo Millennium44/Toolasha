@@ -349,7 +349,13 @@ function card(body, title) {
  * In the DOM it would be lost every two seconds when the panel repaints, which
  * is a row that closes itself while you are reading it.
  */
-const expandedRows = new Set();
+const expandedRows = new Set([
+    // IHurt's two sections open by default, as MCS has them. They are the panel
+    // rather than an appendix to it — collapsed, opening the panel shows two
+    // banners and a card and nothing about what is doing the hitting.
+    'hurt:enemies',
+    'hurt:waves',
+]);
 
 /**
  * The table's columns, proportional rather than fixed.
@@ -850,51 +856,354 @@ export const dpsPanel = new CombatPanel({
     },
 });
 
+/**
+ * A banner of name-and-figure pairs, the way IHurt leads.
+ *
+ * The party total and every member on one line, rather than a card per member.
+ * Deaths are the figure you check rather than study — the interesting reading is
+ * "is anyone dying", and that is one glance across a line. The cards below are
+ * for when the answer is yes.
+ *
+ * @param {string} label - What the row counts
+ * @param {Array<{name: string, value: string}>} parts - One per player
+ * @param {string} total - The party figure
+ * @param {string} tone - Ink for the figures
+ * @returns {HTMLElement}
+ */
+function hurtBanner(label, parts, total, tone) {
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+        background: 'rgba(248, 113, 113, 0.10)',
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: '5px',
+        padding: '5px 9px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'baseline',
+        gap: '5px',
+        fontSize: '11.5px',
+        fontVariantNumeric: 'tabular-nums',
+    });
+
+    const heading = document.createElement('span');
+    heading.textContent = label;
+    Object.assign(heading.style, { color: ROW_COLORS.bad, fontWeight: 'bold' });
+    row.appendChild(heading);
+
+    const pieces = [...parts.map((part) => ({ ...part, gold: true })), { name: 'Total', value: total }];
+    pieces.forEach((part, index) => {
+        if (index > 0) row.appendChild(piece(' | ', COLORS.textDim));
+
+        const wrap = document.createElement('span');
+        const name = document.createElement('span');
+        name.textContent = `${part.name}: `;
+        name.style.color = part.gold ? ROW_COLORS.gold : ROW_COLORS.bad;
+        if (!part.gold) name.style.fontWeight = 'bold';
+
+        const figure = document.createElement('span');
+        figure.textContent = part.value;
+        Object.assign(figure.style, { color: tone, fontWeight: 'bold' });
+
+        wrap.append(name, figure);
+        row.appendChild(wrap);
+    });
+
+    return row;
+}
+
+/**
+ * One player's card: what they took, what they healed, and what it cost them.
+ *
+ * Damage and regeneration side by side rather than netted. A net figure of −200
+ * describes both a comfortable zone and one you barely survive, and the pair
+ * tells them apart: 3,400 taken against 3,600 healed is sustainable, 3,400
+ * against 200 is a run that ends.
+ *
+ * @param {Object} player - From `takenBreakdown`
+ * @param {number} deaths - From the server's own count
+ * @param {number} hours - Elapsed, for the rate
+ * @returns {HTMLElement}
+ */
+function hurtPlayerCard(player, deaths, hours) {
+    const tile = document.createElement('div');
+    Object.assign(tile.style, {
+        background: COLORS.card,
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: '6px',
+        padding: '6px 9px',
+        fontSize: '11.5px',
+        fontVariantNumeric: 'tabular-nums',
+    });
+
+    const name = document.createElement('div');
+    name.textContent = player.name;
+    Object.assign(name.style, { color: ROW_COLORS.gold, fontWeight: 'bold', marginBottom: '3px' });
+    tile.appendChild(name);
+
+    tile.append(
+        line('Damage/s', player.dps === null ? '—' : player.dps.toFixed(1), ROW_COLORS.bad),
+        line('Regen/s', player.hps === null ? '—' : player.hps.toFixed(1), ROW_COLORS.good),
+        hairline(),
+        line('Total dmg', formatKMB(player.damage), ROW_COLORS.bad),
+        line('Total regen', formatKMB(player.regen), ROW_COLORS.good),
+        hairline(),
+        line('Deaths', formatWithSeparator(deaths), deaths ? ROW_COLORS.bad : ROW_COLORS.good),
+        line('Deaths/hr', hours > 0 ? (deaths / hours).toFixed(1) : '0.0', deaths ? ROW_COLORS.bad : ROW_COLORS.good)
+    );
+    return tile;
+}
+
+/** A rule between groups of lines inside a card */
+function hairline() {
+    const rule = document.createElement('div');
+    Object.assign(rule.style, { borderTop: `1px solid ${COLORS.hairline}`, margin: '4px 0' });
+    return rule;
+}
+
+/**
+ * A range, written the way IHurt writes it: `[66-88]`.
+ *
+ * The range is the point of the section rather than a decoration. A wave whose
+ * average hit is forty is comfortable until one of its members hits for two
+ * hundred, and only the maximum says so.
+ *
+ * @param {number|null} min - Smallest hit seen
+ * @param {number|null} max - Largest
+ * @returns {string} Empty when nothing has landed
+ */
+function hitRange(min, max) {
+    if (min === null || max === null) return '';
+    return `[${formatWithSeparator(min)}-${formatWithSeparator(max)}]`;
+}
+
+/**
+ * What one kind of monster has done to the party.
+ *
+ * @param {Object} enemy - From `takenBreakdown`
+ * @returns {HTMLElement}
+ */
+function hurtEnemyCard(enemy) {
+    const tile = document.createElement('div');
+    Object.assign(tile.style, {
+        borderLeft: `3px solid ${ROW_COLORS.bad}`,
+        borderRadius: '4px',
+        background: 'rgba(248, 113, 113, 0.08)',
+        padding: '5px 8px',
+        fontSize: '11px',
+        fontVariantNumeric: 'tabular-nums',
+    });
+
+    const name = document.createElement('div');
+    name.textContent = enemy.name;
+    Object.assign(name.style, { color: ROW_COLORS.bad, fontWeight: 'bold', fontSize: '11.5px' });
+    tile.appendChild(name);
+
+    tile.appendChild(note(`Total: ${formatKMB(enemy.damage)}`, COLORS.textDim));
+    const range = hitRange(enemy.min, enemy.max);
+    if (range) tile.appendChild(note(`Range: ${range}`, COLORS.textDim));
+
+    // Only worth the rows when there is more than one player to tell apart —
+    // solo, they would repeat the card's own total under the player's name
+    if (enemy.players.length > 1 || enemy.players.some((entry) => entry.damage !== enemy.damage)) {
+        for (const entry of enemy.players) {
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+                gap: '6px',
+                alignItems: 'baseline',
+                background: 'rgba(248, 113, 113, 0.10)',
+                borderRadius: '3px',
+                padding: '2px 5px',
+                marginTop: '3px',
+            });
+            row.append(
+                piece(`${entry.name}:`, ROW_COLORS.bad),
+                piece(formatKMB(entry.damage), COLORS.text),
+                piece(hitRange(entry.min, entry.max), COLORS.textDim)
+            );
+            tile.appendChild(row);
+        }
+    }
+    return tile;
+}
+
+/**
+ * A collapsible section heading, with a figure on the right.
+ *
+ * @param {string} key - Where its open state is remembered
+ * @param {string} label - The heading
+ * @param {string} right - A figure for the right-hand side, or empty
+ * @param {string} arrowColor - Ink for the triangle
+ * @param {Function} onToggle - Redraw
+ * @returns {HTMLElement}
+ */
+function hurtSectionHeader(key, label, right, arrowColor, onToggle) {
+    const open = expandedRows.has(key);
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+        display: 'flex',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: '8px',
+        cursor: 'pointer',
+        userSelect: 'none',
+        padding: '2px 0',
+    });
+
+    const left = document.createElement('div');
+    Object.assign(left.style, { display: 'flex', gap: '6px', alignItems: 'baseline' });
+    left.append(piece(open ? '▼' : '▶', arrowColor), piece(label, ROW_COLORS.gold));
+    left.querySelector('span:last-child').style.fontWeight = 'bold';
+
+    header.appendChild(left);
+    if (right) {
+        const figure = piece(right, ROW_COLORS.bad);
+        figure.style.fontWeight = 'bold';
+        header.appendChild(figure);
+    }
+
+    header.addEventListener('click', () => {
+        if (open) expandedRows.delete(key);
+        else expandedRows.add(key);
+        onToggle();
+    });
+    return header;
+}
+
 export const deathsPanel = new CombatPanel({
     id: 'deathsPanel',
-    title: 'Deaths',
-    size: { width: 380, height: 300 },
+    title: 'IHurt',
+    size: { width: 460, height: 420 },
     draw: (body) => {
+        const taken = window.Toolasha?.Combat?.damageTakenTracker?.takenBreakdown?.() || null;
         const data = combatStatsDataCollector.getLatestData?.();
-        const players = data?.players || [];
-        if (!players.length) {
+        const statPlayers = data?.players || [];
+
+        const players = taken?.players || [];
+        if (!players.length && !statPlayers.length) {
             body.appendChild(note('No combat data yet.'));
             return;
         }
 
-        const duration = runSeconds(data);
-        const total = players.reduce((sum, player) => sum + (player.deathCount || 0), 0);
+        // Deaths come from the server, damage is derived here. Two sources for
+        // one number is two numbers that eventually disagree, and the server's
+        // is the one that is right — so each supplies only what it knows.
+        const deathsFor = (name) =>
+            statPlayers.find((entry) => (entry.name || entry.characterName) === name)?.deathCount || 0;
 
-        const summary = card(body, 'Session');
-        summary.append(
-            line('Elapsed', timeReadable(Math.round(duration)), COLORS.text),
-            line('Party deaths', formatWithSeparator(total), total ? ROW_COLORS.bad : ROW_COLORS.good),
-            line(
-                'Party deaths/hr',
-                duration > 0 ? ((total / duration) * 3600).toFixed(1) : '0.0',
-                total ? ROW_COLORS.bad : ROW_COLORS.good
+        const duration = runSeconds(data);
+        const hours = duration / 3600;
+        const totalDeaths = statPlayers.reduce((sum, player) => sum + (player.deathCount || 0), 0);
+
+        const cards = players.length
+            ? players
+            : statPlayers.map((entry) => ({
+                  name: entry.name || entry.characterName || 'Unknown',
+                  damage: 0,
+                  regen: 0,
+                  dps: null,
+                  hps: null,
+              }));
+
+        body.append(
+            hurtBanner(
+                'Session Deaths:',
+                cards.map((player) => ({ name: player.name, value: formatWithSeparator(deathsFor(player.name)) })),
+                formatWithSeparator(totalDeaths),
+                totalDeaths ? ROW_COLORS.bad : ROW_COLORS.good
+            ),
+            hurtBanner(
+                'Session Deaths/hr:',
+                cards.map((player) => ({
+                    name: player.name,
+                    value: hours > 0 ? (deathsFor(player.name) / hours).toFixed(1) : '0.0',
+                })),
+                hours > 0 ? (totalDeaths / hours).toFixed(1) : '0.0',
+                totalDeaths ? ROW_COLORS.bad : ROW_COLORS.good
             )
         );
 
-        // Per player, which is what IHurt is for: a party figure says the group
-        // is dying and not who, and "who" is the whole question when one member
-        // is under-geared for the zone
-        const perPlayer = card(body, 'Per player');
-        for (const player of players) {
-            const deaths = player.deathCount || 0;
-            const perHour = duration > 0 ? (deaths / duration) * 3600 : 0;
-            perPlayer.appendChild(
-                line(
-                    player.name || player.characterName || 'Unknown',
-                    `${formatWithSeparator(deaths)}  ·  ${perHour.toFixed(1)}/hr`,
-                    deaths ? ROW_COLORS.bad : ROW_COLORS.good,
-                    player.isCurrentPlayer ? 'You' : ''
+        const grid = document.createElement('div');
+        Object.assign(grid.style, {
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: '6px',
+        });
+        for (const player of cards) grid.appendChild(hurtPlayerCard(player, deathsFor(player.name), hours));
+        body.appendChild(grid);
+
+        body.appendChild(line('Time fighting', timeReadable(Math.round(taken?.seconds || 0)), COLORS.text));
+
+        if (!taken || !taken.enemies.length) {
+            body.appendChild(
+                note(
+                    'Nothing has hit the party yet this session. Damage taken, what dealt it and how hard it ' +
+                        'hits appear here once it does.'
                 )
             );
+            return;
         }
 
-        perPlayer.appendChild(
-            note('The game reports that a death happened, not what caused it, so these are counts rather than causes.')
+        const totalTaken = taken.enemies.reduce((sum, enemy) => sum + enemy.damage, 0);
+        body.appendChild(
+            hurtSectionHeader(
+                'hurt:enemies',
+                'Enemy Damage to Party:',
+                `Total: ${formatKMB(totalTaken)}`,
+                ROW_COLORS.bad,
+                () => deathsPanel.refresh()
+            )
+        );
+        if (expandedRows.has('hurt:enemies')) {
+            const enemies = document.createElement('div');
+            Object.assign(enemies.style, {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                gap: '6px',
+            });
+            for (const enemy of taken.enemies) enemies.appendChild(hurtEnemyCard(enemy));
+            body.appendChild(enemies);
+        }
+
+        if (taken.waves.length) {
+            body.appendChild(
+                hurtSectionHeader(
+                    'hurt:waves',
+                    'Damage Profiles (Enemy Group Compositions):',
+                    '',
+                    ROW_COLORS.gold,
+                    () => deathsPanel.refresh()
+                )
+            );
+            if (expandedRows.has('hurt:waves')) {
+                for (const wave of taken.waves) {
+                    const tile = card(body, '');
+                    const name = document.createElement('div');
+                    name.textContent = wave.name;
+                    Object.assign(name.style, { color: ROW_COLORS.gold, fontWeight: 'bold', fontSize: '11.5px' });
+
+                    const stats = document.createElement('div');
+                    Object.assign(stats.style, { color: COLORS.textDim, fontSize: '10.5px' });
+                    stats.append(
+                        piece(`Encounters: ${formatWithSeparator(wave.encounters)} | Total Damage: `, COLORS.textDim),
+                        piece(formatKMB(wave.damage), COLORS.text),
+                        piece(' | Avg/Encounter: ', COLORS.textDim),
+                        piece(formatKMB(Math.round(wave.average)), ROW_COLORS.bad)
+                    );
+                    const range = hitRange(wave.min, wave.max);
+                    if (range) stats.appendChild(piece(` | Hit Range: ${range}`, COLORS.textDim));
+
+                    tile.append(name, stats);
+                }
+            }
+        }
+
+        body.appendChild(
+            note(
+                'A monster casting is identified by its mana; an auto-attack spends none, so in a wave the ' +
+                    'attacker is a proxy and unattributed hits are shown as Unknown Enemy.'
+            )
         );
     },
 });

@@ -420,6 +420,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'damageTakenTracker',
+            name: 'Damage Taken Tracker',
+            category: 'Combat',
+            module: Combat.damageTakenTracker,
+            async: false,
+        },
+        {
             key: 'manaTracker',
             name: 'Mana Tracker',
             category: 'Combat',
