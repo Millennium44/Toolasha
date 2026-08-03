@@ -97,7 +97,9 @@ afterEach(() => {
 
 describe('with no target chosen', () => {
     test('it reports the skill going up fastest, as it always did', () => {
-        expect(train('melee', 1000000)).toContain('Melee 134');
+        // The level being worked towards, not the one already held: the time
+        // beside it is time until that number
+        expect(train('melee', 1000000)).toContain('Melee 135');
     });
 
     test('nothing measurable yet draws nothing rather than a guess', () => {
@@ -113,7 +115,7 @@ describe('with a target chosen in the panel', () => {
         select({ skill: 'defense', level: 121, focus: 'defense' });
         const drawn = draw();
 
-        expect(drawn).toContain('Defense 120');
+        expect(drawn).toContain('Defense 121');
         expect(drawn).not.toContain('Melee');
     });
 
