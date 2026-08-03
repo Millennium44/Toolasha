@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The DPS, Over Expected and Luck tiles line up
+
+They sit in a row beside each other and were laid out as if each were alone, so nothing agreed with anything: columns within a tile, and lines across the three of them.
+
+- **The lines of a tile share columns.** Each line used to be laid out independently — right for an income line above a cost line, which are different facts, and wrong for a player row above a total, which is the same measurement twice. A total sitting a few pixels off the figure it totals makes a reader check whether it is even the same kind of number. They are a grid now: the name column takes the slack and every figure lands against the right edge, whether or not each line has the same number of them.
+- **Only a name may be truncated, never a figure.** `1.2…` reads as a number rather than as a truncation.
+- **Digits are one width**, so a column of figures stops shifting as it counts.
+- **Lines start at the top of a tile rather than centred.** This is what stopped the three tiles agreeing: they carry different numbers of lines — DPS has a player and a total, Luck has one — and centring put the single line of one halfway down the two lines of the next. Aligned to the top, the first line of every tile is at the same height, so tiles whose tops agree have figures that agree.
+
 ### Drop Luck breaks out per player after all
 
 Last change said a percentile could not be split between a party. That was wrong: it cannot be _divided_, but it can be computed again for each player, and doing so gives a genuinely different number for each of them.

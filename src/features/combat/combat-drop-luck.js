@@ -41,7 +41,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { partyLuck } from './party-luck.js';
 import { registerRow, rowOption } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
-import { row, rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
+import { rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -417,7 +417,6 @@ registerRow({
             const figure = {
                 text: value === null ? '—' : `${(value * 100).toFixed(1)}%`,
                 bold: true,
-                push: true,
                 color:
                     value === null
                         ? ROW_COLORS.dim
@@ -439,7 +438,8 @@ registerRow({
             const shown = onlyPlayer ? each.filter((player) => player.isCurrentPlayer) : each;
             rows(
                 container,
-                shown.map((player) => luckRow(player.name, player.percentile, player.isCurrentPlayer))
+                shown.map((player) => luckRow(player.name, player.percentile, player.isCurrentPlayer)),
+                { align: true }
             );
             container.title =
                 `${formatOrdinal(result.percentile)} percentile for the party — ${text}\n` +
@@ -448,7 +448,9 @@ registerRow({
             return;
         }
 
-        row(container, luckRow(me?.name || 'Luck', result.percentile, true));
+        // The aligned layout even for one line, so this tile's figure sits at
+        // the same height as the first line of DPS and Over Expected beside it
+        rows(container, [luckRow(me?.name || 'Luck', result.percentile, true)], { align: true });
         container.title = `${formatOrdinal(result.percentile)} percentile — ${text}`;
     },
 });
@@ -483,7 +485,7 @@ registerRow({
         const shown = onlyPlayer ? party.players.filter((player) => player.isCurrentPlayer) : party.players;
         const lines = shown.map((player) => {
             const each = signedPercent(player.percent ?? 0);
-            const figure = { text: player.percent === null ? '—' : each.text, color: each.color, push: true };
+            const figure = { text: player.percent === null ? '—' : each.text, color: each.color };
             if (onlyNumbers) return [figure];
 
             return [
@@ -502,11 +504,11 @@ registerRow({
         // narrowed to one player: a total of one row is that row again.
         if (!onlyPlayer) {
             const total = party.total ? signedPercent(party.total.percent ?? 0) : verdict;
-            const figure = { text: total.text, color: total.color, bold: true, push: true };
+            const figure = { text: total.text, color: total.color, bold: true };
             lines.push(onlyNumbers ? [figure] : [{ text: 'TOTAL', color: ROW_COLORS.neutral, bold: true }, figure]);
         }
 
-        rows(container, lines);
+        rows(container, lines, { align: true });
         container.title =
             `${formatLargeNumber(Math.round(result.income))} of ` +
             `${formatLargeNumber(Math.round(result.expected))} expected over ${result.battles} battles.\n` +

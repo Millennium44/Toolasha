@@ -196,14 +196,31 @@ export function row(container, segments, { center = false } = {}) {
 /**
  * Draw a tile as several lines.
  *
- * Each line is laid out independently, so a two-line tile does not need its
- * columns to agree — they are different facts, not a table.
+ * By default each line is laid out independently, which is right when the lines
+ * are different facts — an income line above a cost line has no columns to
+ * agree about.
+ *
+ * `align` is for when they *are* a table: a row per player and then a total is
+ * the same measurement three times, and a figure that sits a few pixels off the
+ * one above it makes a reader check whether it is the same kind of number. The
+ * lines share columns then, the first stretching and the rest sized to their
+ * contents against the right edge.
  *
  * @param {HTMLElement} container - The row's container
  * @param {Segment[][]} lines - One array of segments per line
+ * @param {Object} [options] - Layout
+ * @param {boolean} [options.align] - Share columns between the lines
  */
-export function rows(container, lines) {
+export function rows(container, lines, { align = false } = {}) {
     container.replaceChildren();
+
+    const drawn = lines.filter((segments) => segments?.length);
+    // An icon has no width until it loads, so it cannot size a column; those
+    // tiles keep the independent layout, where nothing depends on its width
+    const alignable = align && !drawn.some((segments) => segments.some((segment) => segment?.icon));
+
+    if (alignable) return alignedRows(container, drawn);
+
     Object.assign(container.style, {
         display: 'flex',
         flexDirection: 'column',
@@ -212,11 +229,68 @@ export function rows(container, lines) {
         overflow: 'hidden',
     });
 
-    for (const segments of lines) {
-        if (!segments?.length) continue;
+    for (const segments of drawn) {
         const line = document.createElement('div');
         drawLine(line, segments);
         container.appendChild(line);
+    }
+}
+
+/**
+ * The lines as a grid, so every column lines up.
+ *
+ * The first column takes the slack and the rest are as wide as their widest
+ * cell, which puts the figures in a column against the right edge whether or
+ * not every line has the same number of them. `push` is ignored here — the
+ * stretching first column already does what it was for.
+ *
+ * @param {HTMLElement} container - The row's container
+ * @param {Segment[][]} lines - One array of segments per line
+ */
+function alignedRows(container, lines) {
+    const columns = Math.max(...lines.map((segments) => segments.length), 1);
+
+    Object.assign(container.style, {
+        display: 'grid',
+        gridTemplateColumns: `minmax(0, 1fr)${' auto'.repeat(Math.max(columns - 1, 0))}`,
+        // From the top, not centred. These tiles sit in a row beside each other
+        // and carry different numbers of lines — DPS has a player and a total,
+        // Luck has one line — and centring puts the single line of one tile
+        // halfway down the two lines of the next. Aligned to the top, the first
+        // line of every one of them is at the same height.
+        alignContent: 'start',
+        columnGap: '5px',
+        lineHeight: '1.3',
+        overflow: 'hidden',
+        // Digits of one width, so a column of figures is a column rather than a
+        // ragged edge that shifts as the numbers change
+        fontVariantNumeric: 'tabular-nums',
+    });
+
+    for (const segments of lines) {
+        for (let index = 0; index < columns; index += 1) {
+            const segment = segments[index];
+            const span = document.createElement('span');
+
+            if (segment) {
+                span.textContent = segment.text;
+                if (segment.color) span.style.color = segment.color;
+                if (segment.bold) span.style.fontWeight = 'bold';
+            }
+
+            Object.assign(span.style, {
+                // The first column holds a name and is the one that may be cut;
+                // a figure squeezed to "1.2…" reads as a number rather than as
+                // a truncation
+                textAlign: index === 0 ? 'left' : 'right',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: index === 0 ? 'ellipsis' : 'clip',
+                minWidth: '0',
+            });
+
+            container.appendChild(span);
+        }
     }
 }
 
