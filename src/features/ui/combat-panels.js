@@ -93,6 +93,94 @@ function playerStats() {
 }
 
 /**
+ * Everybody's figures, not just yours.
+ *
+ * The rest of this panel answers "what is this run worth to me", which is one
+ * character's question. In a party it is also worth asking who is actually
+ * being paid — five people splitting a zone do not split it evenly, because
+ * loot is rolled per character against their own drop gear.
+ *
+ * The calculator has always been able to do this; the panel only ever asked it
+ * about one player.
+ *
+ * @returns {Array<Object>} Stats per player, yours first
+ */
+function partyStats() {
+    const data = combatStatsDataCollector.getLatestData?.();
+    const players = data?.players || [];
+    if (players.length < 2) return [];
+
+    const duration = runSeconds(data);
+    return players
+        .map((player) => ({
+            ...calculatePlayerStats(player, duration),
+            name: player.name || player.characterName || 'Unknown',
+            isCurrentPlayer: Boolean(player.isCurrentPlayer),
+        }))
+        .sort((a, b) => Number(b.isCurrentPlayer) - Number(a.isCurrentPlayer));
+}
+
+/**
+ * What each character is earning, in whichever case the panel is showing.
+ *
+ * Revenue beside profit rather than profit alone: in a dungeon the two are very
+ * far apart, because the keys are bought up front and the chests only pay at
+ * the end, and a profit figure on its own makes a run look like a disaster
+ * until the moment it does not.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {string} mode - Which of the four cases is selected
+ * @param {number} tax - The MooPass, per day, or zero
+ */
+function drawPartyProfit(body, mode, tax) {
+    const party = partyStats();
+    if (!party.length) return;
+
+    const card_ = card(body, 'Per player');
+    const dungeon = party.some((player) => player.isDungeonRun);
+
+    for (const player of party) {
+        const cases = profitCases(player);
+        const scenario = cases.find((entry) => entry.key === mode) || cases[1];
+        const profit = scenario.revenue - (profitView.costsOn ? scenario.cost : 0) - tax;
+
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+            gap: '10px',
+            alignItems: 'baseline',
+            fontVariantNumeric: 'tabular-nums',
+        });
+
+        const name = piece(player.name, player.isCurrentPlayer ? ROW_COLORS.gold : COLORS.text);
+        if (player.isCurrentPlayer) name.style.fontWeight = 'bold';
+        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+        row.append(
+            name,
+            piece(`${formatKMB(scenario.revenue)}/day`, ROW_COLORS.good),
+            piece(`${formatKMB(profit)}/day`, profit >= 0 ? ROW_COLORS.good : ROW_COLORS.bad)
+        );
+        row.title =
+            `${player.name}: ${scenario.equation}.\n` +
+            `Revenue ${formatWithSeparator(Math.round(scenario.revenue))}/day, ` +
+            `cost ${formatWithSeparator(Math.round(scenario.cost))}/day.`;
+        card_.appendChild(row);
+    }
+
+    card_.appendChild(
+        note(
+            dungeon
+                ? 'Loot is rolled per character against their own drop gear, so a party does not split a zone ' +
+                      'evenly. In a dungeon the chests are counted at their expected value, and the keys are ' +
+                      'charged when the chest drops — so a run reads as a loss until it pays out.'
+                : 'Loot is rolled per character against their own drop gear, so a party does not split a zone evenly.'
+        )
+    );
+}
+
+/**
  * One panel, built from a function that fills its body.
  *
  * The shell is shared so a panel cannot open off-screen in one place and not
@@ -1566,6 +1654,10 @@ export const profitPanel = new CombatPanel({
         if (tax || profitView.costsOn) equation.appendChild(piece(' = ', COLORS.textDim));
         equation.appendChild(piece(`${formatKMB(total)}/day`, ROW_COLORS.gold));
         summary.append(equation, note(`${headline.title} · ${formatKMB(total / 24)}/hr`));
+
+        // Before the four cases, since "who is being paid" is a coarser question
+        // than "which price to sell at" and answering it changes what you do next
+        drawPartyProfit(body, profitView.mode, tax);
 
         for (const scenario of cases) profitBox(body, scenario, tax);
 

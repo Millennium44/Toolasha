@@ -21,15 +21,19 @@ const state = vi.hoisted(() => ({
     actionDetail: null,
     filtering: true,
     inventory: [],
+    openable: {},
 }));
 
-vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
+vi.mock('../../core/config.js', () => ({
+    default: { Z_FLOATING_PANEL: 1100, getSetting: () => false, getSettingValue: (key, fallback) => fallback },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => state.inventory,
         getCurrentActions: () => state.actions,
         getActionDetails: () => state.actionDetail,
         getInitClientData: () => ({ combatMonsterDetailMap: { '/monsters/rat': { name: 'Rat' } } }),
+        getItemDetails: (hrid) => ({ name: hrid, isOpenable: Boolean(state.openable[hrid]) }),
     },
 }));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
@@ -101,6 +105,7 @@ beforeEach(() => {
     state.dps = { dps: 4000, dtps: 500, damage: 1_000_000, taken: 125_000, seconds: 250, partySize: 2 };
     state.filtering = true;
     state.inventory = [];
+    state.openable = {};
     state.breakdown = {
         seconds: 300,
         players: [
@@ -193,11 +198,14 @@ beforeEach(() => {
         durationSeconds: 3600,
         totalEncounters: 400,
         players: [
-            { name: 'Ally', deathCount: 2 },
+            // Coins, because they are revenue at face value and so need no
+            // market to price — the calculator here is the real one
+            { name: 'Ally', deathCount: 2, loot: { a: { itemHrid: '/items/coin', count: 500_000 } } },
             {
                 name: 'You',
                 isCurrentPlayer: true,
                 deathCount: 4,
+                loot: { a: { itemHrid: '/items/coin', count: 2_000_000 } },
                 dailyIncome: { ask: 100, bid: 80 },
                 dailyProfit: { ask: 60, bid: 40 },
                 dailyConsumableCosts: 30,
@@ -664,6 +672,53 @@ describe('what the panels add over their tiles', () => {
         expect(combatProfitView(state.stats).tax).toBeGreaterThan(0);
 
         [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
+    });
+
+    test('Profit lists every character, not only you', () => {
+        // Loot is rolled per character against their own drop gear, so a party
+        // does not split a zone evenly — and the panel only ever asked the
+        // calculator about the current player
+        profitPanel.show();
+        const text = profitPanel.panel.textContent;
+
+        expect(text).toContain('Per player');
+        expect(text).toContain('Ally');
+        expect(text).toContain('You');
+    });
+
+    test('and puts you first, whatever order the party arrived in', () => {
+        // The collector lists Ally first; the panel is read by one person
+        profitPanel.show();
+        const rows = [...profitPanel.panel.querySelectorAll('div')].filter((element) =>
+            element.textContent.startsWith('You')
+        );
+        const allies = [...profitPanel.panel.querySelectorAll('div')].filter((element) =>
+            element.textContent.startsWith('Ally')
+        );
+
+        expect(rows.length).toBeGreaterThan(0);
+        expect(allies.length).toBeGreaterThan(0);
+        expect(
+            rows[rows.length - 1].compareDocumentPosition(allies[0]) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+    });
+
+    test('solo there is nobody to compare against, so the section is not drawn', () => {
+        state.stats.players = [state.stats.players[1]];
+        profitPanel.show();
+
+        expect(profitPanel.panel.textContent).not.toContain('Per player');
+    });
+
+    test('a dungeon says its chests are counted at expected value', () => {
+        // Which is the thing that makes a dungeon read as a loss until it pays:
+        // the key is charged when the chest drops, and the chest is worth what
+        // opening it is worth rather than what it sells for
+        state.openable['/items/chimerical_chest'] = true;
+        state.stats.players[1].loot = { a: { itemHrid: '/items/chimerical_chest', count: 3 } };
+        profitPanel.show();
+
+        expect(profitPanel.panel.textContent).toContain('expected value');
     });
 
     test('Profit shows what patience is worth', () => {
