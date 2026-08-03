@@ -33,7 +33,6 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -41,6 +40,7 @@ import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import {
     forecastAll,
@@ -59,20 +59,8 @@ import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js
 
 const PANEL_ID = 'toolasha-consumables-panel';
 const GEOMETRY_KEY = 'consumablesPanel';
-const SETTINGS_KEY = 'consumablesSettings';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
-
-/** How long you might want the stock to last, cycled by the header button */
-const TARGETS = [
-    { label: '8 hours', seconds: 8 * 3600 },
-    { label: '1 day', seconds: 86400 },
-    { label: '3 days', seconds: 3 * 86400 },
-    { label: '1 week', seconds: 7 * 86400 },
-];
-
-/** Below this, a consumable is worth doing something about now */
-const URGENT_SECONDS = 3600;
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.97)',
@@ -87,7 +75,6 @@ class ConsumablesPanel {
     constructor() {
         this.panel = null;
         this.bodyEl = null;
-        this.targetIndex = 1;
         this.refreshId = null;
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
@@ -124,39 +111,14 @@ class ConsumablesPanel {
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
-    /**
-     * Read back the duration everything is measured against.
-     *
-     * It is the one setting this panel has, and it changes every figure in it —
-     * a panel that forgets it does not merely lose a preference, it shows you a
-     * day's shortfall when you asked for a week's and looks right doing it.
-     */
+    /** Read back the duration everything is measured against */
     async loadSettings() {
-        try {
-            // This runs at module scope, which is long before the database is
-            // open — an unguarded read there comes straight back with the
-            // default, and there is no way to tell that from nothing having been
-            // stored. Which is exactly what "it does not save the target" was.
-            await storage.ready;
-            const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
-            const index = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
-            // A stored value from an older list must not win over the code's
-            if (index >= 0) this.targetIndex = index;
-            this._render();
-        } catch (error) {
-            console.error('[Consumables] Reading the saved target failed:', error);
-        }
-    }
-
-    _saveSettings() {
-        storage.setJSON(SETTINGS_KEY, { targetSeconds: this.target.seconds }, 'settings').catch((error) => {
-            console.error('[Consumables] Saving the target failed:', error);
-        });
+        await loadTarget(() => this._render());
     }
 
     /** The duration everything is measured against */
     get target() {
-        return TARGETS[this.targetIndex] || TARGETS[1];
+        return currentTarget();
     }
 
     /**
@@ -370,8 +332,7 @@ class ConsumablesPanel {
         this.targetBtn.title = 'How long the stock should last. Every shortfall below is measured against this.';
         this.targetBtn.addEventListener('click', (event) => {
             event.stopPropagation();
-            this.targetIndex = (this.targetIndex + 1) % TARGETS.length;
-            this._saveSettings();
+            cycleTarget();
             this._render();
         });
 
@@ -449,7 +410,7 @@ class ConsumablesPanel {
         stops.style.marginLeft = 'auto';
         if (soonest) {
             stops.textContent = `stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name}`;
-            stops.style.color = soonest.secondsLeft < URGENT_SECONDS ? ROW_COLORS.bad : ROW_COLORS.good;
+            stops.style.color = soonest.secondsLeft < this.target.seconds ? ROW_COLORS.bad : ROW_COLORS.good;
         } else {
             // Nothing being consumed at all, which is not the same as lasting
             // forever — it usually means an empty slot
@@ -577,7 +538,12 @@ class ConsumablesPanel {
 
         const lasts = this._cell(Number.isFinite(entry.secondsLeft) ? shortDuration(entry.secondsLeft) : '∞');
         if (!Number.isFinite(entry.secondsLeft)) lasts.style.color = COLORS.textDim;
-        else lasts.style.color = isLimiting || entry.secondsLeft < URGENT_SECONDS ? ROW_COLORS.bad : ROW_COLORS.good;
+        // Measured against the target rather than a fixed hour: with "3 days"
+        // chosen, something lasting two of them is exactly what you opened this
+        // to find, and green was the panel disagreeing with its own Buy column
+        else
+            lasts.style.color =
+                isLimiting || entry.secondsLeft < this.target.seconds ? ROW_COLORS.bad : ROW_COLORS.good;
 
         row.append(held, icon, name, perDay, cost, buy, lasts);
         return row;

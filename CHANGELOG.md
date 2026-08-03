@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Consumables are coloured against the target you set
+
+A consumable lasting two days is fine if you asked for one and is the thing to go and fix if you asked for three. The tile and the panel both used a fixed one-hour threshold, so with "3 days" chosen the tile called Dragon Fruit Yogurt green while the panel's own Buy column said to buy 1.15K of it — two halves of one feature disagreeing.
+
+Both now colour against the target. The setting moved into `utils/consumable-target.js` and is declared shared in the bundler config, because the panel that sets it and the tile that reads it are in different bundles and two copies would mean the tile never hearing about a change.
+
+### Swept the rest of the panels for the same start-up race
+
+Three separate bugs this week were one mistake: reading stored state at module scope, which runs long before IndexedDB is open, and getting the default back with no way to tell that from nothing having been stored.
+
+- **The Houses panel** read which rooms you had switched off that way, so every room counted towards "affordable" until something happened to redraw it — with a "Database not available" line in the console saying exactly that. It waits now, and redraws when the answer lands.
+- **`loadWhenReady`**, the shared helper for this, polled for about five seconds guessing when the database had opened, because a shut database and an empty one look the same from outside. Storage now says when it has finished starting up, so there is one thing to wait on. That covers its four users: the combat-level panel's target selection, the charm panel's folds, the watchlist, and the equipment-savings list.
+
+The rest came out clean. The overlay reads its layout inside `initialize()`, which runs after storage is up; the DPs, IHurt and Profit panels rebuild their header controls on every redraw, so late state catches up on its own; and the panels built on the shared shell redraw their whole body every few seconds and keep no settings in their headers.
+
 ### The chest popup says which side of the book it is pricing at
 
 TReasure always values loot at bid and labels the figure "bid". Toolasha values it through the profit pricing mode instead, which for most settings means ask — so the same chest reads 45.44K here and 43.1K there, and neither is wrong. Without the word there was no way to tell that apart from one of them being broken. The basis is now printed beside the figure, with the setting that controls it in the tooltip.

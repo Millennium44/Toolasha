@@ -1,10 +1,9 @@
 /** @vitest-environment happy-dom
  *
- * The one setting the Consumables panel has, and whether it survives a reload.
+ * Whether the Consumables panel comes back.
  *
- * The target duration changes every figure in the panel, so a panel that
- * forgets it does not merely lose a preference — it shows you a day's shortfall
- * when you asked for a week's, and looks right while doing it.
+ * The target duration it measures against lives in `utils/consumable-target.js`
+ * and is tested there, because the overlay tile reads the same setting.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -40,40 +39,6 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(async () => {
     store.data = {};
     consumablesPanel.hide({ remember: false });
-    consumablesPanel.targetIndex = 1;
-});
-
-describe('the target duration', () => {
-    test('a chosen target is written down', async () => {
-        consumablesPanel.targetIndex = 3;
-        consumablesPanel._saveSettings();
-        await settled();
-
-        expect(store.data.consumablesSettings).toEqual({ targetSeconds: 7 * 86400 });
-    });
-
-    test('and read back, so the panel opens on the one you picked', async () => {
-        store.data.consumablesSettings = { targetSeconds: 8 * 3600 };
-
-        await consumablesPanel.loadSettings();
-
-        expect(consumablesPanel.target.label).toBe('8 hours');
-    });
-
-    test('nothing stored leaves the default alone', async () => {
-        await consumablesPanel.loadSettings();
-
-        expect(consumablesPanel.target.label).toBe('1 day');
-    });
-
-    test('a target the list no longer has does not blank it', async () => {
-        // The list is code; a stored value from an older one must not win
-        store.data.consumablesSettings = { targetSeconds: 999 };
-
-        await consumablesPanel.loadSettings();
-
-        expect(consumablesPanel.target.label).toBe('1 day');
-    });
 });
 
 describe('whether the panel was open', () => {

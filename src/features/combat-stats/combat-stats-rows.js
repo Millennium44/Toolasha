@@ -33,6 +33,7 @@ import {
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../../utils/consumable-forecast.js';
+import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats } from './combat-stats-calculator.js';
 
@@ -495,8 +496,12 @@ function consumablePlayers() {
  */
 function runOutColor(entry) {
     if (!entry) return ROW_COLORS.dim;
-    // An hour is the point at which it is worth stopping what you are doing
-    return entry.secondsLeft < 3600 ? ROW_COLORS.bad : ROW_COLORS.good;
+
+    // Against the target you set in the Consumables panel, not a fixed hour.
+    // With "3 days" chosen, something lasting two of them is precisely what the
+    // setting exists to flag — and green here while the panel's Buy column says
+    // to buy 1.15K of it was the two halves of one feature disagreeing.
+    return entry.secondsLeft < currentTarget().seconds ? ROW_COLORS.bad : ROW_COLORS.good;
 }
 
 /**
@@ -533,3 +538,8 @@ function exactDrinkRates(breakdown, player) {
         return { ...entry, consumptionRate: perDay / 86400, consumedPerDay: Math.ceil(perDay) };
     });
 }
+
+// The tile colours against the target, and this bundle may well be drawn before
+// the one holding the panel that sets it. The module itself is shared, so a
+// second call is a second storage read and nothing more.
+loadTarget();
