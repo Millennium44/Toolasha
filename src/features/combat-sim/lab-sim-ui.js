@@ -27,6 +27,7 @@ import {
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -1467,6 +1468,64 @@ class LabSimUI {
     }
 
     /**
+     * Put an Export CSV button above a results table.
+     *
+     * A ranked table in a panel is read once and closed; the same numbers in a
+     * spreadsheet can be sorted another way, kept beside last week's run, and
+     * shown to someone else — which is most of what people do with an analysis
+     * that took minutes to produce.
+     *
+     * The button is a sibling of the container rather than inside it: sorting a
+     * column re-renders the container's whole innerHTML, and a button living in
+     * there would vanish the first time anyone clicked a header.
+     *
+     * @param {HTMLElement} container - The results container
+     * @param {string} stem - Filename stem, e.g. `labsim-upgrades`
+     * @param {Function} build - Returns `{ rows, columns }` at click time, so the
+     *   export is of what is on screen now rather than what was there at render
+     * @private
+     */
+    _addCsvExport(container, stem, build) {
+        const previous = container.previousElementSibling;
+        if (previous?.dataset?.csvExport) previous.remove();
+
+        const bar = document.createElement('div');
+        bar.dataset.csvExport = stem;
+        bar.style.cssText = 'display:flex; justify-content:flex-end; margin:0 0 6px 0;';
+
+        const button = document.createElement('button');
+        button.textContent = 'Export CSV';
+        button.style.cssText =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'padding:2px 8px; font-size:11px; cursor:pointer;';
+
+        const flash = (text) => {
+            button.textContent = text;
+            clearTimeout(this._csvFlash);
+            this._csvFlash = setTimeout(() => {
+                button.textContent = 'Export CSV';
+            }, 1600);
+        };
+
+        button.addEventListener('click', () => {
+            try {
+                const { rows, columns } = build();
+                if (!rows?.length) {
+                    flash('Nothing to export');
+                    return;
+                }
+                flash(downloadCsv(csvFilename(stem), toCsv(rows, columns)) ? 'Saved \u2713' : 'Failed');
+            } catch (error) {
+                console.error('[LabSimUI] CSV export failed:', error);
+                flash('Failed');
+            }
+        });
+
+        bar.appendChild(button);
+        container.parentNode?.insertBefore(bar, container);
+    }
+
+    /**
      * Render the all-fights combat level analysis: candidates ranked by how
      * many expected combat attempts they save across the whole run (retrying
      * failed rooms), with a per-fight breakdown on click.
@@ -1566,6 +1625,31 @@ class LabSimUI {
 
         html += '</tbody></table>';
         container.innerHTML = html;
+
+        this._addCsvExport(container, 'labsim-all-fights', () => ({
+            columns: [
+                { key: 'upgrade', label: 'Upgrade' },
+                { key: 'cost', label: 'Cost' },
+                { key: 'perBillion', label: 'Attempts saved per 1B' },
+                { key: 'attempts', label: 'Expected attempts' },
+                { key: 'attemptsDelta', label: 'Change in attempts' },
+                { key: 'roomsApplied', label: 'Rooms reached' },
+                { key: 'roomsTotal', label: 'Rooms total' },
+                { key: 'avgWinDelta', label: 'Avg win rate change' },
+            ],
+            // Raw numbers rather than the formatted cells: a spreadsheet cannot
+            // sort "1.2B" or sum "+0.32%"
+            rows: results.map((r) => ({
+                upgrade: r.candidate?.description || '',
+                cost: r.cost ?? null,
+                perBillion: r.attemptsSavedPerBillion ?? null,
+                attempts: r.expectedAttempts,
+                attemptsDelta: r.attemptsDelta,
+                roomsApplied: r.appliedFights ?? r.fights.length,
+                roomsTotal: r.fights.length,
+                avgWinDelta: r.avgWinDelta,
+            })),
+        }));
 
         container.querySelectorAll('[data-allfights-row]').forEach((row) => {
             row.addEventListener('click', () => {
@@ -1746,6 +1830,33 @@ class LabSimUI {
         };
 
         renderAll();
+
+        this._addCsvExport(container, 'labsim-upgrades', () => ({
+            columns: [
+                { key: 'upgrade', label: 'Upgrade' },
+                { key: 'paidIn', label: 'Paid in' },
+                { key: 'cost', label: 'Gold cost' },
+                { key: 'tokenCost', label: 'Token cost' },
+                { key: 'rate', label: 'Win rate' },
+                { key: 'rateDelta', label: 'Win rate change' },
+                { key: 'perPercent', label: 'Cost per +1%' },
+            ],
+            rows: results.map((r) => {
+                const rate = r.winRate ?? r.clearRate ?? null;
+                const delta = r.winRateDelta ?? r.clearRateDelta ?? null;
+                const paid = r.costType === 'token' ? r.tokenCost : r.cost;
+                const gain = (delta || 0) * 100;
+                return {
+                    upgrade: r.candidate?.description || '',
+                    paidIn: r.costType === 'token' ? 'tokens' : 'gold',
+                    cost: r.costType === 'gold' ? (r.cost ?? null) : null,
+                    tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : null,
+                    rate,
+                    rateDelta: delta,
+                    perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
+                };
+            }),
+        }));
 
         // The container persists across Analyze runs — replace the previous
         // sort handler instead of stacking a new one each analysis
@@ -2368,6 +2479,35 @@ class LabSimUI {
         };
 
         renderAll();
+
+        this._addCsvExport(container, 'labsim-skilling-upgrades', () => ({
+            columns: [
+                { key: 'upgrade', label: 'Upgrade' },
+                { key: 'skill', label: 'Skill' },
+                { key: 'paidIn', label: 'Paid in' },
+                { key: 'cost', label: 'Gold cost' },
+                { key: 'tokenCost', label: 'Token cost' },
+                { key: 'clearRate', label: 'Avg clear rate' },
+                { key: 'clearRateDelta', label: 'Clear rate change' },
+                { key: 'perPercent', label: 'Cost per +1%' },
+            ],
+            rows: results.map((r) => {
+                const paid = r.costType === 'token' ? r.tokenCost : r.cost;
+                const gain = (r.clearRateDelta || 0) * 100;
+                return {
+                    upgrade: r.candidate?.description || '',
+                    // Gear bought for one skill says which; an enhancement of
+                    // something worn everywhere has no one skill to name
+                    skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
+                    paidIn: r.costType === 'token' ? 'tokens' : 'gold',
+                    cost: r.costType === 'gold' ? (r.cost ?? null) : null,
+                    tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : null,
+                    clearRate: r.clearRate ?? null,
+                    clearRateDelta: r.clearRateDelta ?? null,
+                    perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
+                };
+            }),
+        }));
 
         // The container persists across Analyze runs — replace the previous
         // sort handler instead of stacking a new one each analysis

@@ -142,6 +142,36 @@ describe('a skill only gets its own gear', () => {
     });
 });
 
+describe('a skill named either way', () => {
+    // The panel and the equipment map hold skills as hrids; the stat names are
+    // bare. Taking only the bare form meant an hrid looked for
+    // `/skills/milkingSpeed`, matched nothing, missed the tool slot entirely,
+    // and returned an empty list without ever erroring — the feature was inert
+    // in the one place it is actually called from
+    test('an hrid finds the same stats as a bare name', () => {
+        expect(relevantStats('/skills/milking').has('milkingSpeed')).toBe(true);
+    });
+
+    test('and the same tool, which a missed slot lookup filters out entirely', () => {
+        const byHrid = bestGearForSkill({ skill: '/skills/milking', itemDetailMap: ITEMS, levels: LEVELS });
+
+        expect(byHrid.map((c) => c.upgradeHrid)).toContain('/items/celestial_brush');
+        expect(byHrid.map((c) => c.upgradeHrid)).toEqual(named('milking'));
+    });
+
+    test('the description reads as a skill, not as a path', () => {
+        const [candidate] = bestGearForSkill({ skill: '/skills/milking', itemDetailMap: ITEMS, levels: LEVELS });
+
+        expect(candidate.description).toContain('(milking)');
+    });
+
+    test('but the key stays as it was given, since that is what the equipment map is keyed by', () => {
+        const [candidate] = bestGearForSkill({ skill: '/skills/milking', itemDetailMap: ITEMS, levels: LEVELS });
+
+        expect(candidate.skillKey).toBe('/skills/milking');
+    });
+});
+
 describe('the shape the analysis expects', () => {
     test('an empty slot names nothing it would replace, so it is not priced as free', () => {
         const candidate = forSkill('milking').find((c) => c.slot === '/equipment_types/milking_tool');

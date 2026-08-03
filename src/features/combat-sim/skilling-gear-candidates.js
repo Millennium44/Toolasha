@@ -39,6 +39,25 @@ export const NEW_GEAR_LEVEL = 5;
 /** Skills whose gathering quantity is worth counting */
 const GATHERING_SKILLS = new Set(['milking', 'foraging', 'woodcutting']);
 
+/**
+ * The bare skill name, whichever form the caller has.
+ *
+ * Callers hold skills as hrids (`/skills/milking`) because that is what the
+ * equipment map and the level table are keyed by; the stat names here are bare
+ * (`milkingSpeed`). Taking only the bare form meant an hrid produced
+ * `/skills/milkingSpeed`, which matches nothing, and a tool slot lookup that
+ * missed — so every celestial tool and every skill outfit was silently filtered
+ * out and the whole feature came back empty without ever erroring.
+ *
+ * @param {string} skill - `milking` or `/skills/milking`
+ * @returns {string} `milking`
+ */
+function skillName(skill) {
+    return String(skill || '')
+        .replace('/skills/', '')
+        .toLowerCase();
+}
+
 /** Equipment types that can hold something for a given skill, by tool slot */
 const TOOL_TYPES = {
     milking: '/equipment_types/milking_tool',
@@ -64,7 +83,7 @@ const TOOL_TYPES = {
  * @returns {Set<string>}
  */
 export function relevantStats(skill) {
-    const key = String(skill || '').toLowerCase();
+    const key = skillName(skill);
     const fields = new Set([
         `${key}Speed`,
         `${key}Efficiency`,
@@ -138,7 +157,7 @@ export function canEquip(itemDetail, levels) {
  */
 export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, levels = new Map() }) {
     const stats = relevantStats(skill);
-    const toolType = TOOL_TYPES[String(skill || '').toLowerCase()];
+    const toolType = TOOL_TYPES[skillName(skill)];
     const best = new Map();
 
     for (const [hrid, detail] of Object.entries(itemDetailMap)) {
@@ -178,7 +197,7 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
             currentLevel: worn?.enhancementLevel || 0,
             upgradeHrid: winner.hrid,
             upgradeLevel: NEW_GEAR_LEVEL,
-            description: `${from}${name} +${NEW_GEAR_LEVEL} (${skill})`,
+            description: `${from}${name} +${NEW_GEAR_LEVEL} (${skillName(skill)})`,
             type: 'skilling_gear',
         });
     }
