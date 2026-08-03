@@ -44,6 +44,17 @@ class CombatStatsDataCollector {
         // Load persisted tracking state from storage (MCS-style)
         await this.loadConsumableTracking();
 
+        // And the last run itself. Without this the overlay showed "No loot
+        // tracked yet" after every refresh until the next battle started — in a
+        // dungeon that is a whole wave of nothing — while the Combat Statistics
+        // popup showed the run perfectly, because the popup was the only caller
+        // of loadLatestData. The snapshot was written all along and never read
+        // back at start-up.
+        //
+        // Safe to restore unconditionally: the rows date it from
+        // `combatStartTime`, and the next `new_battle` overwrites it outright.
+        await this.loadLatestData();
+
         // Store handler references for cleanup
         this.newBattleHandler = (data) => this.onNewBattle(data);
         this.consumableEventHandler = (data) => this.onConsumableUsed(data);

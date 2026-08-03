@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The overlay filled in on the next wave; now it fills in on load
+
+After a refresh every combat tile read "No loot tracked yet", "No combat yet", "Not in combat" until the next battle started. In a dungeon a battle is a wave, so that is tens of seconds of a blank overlay — and MCS has no such gap.
+
+- **The snapshot was already being written, and only the popup read it back.** `combat-stats-data-collector` saves the run to IndexedDB on every battle and has a `loadLatestData` to restore it, which `initialize` never called — the Combat Statistics popup was the only caller. That is exactly why the popup survived a reload and the overlay beside it did not. It is called at start-up now.
+- **Safe to restore unconditionally**, because the rows date the run from `combatStartTime` rather than from when it was stored, and the next `new_battle` replaces it outright.
+- **The DPS table borrows the party's names too.** Damage arrives on `battle_updated`, which is constant, but names arrive on `new_battle`, which is a wave apart — so a reload drew real numbers against "Player 1" through "Player 5". The names come from the restored snapshot, which is built from the same player list in the same order.
+- **A test that fails without the fix**, since nothing here throws: the failure is a tile quietly saying it has nothing.
+
 ### A refresh no longer throws the dungeon away, and Total Profit shows the party
 
 Two unrelated faults, both visible in the same screenshot.
