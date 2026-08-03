@@ -1026,10 +1026,19 @@ class OverlayPanel {
             position: 'absolute',
             right: '0',
             bottom: '0',
-            width: '10px',
-            height: '10px',
+            width: '12px',
+            height: '12px',
             cursor: 'nwse-resize',
-            background: 'linear-gradient(135deg, transparent 0 50%, rgba(158, 196, 255, 0.6) 50%)',
+            // Above the − and + buttons. They sit bottom left and a tile can be
+            // forty pixels wide, at which point two buttons reach the corner and
+            // cover the one control that would let you make the tile bigger
+            // again — the tile becomes stuck at the size that caused it.
+            zIndex: '3',
+            // Its own backdrop, because on a small tile it is now drawn over a
+            // button and a bare triangle on top of one reads as neither
+            background:
+                'linear-gradient(135deg, transparent 0 50%, rgba(158, 196, 255, 0.75) 50%), rgba(8, 10, 20, 0.85)',
+            borderBottomRightRadius: '3px',
             display: 'none',
         });
         tile.appendChild(grip);
@@ -1189,8 +1198,9 @@ class OverlayPanel {
         const holder = document.createElement('div');
         Object.assign(holder.style, {
             position: 'absolute',
-            // Bottom left: top right is where a tile's value sits, and the
-            // resize grip already owns bottom right
+            // Bottom left: top right is where a tile's value sits. The resize
+            // grip is bottom right and is drawn above these, so on a tile too
+            // narrow to hold both it is the corner that wins.
             left: '1px',
             bottom: '1px',
             display: 'none',
@@ -1198,6 +1208,8 @@ class OverlayPanel {
             background: 'rgba(8, 10, 20, 0.9)',
             borderRadius: '3px',
             zIndex: '1',
+            // Never under the grip where there is room to avoid it
+            maxWidth: 'calc(100% - 14px)',
         });
 
         const step = (delta) => {
