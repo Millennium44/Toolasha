@@ -38,6 +38,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { isLevelGapped } from '../../utils/dungeon-level-gap.js';
 
 const ACCENT = '#7fd6a3';
 
@@ -273,6 +274,23 @@ function drawDungeonChests(body, chest) {
             continue;
         }
 
+        // A character far below the top of the party has their drops cut by an
+        // amount nothing here knows, so their count is shown and the verdict is
+        // not — a percentile against a full share would be a verdict on their
+        // party wearing the label of their luck
+        if (isLevelGapped(player.levelGap)) {
+            card.appendChild(
+                panelLine(
+                    player.name,
+                    `${formatWithSeparator(luck.chests)} over ${luck.completions}   ` +
+                        `level gap −${Math.round(Math.abs(player.levelGap) * 100)}%`,
+                    ROW_COLORS.bad,
+                    describeChestRun(player)
+                )
+            );
+            continue;
+        }
+
         const verdict = signedPercent(luck.expected > 0 ? (luck.chests / luck.expected - 1) * 100 : 0);
         const percentile = luck.percentile === null ? '—' : formatOrdinal(luck.percentile);
 
@@ -294,11 +312,37 @@ function drawDungeonChests(body, chest) {
             'A completion pays five chests split across the party, so a bigger party is fewer each.'
         )
     );
+
+    // Where the completion count came from, because the two differ in what they
+    // can see and the difference decides whether a zero is visible
     card.appendChild(
-        panelNote(
-            'Completions are counted by watching the chests arrive, so a dungeon already in progress is measured ' +
-                'from the moment this saw it rather than from the start.'
+        panelLine(
+            'Completions',
+            chest.counted === 'tracker' ? 'from the dungeon tracker' : 'inferred from chests',
+            chest.counted === 'tracker' ? ROW_COLORS.neutral : ROW_COLORS.dim,
+            chest.counted === 'tracker'
+                ? 'Counted from the party’s key-count messages, so a run that paid somebody nothing still ' +
+                      'counts as a run for them.'
+                : 'Counted by watching the chests arrive, which is the solo fallback — it cannot see a run that ' +
+                      'paid nothing, because nothing is what a run that paid nothing looks like.'
         )
+    );
+
+    if (chest.entryKey?.spent) {
+        card.appendChild(
+            panelLine(
+                'Entry keys spent',
+                formatWithSeparator(chest.entryKey.spent),
+                ROW_COLORS.neutral,
+                'Counted from every inventory change rather than from a count at each end, so keys bought ' +
+                    'mid-run are recorded as acquired and never subtracted from what was spent' +
+                    (chest.entryKey.gained ? `. ${formatWithSeparator(chest.entryKey.gained)} acquired.` : '.')
+            )
+        );
+    }
+
+    card.appendChild(
+        panelNote('A dungeon already in progress is measured from the moment this saw it rather than from the start.')
     );
 }
 

@@ -44,6 +44,7 @@ import { partyLuck } from './party-luck.js';
 import { registerRow, rowOption } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
+import dungeonTracker from './dungeon-tracker.js';
 import {
     chestLuck,
     chestsPerCompletion,
@@ -52,6 +53,8 @@ import {
     newChestTally,
     noteChestCount,
 } from '../../utils/dungeon-chest-luck.js';
+import { newKeyLedger, noteItems, sample, keyFlow, entryKeyFor } from '../../utils/key-ledger.js';
+import { partyLevelGaps, isLevelGapped } from '../../utils/dungeon-level-gap.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -115,6 +118,9 @@ class CombatDropLuck {
         // A dungeon is measured by watching its chests rather than by modelling
         // its monsters; `_noteChests` fills this in and nothing else touches it
         this.chests = null;
+        // Keys are counted continuously rather than sampled, so that buying a
+        // stack mid-run cannot be mistaken for keys coming back
+        this.keys = newKeyLedger();
     }
 
     initialize() {
@@ -130,6 +136,15 @@ class CombatDropLuck {
 
         this.battleUnitFetchedHandler = (message) => this._onCombatEnded(message);
         webSocketHook.on('battle_unit_fetched', this.battleUnitFetchedHandler);
+
+        this.itemsHandler = (data) => noteItems(this.keys, data?.endCharacterItems);
+        webSocketHook.on('items_updated', this.itemsHandler);
+
+        // The tracker knows when a run finished, which is a fact rather than the
+        // inference the chest count gives — and it is the only thing that can
+        // count a completion that paid somebody nothing
+        this.dungeonHandler = (_current, completed) => this._onDungeonCompleted(completed);
+        dungeonTracker.onUpdate(this.dungeonHandler);
     }
 
     disable() {
@@ -141,13 +156,50 @@ class CombatDropLuck {
             webSocketHook.off('battle_unit_fetched', this.battleUnitFetchedHandler);
             this.battleUnitFetchedHandler = null;
         }
+        if (this.itemsHandler) {
+            webSocketHook.off('items_updated', this.itemsHandler);
+            this.itemsHandler = null;
+        }
+        if (this.dungeonHandler) {
+            dungeonTracker.offUpdate(this.dungeonHandler);
+            this.dungeonHandler = null;
+        }
         this.timerRegistry.clearAll();
         document.getElementById(DISPLAY_ID)?.remove();
         this.context = null;
         this.lastResult = null;
         this.liveAt = 0;
         this.chests = null;
+        this.keys = newKeyLedger();
         this.isInitialized = false;
+    }
+
+    /**
+     * A run finished, which the chest count can only guess at.
+     *
+     * Worth taking from the tracker rather than inferring for two reasons: two
+     * completions between samples merge into one rise, and a completion that paid
+     * somebody nothing produces no rise at all — which is exactly the case a
+     * level-gapped character is in, and exactly the one worth showing.
+     *
+     * @param {Object} completed - The tracker's completed run, or null on a
+     *   progress update
+     */
+    _onDungeonCompleted(completed) {
+        if (!completed || !this.chests) return;
+
+        try {
+            this.chests.completions += 1;
+
+            // Two "Key counts" messages a run, so the fall between them is what
+            // each member spent. Only a fall: a rise means they restocked, and
+            // what they spent underneath that is not recoverable.
+            for (const [who, count] of Object.entries(completed.keyCountsMap || {})) {
+                sample(this.keys, who, count);
+            }
+        } catch (error) {
+            console.error('[CombatDropLuck] Recording a dungeon completion failed:', error);
+        }
     }
 
     /**
@@ -178,6 +230,11 @@ class CombatDropLuck {
                     combatRareFind: stats?.combatRareFind || 0,
                     combatDropQuantity: stats?.combatDropQuantity || 0,
                 },
+                // Everybody's standing against the highest level in the party. A
+                // character far below it is penalised on what drops for them, so
+                // a luck reading that ignores this blames their gear for their
+                // party. Captured for every zone, not just dungeons.
+                levelGaps: this._partyGaps(players),
                 // Without stats the model would silently assume a bare character
                 // and call anyone wearing drop gear lucky, so say so instead
                 hasBonuses: !!stats,
@@ -195,12 +252,39 @@ class CombatDropLuck {
     }
 
     /**
+     * Each party member's level-gap penalty, by name.
+     *
+     * The level is read off the payload rather than computed from a profile: the
+     * party is right there in the message, and a profile has to be fetched and
+     * cached and can be stale. When it is absent the answer is null — unknown
+     * rather than unpenalised, because drawing a missing level as a clean bill of
+     * health is the one outcome worse than saying nothing.
+     *
+     * @param {Array<Object>} players - `new_battle` players
+     * @returns {Object} Name to debuff, a negative fraction or null
+     */
+    _partyGaps(players) {
+        const gaps = partyLevelGaps(players.map((player) => player?.combatDetails?.combatLevel ?? null));
+
+        const byName = {};
+        players.forEach((player, index) => {
+            const name = player?.character?.name;
+            if (name) byName[name] = gaps[index];
+        });
+        return byName;
+    }
+
+    /**
      * Watch every player's chest count for the moments it rises.
      *
-     * A dungeon does not report its completions — only the simulator has ever had
-     * that number, and only for runs it simulated — so they are observed. Each
-     * rise in a player's chest count is one completion that paid what it rose by,
-     * which gives the completions and the extras together with nothing assumed.
+     * The dungeon tracker counts completions properly, off the party's "Key
+     * counts" chat messages, and that is used when it has them. This is the
+     * fallback for when it does not — which the tracker's own code says is the
+     * solo case, since a validated run needs party messages. A rise in the chest
+     * count is one completion that paid what it rose by.
+     *
+     * The two differ in one way that matters: a rise cannot see a completion that
+     * paid nothing, and the tracker can.
      *
      * Done from `new_battle` rather than from the collector because the loot map
      * for *every* player rides along on it, and a completion has to be seen the
@@ -222,7 +306,7 @@ class CombatDropLuck {
         // and its loot map starts back at nothing, which would otherwise read as
         // everybody opening their chests at once
         if (!this.chests || this.chests.actionHrid !== actionHrid || battleId < this.chests.battleId) {
-            this.chests = { actionHrid, battleId, partySize: players.length || 1, tallies: {} };
+            this.chests = { actionHrid, battleId, partySize: players.length || 1, tallies: {}, completions: 0 };
         }
         this.chests.battleId = battleId;
         this.chests.partySize = players.length || this.chests.partySize;
@@ -248,28 +332,58 @@ class CombatDropLuck {
     /**
      * How the dungeon's chests have fallen, per player.
      *
-     * @returns {{partySize: number, players: Array<Object>}|null} Null outside a
-     *   dungeon, or before a completion has been seen
+     * @returns {{partySize: number, players: Array<Object>, counted: string,
+     *   entryKey: Object|null}|null} Null outside a dungeon
      */
     dungeonChestLuck() {
         const tracked = this.chests;
         if (!tracked) return null;
 
         const partySize = tracked.partySize || 1;
-        const players = Object.entries(tracked.tallies).map(([name, tally]) => ({
-            name,
-            isCurrentPlayer: Boolean(tally.isCurrentPlayer),
-            byPayout: tally.byPayout,
-            mean: chestsPerCompletion({ partySize, dropQuantity: tally.quantity }),
-            luck: chestLuck({
-                completions: tally.completions,
-                chests: tally.chests,
-                mean: chestsPerCompletion({ partySize, dropQuantity: tally.quantity }),
-            }),
-        }));
+        const gaps = this.context?.levelGaps || {};
+        // The tracker's count is the whole party's, so it applies to everybody;
+        // the chest-rise count is per player and only stands in when it has to
+        const fromTracker = tracked.completions > 0;
+
+        const players = Object.entries(tracked.tallies).map(([name, tally]) => {
+            const mean = chestsPerCompletion({ partySize, dropQuantity: tally.quantity });
+            const completions = fromTracker ? tracked.completions : tally.completions;
+            const levelGap = gaps[name] ?? null;
+
+            return {
+                name,
+                isCurrentPlayer: Boolean(tally.isCurrentPlayer),
+                byPayout: tally.byPayout,
+                mean,
+                levelGap,
+                // What actually arrived per completion, which is the figure that
+                // needs no model at all — and the only one that can show a
+                // completion paying nothing
+                observed: completions > 0 ? tally.chests / completions : null,
+                luck: chestLuck({ completions, chests: tally.chests, mean }),
+            };
+        });
 
         if (!players.length) return null;
-        return { partySize, players };
+
+        return {
+            partySize,
+            players,
+            counted: fromTracker ? 'tracker' : 'chests',
+            entryKey: this._entryKeySpend(),
+        };
+    }
+
+    /**
+     * What entry keys this dungeon has actually cost, counted rather than derived.
+     *
+     * @returns {{itemHrid: string, spent: number, gained: number}|null}
+     */
+    _entryKeySpend() {
+        const itemHrid = entryKeyFor(this.context?.actionHrid);
+        if (!itemHrid) return null;
+
+        return { itemHrid, ...keyFlow(this.keys, itemHrid) };
     }
 
     /**
@@ -494,9 +608,27 @@ export function describeChestRun(player) {
     const lines = [
         `${player.name}: ${luck.chests} chests over ${luck.completions} completions, ` +
             `${luck.expected.toFixed(1)} expected.`,
-        `Each completion pays ${Math.floor(player.mean)} guaranteed and ${(luck.chance * 100).toFixed(1)}% ` +
-            `of another; ${luck.extras} of those came against ${luck.expectedExtras.toFixed(1)} owed.`,
     ];
+
+    // The measured rate first when there is a level gap, because the modelled one
+    // is the thing that stopped applying
+    if (player.observed !== null && player.observed !== undefined) {
+        lines.push(`That is ${player.observed.toFixed(2)} a completion against a modelled ${player.mean.toFixed(2)}.`);
+    }
+
+    if (isLevelGapped(player.levelGap)) {
+        lines.push(
+            `Level gap ${Math.round(Math.abs(player.levelGap) * 100)}%: they are far enough below the top of the ` +
+                'party for the game to cut what drops for them, so what they were owed is not what the model says ' +
+                'and no percentile here would be about their luck.'
+        );
+        return lines.join('\n');
+    }
+
+    lines.push(
+        `Each completion pays ${Math.floor(player.mean)} guaranteed and ${(luck.chance * 100).toFixed(1)}% ` +
+            `of another; ${luck.extras} of those came against ${luck.expectedExtras.toFixed(1)} owed.`
+    );
     if (payouts) lines.push(`Completions by payout: ${payouts}.`);
     if (luck.percentile === null) {
         lines.push('Nothing about this payout is random, so there is no luck in it to place.');
@@ -530,9 +662,21 @@ function drawChestRows(container, chest, figureOf, keyPrefix) {
         { align: true }
     );
 
+    const counted =
+        chest.counted === 'tracker'
+            ? 'Completions come from the dungeon tracker, so a run that paid nothing still counts as a run.'
+            : 'Completions are counted by watching the chests arrive, which cannot see a run that paid nothing.';
+
+    const keys = chest.entryKey?.spent
+        ? `Entry keys spent since this started watching: ${chest.entryKey.spent}` +
+          (chest.entryKey.gained ? ` (${chest.entryKey.gained} acquired, not counted as spending).` : '.')
+        : null;
+
     container.title = [
         'Dungeon: chests dropped against chests owed. The per-monster model does not fit a dungeon, ' +
             'but the drop-quantity bonus — the chance of a second chest — is the whole of the randomness in one.',
+        counted,
+        ...(keys ? [keys] : []),
         ...chest.players.map(describeChestRun),
     ].join('\n\n');
 }
@@ -556,16 +700,21 @@ registerRow({
             return drawChestRows(
                 container,
                 chest,
-                (player) => ({
-                    text: player.luck?.percentile == null ? '—' : `${(player.luck.percentile * 100).toFixed(1)}%`,
-                    bold: true,
-                    color:
-                        player.luck?.percentile == null
-                            ? ROW_COLORS.dim
-                            : { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
-                                  describeLuck(player.luck.percentile).tone
-                              ],
-                }),
+                (player) => {
+                    // A level-gapped character is owed less than the model says.
+                    // Their percentile would read as terrible luck and would
+                    // actually be a description of their party.
+                    if (isLevelGapped(player.levelGap)) return { text: 'gap', bold: true, color: ROW_COLORS.bad };
+                    if (player.luck?.percentile == null) return { text: '—', bold: true, color: ROW_COLORS.dim };
+
+                    return {
+                        text: `${(player.luck.percentile * 100).toFixed(1)}%`,
+                        bold: true,
+                        color: { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
+                            describeLuck(player.luck.percentile).tone
+                        ],
+                    };
+                },
                 'luck'
             );
         }
@@ -661,7 +810,11 @@ registerRow({
                 container,
                 chest,
                 (player) => {
+                    // Over *what*, for somebody the game is paying a reduced
+                    // share? The expectation is the part that stopped applying
+                    if (isLevelGapped(player.levelGap)) return { text: 'gap', color: ROW_COLORS.bad };
                     if (!player.luck || !(player.luck.expected > 0)) return { text: '—', color: ROW_COLORS.dim };
+
                     const over = signedPercent((player.luck.chests / player.luck.expected - 1) * 100);
                     return { text: over.text, color: over.color };
                 },

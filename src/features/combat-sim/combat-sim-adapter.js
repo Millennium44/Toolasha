@@ -12,6 +12,7 @@ import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 
 /**
  * Extract all required game data maps from initClientData for the sim engine.
@@ -630,25 +631,13 @@ export async function buildAllPlayerDTOs() {
         slotIndex++;
     }
 
-    // Calculate level gap debuff
+    // Calculate level gap debuff. The formula is shared with the live drop model
+    // in utils/dungeon-level-gap.js — kept in one place because the two used to
+    // disagree about the same party, the sim predicting a fraction of the loot
+    // and the panel afterwards calling that same player unlucky for it.
     if (players.length > 1) {
-        let maxCombatLevel = 0;
-        const levels = players.map((p) => {
-            const level = calcCombatLevel(p);
-            maxCombatLevel = Math.max(maxCombatLevel, level);
-            return level;
-        });
-
-        for (let i = 0; i < players.length; i++) {
-            const ratio = maxCombatLevel / levels[i];
-            if (ratio > 1.2) {
-                const maxDebuff = 0.9;
-                const levelPercent = Math.floor((ratio - 1.2) * 100) / 100;
-                players[i].debuffOnLevelGap = -1 * Math.min(maxDebuff, 3 * levelPercent);
-            } else {
-                players[i].debuffOnLevelGap = 0;
-            }
-        }
+        const gaps = partyLevelGaps(players.map((p) => calcCombatLevel(p)));
+        players.forEach((player, index) => (player.debuffOnLevelGap = gaps[index] ?? 0));
     }
 
     // Build playerInfo: hrid → name mapping in player order, for tab rendering

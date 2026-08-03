@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Counted keys, counted completions, and a level gap that was invisible
+
+Three things the chest reading was guessing at, all now measured.
+
+- **Keys are counted continuously, not sampled.** The obvious measurement is the count at the start of a run against the count at the end, and it breaks the moment somebody buys keys mid-run: start at 10, spend 3, buy 20, and the difference says you _gained_ 17. Two samples cannot tell one number changing twice from one number changing once. So `items_updated` is watched instead and the two directions are added up separately — a fall is spending, a rise is acquiring, and a mid-run restock lands in the second and never touches the first.
+- **Party members are only visible twice a run**, through the key-count chat message, so their figure is trusted only while it falls. A rise is marked unmeasurable rather than counted as zero spent, which would quietly drag the average down every time somebody restocked.
+- **Completions come from the dungeon tracker** where it has them, which it does in a party. It counts a run that paid somebody _nothing_ — something watching the chest count can never do, because nothing is exactly what such a run looks like. The chest-rise inference stays as the solo fallback, and the panel says which one is in use.
+- **The level gap is no longer invisible.** A character far enough below the top of the party has their drops cut, and the formula existed only inside the simulator, applied to per-monster drops. The live model had no notion of it at all, so the simulator would predict a level-gapped player taking a fraction of the loot and Party Luck would then call that same player unlucky for it. The formula now lives in `utils/dungeon-level-gap.js` and the simulator imports it, so the two cannot drift.
+- **A gapped player is measured but not judged.** Their chests and completions are shown; the percentile is replaced with the size of the gap. A verdict against a full share would be a description of their party wearing the label of their luck.
+- **What it deliberately does not claim** is that the level gap is what zeroes a dungeon's chests, or by how much. The simulator applies the debuff to monster drops and leaves the chest line alone, and its 90% cap cannot produce nothing at all — so the two are not obviously the same mechanic, and a chest multiplier guessed from a monster-drop formula would be a confident number with nothing behind it. The gap is shown; the inference is not made.
+
 ### A dungeon is measured by its chests
 
 Party Luck and the Luck and Over Expected tiles showed nothing at all in a dungeon, for everybody, with no explanation. The drop model declines dungeons on purpose — they pay from a reward table on completion rather than per monster — but there is a question a dungeon _can_ answer, and it is the one people ask: how many chests came, against how many were owed.
