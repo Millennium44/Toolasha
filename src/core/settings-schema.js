@@ -2160,7 +2160,14 @@ export const settingsGroups = {
                 label: 'Overlay Panel: One floating panel other features add a row to',
                 type: 'checkbox',
                 default: true,
-                help: 'A configurable overlay. Open it from the Overlay button on the settings page, then use the gear to choose which rows show and in what order. Rows appear as features gain them',
+                help: 'A configurable overlay. Open it from the Overlay tab beside Inventory, then use the gear to choose which rows show and in what order. Rows appear as features gain them. Its ⇲ button docks it below the character tabs, where it takes its own space instead of covering the game',
+            },
+            overlayTabButton: {
+                id: 'overlayTabButton',
+                label: 'Overlay tab button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
             },
             draggableModals: {
                 id: 'draggableModals',

@@ -88,6 +88,47 @@ const REFRESH_MS = 1000;
 const DEFAULT_PANEL = { width: 480, height: 320 };
 const ZOOM_STEP = 10;
 
+/** Marks the container the docked panel was put into, so the sheet can find it */
+const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
+const DOCK_STYLE_ID = 'toolasha-overlay-dock';
+const DOCK_HEIGHT = { min: 90, max: 900, default: 220 };
+
+/** Fired on `document` whenever the panel opens or closes */
+export const VISIBILITY_EVENT = 'toolasha:overlay-visibility';
+
+/**
+ * What docking does to the character column.
+ *
+ * The column is a header strip and a tab body; adding a third child below them
+ * would simply make the column taller and push the bottom of the inventory off
+ * the screen. Turning it into a flex column instead makes the tab body the one
+ * part that gives — it takes whatever height the docked panel leaves and scrolls
+ * the rest, which is what "make the inventory smaller to accommodate" means.
+ *
+ * `min-height: 0` is what actually allows that: a flex item refuses to shrink
+ * below its content without it, so the body would keep its full height and push
+ * the panel out of view regardless of the flex factors.
+ */
+const DOCK_CSS = `
+    .${DOCK_HOST_CLASS} {
+        display: flex !important;
+        flex-direction: column !important;
+        max-height: 100%;
+        min-height: 0;
+    }
+    .${DOCK_HOST_CLASS} > [class*="TabsComponent_tabsContainer"] {
+        flex: 0 0 auto;
+    }
+    .${DOCK_HOST_CLASS} > [class*="TabsComponent_tabPanelsContainer"] {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    #${PANEL_ID}[data-docked="true"] {
+        flex: 0 0 auto;
+    }
+`;
+
 const COLORS = {
     // Nearly opaque: at 0.9 the game's inventory grid read straight through the
     // tiles, and a figure you have to pick out of a background is not a glance
@@ -115,8 +156,13 @@ class OverlayPanel {
             separators: true,
             textScale: 100,
             open: false,
+            /** In the character column rather than floating over the game */
+            docked: false,
+            dockHeight: DOCK_HEIGHT.default,
         };
         this.panel = null;
+        /** The container the docked panel was put into, so it can be put back */
+        this.dockHost = null;
         this.canvasEl = null;
         this.pickerEl = null;
         this.timerRegistry = createTimerRegistry();
@@ -158,6 +204,7 @@ class OverlayPanel {
         this._createPanel();
         this.settings.open = true;
         this._save();
+        this._announce();
     }
 
     /** Close the panel and remember that it was closed */
@@ -165,6 +212,18 @@ class OverlayPanel {
         this._removePanel();
         this.settings.open = false;
         this._save();
+        this._announce();
+    }
+
+    /**
+     * Say that the panel opened or closed.
+     *
+     * An event rather than a callback list, because the only listener is the tab
+     * button that switches this — and a switch that does not change when the
+     * panel is closed by its own ✕ is a switch you stop trusting.
+     */
+    _announce() {
+        document.dispatchEvent(new CustomEvent(VISIBILITY_EVENT, { detail: { open: Boolean(this.panel) } }));
     }
 
     /** Open if closed, close if open */
@@ -190,8 +249,48 @@ class OverlayPanel {
     }
 
     _createPanel() {
+        // Asked for docked but the column has not rendered yet — a reload lands
+        // here — so it opens floating rather than not at all, and the next open
+        // finds the column
+        const host = this.settings.docked ? this._findDockHost() : null;
+
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
+        Object.assign(this.panel.style, {
+            background: COLORS.background,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '8px',
+            color: COLORS.text,
+            fontSize: `${this._baseFontPx()}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+        });
+
+        this.panel.appendChild(this._createHeader(Boolean(host)));
+
+        // The scroll container, so the canvas below can be as large as the tiles
+        // need without the panel growing to match
+        this.scrollEl = document.createElement('div');
+        Object.assign(this.scrollEl.style, { flex: '1', overflow: 'auto', padding: '6px', minHeight: '0' });
+
+        this.canvasEl = document.createElement('div');
+        Object.assign(this.canvasEl.style, { position: 'relative', minHeight: '100%' });
+        this.scrollEl.appendChild(this.canvasEl);
+        this.panel.appendChild(this.scrollEl);
+
+        this.pickerEl = this._createPicker();
+        document.body.appendChild(this.pickerEl);
+
+        if (host) this._placeDocked(host);
+        else this._placeFloating();
+
+        this._renderBody();
+        this._startRefreshing();
+    }
+
+    /** Over the game, where it can be dragged anywhere and remembers where */
+    _placeFloating() {
         Object.assign(this.panel.style, {
             position: 'fixed',
             top: '120px',
@@ -202,37 +301,14 @@ class OverlayPanel {
             zIndex: String(config.Z_HUD),
             width: `${DEFAULT_PANEL.width}px`,
             height: `${DEFAULT_PANEL.height}px`,
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.55)',
-            color: COLORS.text,
-            fontSize: `${this._baseFontPx()}px`,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
         });
-
-        this.panel.appendChild(this._createHeader());
-        // Unlocked across a reload means the panel comes back mid-arrangement,
-        // and it should come back raised rather than underneath the game
-        this._refreshStacking();
-
-        // The scroll container, so the canvas below can be as large as the tiles
-        // need without the panel growing to match
-        this.scrollEl = document.createElement('div');
-        Object.assign(this.scrollEl.style, { flex: '1', overflow: 'auto', padding: '6px' });
-
-        this.canvasEl = document.createElement('div');
-        Object.assign(this.canvasEl.style, { position: 'relative', minHeight: '100%' });
-        this.scrollEl.appendChild(this.canvasEl);
-        this.panel.appendChild(this.scrollEl);
-
-        this.pickerEl = this._createPicker();
-        document.body.appendChild(this.pickerEl);
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+        // Unlocked across a reload means the panel comes back mid-arrangement,
+        // and it should come back raised rather than underneath the game
+        this._refreshStacking();
 
         this.detachResize = makeResizable(this.panel, {
             minWidth: 220,
@@ -244,18 +320,160 @@ class OverlayPanel {
             },
         });
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 }).then(() => this._renderBody());
-
-        this._renderBody();
-        this._startRefreshing();
     }
 
-    _createHeader() {
+    /**
+     * Below the character tabs, in the column's own flow.
+     *
+     * In flow rather than pinned over the column, so the game's own layout does
+     * the work: the panel is a sibling of the tab body, and the sheet gives the
+     * tab body the leftover height. Nothing has to measure anything, and the
+     * arrangement survives the column being resized, the window changing, and
+     * the combat panel's own height setting.
+     *
+     * @param {HTMLElement} host - The container holding the tabs and their body
+     */
+    _placeDocked(host) {
+        if (!document.getElementById(DOCK_STYLE_ID)) {
+            const style = document.createElement('style');
+            style.id = DOCK_STYLE_ID;
+            style.textContent = DOCK_CSS;
+            document.head.appendChild(style);
+        }
+
+        Object.assign(this.panel.style, {
+            position: 'relative',
+            zIndex: 'auto',
+            width: 'auto',
+            height: `${this._dockHeight()}px`,
+            marginTop: '4px',
+            boxShadow: 'none',
+        });
+        this.panel.dataset.docked = 'true';
+
+        host.classList.add(DOCK_HOST_CLASS);
+        host.appendChild(this.panel);
+        this.dockHost = host;
+
+        this.detachResize = this._makeDockResizable();
+    }
+
+    /**
+     * The container the docked panel goes into.
+     *
+     * Found through the character column's tab strip — the one with an Inventory
+     * tab — because every tab strip in the game shares the same classes and only
+     * this one has that. The strip's container and the body it switches are
+     * siblings; their parent is what the panel joins.
+     *
+     * @returns {HTMLElement|null}
+     */
+    _findDockHost() {
+        for (const list of document.querySelectorAll('[role="tablist"]')) {
+            const inventory = [...list.querySelectorAll('[role="tab"]')].some(
+                (tab) => tab.textContent.trim() === 'Inventory'
+            );
+            if (!inventory) continue;
+
+            const container = list.closest('[class*="TabsComponent_tabsContainer"]');
+            if (container?.parentElement) return container.parentElement;
+        }
+        return null;
+    }
+
+    /** The saved dock height, kept inside what a column can actually give */
+    _dockHeight() {
+        const saved = Number(this.settings.dockHeight);
+        if (!Number.isFinite(saved)) return DOCK_HEIGHT.default;
+        return Math.min(DOCK_HEIGHT.max, Math.max(DOCK_HEIGHT.min, Math.round(saved)));
+    }
+
+    /**
+     * A grab bar along the docked panel's top edge.
+     *
+     * Height only, and dragged from the top: the width is the column's to decide,
+     * and the boundary being dragged is the one between this panel and the
+     * inventory above it — so the bar belongs on that boundary rather than in a
+     * corner. Dragging up gives the panel more and the inventory less.
+     *
+     * @returns {Function} Detach
+     */
+    _makeDockResizable() {
+        const bar = document.createElement('div');
+        bar.title = 'Drag to give the overlay more or less of the column';
+        Object.assign(bar.style, {
+            height: '5px',
+            flex: '0 0 auto',
+            cursor: 'ns-resize',
+            background: COLORS.separator,
+        });
+
+        let startY = 0;
+        let startHeight = 0;
+        let resizing = false;
+
+        const onMove = (event) => {
+            if (!resizing) return;
+            const wanted = startHeight - (event.clientY - startY);
+            this.panel.style.height = `${Math.min(DOCK_HEIGHT.max, Math.max(DOCK_HEIGHT.min, wanted))}px`;
+        };
+        const onUp = () => {
+            if (!resizing) return;
+            resizing = false;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            this.settings.dockHeight = Math.round(this.panel.getBoundingClientRect().height);
+            this._save();
+            this._renderBody();
+            this._placePicker();
+        };
+        const onDown = (event) => {
+            if (event.button !== 0) return;
+            resizing = true;
+            startY = event.clientY;
+            startHeight = this.panel.getBoundingClientRect().height;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            event.preventDefault();
+        };
+
+        bar.addEventListener('mousedown', onDown);
+        this.panel.insertBefore(bar, this.panel.firstChild);
+
+        return () => {
+            bar.removeEventListener('mousedown', onDown);
+            onUp();
+            bar.remove();
+        };
+    }
+
+    /**
+     * Move the panel between floating over the game and sitting in the column.
+     *
+     * Rebuilt rather than restyled: the two differ in how they are positioned,
+     * sized, stacked and resized, and every tile's placement is redrawn from the
+     * saved layout anyway — so there is nothing to preserve by editing in place
+     * and a good deal to get wrong.
+     */
+    toggleDock() {
+        this.settings.docked = !this.settings.docked;
+        this._save();
+        if (!this.panel) return;
+        this._removePanel();
+        this._createPanel();
+    }
+
+    /**
+     * @param {boolean} docked - Whether this header belongs to a docked panel
+     * @returns {HTMLElement}
+     */
+    _createHeader(docked = false) {
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            cursor: 'move',
+            cursor: docked ? 'default' : 'move',
             padding: '5px 8px 5px 10px',
             background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
@@ -293,17 +511,28 @@ class OverlayPanel {
             }
             this._refreshStacking();
         });
+        const dockBtn = this._iconButton(
+            docked ? '⇱' : '⇲',
+            docked
+                ? 'Float over the game, where it can be dragged anywhere'
+                : 'Dock below the character tabs, giving the overlay its own space instead of covering the game',
+            () => this.toggleDock()
+        );
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
 
-        buttons.append(this.lockBtn, gearBtn, closeBtn);
+        buttons.append(this.lockBtn, dockBtn, gearBtn, closeBtn);
         header.appendChild(title);
         header.appendChild(buttons);
 
-        this.detachDrag = makeDraggable(this.panel, header, (position) => {
-            saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
-            // It is anchored to the panel, so it has to come along
-            this._placePicker();
-        });
+        // A docked panel has nowhere to be dragged to — it is a row of the
+        // column, and the only thing left to choose is how tall it is
+        if (!docked) {
+            this.detachDrag = makeDraggable(this.panel, header, (position) => {
+                saveGeometry(GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+                // It is anchored to the panel, so it has to come along
+                this._placePicker();
+            });
+        }
         return header;
     }
 
@@ -389,6 +618,9 @@ class OverlayPanel {
      */
     _refreshStacking() {
         if (!this.panel) return;
+        // A docked panel is not over anything to begin with — it has its own
+        // space in the column, which is the point of docking it
+        if (this.panel.dataset.docked === 'true') return;
         const inUse = this.isPickerOpen || !this.settings.locked;
         this.panel.style.zIndex = String(inUse ? config.Z_FLOATING_PANEL : config.Z_HUD);
     }
@@ -1289,9 +1521,35 @@ class OverlayPanel {
         return holder;
     }
 
+    /**
+     * Put the docked panel back after React has rebuilt the column.
+     *
+     * Switching tabs re-renders the column, which drops both the panel and the
+     * class the sheet keys off. Cheap enough to check on every tick, and the
+     * alternative — a MutationObserver on a container that churns on every
+     * combat tick — costs more than the check it would be avoiding.
+     */
+    _ensureDocked() {
+        if (!this.panel || this.panel.dataset.docked !== 'true') return;
+
+        if (this.panel.isConnected && this.dockHost?.isConnected) {
+            this.dockHost.classList.add(DOCK_HOST_CLASS);
+            return;
+        }
+        const host = this._findDockHost();
+        if (!host) return;
+
+        host.classList.add(DOCK_HOST_CLASS);
+        host.appendChild(this.panel);
+        this.dockHost = host;
+    }
+
     _startRefreshing() {
         if (this.refreshId) return;
-        this.refreshId = setInterval(() => this._renderBody(), REFRESH_MS);
+        this.refreshId = setInterval(() => {
+            this._ensureDocked();
+            this._renderBody();
+        }, REFRESH_MS);
         this.timerRegistry.registerInterval(this.refreshId);
     }
 
@@ -1308,6 +1566,10 @@ class OverlayPanel {
 
         this.pickerEl?.remove();
         this.pickerEl = null;
+
+        // Left behind, the column keeps a flex layout with nothing to fill it
+        this.dockHost?.classList.remove(DOCK_HOST_CLASS);
+        this.dockHost = null;
 
         if (this.panel) {
             unregisterFloatingPanel(this.panel);

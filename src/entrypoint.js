@@ -638,6 +638,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'overlayTabButton',
+            name: 'Overlay Tab Button',
+            category: 'Interface',
+            module: UI.overlayTabButton,
+            async: false,
+        },
+        {
             key: 'draggableModals',
             name: 'Draggable Modals',
             category: 'UI',

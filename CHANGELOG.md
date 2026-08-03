@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### An Overlay switch in the character tabs, and somewhere for the overlay to live
+
+The overlay was opened from a button inside the settings dialog. That is two clicks and a scroll away from something people turn on and off several times an hour, and the cost of that is not the clicks — it is that everybody leaves it up permanently and works around whatever it covers.
+
+- **An Overlay switch beside Inventory**, before Optimizer, drawn the way Room Logs is: a clone of a real tab, so it inherits whatever the game currently thinks a tab looks like rather than a copy that drifts at the next patch. Dim when the overlay is down, lit when it is up — a button that does nothing visible on the second click reads as broken.
+- **It never highlights as a selected tab.** It opens a panel rather than choosing what the column shows, and a column showing Inventory with Overlay highlighted would be saying something untrue.
+- **The switch follows the panel**, including when the panel is closed by its own ✕, so it never claims a state the overlay is not in.
+- **⇲ docks the overlay below the character tabs**, in the column's own flow, and the inventory gives up the height rather than being covered — which is the point. Floating over the game is the wrong resting place for a panel that is always up: whatever it covers is covered permanently, and moving it out of the way only means moving it somewhere else that is also in the way.
+- **Nothing measures anything.** Docked, the panel is a sibling of the tab body and the column becomes a flex column, so the game's own layout hands the body the leftover height. It survives the window changing, the column being resized, and the combat panel's own height setting without a single recalculation.
+- **Drag its top edge to trade height with the inventory.** That edge is the boundary being moved, so it is where the handle belongs; a corner grip would be the wrong gesture for something that only has a height to choose.
+- **It puts itself back after the game rebuilds the column**, which switching tabs does.
+- **Asked to dock before the column exists, it opens floating instead of not at all** — which is what a reload looks like, since the setting is read back before the game has drawn the column it names.
+
 ### A tile with nothing to report says so
 
 Tiles went blank when their feature had nothing yet, which looks broken rather than idle — you cannot tell a feature waiting for its first measurement from one that has fallen over, and on an overlay of a dozen tiles the empty ones are exactly the ones your eye keeps returning to, because there is nothing there to finish reading.
