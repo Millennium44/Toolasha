@@ -146,12 +146,16 @@ describe('placing a run of dungeons', () => {
 });
 
 describe('counting completions by watching the chests', () => {
-    test('the first sighting starts the count rather than paying out', () => {
-        // Somebody may walk in holding a hundred chests from yesterday
-        const tally = noteChestCount(newChestTally(), 100);
+    test('a session already under way keeps its chests', () => {
+        // `totalLootMap` is the session's loot, not the character's inventory,
+        // and the server re-sends all of it after a refresh. Treating the first
+        // sighting as a baseline threw the whole session away every reload.
+        const tally = noteChestCount(newChestTally(), 63);
 
+        expect(tally.chests).toBe(63);
+        // What a count alone cannot say is how many runs produced them
         expect(tally.completions).toBe(0);
-        expect(tally.chests).toBe(0);
+        expect(tally.unwatched).toBe(63);
     });
 
     test('a rise is one completion paying what it rose by', () => {
@@ -162,7 +166,20 @@ describe('counting completions by watching the chests', () => {
 
         expect(tally.completions).toBe(2);
         expect(tally.chests).toBe(3);
+        expect(tally.watchedChests).toBe(3);
         expect(tally.byPayout).toEqual({ 1: 1, 2: 1 });
+    });
+
+    test('chests seen arriving are kept apart from chests already there', () => {
+        // So a percentile can be computed over the part that has completions to
+        // go with it, while the tile still shows the session's real total
+        let tally = newChestTally();
+        tally = noteChestCount(tally, 63);
+        tally = noteChestCount(tally, 65);
+
+        expect(tally.chests).toBe(65);
+        expect(tally.watchedChests).toBe(2);
+        expect(tally.completions).toBe(1);
     });
 
     test('a count that has not moved is not a completion', () => {
@@ -173,14 +190,15 @@ describe('counting completions by watching the chests', () => {
         expect(tally.completions).toBe(0);
     });
 
-    test('chests going down is somebody opening them, not un-completing a run', () => {
+    test('a fall is a new session, not a run un-completing', () => {
+        // Session loot only ever grows, so a drop means the action restarted.
+        // The caller resets on that; nothing is counted in the meantime.
         let tally = newChestTally();
         tally = noteChestCount(tally, 10);
         tally = noteChestCount(tally, 2);
-        tally = noteChestCount(tally, 3);
 
-        expect(tally.completions).toBe(1);
-        expect(tally.chests).toBe(1);
+        expect(tally.completions).toBe(0);
+        expect(tally.chests).toBe(2);
     });
 
     test('nonsense is ignored rather than counted', () => {
