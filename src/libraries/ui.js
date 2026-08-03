@@ -22,6 +22,7 @@ import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
 import combatText from '../features/ui/combat-text.js';
 import { dpsPanel, deathsPanel, profitPanel, combatProfitView } from '../features/ui/combat-panels.js';
+import { partyLootPanel } from '../features/ui/party-loot-panel.js';
 
 // Navigation features
 import altClickNavigation from '../features/navigation/alt-click-navigation.js';
@@ -175,6 +176,7 @@ toolashaRoot.UI = {
     dpsPanel,
     deathsPanel,
     profitPanel,
+    partyLootPanel,
     combatProfitView,
 };
 
