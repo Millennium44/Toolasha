@@ -43,7 +43,12 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/storage.js', () => ({ default: { db: {}, getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../utils/deferred-load.js', () => ({ loadWhenReady: async () => {} }));
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: () => {},
+    saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));

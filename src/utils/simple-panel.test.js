@@ -6,6 +6,8 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('./panel-geometry.js', () => ({
     restoreGeometry: vi.fn(),
     saveGeometry: vi.fn(),
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
 }));
 
 vi.mock('./panel-z-index.js', () => ({

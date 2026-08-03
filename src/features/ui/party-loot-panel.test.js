@@ -29,7 +29,12 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
         lootList: player.lootList || [],
     }),
 }));
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: () => {},
+    saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 // Mocked outright rather than through importOriginal: the real module is
 // exercised by its own tests, and pulling it in here recurses through the mock

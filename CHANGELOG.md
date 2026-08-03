@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The marketplace badge counts the finished ones
+
+It said 2 for a filled sell order sitting beside a buy order that had taken 130 of 719 — and collecting those 130 does nothing except silence it until the next fill. It says 1.
+
+The number has to come through CSS for the same reason the hiding did: React owns that node and rewrites its text on every update, so anything written into it is gone within the second. A generated rule blanks the real text and prints ours in a pseudo-element, which survives every re-render because the game does not know the rule is there. None finished still hides the badge outright rather than showing a zero.
+
+### Panels remember whether they were open
+
+Every panel built from MCS — DPs, IHurt, Profit, Party Luck, Party Loot, and the rest — reopens itself if the page was left with it up. A panel that has to be found and reopened after every refresh is a panel that gets opened once and then not bothered with.
+
+Stored beside the geometry, because it is the same question: where a panel was, and whether it was anywhere at all. The read is fired off at module scope rather than awaited, so a panel appears a moment after the page — which is what a remembered panel looks like anyway.
+
 ### The treasure popup, closer to TReasure
 
 - **Rows that say nothing are gone.** A chest's drop table runs to thirty-odd entries, most of them equipment at rates so long that a lifetime of opening owes you a hundredth of one. Listed, they read "0, 0.00 expected, −100%" — three figures agreeing that nothing happened, pushing the rows that did happen off the bottom. Anything that actually dropped is kept however unlikely it was, because that is exactly the row worth seeing.

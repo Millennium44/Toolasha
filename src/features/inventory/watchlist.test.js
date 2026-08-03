@@ -28,7 +28,12 @@ vi.mock('../../core/storage.js', () => ({
     default: { getJSON: async () => null, setJSON: async () => {} },
 }));
 
-vi.mock('../../utils/panel-geometry.js', () => ({ restoreGeometry: () => {}, saveGeometry: () => {} }));
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: () => {},
+    saveGeometry: () => {},
+    saveOpenState: async () => {},
+    wasOpen: async () => false,
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('./inventory-badge-manager.js', () => ({
