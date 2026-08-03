@@ -27,7 +27,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-const { criticalAuraAbility, withCriticalAura } = await import('./lab-sim-ui.js');
+const { criticalAuraAbility, criticalAuraCandidate } = await import('./lab-sim-ui.js');
 
 const CRIT = '/abilities/critical_aura';
 
@@ -73,7 +73,7 @@ describe('which aura the simulation casts', () => {
     });
 });
 
-describe('slotting it for the simulation', () => {
+describe('offering it as one upgrade among the others', () => {
     const bar = (special, ...rest) => ({
         hrid: '/players/me',
         abilities: [special, ...rest, null, null, null].slice(0, 5),
@@ -81,62 +81,72 @@ describe('slotting it for the simulation', () => {
     const ability = (hrid, level = 10) => ({ hrid, level, triggers: [] });
     const aura = { hrid: CRIT, level: 20, special: true, learned: true };
 
-    test('a special ability replaces the special slot, which is where an aura lives', () => {
-        const swapped = withCriticalAura(bar(ability('/abilities/fierce_aura'), ability('/abilities/smack')), aura);
+    test('a special ability is offered for the special slot, which is where an aura lives', () => {
+        const candidate = criticalAuraCandidate(
+            bar(ability('/abilities/fierce_aura'), ability('/abilities/smack')),
+            aura
+        );
 
-        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT, level: 20 });
-        expect(swapped.abilities[1].hrid).toBe('/abilities/smack');
+        expect(candidate).toMatchObject({
+            slot: 'ability_0',
+            upgradeHrid: CRIT,
+            upgradeLevel: 20,
+            type: 'ability_swap',
+        });
     });
 
-    test('an empty special slot is filled rather than left', () => {
-        const swapped = withCriticalAura(bar(null, ability('/abilities/smack')), aura);
+    test('and says what it would replace', () => {
+        const candidate = criticalAuraCandidate(bar(ability('/abilities/fierce_aura')), aura);
 
-        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT });
+        expect(candidate.description).toContain('Fierce Aura');
+        expect(candidate.description).toContain('Critical Aura');
     });
 
-    test('a bar shorter than five slots is not a reason to fail', () => {
-        const swapped = withCriticalAura({ hrid: '/players/me', abilities: [] }, aura);
+    test('an empty special slot is an offer too', () => {
+        const candidate = criticalAuraCandidate(bar(null, ability('/abilities/smack')), aura);
 
-        expect(swapped.abilities[0]).toMatchObject({ hrid: CRIT });
-        expect(swapped.abilities).toHaveLength(5);
+        expect(candidate).toMatchObject({ slot: 'ability_0', upgradeHrid: CRIT });
     });
 
-    test('a non-special one takes a free slot instead of the special one', () => {
+    test('already running it at that level is not an upgrade', () => {
+        // There is nothing to measure, and a candidate worth nothing at the top
+        // of a ranked list is noise
+        expect(criticalAuraCandidate(bar(ability(CRIT, 20)), aura)).toBeNull();
+    });
+
+    test('but running it at a lower level is', () => {
+        expect(criticalAuraCandidate(bar(ability(CRIT, 5)), aura)).toMatchObject({ upgradeLevel: 20 });
+    });
+
+    test('a non-special one takes a free slot rather than the special one', () => {
         const normal = { ...aura, special: false };
-        const swapped = withCriticalAura(bar(ability('/abilities/precision'), ability('/abilities/smack')), normal);
+        const candidate = criticalAuraCandidate(
+            bar(ability('/abilities/precision'), ability('/abilities/smack')),
+            normal
+        );
 
-        expect(swapped.abilities[0].hrid).toBe('/abilities/precision');
-        expect(swapped.abilities[2]).toMatchObject({ hrid: CRIT });
+        expect(candidate.slot).toBe('ability_2');
     });
 
-    test('and a full bar is left alone rather than losing an ability you chose', () => {
+    test('and a full bar is no offer at all, rather than one that drops an ability', () => {
         const normal = { ...aura, special: false };
         const full = {
             hrid: '/players/me',
-            abilities: [
-                ability('/abilities/precision'),
-                ability('/abilities/a'),
-                ability('/abilities/b'),
-                ability('/abilities/c'),
-                ability('/abilities/d'),
-            ],
+            abilities: ['a', 'b', 'c', 'd', 'e'].map((n) => ability(`/abilities/${n}`)),
         };
 
-        expect(withCriticalAura(full, normal)).toBe(full);
+        expect(criticalAuraCandidate(full, normal)).toBeNull();
     });
 
-    test('the bar the panel is showing is left alone', () => {
-        // The editor hands out the DTOs it is still displaying, so a swap made
-        // for one simulation must not become a bar the panel claims you run
+    test('the bar the panel is showing is never touched', () => {
+        // A candidate is a description of a change, not the change itself
         const original = bar(ability('/abilities/fierce_aura'));
-        withCriticalAura(original, aura);
+        criticalAuraCandidate(original, aura);
 
         expect(original.abilities[0].hrid).toBe('/abilities/fierce_aura');
     });
 
-    test('no aura at all changes nothing', () => {
-        const original = bar(ability('/abilities/fierce_aura'));
-
-        expect(withCriticalAura(original, null)).toBe(original);
+    test('no aura, no offer', () => {
+        expect(criticalAuraCandidate(bar(ability('/abilities/fierce_aura')), null)).toBeNull();
     });
 });

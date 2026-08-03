@@ -1185,13 +1185,6 @@ class LabSimUI {
             return;
         }
 
-        // Yours only, and here only. You own one aura, so putting it on every
-        // party member would be simulating a party nobody could field — and
-        // this is an upgrade question rather than a "how far can I get" one, so
-        // Max Level is left simulating the gear you actually have on.
-        const selfHrid = this._editor?.getSelfHrid();
-        playerDTOs = playerDTOs.map((dto) => (!selfHrid || dto?.hrid === selfHrid ? this._critAuraSwap(dto) : dto));
-
         const communityBuffs = getCommunityBuffs();
         const labyrinthCombatBuffs = labyrinthClearRate.getLabyrinthCombatBuffs();
 
@@ -1278,6 +1271,7 @@ class LabSimUI {
                     abilityTargetLevel,
                     combatLevelTargets,
                     abilityTargets,
+                    extraCandidates: this._critAuraCandidates(playerDTOs[playerIndex]),
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -2341,9 +2335,10 @@ class LabSimUI {
      * @param {Object} dto - A player DTO
      * @returns {Object} The same one, or a copy wearing the aura
      */
-    _critAuraSwap(dto) {
-        if (!config.getSetting('labSim_critAura')) return dto;
-        return withCriticalAura(dto, criticalAuraAbility());
+    _critAuraCandidates(playerDTO) {
+        if (!config.getSetting('labSim_critAura')) return [];
+        const candidate = criticalAuraCandidate(playerDTO, criticalAuraAbility());
+        return candidate ? [candidate] : [];
     }
 
     /**
@@ -2367,10 +2362,9 @@ class LabSimUI {
             ? `your Critical Aura at level ${aura.level}`
             : 'Critical Aura at level 1 — you have not learned it, so this is what the book would get you';
         label.title =
-            `Analyse upgrades with ${which} in the ${aura.special ? 'special' : 'ability'} slot, in place of ` +
-            'whatever is there now. An upgrade is worth a different amount depending on what else is running, and ' +
-            'a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" ' +
-            'can change with the aura up. Affects the Upgrade analysis only.';
+            `Weigh slotting ${which} as one of the upgrades, ranked beside the rest with its own cost. It is not ` +
+            'applied to the others: what you want to know is what the aura is worth compared with what you were ' +
+            'already considering, not what everything else is worth once you are wearing it.';
     }
 
     /**
@@ -2545,38 +2539,48 @@ export function criticalAuraAbility() {
 }
 
 /**
- * The same player, with the Critical Aura slotted.
+ * The Critical Aura as one upgrade to weigh, rather than a change to everything.
  *
- * A special ability replaces the special slot, which is the slot an aura lives
- * in and holds exactly one thing — swapping it is precisely the "swap my aura"
- * gesture. A non-special one takes the first free slot and, finding none, is
- * left out rather than dropping a combat ability you chose on purpose.
+ * The first version put the aura on before the analysis ran, which answered a
+ * different question: every upgrade was then measured against a build already
+ * wearing it. What you want to know is what the aura is worth *compared with*
+ * the upgrades you were considering — so it goes in as a candidate and gets
+ * ranked beside them, with its own cost.
  *
- * A copy rather than an edit: the DTOs handed out by the editor are the ones it
- * is still showing, and a swap made for a simulation must not turn into a bar
- * the panel then claims you are running.
+ * A special-slot ability replaces the special slot, which holds exactly one
+ * thing. A non-special one takes the first free slot, and finding none, is left
+ * out rather than dropping a combat ability chosen on purpose.
  *
- * @param {Object} dto - A player DTO
+ * @param {Object} playerDTO - The player it would be slotted on
  * @param {{hrid: string, level: number, special: boolean}} aura - From `criticalAuraAbility`
- * @returns {Object} A new DTO, or the same one when there was nowhere to put it
+ * @returns {Object|null} A candidate for the upgrade analysis, or null when it
+ *   is already slotted at that level or there is nowhere to put it
  */
-export function withCriticalAura(dto, aura) {
-    if (!dto || !aura) return dto;
+export function criticalAuraCandidate(playerDTO, aura) {
+    if (!playerDTO || !aura) return null;
 
-    const abilities = [...(dto.abilities || [])];
-    while (abilities.length < 5) abilities.push(null);
+    const abilities = playerDTO.abilities || [];
+    const slotIndex = aura.special ? 0 : abilities.findIndex((ability, index) => index > 0 && !ability);
+    if (slotIndex < 0) return null;
 
-    const slotted = { hrid: aura.hrid, level: aura.level, triggers: [] };
-    if (aura.special) {
-        abilities[0] = slotted;
-    } else {
-        const already = abilities.findIndex((ability) => ability?.hrid === aura.hrid);
-        const free = abilities.findIndex((ability, index) => index > 0 && !ability);
-        const target = already >= 0 ? already : free;
-        if (target < 0) return dto;
-        abilities[target] = slotted;
-    }
-    return { ...dto, abilities };
+    const current = abilities[slotIndex];
+    // Already running it at that level: there is no upgrade to measure
+    if (current?.hrid === aura.hrid && current.level >= aura.level) return null;
+
+    const name = 'Critical Aura';
+    const from = current
+        ? `${dataManager.getInitClientData()?.abilityDetailMap?.[current.hrid]?.name || current.hrid.split('/').pop()} → `
+        : '';
+
+    return {
+        slot: `ability_${slotIndex}`,
+        currentHrid: current?.hrid || aura.hrid,
+        currentLevel: current?.level || 0,
+        upgradeHrid: aura.hrid,
+        upgradeLevel: aura.level,
+        description: `${from}${name} (Lv${aura.level})`,
+        type: 'ability_swap',
+    };
 }
 
 const labSimUI = new LabSimUI();
