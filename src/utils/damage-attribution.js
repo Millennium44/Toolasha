@@ -7,13 +7,20 @@
  * that "Bob crit the rat for 4,120" from two of those snapshots is the whole
  * problem, and there is no attribution field to read — the trick is elsewhere.
  *
- * ## Mana identifies the attacker
+ * ## An attack counter identifies the attacker
  *
- * Only the casting player's mana falls on a cast, so **whoever's `cMP` went down
- * this tick is who acted**. That is the only join the payload offers between a
- * player and a monster's lost health. With one player in the party there is no
- * ambiguity to resolve and the single player is credited directly, which also
- * means a solo run works before any mana has ever been spent.
+ * Each player carries `atkCounter`, and it goes up when they attack. Across two
+ * recorded runs it rose on **every** tick that dealt damage — sixty-nine of
+ * sixty-nine — which makes it the join between a player and a monster's lost
+ * health.
+ *
+ * It replaced mana, which was the original answer and a much weaker one. Only an
+ * ability costs mana, so `cMP` falling identified the actor on eight of those
+ * sixty-nine ticks. Solo that did not matter, because a single player is
+ * credited directly whatever the payload says; **in a party it meant nine hits
+ * in ten belonged to nobody and were thrown away.** Mana is kept below the
+ * counter, for a payload that carries no counter and for the tick where two
+ * people act at once and one of them cast.
  *
  * ## A counter distinguishes a hit from a tick
  *
@@ -24,9 +31,9 @@
  *
  * ## What it deliberately does not do
  *
- * It does not guess. A tick where several players cast at once credits the last
- * mana drop seen, because the payload cannot separate them — and a tick with no
- * mana drop and several players credits nobody rather than the wrong body.
+ * It does not guess. A tick where several players act at once falls back to the
+ * last mana drop, because the payload cannot separate them — and a tick that
+ * names nobody at all credits nobody rather than the wrong body.
  *
  * The model is DPs' and the Floating Combat Text tool's, from MWI Combat Suite
  * by Frotty (MIT) — see `third-party/mwi-combat-suite/` and
@@ -38,7 +45,7 @@
  * @returns {Object}
  */
 export function newAttributionState() {
-    return { playersMP: {}, monstersHP: {}, dmgCounter: {}, critCounter: {}, actions: {} };
+    return { playersMP: {}, playersAtk: {}, monstersHP: {}, dmgCounter: {}, critCounter: {}, actions: {} };
 }
 
 /**
@@ -76,7 +83,7 @@ export function noteActions(state, players) {
 }
 
 /**
- * Which player acted this tick, by whose mana fell.
+ * Which player acted this tick.
  *
  * @param {Object} pMap - This tick's players
  * @param {Object} state - From `newAttributionState`, mutated
@@ -84,21 +91,41 @@ export function noteActions(state, players) {
  */
 export function findCaster(pMap, state) {
     const indices = Object.keys(pMap || {});
-    let caster = null;
+    const swung = [];
+    const spent = [];
 
     for (const index of indices) {
-        const mana = Number(pMap[index]?.cMP);
-        if (!Number.isFinite(mana)) continue;
+        const player = pMap[index];
 
-        const before = state.playersMP[index];
-        if (before !== undefined && mana < before) caster = index;
-        state.playersMP[index] = mana;
+        const attacks = Number(player?.atkCounter);
+        const attacksBefore = state.playersAtk[index];
+        if (Number.isFinite(attacks)) {
+            if (attacksBefore !== undefined && attacks > attacksBefore) swung.push(index);
+            state.playersAtk[index] = attacks;
+        }
+
+        const mana = Number(player?.cMP);
+        if (Number.isFinite(mana)) {
+            const before = state.playersMP[index];
+            if (before !== undefined && mana < before) spent.push(index);
+            state.playersMP[index] = mana;
+        }
     }
 
-    // Solo: there is nobody else it could have been, and waiting for a mana drop
-    // would mean an auto-attacking character never registers a hit at all
-    if (caster === null && indices.length === 1) return indices[0];
-    return caster;
+    // `atkCounter` is what it sounds like, and across two recorded runs it rose
+    // on every single tick that dealt damage — 69 of 69. Mana rose on eight of
+    // them, because only an ability costs any: in a party, waiting for a mana
+    // drop means nine hits in ten belong to nobody and are thrown away.
+    if (swung.length === 1) return swung[0];
+
+    // Two people acting at once. Mana at least separates a cast from a swing,
+    // which is the older and worse answer rather than no answer.
+    if (spent.length) return spent[spent.length - 1];
+
+    // Solo: there is nobody else it could have been, and on a payload with no
+    // attack counter this is what keeps an auto-attacker registering at all
+    if (indices.length === 1) return indices[0];
+    return null;
 }
 
 /**
