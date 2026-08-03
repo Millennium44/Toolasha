@@ -14,15 +14,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
 
-### And can analyse upgrades with the Critical Aura up
+### Bulk Sell never sells gear that is in a loadout
 
-A **Crit Aura** switch on the **Upgrade** tab, beside Use Skip Levels, puts the Critical Aura in the special ability slot at the level you have learned it to. An upgrade is worth a different amount depending on what else is running, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura up, and re-slotting abilities to find out is a lot of clicking for a question the simulator can answer.
+A loadout is a claim on an item: you are still using it, just not right now, and you find out it is gone the next time you switch to that loadout. It goes through the same hold mechanism other scripts use, so it is counted and reported rather than silently filtered — the panel says how many were held back and why.
 
-Not learned it? It simulates level 1, which is what buying the book would get you. Gating this on having already learned it would answer the question only for people who no longer need to ask it.
+Keyed by item **and** enhancement level, so a +10 in a loadout does not protect the +0 you keep for melting.
 
-The Upgrade analysis only. Max Level asks how far your build gets you, which is a question about the abilities you actually have slotted.
+### And the Watchlist source leaves enhanced gear alone
 
-Yours only: putting it on every party member would be simulating a party nobody could field. It is found by name in the ability data rather than a hardcoded hrid, so one renamed by an update is still found — and a bar with no free slot is left alone rather than losing an ability you chose on purpose.
+Matching every enhancement level of a tracked item is right for stacks and wrong for equipment: the list tracks "Gobo Defender", and a +10 was swept into the queue at six million coins. The Watchlist source now sells unenhanced items only, and says how many it skipped. A tab names the level it means, so a tab is still trusted to mean it.
+
+### And can weigh the Critical Aura as an upgrade
+
+A **Crit Aura** switch on the **Upgrade** tab adds the Critical Aura to the candidates, ranked beside your equipment and ability upgrades with its own cost, at the level you have learned it to.
+
+Not applied to the others, which is what the first version did — that measured every upgrade against a build already wearing it, and answered a different question. What you want to know is what the aura is worth _compared with_ what you were already considering.
+
+Already running it at that level is not offered, since there would be nothing to measure. Not learned it? It is offered at level 1, which is what buying the book would get you.
 
 ### The Watchlist's switches moved to its top bar, and there is one more
 

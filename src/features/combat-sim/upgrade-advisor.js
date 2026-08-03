@@ -1657,6 +1657,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseTargetLevel = 0,
         houseTargets = null,
         optimizeFood = false,
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -1685,6 +1686,18 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets
         )
     );
+    // Candidates the caller asked for by name, alongside whatever the mode
+    // generated. This is how one specific thing — "what would the Critical Aura
+    // do for me" — gets ranked against the upgrades you were already weighing,
+    // rather than becoming a change applied to all of them.
+    const already = new Set(candidates.map(candidateAssignmentKey));
+    for (const candidate of extraCandidates) {
+        const key = candidateAssignmentKey(candidate);
+        if (already.has(key)) continue;
+        already.add(key);
+        candidates.push(candidate);
+    }
+
     const candidatesWithCost = candidates.map((c) => ({
         ...c,
         cost: calculateUpgradeCost(c, gameData),
@@ -2378,6 +2391,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
+        extraCandidates = [],
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -2427,6 +2441,18 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             }
             candidates.push(candidate);
         }
+    }
+
+    // Candidates the caller asked for by name, alongside whatever the mode
+    // generated. This is how one specific thing — "what would the Critical Aura
+    // do for me" — gets ranked against the upgrades you were already weighing,
+    // rather than becoming a change applied to all of them.
+    const already = new Set(candidates.map(candidateAssignmentKey));
+    for (const candidate of extraCandidates) {
+        const key = candidateAssignmentKey(candidate);
+        if (already.has(key)) continue;
+        already.add(key);
+        candidates.push(candidate);
     }
 
     const candidatesWithCost = candidates.map((c) => ({

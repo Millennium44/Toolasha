@@ -32,6 +32,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -74,6 +75,28 @@ const MS_PER_DAY = 86400000;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
+/**
+ * Every piece of gear saved into a loadout, as hold keys.
+ *
+ * A loadout is a claim on an item: you are still using it, just not right now.
+ * Selling one is not merely a mistake, it is a mistake you find out about the
+ * next time you switch to that loadout and it is not there.
+ *
+ * Keyed by item and enhancement level, so a +10 in a loadout does not protect
+ * the +0 you keep for melting.
+ *
+ * @returns {Array<string>} Hold keys
+ */
+export function loadoutHoldKeys() {
+    const keys = [];
+    for (const snapshot of loadoutSnapshot.getAllSnapshots?.() || []) {
+        for (const piece of snapshot.equipment || []) {
+            if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+        }
+    }
+    return keys;
+}
+
 class BulkSellAssistant {
     constructor() {
         this.isInitialized = false;
@@ -100,11 +123,34 @@ class BulkSellAssistant {
          */
         this.holdProviders = new Map();
         this.heldCount = 0;
+        /** Enhanced gear the watchlist source declined to sweep up */
+        this.enhancedSkipped = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
         this.toggleBtn = null;
         this.panelVisible = false;
         this.rulesOpen = false;
+    }
+
+    /**
+     * What was left out of the queue and why.
+     *
+     * Counted and said rather than silently dropped: an item missing from a sell
+     * run with no explanation is indistinguishable from a bug, and one of these
+     * reasons — gear that is in a loadout — is the difference between a tidy
+     * inventory and a loadout that stops working.
+     *
+     * @param {Object} [options] - `bare: true` for a sentence of its own
+     * @returns {string}
+     */
+    _skipNote({ bare = false } = {}) {
+        const parts = [];
+        if (this.heldCount > 0) parts.push(`${this.heldCount} held back (in a loadout, or claimed elsewhere)`);
+        if (this.enhancedSkipped > 0) {
+            parts.push(`${this.enhancedSkipped} enhanced item${this.enhancedSkipped === 1 ? '' : 's'} skipped`);
+        }
+        if (!parts.length) return '';
+        return bare ? parts.join(' · ') : ` (${parts.join(', ')})`;
     }
 
     /**
@@ -710,10 +756,16 @@ class BulkSellAssistant {
         }
 
         const clientData = dataManager.getInitClientData();
-        const heldKeys = collectHeldKeys(this.holdProviders, (name, error) =>
+        // Gear saved into a loadout is gear you are still using — just not right
+        // now. Through the hold mechanism rather than a filter of its own, so it
+        // is counted and reported like every other claim on the inventory.
+        const providers = new Map(this.holdProviders);
+        providers.set('loadouts', () => loadoutHoldKeys());
+        const heldKeys = collectHeldKeys(providers, (name, error) =>
             console.error(`[BulkSellAssistant] Hold provider "${name}" failed; its items are not held:`, error)
         );
         let held = 0;
+        let enhanced = 0;
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
@@ -734,10 +786,21 @@ class BulkSellAssistant {
             // Matched on the hrid rather than the key: the watchlist tracks an
             // item, not an item at a level, so every level of a tracked item is
             // in scope. A tab is the other way round and keeps its own keys.
-            if (watchedHrids && !watchedHrids.has(item.itemHrid)) return false;
+            if (watchedHrids) {
+                if (!watchedHrids.has(item.itemHrid)) return false;
+                // …which is exactly why enhanced gear is left out of it. The
+                // list tracks "Gobo Defender"; matching every level of that
+                // swept a +10 into the queue at six million coins. A tab names
+                // the level it means, so it is trusted to mean it.
+                if ((item.enhancementLevel || 0) > 0) {
+                    enhanced++;
+                    return false;
+                }
+            }
             return true;
         });
         this.heldCount = held;
+        this.enhancedSkipped = enhanced;
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
@@ -759,9 +822,10 @@ class BulkSellAssistant {
             );
 
         if (!this.queue.length) {
+            const why = this._skipNote();
             this.statusNote = tabName
-                ? `No tradable items in "${tabName}"${held > 0 ? ` (${held} held back)` : ''}`
-                : `No tradable items in inventory${held > 0 ? ` (${held} held back)` : ''}`;
+                ? `No tradable items in "${tabName}"${why}`
+                : `No tradable items in inventory${why}`;
             this.state = 'idle';
             this._render();
             return;
@@ -769,7 +833,7 @@ class BulkSellAssistant {
         this.index = 0;
         // Say so rather than letting the count quietly differ from what is in
         // the inventory
-        this.statusNote = held > 0 ? `${held} item${held === 1 ? '' : 's'} held back` : '';
+        this.statusNote = this._skipNote({ bare: true });
         this._prepareCurrent();
     }
 

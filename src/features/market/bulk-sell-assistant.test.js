@@ -9,7 +9,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: [], details: {}, watched: [] }));
+const game = vi.hoisted(() => ({ items: [], details: {}, watched: [], loadouts: [] }));
 const settings = vi.hoisted(() => ({}));
 
 vi.mock('../../core/config.js', () => ({
@@ -42,6 +42,9 @@ vi.mock('../inventory/custom-tabs/custom-tabs-data.js', () => ({
     collectItemsAboveTab: () => new Set(),
 }));
 vi.mock('./marketplace-shortcuts.js', () => ({ default: {} }));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: { getAllSnapshots: () => game.loadouts },
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: () => ({ start: () => {}, stop: () => {} }),
@@ -77,6 +80,7 @@ beforeEach(() => {
     bulkSell.chip = null;
     bulkSell.holdProviders = new Map();
     bulkSell.selectedTabId = 'all';
+    game.loadouts = [];
 });
 
 const queued = () => bulkSell.queue.map((entry) => entry.itemHrid);
@@ -90,10 +94,19 @@ describe('selling what the watchlist is tracking', () => {
         expect(queued()).not.toContain('/items/milk');
     });
 
-    test('every enhancement level of a tracked item counts', async () => {
-        // The watchlist tracks an item, not an item at a level, so "sell what
-        // I am watching" means all of it. A tab is the other way round.
+    test('but enhanced gear is left alone', async () => {
+        // The list tracks "Gobo Defender"; matching every level of that swept a
+        // +10 into the queue at six million coins. A tab names the level it
+        // means, so it is trusted to mean it.
         bulkSell.selectedTabId = 'watchlist';
+        await bulkSell._start();
+
+        expect(queued()).not.toContain('/items/sword');
+        expect(bulkSell.enhancedSkipped).toBe(1);
+    });
+
+    test('and a tab still sells the level it named', async () => {
+        bulkSell.selectedTabId = 'all';
         await bulkSell._start();
 
         expect(queued()).toContain('/items/sword');
@@ -150,5 +163,39 @@ describe('the watchlist is only offered when it has something in it', () => {
     test('and not when the list is empty, since it would build an empty run', async () => {
         game.watched = [];
         expect(await optionValues()).not.toContain('watchlist');
+    });
+});
+
+describe('gear saved into a loadout', () => {
+    test('is never sold, whatever the source', async () => {
+        // A loadout is a claim: you are still using it, just not right now, and
+        // you find out it is gone the next time you switch to that loadout
+        game.loadouts = [{ equipment: [{ itemHrid: '/items/cheese', enhancementLevel: 0 }] }];
+        await bulkSell._start();
+
+        expect(queued()).not.toContain('/items/cheese');
+    });
+
+    test('at the level the loadout names, not every level of it', async () => {
+        // A +10 in a loadout does not protect the +0 you keep for melting
+        game.loadouts = [{ equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }] }];
+        await bulkSell._start();
+
+        expect(queued()).toContain('/items/sword');
+    });
+
+    test('and is counted rather than silently dropped', async () => {
+        game.loadouts = [{ equipment: [{ itemHrid: '/items/cheese', enhancementLevel: 0 }] }];
+        await bulkSell._start();
+
+        expect(bulkSell.heldCount).toBe(1);
+        expect(bulkSell._skipNote()).toContain('loadout');
+    });
+
+    test('a loadout with nothing in it is not a problem', async () => {
+        game.loadouts = [{ equipment: [] }, {}];
+        await bulkSell._start();
+
+        expect(queued().length).toBeGreaterThan(0);
     });
 });
