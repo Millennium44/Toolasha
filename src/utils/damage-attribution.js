@@ -14,13 +14,18 @@
  * sixty-nine — which makes it the join between a player and a monster's lost
  * health.
  *
- * It replaced mana, which was the original answer and a much weaker one. Only an
+ * It replaced mana, which was the original answer and a weaker one: only an
  * ability costs mana, so `cMP` falling identified the actor on eight of those
- * sixty-nine ticks. Solo that did not matter, because a single player is
- * credited directly whatever the payload says; **in a party it meant nine hits
- * in ten belonged to nobody and were thrown away.** Mana is kept below the
- * counter, for a payload that carries no counter and for the tick where two
- * people act at once and one of them cast.
+ * sixty-nine ticks. Mana is kept below the counter, for a payload that carries
+ * no counter and for the tick where two people act at once and one of them cast.
+ *
+ * **This is a better-founded answer, not a rescue.** A recorded two-character
+ * party — twelve battles, a hundred and thirty-seven ticks that dealt damage —
+ * picks the same character under both rules on every single tick. `pMap` is a
+ * delta exactly as `mMap` is, so a player who did nothing is not in the tick at
+ * all, and the old code's "only one player here, so it was them" was usually
+ * right. It was right by inference; this is right because a counter of attacks
+ * went up, and nothing guarantees the inference keeps holding.
  *
  * ## A counter distinguishes a hit from a tick
  *
@@ -112,18 +117,19 @@ export function findCaster(pMap, state) {
         }
     }
 
-    // `atkCounter` is what it sounds like, and across two recorded runs it rose
-    // on every single tick that dealt damage — 69 of 69. Mana rose on eight of
-    // them, because only an ability costs any: in a party, waiting for a mana
-    // drop means nine hits in ten belong to nobody and are thrown away.
+    // `atkCounter` is what it sounds like. Across three recorded runs it rose on
+    // every tick that dealt damage, and on a two-character party it named one
+    // character and never both — 133 of the 137 damage ticks, the other four
+    // being a character's first appearance in the delta.
     if (swung.length === 1) return swung[0];
 
     // Two people acting at once. Mana at least separates a cast from a swing,
     // which is the older and worse answer rather than no answer.
     if (spent.length) return spent[spent.length - 1];
 
-    // Solo: there is nobody else it could have been, and on a payload with no
-    // attack counter this is what keeps an auto-attacker registering at all
+    // One character in this tick's delta — which after a `new_battle` is most
+    // ticks, since `pMap` carries whoever acted rather than the whole party. It
+    // is also what credits a solo auto-attacker on a payload with no counter.
     if (indices.length === 1) return indices[0];
     return null;
 }
