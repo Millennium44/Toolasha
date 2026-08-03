@@ -69,7 +69,7 @@ export function isFinishedWithSpoils(listing) {
 
 /**
  * Whether any listing in the book warrants badging the sidebar.
- * @param {Object} listings - Keyed by listing id
+ * @param {Array<Object>|Object} listings - The character's market listings
  * @returns {boolean}
  */
 export function anyFinished(listings) {
@@ -78,7 +78,6 @@ export function anyFinished(listings) {
 
 class MarketplaceBadgeFilter {
     constructor() {
-        this.listings = {};
         this.hidden = false;
         this.unregister = null;
     }
@@ -86,32 +85,36 @@ class MarketplaceBadgeFilter {
     initialize() {
         if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
 
-        const initHandler = (data) => this.ingest(data?.myMarketListings);
-        const updateHandler = (data) => this.ingest(data?.endMarketListings);
-
-        dataManager.on('character_initialized', initHandler);
+        const updateHandler = () => this.refresh();
+        dataManager.on('character_initialized', updateHandler);
         dataManager.on('market_listings_updated', updateHandler);
         this.unregister = () => {
-            dataManager.off('character_initialized', initHandler);
+            dataManager.off('character_initialized', updateHandler);
             dataManager.off('market_listings_updated', updateHandler);
         };
 
-        // Nothing is known until the first payload arrives. Hiding straight away
-        // rather than waiting means a stale badge from before the script loaded
-        // does not sit there unexplained; the first update corrects it either way.
-        this.apply(false);
+        // Read what is already known rather than waiting to be told.
+        //
+        // This is the whole of the bug it used to have. Features are initialized
+        // from *inside* the `character_initialized` handler, so by the time this
+        // runs that event has already fired and this listener will never see it.
+        // The old code hid the badge here and then waited for a payload that had
+        // already gone past — so a filled order sitting there through a reload
+        // stayed unbadged until some unrelated listing happened to change.
+        this.refresh();
     }
 
     /**
-     * @param {Array<Object>} listings - Listings from the server
+     * Re-decide from the listings as they currently stand.
+     *
+     * Read from the data manager rather than accumulated here. It already merges
+     * each `market_listings_updated` into the character's book, and a private
+     * copy could only drift from it — a listing that leaves the book would linger
+     * in the copy at whatever state it was last seen, badging the sidebar for an
+     * order that no longer exists.
      */
-    ingest(listings) {
-        if (!Array.isArray(listings)) return;
-        for (const listing of listings) {
-            if (!listing || listing.id == null) continue;
-            this.listings[listing.id] = listing;
-        }
-        this.apply(anyFinished(this.listings));
+    refresh() {
+        this.apply(anyFinished(dataManager.characterData?.myMarketListings));
     }
 
     /**
@@ -129,7 +132,6 @@ class MarketplaceBadgeFilter {
         this.unregister = null;
         removeStyles(STYLE_ID);
         this.hidden = false;
-        this.listings = {};
     }
 }
 
