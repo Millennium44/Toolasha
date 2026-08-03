@@ -155,6 +155,11 @@ class LabyrinthRoomLogs {
         this.xpBaseline = null;
         this.pendingReport = null;
         this.reportTimer = null;
+        // Which room types are showing their levels. Closed to start with: the
+        // record runs to a couple of hundred rooms, and the pooled reading is
+        // the one worth reading first — the levels are what you open when it
+        // says something.
+        this.expandedSubjects = new Set();
     }
 
     /** How many rooms of history to keep */
@@ -1437,12 +1442,12 @@ class LabyrinthRoomLogs {
         // at all if you are looking for a particular room.
         const drawn = new Set();
         for (const group of snapshot.bySubject || []) {
-            list.appendChild(this.renderSubjectRow(group));
-            for (const row of rows) {
-                if (row.subjectHrid !== group.subjectHrid) continue;
-                list.appendChild(this.renderAccuracyRow(row));
-                drawn.add(row);
-            }
+            const levels = rows.filter((row) => row.subjectHrid === group.subjectHrid);
+            levels.forEach((row) => drawn.add(row));
+
+            list.appendChild(this.renderSubjectRow(group, levels.length));
+            if (!this.expandedSubjects.has(group.subjectHrid)) continue;
+            for (const row of levels) list.appendChild(this.renderAccuracyRow(row));
         }
         // Anything the pooling did not cover, rather than silently dropped
         for (const row of rows) if (!drawn.has(row)) list.appendChild(this.renderAccuracyRow(row));
@@ -1456,20 +1461,32 @@ class LabyrinthRoomLogs {
      * of that can still be a sim ten points high on every one of them.
      *
      * @param {Object} group - From `accuracyBySubject`
+     * @param {number} levels - How many per-level rows it is hiding
      * @returns {HTMLElement}
      */
-    renderSubjectRow(group) {
+    renderSubjectRow(group, levels = 0) {
         const pct = (v, places = 0) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '—');
+        const open = this.expandedSubjects.has(group.subjectHrid);
 
         const card = document.createElement('div');
         card.style.cssText =
             'border:1px solid rgba(146,182,255,0.18); border-left:3px solid rgba(146,182,255,0.5); ' +
-            'border-radius:5px; background:rgba(18,26,38,0.92); padding:5px 7px; font-size:11px; line-height:1.35;';
+            'border-radius:5px; background:rgba(18,26,38,0.92); padding:5px 7px; font-size:11px; ' +
+            'line-height:1.35; cursor:pointer;';
+        card.title = open ? 'Hide the levels of this room' : `Show the ${levels} level(s) behind this reading`;
+        card.addEventListener('click', () => {
+            if (open) this.expandedSubjects.delete(group.subjectHrid);
+            else this.expandedSubjects.add(group.subjectHrid);
+            this.render();
+        });
 
         const header = document.createElement('div');
         header.style.cssText = 'display:flex; justify-content:space-between; gap:6px; font-weight:700;';
         const name = document.createElement('span');
-        name.textContent = `${this.prettyMonsterName(group.subjectHrid)} — all levels`;
+        const caret = document.createElement('span');
+        caret.textContent = open ? '−' : '+';
+        caret.style.cssText = 'display:inline-block; width:10px; color:#9ec4ff;';
+        name.append(caret, `${this.prettyMonsterName(group.subjectHrid)} — all levels`);
         const record = document.createElement('span');
         record.style.cssText = 'opacity:0.85;';
         record.textContent = `${group.clears}/${group.attempts}`;
@@ -1496,9 +1513,10 @@ class LabyrinthRoomLogs {
         const spread = document.createElement('div');
         spread.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
         spread.textContent =
-            group.lowestLevel === group.highestLevel
+            (group.lowestLevel === group.highestLevel
                 ? `Lv.${group.lowestLevel} only`
-                : `${group.levels} levels, Lv.${group.lowestLevel}–${group.highestLevel}`;
+                : `${group.levels} levels, Lv.${group.lowestLevel}–${group.highestLevel}`) +
+            (open ? '' : ' — click to open');
         card.appendChild(spread);
         return card;
     }
@@ -1752,6 +1770,9 @@ class LabyrinthRoomLogs {
 }
 
 const labyrinthRoomLogs = new LabyrinthRoomLogs();
+
+/** The singleton itself, for tests — the default export is the feature shell */
+export { labyrinthRoomLogs };
 
 export default {
     name: 'Labyrinth Room Logs',

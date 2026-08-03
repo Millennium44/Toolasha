@@ -1,11 +1,15 @@
-import { describe, test, expect, vi } from 'vitest';
+/** @vitest-environment happy-dom */
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, getSettingValue: (_k, d) => d } }));
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => false, getSettingValue: (_k, d) => d, Z_FLOATING_PANEL: 1100 },
+}));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getSkills: () => null } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 
-const { groupByFloor, floorSummary } = await import('./labyrinth-room-logs.js');
+const { groupByFloor, floorSummary, labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
 
 const room = (over = {}) => ({
     runKey: 'run|15',
@@ -69,5 +73,111 @@ describe('floorSummary', () => {
 
     test('handles an empty floor', () => {
         expect(floorSummary([])).toMatchObject({ rooms: 0, cleared: 0, xpPerHour: null });
+    });
+});
+
+describe('the sim accuracy list opens a room type at a time', () => {
+    const row = (level, over = {}) => ({
+        subjectHrid: '/skills/milking',
+        kind: 'skilling',
+        monster: 'milking',
+        level,
+        attempts: 2,
+        clears: 1,
+        predicted: 0.5,
+        observed: 0.5,
+        low: 0.1,
+        high: 0.9,
+        likelihood: 0.5,
+        verdict: 'consistent',
+        measured: null,
+        timing: null,
+        rates: null,
+        ...over,
+    });
+
+    const snapshot = {
+        rows: [row(173), row(186), row(191)],
+        summary: { buckets: 3, attempts: 6, clears: 3, judged: 6, judgedClears: 3, expected: 3, contested: 0 },
+        bySubject: [
+            {
+                subjectHrid: '/skills/milking',
+                kind: 'skilling',
+                monster: 'milking',
+                levels: 3,
+                lowestLevel: 173,
+                highestLevel: 191,
+                attempts: 6,
+                clears: 3,
+                judged: 6,
+                judgedClears: 3,
+                expected: 3,
+                predicted: 0.5,
+                observed: 0.5,
+                low: 0.2,
+                high: 0.8,
+                offBy: 0,
+                verdict: 'consistent',
+            },
+        ],
+    };
+
+    const text = () => document.querySelector('.mwi-lab-logs-list').textContent;
+    const cards = () => document.querySelectorAll('.mwi-lab-logs-list > div');
+
+    beforeEach(async () => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        labyrinthRoomLogs.view = 'accuracy';
+        labyrinthRoomLogs.expandedSubjects = new Set();
+        labyrinthRoomLogs.simSource = { accuracy: async () => snapshot };
+        await labyrinthRoomLogs.renderAccuracy();
+    });
+
+    test('a room type starts closed, showing its pooled reading only', () => {
+        // The record runs to a couple of hundred rooms; opening on all of them
+        // is a wall rather than a list
+        // Not a bare 'Lv.173' — the pooled row names the range it covers
+        expect(text()).toContain('Milking — all levels');
+        expect(text()).not.toContain('Milking Lv.173');
+    });
+
+    test('and says there is something behind it', () => {
+        expect(text()).toContain('click to open');
+    });
+
+    test('clicking it shows its levels', async () => {
+        [...cards()][1].click();
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).toContain('Milking Lv.173');
+        expect(text()).toContain('Milking Lv.191');
+    });
+
+    test('and clicking it again puts them away', async () => {
+        [...cards()][1].click();
+        await labyrinthRoomLogs.renderAccuracy();
+        [...cards()][1].click();
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).not.toContain('Milking Lv.173');
+    });
+
+    test('one room type opening does not open the others', async () => {
+        labyrinthRoomLogs.simSource = {
+            accuracy: async () => ({
+                ...snapshot,
+                rows: [...snapshot.rows, row(200, { subjectHrid: '/skills/brewing', monster: 'brewing' })],
+                bySubject: [
+                    ...snapshot.bySubject,
+                    { ...snapshot.bySubject[0], subjectHrid: '/skills/brewing', monster: 'brewing', levels: 1 },
+                ],
+            }),
+        };
+        labyrinthRoomLogs.expandedSubjects = new Set(['/skills/milking']);
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).toContain('Milking Lv.173');
+        expect(text()).not.toContain('Brewing Lv.200');
     });
 });
