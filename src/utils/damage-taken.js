@@ -17,25 +17,37 @@
  * "took 3,400 and healed 3,600" is the reading that says whether a zone is
  * survivable and a net figure is not.
  *
- * ## Which monster did it is a guess, and it is labelled as one
+ * ## `mMap` is a delta, and that is the whole trick
  *
- * Outgoing has mana: only the caster's mana falls, so the attacker is known.
- * Incoming has that only for a monster casting an ability — a monster swinging
- * an auto-attack spends nothing, and most of what hits you is auto-attacks. So
- * there is a ladder, in the order MCS's IHurt uses it:
+ * A tick does not carry the wave. It carries the units whose state the server
+ * touched, which across a recorded run of six battles meant nought or one entry
+ * per tick against rosters of three. And on every one of the forty-two ticks
+ * where the character was hit, the delta held exactly one monster **whose fields
+ * had not changed at all** — same health, same mana, same counters.
  *
- * 1. **A monster's mana fell** — it cast, and it is the attacker.
- * 2. **There is only one monster** — no ambiguity to resolve.
- * 3. **A monster's own `dmgCounter` rose** — it was hit this tick. A proxy, and
- *    a weak one: being hit is not attacking. It is right in the common case
- *    (you and it are trading) and wrong when the party is spread across a wave.
- * 4. **Nobody** — recorded against `null` rather than against a guess, and shown
- *    as "Unknown Enemy".
+ * A monster with nothing to report is in the delta because it *acted*. That is
+ * the attacker, named by the payload, and it is a far better signal than the one
+ * this module first shipped with.
  *
- * Rung 3 is the one to be suspicious of. It is kept because it is what IHurt
- * does, and a panel that disagrees with the one it is modelled on is worse than
- * one that inherits its uncertainty — but the damage credited by it is not
- * evidence about which monster in a wave is dangerous.
+ * ## The ladder
+ *
+ * 1. **A monster's mana fell** — it cast an ability. In that recording no
+ *    monster ever cast one, so this rung is rarer than it sounds.
+ * 2. **A monster is in the delta with nothing changed** — it swung. This is what
+ *    identifies the attacker in practice.
+ * 3. **Several of those, all of the same kind** — which one it was does not
+ *    matter, because "what hit me" has the same answer either way.
+ * 4. **A monster's own `dmgCounter` rose** — it was hit this tick. MCS's proxy,
+ *    kept but demoted below everything above: being hit is not attacking, and
+ *    what it names is the monster *you* attacked.
+ * 5. **Nobody** — no candidate rather than a guess, and shown as "Unknown Enemy".
+ *
+ * The first version had "there is only one monster in the tick" as rung 2 and
+ * justified it as "no ambiguity to resolve". It gave the right answer most of
+ * the time for the wrong reason: the wave was usually still three strong, and
+ * what made the tick unambiguous was the delta, not the fight. Believing the
+ * wrong reason is what left this crediting the monster you were attacking
+ * whenever two units reported on the same tick.
  *
  * The model is IHurt's, from MWI Combat Suite by Frotty (MIT) — see
  * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
@@ -47,36 +59,59 @@
  * @returns {Object}
  */
 export function newTakenState() {
-    return { playersHP: {}, playersDmg: {}, monstersMP: {}, monstersDmg: {} };
+    return { playersHP: {}, playersDmg: {}, monsters: {} };
 }
 
 /**
- * Which monster acted this tick, as far as anything can tell.
+ * Whether a monster reported anything different from last time.
  *
- * @param {Object} mMap - The tick's monsters
- * @param {Object} state - From `newTakenState`, mutated with this tick's counters
- * @returns {string|null} A monster index, or null when nothing identifies one
+ * Every field the tick carries, rather than a list of the ones known today: a
+ * monster that is in the delta only because of a field this does not know about
+ * would otherwise be read as having acted.
+ *
+ * @param {Object} before - Its previous state
+ * @param {Object} now - Its state this tick
+ * @returns {boolean}
  */
-export function findAttacker(mMap, state) {
-    const monsters = Object.entries(mMap || {});
-    let cast = null;
-    let struck = null;
+function unchanged(before, now) {
+    for (const key of Object.keys(now)) {
+        if (now[key] !== before[key]) return false;
+    }
+    return true;
+}
 
-    for (const [index, monster] of monsters) {
-        if (!monster) continue;
+/**
+ * Which monsters could have acted this tick.
+ *
+ * A list rather than one index, because "both Eyes swung" is a real answer: the
+ * caller knows their names and can see that the ambiguity does not matter.
+ * Picking one of them arbitrarily would throw that away, and returning nothing
+ * would lose damage the payload was perfectly clear about.
+ *
+ * @param {Object} mMap - The tick's monsters, which is a delta and not the wave
+ * @param {Object} state - From `newTakenState`, mutated with this tick's units
+ * @returns {Array<string>} Monster indices, empty when nothing identifies one
+ */
+export function findAttackers(mMap, state) {
+    const entries = Object.entries(mMap || {}).filter(([, monster]) => monster);
+    const cast = [];
+    const acted = [];
+    const struck = [];
 
-        const previousMP = state.monstersMP[index];
-        if (previousMP !== undefined && Number(monster.cMP) < previousMP) cast = index;
-        state.monstersMP[index] = Number(monster.cMP);
+    for (const [index, monster] of entries) {
+        const before = state.monsters[index];
+        state.monsters[index] = monster;
+        // Nothing to compare against, so nothing to conclude — a monster's first
+        // appearance in a delta says only that the server mentioned it
+        if (!before) continue;
 
-        const previousDmg = state.monstersDmg[index];
-        const currentDmg = Number(monster.dmgCounter ?? 0);
-        if (previousDmg !== undefined && currentDmg > previousDmg) struck = index;
-        state.monstersDmg[index] = currentDmg;
+        if (Number(monster.cMP) < Number(before.cMP)) cast.push(index);
+        else if (Number(monster.dmgCounter ?? 0) > Number(before.dmgCounter ?? 0)) struck.push(index);
+        else if (unchanged(before, monster)) acted.push(index);
     }
 
-    if (cast !== null) return cast;
-    if (monsters.length === 1) return monsters[0][0];
+    if (cast.length) return cast;
+    if (acted.length) return acted;
     return struck;
 }
 
@@ -89,12 +124,12 @@ export function findAttacker(mMap, state) {
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newTakenState`, mutated
- * @returns {Array<Object>} `{playerIndex, monsterIndex, damage, isMiss, isRegen, isDeath}`
+ * @returns {Array<Object>} `{playerIndex, monsters, damage, isMiss, isRegen, isDeath}`
  */
 export function attributeIncoming(tick, state) {
     const events = [];
     const pMap = tick?.pMap || {};
-    const attacker = findAttacker(tick?.mMap, state);
+    const attackers = findAttackers(tick?.mMap, state);
 
     for (const [index, player] of Object.entries(pMap)) {
         if (!player) continue;
@@ -116,7 +151,7 @@ export function attributeIncoming(tick, state) {
         if (counter > beforeCounter) {
             events.push({
                 playerIndex: index,
-                monsterIndex: attacker,
+                monsters: attackers,
                 damage: Math.max(0, lost),
                 isMiss: lost <= 0,
             });
@@ -149,6 +184,30 @@ export function foldTaken(tally, events) {
 }
 
 /**
+ * What to call a hit, given every monster that could have landed it.
+ *
+ * Several candidates of the same kind are not ambiguous in any way a reader
+ * cares about: "an Eyes hit you for 41" is true whichever of the two Eyes it
+ * was. Candidates that disagree are genuinely unknown, and saying so is better
+ * than picking the first one — a wrong name here would move damage from one
+ * monster of a wave onto another and then be read as evidence about which of
+ * them is dangerous.
+ *
+ * @param {Array<string>} candidates - Monster indices
+ * @param {Function} nameOf - Monster index → name, or null
+ * @returns {string} A monster name, or `Unknown Enemy`
+ */
+export function resolveName(candidates, nameOf) {
+    const names = new Set();
+    for (const index of candidates || []) {
+        const name = nameOf(index);
+        if (!name) return 'Unknown Enemy';
+        names.add(name);
+    }
+    return names.size === 1 ? [...names][0] : 'Unknown Enemy';
+}
+
+/**
  * Add a tick's events to a running per-monster tally.
  *
  * Hit ranges rather than just totals, because that is what says whether a zone
@@ -163,9 +222,7 @@ export function foldTakenByEnemy(tally, events, nameOf) {
     for (const event of events) {
         if (event.isDeath || event.isRegen || event.isMiss) continue;
 
-        const name =
-            (event.monsterIndex === null || event.monsterIndex === undefined ? null : nameOf(event.monsterIndex)) ||
-            'Unknown Enemy';
+        const name = resolveName(event.monsters, nameOf);
         const entry = (tally[name] ||= { damage: 0, hits: 0, min: null, max: null, byPlayer: {} });
 
         entry.damage += event.damage;
