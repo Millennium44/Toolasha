@@ -1850,6 +1850,24 @@ export const settingsGroups = {
                 default: true,
                 help: "Infers damage from health lost between combat ticks, since the game sends no damage figure. Overkill is not counted, and in a party it is the whole party's damage — nothing on the wire says who struck",
             },
+            portraitDps: {
+                id: 'portraitDps',
+                label: 'Portrait DPS: Show each character’s damage on their battle portrait',
+                type: 'checkbox',
+                default: false,
+                help: "Draws the run's DPS and total damage over each character in the battle panel, matched by name. Off by default because the portraits are already busy with health and mana",
+            },
+            portraitDpsPosition: {
+                id: 'portraitDpsPosition',
+                label: 'Portrait DPS: Where to put it',
+                type: 'select',
+                default: 'above',
+                options: [
+                    { value: 'above', label: 'Above the portrait' },
+                    { value: 'below', label: 'Below the portrait' },
+                ],
+                help: 'Above sits over the name; below sits under the ability bar',
+            },
             combatSim: {
                 id: 'combatSim',
                 label: 'Combat Simulator',

@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Damage on the battle portraits
+
+Each character's DPS and total damage, drawn on their own portrait. The DPS tile already ranks the party, and a ranked list is the wrong shape for the question asked mid-fight, which is "is _that_ one pulling their weight" while looking straight at them.
+
+- **Matched by name, not by position.** The obvious join is index — the payload's player 0 is the leftmost portrait — and it is exactly the join that produced the bug fixed above. A portrait whose name is not in the tally gets nothing rather than getting somebody else's damage.
+- **Off by default**, since the portraits already carry health, mana and an ability bar. Settings → Combat, with a choice of above or below the portrait.
+- **The rate reads first**, because it is the comparable figure: total damage rewards whoever has been in the fight longest, which after a death is not a measure of anything. Too early for a rate shows a dash rather than a zero.
+- **This is the most fragile thing in the script**, and worth saying so: it reaches into the game's own DOM rather than into the payload, and the class names carry a build hash that changes with every game update. Every selector is a prefix match, the meters are re-attached on a `MutationObserver` because the game rebuilds the panel from under them, and the failure mode is drawing nothing.
+
 ### Fixed: a party you left stayed in the DPS table, and your name appeared twice
 
 Both symptoms, one cause. The damage tally is keyed by **battle slot**, which is a position in this fight rather than an identity — fine while the fight keeps its shape, wrong the moment it does not.

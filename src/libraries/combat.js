@@ -20,6 +20,7 @@ import combatBattleCounter from '../features/combat/combat-battle-counter.js';
 import combatDropLuck from '../features/combat/combat-drop-luck.js';
 import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
+import portraitDps from '../features/combat/portrait-dps.js';
 // Side-effect import: registers the Build Score overlay row
 import '../features/profile/build-score-row.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
@@ -77,6 +78,7 @@ toolashaRoot.Combat = {
     combatDropLuck,
     partyLuckPanel,
     combatDPS,
+    portraitDps,
     labyrinthTracker,
     labyrinthBestLevel,
     labyrinthShopPrices,

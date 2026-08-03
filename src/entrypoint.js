@@ -524,6 +524,13 @@ function registerFeatures() {
             module: Combat.combatDPS,
             async: false,
         },
+        {
+            key: 'portraitDps',
+            name: 'Portrait DPS',
+            category: 'Combat',
+            module: Combat.portraitDps,
+            async: false,
+        },
         { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: false },
         {
             key: 'labyrinthTracker',
