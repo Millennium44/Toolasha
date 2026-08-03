@@ -13,6 +13,7 @@ The Record button in the Damage panel can only start once a session is already r
 - **Auto-record combat on load**, off by default, starts the recorder the moment the page does and writes the file out on its own after a set number of seconds (sixty by default, ten to six hundred). Nobody is watching a recording that started itself, so it hands over the file without being asked.
 - **It snapshots the battle panel on every tick until the first battle is announced.** Whether the monsters' names can be read off the screen during that window is the other half of the same question, and a recording made during a refresh can now carry the answer rather than leaving it to be guessed at.
 - **The snapshots stop once the payload names the wave**, because from that point the screen has nothing to add.
+- **Both damage trackers move out of Loot Log and into Combat Features**, along with the new switches. They had been filed under Loot Log, which is where nobody would look for them and where I could not find them either.
 
 ### Fixed: everything went to Unknown Enemy, and the fixture was why
 
