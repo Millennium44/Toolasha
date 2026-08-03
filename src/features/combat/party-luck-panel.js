@@ -274,23 +274,6 @@ function drawDungeonChests(body, chest) {
             continue;
         }
 
-        // A character far below the top of the party has their drops cut by an
-        // amount nothing here knows, so their count is shown and the verdict is
-        // not — a percentile against a full share would be a verdict on their
-        // party wearing the label of their luck
-        if (isLevelGapped(player.levelGap)) {
-            card.appendChild(
-                panelLine(
-                    player.name,
-                    `${formatWithSeparator(luck.chests)} over ${luck.completions}   ` +
-                        `level gap −${Math.round(Math.abs(player.levelGap) * 100)}%`,
-                    ROW_COLORS.bad,
-                    describeChestRun(player)
-                )
-            );
-            continue;
-        }
-
         const verdict = signedPercent(luck.expected > 0 ? (luck.chests / luck.expected - 1) * 100 : 0);
         const percentile = luck.percentile === null ? '—' : formatOrdinal(luck.percentile);
 
@@ -302,6 +285,27 @@ function drawDungeonChests(body, chest) {
                 describeChestRun(player)
             )
         );
+
+        // The gap is inside the expectation above rather than replacing it, so
+        // the percentile means what it usually does. It still gets its own line:
+        // a character being paid a tenth of a share should not have to be
+        // inferred from an expectation that looks oddly small.
+        if (isLevelGapped(player.levelGap)) {
+            card.appendChild(
+                panelLine(
+                    `  level gap`,
+                    `−${Math.round(Math.abs(player.levelGap) * 100)}%, ` +
+                        `${player.mean.toFixed(2)} a completion` +
+                        (player.observed === null ? '' : ` (${player.observed.toFixed(2)} seen)`),
+                    ROW_COLORS.bad,
+                    'Far enough below the top of the party for the game to cut what drops for them. Below one ' +
+                        'chest a completion there is no guaranteed chest at all — the fraction becomes the chance ' +
+                        'of getting one, which is why the payout is usually nothing and occasionally one.\n' +
+                        'The size of the cut is the debuff the simulator uses for monster drops; nothing has ' +
+                        'confirmed a dungeon uses the same number, so the seen rate is shown beside it.'
+                )
+            );
+        }
     }
 
     card.appendChild(
