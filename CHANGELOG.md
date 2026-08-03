@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A refresh no longer throws the dungeon away, and Total Profit shows the party
+
+Two unrelated faults, both visible in the same screenshot.
+
+- **The chest reading survives a reload now.** It did not, and MCS's equivalent does — because MCS stores nothing for it. `totalLootMap` is the loot for the **combat session**, not the character's inventory, and the server accumulates it and re-sends the whole thing on every `new_battle` along with `combatStartTime`. Nothing needs keeping; the server keeps it. The tally was treating a first sighting as a baseline, which is the right rule for an inventory — somebody may walk in holding a hundred chests from yesterday — and quite wrong for session loot. Every refresh reset the run to zero.
+- **The completions behind those chests are recovered too.** A chest total with no completion count cannot be placed, and that part genuinely is lost on reload. The dungeon tracker has been writing every finished run to storage all along, so they are counted from there — runs of this dungeon stamped at or after the session began. The panel says how many were read back.
+- **A session is now identified by its start time** rather than by the battle counter, which is what makes a reload continue a session instead of starting one. A falling battle id stays as the fallback for a payload without a start time.
+- **Total Profit is a row per character.** It only ever asked the calculator about the current player, so a five-person party showed one line — the spread between five people splitting a zone is exactly what the tile is for. Yours is first and in gold whatever order the party arrived in, and the tile's default height now fits a party rather than clipping it.
+
 ### Counted keys, counted completions, and a level gap that was invisible
 
 Three things the chest reading was guessing at, all now measured.

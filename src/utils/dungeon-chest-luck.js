@@ -213,29 +213,48 @@ export function chestLuck({ completions, chests, mean } = {}) {
 /**
  * Watch a chest count for the moments it rises.
  *
- * Each rise is one completion that paid that many chests. Held as a plain object
- * so a caller can keep one per character and hand it back each time.
+ * The count comes from `totalLootMap`, which is the loot for the **combat
+ * session** rather than the character's inventory — the server accumulates it
+ * and re-sends the whole thing on every `new_battle`. That is worth being
+ * precise about, because it is the difference between a reading that survives a
+ * page refresh and one that does not: after a reload the very first message
+ * carries every chest the session has produced, so nothing needs storing.
  *
- * @param {Object} tally - `{completions, chests, byPayout, seen}`, mutated
- * @param {number} count - The chest count as it stands now
+ * This originally treated a first sighting as a baseline — the right rule for an
+ * inventory, where somebody may walk in holding a hundred chests from yesterday,
+ * and quite wrong here. It threw away the whole session on every refresh.
+ *
+ * What a first sighting genuinely cannot recover is how many *completions*
+ * produced those chests, so that much is recorded separately: `chests` is the
+ * session's own total, and `watchedChests` is the part with a completion count
+ * to go with it.
+ *
+ * @param {Object} tally - From `newChestTally`, mutated
+ * @param {number} count - The session's chest count as it stands now
  * @returns {Object} The same tally
  */
 export function noteChestCount(tally, count) {
     if (!Number.isFinite(count) || count < 0) return tally;
 
-    // The first sighting is where counting starts, not a payout: the character
-    // may have walked in holding a hundred chests from yesterday
-    if (tally.seen === null || tally.seen === undefined) {
-        tally.seen = count;
+    const before = tally.seen;
+    tally.seen = count;
+    // Always the session's own figure, whether or not this saw it arrive
+    tally.chests = count;
+
+    if (before === null || before === undefined) {
+        // Arriving mid-session: these chests are real and their completions are
+        // not knowable from a count alone
+        tally.unwatched = count;
         return tally;
     }
 
-    const gained = count - tally.seen;
-    tally.seen = count;
+    // A fall means the session restarted — the caller resets on that, and until
+    // it does there is nothing to add
+    const gained = count - before;
     if (gained <= 0) return tally;
 
     tally.completions += 1;
-    tally.chests += gained;
+    tally.watchedChests += gained;
     tally.byPayout[gained] = (tally.byPayout[gained] || 0) + 1;
     return tally;
 }
@@ -245,5 +264,5 @@ export function noteChestCount(tally, count) {
  * @returns {Object}
  */
 export function newChestTally() {
-    return { completions: 0, chests: 0, byPayout: {}, seen: null };
+    return { completions: 0, chests: 0, watchedChests: 0, unwatched: 0, byPayout: {}, seen: null };
 }

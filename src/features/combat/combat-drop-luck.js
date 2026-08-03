@@ -45,6 +45,7 @@ import { registerRow, rowOption } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 import dungeonTracker from './dungeon-tracker.js';
+import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import {
     chestLuck,
     chestsPerCompletion,
@@ -299,14 +300,33 @@ class CombatDropLuck {
         }
 
         const { actionHrid, difficultyTier } = this.context;
-        const battleId = data?.battleId || 0;
         const players = data?.players || [];
+        // The server's own name for this session, unchanged across a refresh —
+        // which is what makes a reload continue a session rather than start one
+        const startedAt = data?.combatStartTime || null;
 
-        // A different dungeon, or the same one begun again, is a different run —
-        // and its loot map starts back at nothing, which would otherwise read as
-        // everybody opening their chests at once
-        if (!this.chests || this.chests.actionHrid !== actionHrid || battleId < this.chests.battleId) {
-            this.chests = { actionHrid, battleId, partySize: players.length || 1, tallies: {}, completions: 0 };
+        // A different dungeon, or the same one begun again, is a different
+        // session and its loot map starts back at nothing. The start time is the
+        // signal; a falling battle id is the fallback for a payload without one.
+        const battleId = data?.battleId || 0;
+        const restarted =
+            this.chests &&
+            (this.chests.actionHrid !== actionHrid ||
+                (startedAt ? this.chests.startedAt !== startedAt : battleId < this.chests.battleId));
+
+        if (!this.chests || restarted) {
+            this.chests = {
+                actionHrid,
+                startedAt,
+                battleId,
+                partySize: players.length || 1,
+                tallies: {},
+                completions: 0,
+                // Completions that happened before this page loaded, recovered
+                // from the tracker's own history rather than guessed at
+                restored: null,
+            };
+            this._restoreCompletions(this.chests);
         }
         this.chests.battleId = battleId;
         this.chests.partySize = players.length || this.chests.partySize;
@@ -330,6 +350,43 @@ class CombatDropLuck {
     }
 
     /**
+     * How many runs finished before this page loaded.
+     *
+     * The chests survive a refresh for free — `totalLootMap` is the session's own
+     * and the server re-sends it — but the completions behind them do not, and a
+     * total with no completion count cannot be placed. The tracker has been
+     * writing every completed run to storage all along, so they are counted from
+     * there: runs of this dungeon, stamped at or after the session started.
+     *
+     * Async and fire-and-forget, because this is reached from a WebSocket handler
+     * and a storage read has no business blocking one. Until it lands the reading
+     * uses what it has watched, which is a smaller sample rather than a wrong one.
+     *
+     * @param {Object} tracked - The chest state to fill in
+     */
+    async _restoreCompletions(tracked) {
+        try {
+            const startedAt = tracked.startedAt ? new Date(tracked.startedAt).getTime() : 0;
+            if (!startedAt) return;
+
+            const name = dungeonTrackerStorage.getDungeonInfo(tracked.actionHrid)?.name;
+            const runs = await dungeonTrackerStorage.getAllRuns();
+
+            // Still the session this was started for — a slow read that lands
+            // after the player has moved on must not be applied to the new one
+            if (this.chests !== tracked) return;
+
+            tracked.restored = runs.filter((run) => {
+                if (name && run.dungeonName !== name) return false;
+                const at = new Date(run.timestamp).getTime();
+                return Number.isFinite(at) && at >= startedAt;
+            }).length;
+        } catch (error) {
+            console.error('[CombatDropLuck] Recovering earlier completions failed:', error);
+        }
+    }
+
+    /**
      * How the dungeon's chests have fallen, per player.
      *
      * @returns {{partySize: number, players: Array<Object>, counted: string,
@@ -343,10 +400,15 @@ class CombatDropLuck {
         const gaps = this.context?.levelGaps || {};
         // The tracker's count is the whole party's, so it applies to everybody;
         // the chest-rise count is per player and only stands in when it has to
-        const fromTracker = tracked.completions > 0;
+        const party = (tracked.restored || 0) + tracked.completions;
+        const fromTracker = party > 0;
 
         const players = Object.entries(tracked.tallies).map(([name, tally]) => {
-            const completions = fromTracker ? tracked.completions : tally.completions;
+            // With a completion count covering the whole session the session's
+            // own chest total is the right numerator. Without one, only the part
+            // this watched arrive has a denominator to go with it.
+            const completions = fromTracker ? party : tally.completions;
+            const chests = fromTracker ? tally.chests : tally.watchedChests;
             const levelGap = gaps[name] ?? null;
             // The gap belongs in the expectation rather than in a rule that
             // refuses to give one. A party of five at a 90% penalty is a mean of
@@ -365,8 +427,11 @@ class CombatDropLuck {
                 // because the debuff's size is borrowed from the monster-drop
                 // formula: if that number is wrong for chests, these two diverge
                 // and the divergence is on screen rather than buried.
-                observed: completions > 0 ? tally.chests / completions : null,
-                luck: chestLuck({ completions, chests: tally.chests, mean }),
+                observed: completions > 0 ? chests / completions : null,
+                // The session's own total, shown whether or not there is a
+                // completion count to place it against
+                chests: tally.chests,
+                luck: chestLuck({ completions, chests, mean }),
             };
         });
 
@@ -376,6 +441,9 @@ class CombatDropLuck {
             partySize,
             players,
             counted: fromTracker ? 'tracker' : 'chests',
+            // Completions from before this page loaded, so the panel can say the
+            // reading spans the session rather than the tab
+            restored: tracked.restored || 0,
             entryKey: this._entryKeySpend(),
         };
     }

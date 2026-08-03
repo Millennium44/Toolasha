@@ -22,6 +22,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import {
     row,
+    rows,
     blank,
     shortDuration,
     drawLine,
@@ -42,21 +43,25 @@ let cached = null;
 let cachedAt = 0;
 
 /**
- * The current player's stats, recomputed at most every few seconds.
+ * Everybody's stats, recomputed at most every few seconds.
  *
- * Returns null until a combat run has produced data — a row with nothing behind
- * it draws nothing rather than a row of zeroes, which would read as a real
- * measurement of a run that is going badly.
+ * The whole party rather than just you: loot is rolled per character against
+ * their own drop gear, so five people splitting a zone do not split it evenly,
+ * and a tile that shows one of the five answers a question nobody asked.
  *
- * @returns {Object|null} From `calculatePlayerStats`, or null
+ * Costs a loot-map pricing per player instead of one, which is why the cache
+ * matters more than it did — the overlay redraws every second.
+ *
+ * @returns {Array<Object>} From `calculatePlayerStats`, yours first, empty until
+ *   a run has produced data
  */
-function currentStats() {
+function partyStats() {
     const now = Date.now();
     if (cached && now - cachedAt < CACHE_MS) return cached;
 
     const data = combatStatsDataCollector.getLatestData();
-    const player = data?.players?.find((entry) => entry.isCurrentPlayer);
-    if (!player) return null;
+    const players = data?.players || [];
+    if (!players.length) return [];
 
     // Live data can time its own duration; a stored snapshot cannot, because its
     // start time may belong to a run that ended hours ago
@@ -66,9 +71,22 @@ function currentStats() {
         if (elapsed > 0) duration = elapsed;
     }
 
-    cached = calculatePlayerStats(player, duration);
+    cached = players
+        .map((player) => ({ ...calculatePlayerStats(player, duration), isCurrentPlayer: player.isCurrentPlayer }))
+        // Yours first whatever order the party arrived in, so the figure you
+        // look for is always on the same line
+        .sort((a, b) => Number(Boolean(b.isCurrentPlayer)) - Number(Boolean(a.isCurrentPlayer)));
     cachedAt = now;
     return cached;
+}
+
+/**
+ * The current player's stats, for the rows that are only ever about you.
+ *
+ * @returns {Object|null} From `calculatePlayerStats`, or null
+ */
+function currentStats() {
+    return partyStats().find((player) => player.isCurrentPlayer) || null;
 }
 
 registerRow({
@@ -217,21 +235,43 @@ registerRow({
     key: 'totalProfit',
     empty: 'No loot tracked yet',
     name: 'Total Profit',
-    defaultSize: { width: 220, height: 30 },
+    // Taller by default than it was: a party of five needs five lines, and a
+    // tile sized for one clips the rest
+    defaultSize: { width: 240, height: 78 },
     render: (container) => {
-        const stats = currentStats();
-        if (!stats) return blank(container);
+        const party = partyStats();
+        if (!party.length) return blank(container);
 
-        // Both cost figures are {ask, bid} rather than numbers; subtracting the
-        // objects gave NaN
-        const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+        // A row each, because loot is rolled per character against their own
+        // drop gear — five people splitting a zone do not split it evenly, and
+        // the party's spread is the thing worth watching during a run
+        rows(
+            container,
+            party.map((stats) => {
+                // Both cost figures are {ask, bid} rather than numbers;
+                // subtracting the objects gave NaN
+                const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
 
-        row(container, [
-            { text: stats.name || 'You', color: ROW_COLORS.gold, bold: true, ellipsis: true },
-            { text: '🪙' },
-            { text: formatLargeNumber(Math.round(banked)), color: banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad },
-            { text: `${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`, color: ROW_COLORS.dim, push: true },
-        ]);
+                return [
+                    {
+                        text: stats.name || 'You',
+                        color: stats.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
+                        bold: Boolean(stats.isCurrentPlayer),
+                        ellipsis: true,
+                    },
+                    { text: '🪙' },
+                    {
+                        text: formatLargeNumber(Math.round(banked)),
+                        color: banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad,
+                    },
+                    {
+                        text: `${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`,
+                        color: ROW_COLORS.dim,
+                        push: true,
+                    },
+                ];
+            })
+        );
     },
     onOpen: () => window.Toolasha?.UI?.profitPanel?.toggle(),
 });

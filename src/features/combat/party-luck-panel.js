@@ -326,8 +326,13 @@ function drawDungeonChests(body, chest) {
             chest.counted === 'tracker' ? ROW_COLORS.neutral : ROW_COLORS.dim,
             chest.counted === 'tracker'
                 ? 'Counted from the party’s key-count messages, so a run that paid somebody nothing still ' +
-                      'counts as a run for them.'
-                : 'Counted by watching the chests arrive, which is the solo fallback — it cannot see a run that ' +
+                      'counts as a run for them.' +
+                      (chest.restored
+                          ? `\n${chest.restored} finished before this page loaded and were read back from the ` +
+                            'tracker’s history. The chests need no recovering — the loot total belongs to the ' +
+                            'combat session rather than to the tab, and the server re-sends all of it.'
+                          : '')
+                : 'Counted by watching the chests arrive, which is the fallback — it cannot see a run that ' +
                       'paid nothing, because nothing is what a run that paid nothing looks like.'
         )
     );

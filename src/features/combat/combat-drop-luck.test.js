@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ actions: [], actionDetail: null, characterId: 'me' }));
+const game = vi.hoisted(() => ({ actions: [], actionDetail: null, characterId: 'me', runs: [] }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, COLOR_TEXT_PRIMARY: '#fff' } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -14,6 +14,12 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
 vi.mock('./dungeon-tracker.js', () => ({ default: { onUpdate: () => {}, offUpdate: () => {} } }));
+vi.mock('./dungeon-tracker-storage.js', () => ({
+    default: {
+        getDungeonInfo: () => ({ name: 'Chimerical Den' }),
+        getAllRuns: async () => game.runs,
+    },
+}));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
@@ -92,14 +98,45 @@ describe('watching a dungeon pay out', () => {
         combatDropLuck.chests = null;
         combatDropLuck.context = null;
         combatDropLuck.keys = { counts: {}, spent: {}, gained: {}, samples: {} };
+        game.runs = [];
         // The live percentile is throttled and this test is not about it
         combatDropLuck.liveAt = Date.now();
     });
 
-    test('the chests somebody walked in with are not a windfall', () => {
+    test('chests already there are shown, and not yet placed', () => {
+        // They are real — session loot, not inventory — but nothing yet says how
+        // many completions produced them, and a total with no denominator cannot
+        // be a percentile
         combatDropLuck._rememberContext(battle(1, [40, 0]));
 
-        expect(combatDropLuck.dungeonChestLuck().players[0].luck).toBeNull();
+        const [mine] = combatDropLuck.dungeonChestLuck().players;
+        expect(mine.chests).toBe(40);
+        expect(mine.luck).toBeNull();
+    });
+
+    test('completions from before the reload are recovered from the tracker history', async () => {
+        // The chests come back on their own; the runs behind them are counted
+        // from what the tracker has been writing down all along
+        game.runs = [
+            { dungeonName: 'Chimerical Den', timestamp: '2026-08-03T01:10:00Z' },
+            { dungeonName: 'Chimerical Den', timestamp: '2026-08-03T01:20:00Z' },
+            // Before this session started, so not this session's
+            { dungeonName: 'Chimerical Den', timestamp: '2026-08-03T00:10:00Z' },
+            // A different dungeon entirely
+            { dungeonName: 'Pirate Cove', timestamp: '2026-08-03T01:30:00Z' },
+        ];
+
+        combatDropLuck._rememberContext({ ...battle(40, [7, 6]), combatStartTime: '2026-08-03T01:00:00Z' });
+
+        // The restore is fired off the message handler rather than awaited there,
+        // so let it land before reading
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const luck = combatDropLuck.dungeonChestLuck();
+
+        expect(luck.restored).toBe(2);
+        expect(luck.counted).toBe('tracker');
+        expect(luck.players[0].luck.completions).toBe(2);
+        expect(luck.players[0].luck.chests).toBe(7);
     });
 
     test('each rise is one completion, and the party splits the five', () => {
@@ -217,5 +254,34 @@ describe('watching a dungeon pay out', () => {
         combatDropLuck._rememberContext(battle(2, [4, 3]));
 
         expect(combatDropLuck.dungeonChestLuck().players[0].luck.completions).toBe(1);
+    });
+
+    test('a refresh mid-session keeps the chests, because the server re-sends them', () => {
+        // `totalLootMap` is the session's loot and arrives whole on the first
+        // message after a reload. Treating that first sighting as a baseline is
+        // what used to throw the run away.
+        const session = '2026-08-03T01:00:00Z';
+        combatDropLuck._rememberContext({ ...battle(40, [63, 50]), combatStartTime: session });
+
+        const [mine] = combatDropLuck.dungeonChestLuck().players;
+        expect(mine.chests).toBe(63);
+    });
+
+    test('and a new session is still a new session', () => {
+        combatDropLuck._rememberContext({ ...battle(40, [63, 50]), combatStartTime: '2026-08-03T01:00:00Z' });
+        combatDropLuck._rememberContext({ ...battle(1, [0, 0]), combatStartTime: '2026-08-03T02:00:00Z' });
+
+        expect(combatDropLuck.dungeonChestLuck().players[0].chests).toBe(0);
+    });
+
+    test('the same session across a reload is not a new one', () => {
+        const session = '2026-08-03T01:00:00Z';
+        combatDropLuck._rememberContext({ ...battle(40, [63, 50]), combatStartTime: session });
+        // A reload restarts the battle numbering it saw, but not the session
+        combatDropLuck._rememberContext({ ...battle(1, [65, 50]), combatStartTime: session });
+
+        const [mine] = combatDropLuck.dungeonChestLuck().players;
+        expect(mine.chests).toBe(65);
+        expect(mine.luck.completions).toBe(1);
     });
 });
