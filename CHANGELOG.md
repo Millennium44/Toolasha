@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The payload names the attacker after all
+
+Unknown Enemy kept turning up in waves even after the reload fix, because that fix was for a different cause. Going back to the recorded run to measure rather than reason turned up something better: **`mMap` is a delta**. A tick does not carry the wave, it carries the units the server touched — nought or one entry per tick against rosters of three.
+
+- **A monster in the delta with nothing changed is the one that swung.** Same health, same mana, same counters, and there anyway. Across the recording that held on every one of the forty-two ticks the character was hit, and the wave was still three strong for thirty-six of them. That is the attacker, stated by the payload.
+- **The old rung 2 was right by accident.** It said "there is only one monster in the tick, so there is no ambiguity" — but the ambiguity it was dodging was in the delta, not in the fight. Believing the wrong reason is what left it crediting the monster you were attacking whenever two units reported on the same tick, which in a wave is most of the time.
+- **Being hit is now the last rung, not the second.** A monster whose own damage counter rose is one _you_ hit. That is evidence about your target and says nothing about theirs.
+- **Two monsters of the same kind are no longer ambiguous.** "An Eyes hit you for 41" is true whichever of the two it was. Only candidates that disagree fall through to Unknown Enemy, and a wrong name would be worse than none — it would move damage from one monster of a wave onto another and then read as evidence about which is dangerous.
+- **Some Unknown Enemy remains, and it is honest.** A tick where you were hit and the server mentioned no monster at all cannot name one, and neither can two different monsters swinging together.
+
 ### Reloading mid-fight no longer costs you the monsters' names
 
 A combat tick carries each monster's health, mana and two counters — and nothing that says what the monster is. Identity arrives once, in the message that starts a battle, and a page reloaded mid-fight never sees it. So everything that hit you for the rest of that battle went to "Unknown Enemy", and everything you killed in it went nowhere at all. MCS has the same hole for the same reason.

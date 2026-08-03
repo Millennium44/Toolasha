@@ -11,10 +11,11 @@
 import { describe, test, expect } from 'vitest';
 import {
     newTakenState,
-    findAttacker,
+    findAttackers,
     attributeIncoming,
     foldTaken,
     foldTakenByEnemy,
+    resolveName,
     waveKey,
 } from './damage-taken.js';
 
@@ -47,7 +48,7 @@ describe('what counts as being hit', () => {
         attributeIncoming(tick({ 0: { hp: 500, dmg: 3 } }), state);
         const events = attributeIncoming(tick({ 0: { hp: 420, dmg: 4 } }), state);
 
-        expect(events).toEqual([{ playerIndex: '0', monsterIndex: null, damage: 80, isMiss: false }]);
+        expect(events).toEqual([{ playerIndex: '0', monsters: [], damage: 80, isMiss: false }]);
     });
 
     test('the counter up with health unchanged is a miss', () => {
@@ -99,44 +100,105 @@ describe('what counts as being hit', () => {
 });
 
 describe('which monster did it', () => {
-    test('a monster whose mana fell cast, and is the attacker', () => {
-        const state = newTakenState();
-        findAttacker({ 0: { cMP: 100, dmgCounter: 0 }, 1: { cMP: 100, dmgCounter: 0 } }, state);
+    /**
+     * Show a monster to the state so later ticks have something to compare with.
+     * @param {Object} state - From `newTakenState`
+     * @param {Object} mMap - Monsters
+     */
+    function seed(state, mMap) {
+        findAttackers(mMap, state);
+    }
 
-        expect(findAttacker({ 0: { cMP: 100, dmgCounter: 0 }, 1: { cMP: 60, dmgCounter: 0 } }, state)).toBe('1');
+    test('a monster in the delta with nothing changed is the one that swung', () => {
+        // The finding that rebuilt this: `mMap` carries the units the server
+        // touched, and across a recorded run every single tick the character was
+        // hit held exactly one monster whose fields had not moved at all
+        const state = newTakenState();
+        seed(state, { 0: { cHP: 500, cMP: 100, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } });
+
+        expect(findAttackers({ 1: { cHP: 400, cMP: 100, dmgCounter: 5 } }, state)).toEqual(['1']);
     });
 
-    test('one monster needs no working out', () => {
-        // Which is the case that matters: an auto-attack spends no mana, and
-        // most of what hits you is auto-attacks
+    test('a monster whose mana fell cast, and outranks the rest', () => {
         const state = newTakenState();
-        findAttacker({ 0: { cMP: 100, dmgCounter: 0 } }, state);
+        seed(state, { 0: { cHP: 500, cMP: 100, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } });
 
-        expect(findAttacker({ 0: { cMP: 100, dmgCounter: 0 } }, state)).toBe('0');
+        const attackers = findAttackers(
+            { 0: { cHP: 500, cMP: 60, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } },
+            state
+        );
+        expect(attackers).toEqual(['0']);
     });
 
-    test('failing that, the monster that was itself hit', () => {
-        // A proxy, and a weak one — being hit is not attacking. Kept because it
-        // is the rung IHurt uses, and a panel modelled on it should agree.
+    test('two that both swung are both candidates', () => {
+        // Rather than one of them arbitrarily: their names may agree, and if
+        // they do the ambiguity is not one a reader cares about
         const state = newTakenState();
-        findAttacker({ 0: { cMP: 100, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 5 } }, state);
+        seed(state, { 0: { cHP: 500, cMP: 100, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } });
 
-        expect(findAttacker({ 0: { cMP: 100, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 6 } }, state)).toBe('1');
+        const attackers = findAttackers(
+            { 0: { cHP: 500, cMP: 100, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } },
+            state
+        );
+        expect(attackers).toEqual(['0', '1']);
     });
 
-    test('a cast outranks having been hit', () => {
+    test('the monster you hit is not the monster that hit you', () => {
+        // Its `dmgCounter` rose, which says it took a hit. That is evidence
+        // about your target and not about theirs, so it ranks below everything.
         const state = newTakenState();
-        findAttacker({ 0: { cMP: 100, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 5 } }, state);
+        seed(state, { 0: { cHP: 500, cMP: 100, dmgCounter: 5 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } });
 
-        expect(findAttacker({ 0: { cMP: 40, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 6 } }, state)).toBe('0');
+        const attackers = findAttackers(
+            { 0: { cHP: 300, cMP: 100, dmgCounter: 6 }, 1: { cHP: 400, cMP: 100, dmgCounter: 5 } },
+            state
+        );
+        expect(attackers).toEqual(['1']);
     });
 
-    test('nothing identifying one credits nobody', () => {
-        // Rather than the first monster in the list, which would be a claim
+    test('failing everything else, the monster that was itself hit', () => {
+        // MCS's proxy, kept as the last rung so a wave still attributes rather
+        // than filing everything under Unknown
         const state = newTakenState();
-        findAttacker({ 0: { cMP: 100, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 5 } }, state);
+        seed(state, { 0: { cHP: 500, cMP: 100, dmgCounter: 5 } });
 
-        expect(findAttacker({ 0: { cMP: 100, dmgCounter: 5 }, 1: { cMP: 100, dmgCounter: 5 } }, state)).toBeNull();
+        expect(findAttackers({ 0: { cHP: 300, cMP: 100, dmgCounter: 6 } }, state)).toEqual(['0']);
+    });
+
+    test('an empty delta names nobody', () => {
+        // Nothing acted that the server saw fit to mention
+        expect(findAttackers({}, newTakenState())).toEqual([]);
+    });
+
+    test("a monster's first appearance says nothing about it", () => {
+        // There is no previous state to compare against, so "unchanged" is not
+        // a claim that can be made
+        expect(findAttackers({ 0: { cHP: 500, cMP: 100, dmgCounter: 5 } }, newTakenState())).toEqual([]);
+    });
+});
+
+describe('naming a hit from its candidates', () => {
+    test('one candidate is its name', () => {
+        expect(resolveName(['0'], () => 'Veyes')).toBe('Veyes');
+    });
+
+    test('two of the same kind are not ambiguous', () => {
+        // "An Eyes hit you for 41" is true whichever of the two it was
+        expect(resolveName(['0', '1'], () => 'Eyes')).toBe('Eyes');
+    });
+
+    test('candidates that disagree are unknown', () => {
+        // A wrong name here would move damage from one monster of a wave onto
+        // another and then be read as evidence about which is dangerous
+        expect(resolveName(['0', '1'], (index) => (index === '0' ? 'Eye' : 'Eyes'))).toBe('Unknown Enemy');
+    });
+
+    test('a candidate the battle cannot name makes the whole hit unknown', () => {
+        expect(resolveName(['0', '1'], (index) => (index === '0' ? 'Eye' : null))).toBe('Unknown Enemy');
+    });
+
+    test('no candidates at all is unknown', () => {
+        expect(resolveName([], () => 'Eye')).toBe('Unknown Enemy');
     });
 });
 
@@ -160,8 +222,8 @@ describe('folding a run together', () => {
         foldTakenByEnemy(
             tally,
             [
-                { playerIndex: '0', monsterIndex: '0', damage: 66 },
-                { playerIndex: '0', monsterIndex: '0', damage: 88 },
+                { playerIndex: '0', monsters: ['0'], damage: 66 },
+                { playerIndex: '0', monsters: ['0'], damage: 88 },
             ],
             () => 'Veyes'
         );
@@ -174,8 +236,8 @@ describe('folding a run together', () => {
         foldTakenByEnemy(
             tally,
             [
-                { playerIndex: '0', monsterIndex: '0', damage: 66 },
-                { playerIndex: '1', monsterIndex: '0', damage: 12 },
+                { playerIndex: '0', monsters: ['0'], damage: 66 },
+                { playerIndex: '1', monsters: ['0'], damage: 12 },
             ],
             () => 'Veyes'
         );
@@ -186,14 +248,14 @@ describe('folding a run together', () => {
     test('an unidentified attacker is named as unknown, not dropped', () => {
         // Dropping it would make the enemy totals disagree with the party total
         const tally = {};
-        foldTakenByEnemy(tally, [{ playerIndex: '0', monsterIndex: null, damage: 8 }], () => null);
+        foldTakenByEnemy(tally, [{ playerIndex: '0', monsters: [], damage: 8 }], () => null);
 
         expect(tally['Unknown Enemy'].damage).toBe(8);
     });
 
     test('a monster index the battle no longer knows is unknown too', () => {
         const tally = {};
-        foldTakenByEnemy(tally, [{ playerIndex: '0', monsterIndex: '7', damage: 8 }], () => null);
+        foldTakenByEnemy(tally, [{ playerIndex: '0', monsters: ['7'], damage: 8 }], () => null);
 
         expect(tally['Unknown Enemy'].damage).toBe(8);
     });
@@ -203,7 +265,7 @@ describe('folding a run together', () => {
         foldTakenByEnemy(
             tally,
             [
-                { playerIndex: '0', monsterIndex: '0', damage: 0, isMiss: true },
+                { playerIndex: '0', monsters: ['0'], damage: 0, isMiss: true },
                 { playerIndex: '0', damage: 60, isRegen: true },
             ],
             () => 'Veyes'
