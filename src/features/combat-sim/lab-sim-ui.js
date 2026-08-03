@@ -2101,7 +2101,6 @@ class LabSimUI {
      */
     _buildSkillEquipmentMap(gameData) {
         const itemDetailMap = gameData?.itemDetailMap || {};
-        const liveEquipment = dataManager.characterEquipment;
         const allSnapshots = loadoutSnapshot.getAllSnapshots();
         const equipmentMap = {};
 
@@ -2111,20 +2110,16 @@ class LabSimUI {
             if (!snapshot?.equipment?.length) continue;
 
             const equipment = {};
-            for (const equip of snapshot.equipment) {
+            // Levels from the loadout's own rule rather than the stored number:
+            // a loadout in "highest owned" mode wears the best copy you have
+            // now, and the previous fallback only looked at what was equipped
+            // this moment — so every loadout except the active one reported the
+            // enhancement it had when it was last saved, often +0
+            for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
                 const itemDetail = itemDetailMap[equip.itemHrid];
                 const equipType = itemDetail?.equipmentDetail?.type;
                 if (!equipType) continue;
-                let enhancementLevel = equip.enhancementLevel || 0;
-                if (enhancementLevel === 0 && liveEquipment) {
-                    for (const [, liveItem] of liveEquipment) {
-                        if (liveItem.itemHrid === equip.itemHrid) {
-                            enhancementLevel = liveItem.enhancementLevel || 0;
-                            break;
-                        }
-                    }
-                }
-                equipment[equipType] = { hrid: equip.itemHrid, enhancementLevel };
+                equipment[equipType] = { hrid: equip.itemHrid, enhancementLevel: equip.enhancementLevel };
             }
             equipmentMap[skillHrid] = equipment;
         }
