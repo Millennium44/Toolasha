@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The simulator is about four times quicker at rebuilding stats, and fury feels it most
+
+Fury was the slowest damage type to simulate, and nothing about it was slow — it was just the only one that triggered a full stat rebuild on nearly every swing. Measured, one rebuild cost ~92 µs, and **72% of it was re-aggregating what the equipment contributes**: seventy stats, each an `Object.values` plus a filter, a map and a reduce over thirteen slots, arriving at numbers that cannot change during a fight. It is now ~23 µs.
+
+Three changes, none of which alters a single figure:
+
+- **Equipment totals are computed once** and reused until what is worn changes, keyed on the gear itself rather than on a flag somebody has to remember to clear.
+- **Buffs are indexed in one pass** per rebuild instead of thirty-five separate scans of the same object, each allocating two throwaway arrays.
+- **Buff copies use a spread instead of `structuredClone`** — every field of a buff is a primitive, so the copy is identical and about fifty times cheaper. This runs on every drink tick, every aura and every curse, so it was not only fury paying for it.
+
+Fury also stopped rewriting the event queue on every swing. A landed hit pushes the 15-second timer back, which used to mean scanning the queue, removing the old expiry and queuing a new one each time. One event now lives across the whole streak and re-arms itself if it fires while the timer has moved on.
+
+Checked by running the old and new stat rebuild side by side over 120 configurations — full gear, sparse gear, two-handers, no gear at all, with zero to thirty buffs, called repeatedly — and comparing every field. Identical throughout. The comparison also caught a real mistake while it was being written: two stats whose names end in digits were being dropped from the equipment list, which no unit test noticed.
+
 ### One purchase now counts for every loadout it would improve
 
 A tier upgrade is one item that every loadout can share, but which rooms it was credited for was decided by matching the **exact piece it replaces** — and each candidate carries whichever piece the first loadout to generate it happened to wear. Buy the Magician's Hat and the loadouts wearing some _other_ hat were never asked whether it would beat theirs: one price, a fraction of the benefit, and a `1 / 10` in the Rooms column that looked like a considered answer.

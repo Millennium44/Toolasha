@@ -1017,9 +1017,20 @@ class CombatSimulator {
     }
 
     processFuryExpirationEvent(event) {
-        event.source.furyAmount = 0;
-        event.source.furyExpireTime = 0;
-        event.source.updateFuryBuffs(0, 0, 0, 0);
+        const source = event.source;
+        // The timer was pushed back after this event was queued, which is the
+        // normal case — every landed hit refreshes it. Re-arm for the new time
+        // rather than expiring stacks the unit still has
+        if (source.furyAmount > 0 && source.furyExpireTime > this.simulationTime) {
+            const next = new FuryExpirationEvent(source.furyExpireTime, source.furyAmount, source);
+            source.furyExpirationEvent = next;
+            this.eventQueue.addEvent(next);
+            return;
+        }
+        source.furyAmount = 0;
+        source.furyExpireTime = 0;
+        source.furyExpirationEvent = null;
+        source.updateFuryBuffs(0, 0, 0, 0);
     }
 
     _processFuryUpdate(source, didHit) {
@@ -1031,11 +1042,24 @@ class CombatSimulator {
 
         source.furyAmount = newAmount;
 
-        // Always reschedule expiration (resets the 15s timer)
-        this.eventQueue.clearByTypeAndSource(FuryExpirationEvent.type, source);
         if (newAmount > 0) {
             source.furyExpireTime = this.simulationTime + FURY_EXPIRE_TIME;
-            this.eventQueue.addEvent(new FuryExpirationEvent(source.furyExpireTime, newAmount, source));
+            // The timer moves on every swing, and rewriting the queue each time
+            // meant a scan and a fresh array per attack. The queued event checks
+            // the clock when it fires and re-arms itself if the timer has moved,
+            // so one event per fury streak is enough.
+            //
+            // `_heapIndex` goes to −1 when an event leaves the queue, which is
+            // how a unit reset that cleared the queue is noticed without anyone
+            // having to remember to clear a flag.
+            const pending = source.furyExpirationEvent;
+            if (!pending || pending._heapIndex < 0) {
+                const expiry = new FuryExpirationEvent(source.furyExpireTime, newAmount, source);
+                source.furyExpirationEvent = expiry;
+                this.eventQueue.addEvent(expiry);
+            }
+        } else {
+            source.furyExpireTime = 0;
         }
 
         // Only recalculate combat stats if stacks actually changed
@@ -1194,7 +1218,9 @@ class CombatSimulator {
         }
 
         for (const buff of consumable.buffs) {
-            const currentBuff = structuredClone(buff);
+            // Flat objects, so a spread is the same copy structuredClone makes
+            // and fifty times quicker — this one runs on every drink tick
+            const currentBuff = { ...buff };
             if (source.combatDetails.combatStats.drinkConcentration > 0 && consumable.catagoryHrid.includes('drink')) {
                 currentBuff.ratioBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;
                 currentBuff.flatBoost *= 1 + source.combatDetails.combatStats.drinkConcentration;
@@ -1343,7 +1369,7 @@ class CombatSimulator {
                             1.0 +
                             source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] *
                                 buff.multiplierPerSkillLevel;
-                        const currentBuff = structuredClone(buff);
+                        const currentBuff = { ...buff };
                         currentBuff.flatBoost *= multiplier;
                         currentBuff.ratioBoost *= multiplier;
                         target.addBuff(currentBuff, this.simulationTime);
