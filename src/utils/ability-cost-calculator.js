@@ -89,50 +89,52 @@ export function calculateAbilityCost(abilityHrid, targetLevel) {
  * @returns {number} Cost in coins
  */
 export function calculateAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
+    return explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel).total ?? 0;
+}
+
+/**
+ * The same cost, itemised: which book, how many, at what price.
+ *
+ * An ability is levelled by reading books, not by buying a copy of itself at an
+ * enhancement level — so a breakdown built from `resolveUpgradeBuyPrice` asks the
+ * market for something that does not exist and comes back with "no price found"
+ * for an ability anyone can buy books for today. This is what an ability upgrade
+ * actually costs, in the terms it is actually paid in.
+ *
+ * @param {string} abilityHrid - Ability HRID, e.g. `/abilities/fireball`
+ * @param {number} currentLevel - Level it is at now (0 = not learned)
+ * @param {number} currentXp - XP it has now
+ * @param {number} targetLevel - Level being priced
+ * @returns {Object} `{ bookHrid, bookName, books, xpPerBook, bookPrice, total, learnBook }`,
+ *   with `bookPrice` and `total` null when the book has no market listing
+ */
+export function explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, targetLevel) {
     const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
+    const bookHrid = String(abilityHrid || '').replace('/abilities/', '/items/');
+    const bookName =
+        gameData?.itemDetailMap?.[bookHrid]?.name || bookHrid.split('/').pop().replace(/_/g, ' ') || 'ability book';
+    const blank = { bookHrid, bookName, books: 0, xpPerBook: 0, bookPrice: null, total: null, learnBook: false };
 
-    const levelXpTable = gameData.levelExperienceTable;
-    if (!levelXpTable) return 0;
+    const levelXpTable = gameData?.levelExperienceTable;
+    if (!levelXpTable) return blank;
 
-    // Calculate XP needed
     const targetXp = levelXpTable[targetLevel] || 0;
-    const xpNeeded = targetXp - currentXp;
-
-    // Determine XP per book
     const xpPerBook = isStarterAbility(abilityHrid) ? 50 : 500;
 
-    // Calculate books needed
-    let booksNeeded = xpNeeded / xpPerBook;
+    let books = (targetXp - currentXp) / xpPerBook;
+    // A book is spent learning the ability before any of them count as levels
+    const learnBook = currentLevel === 0;
+    if (learnBook) books += 1;
 
-    // If starting from level 0, need +1 book to learn initially
-    if (currentLevel === 0) {
-        booksNeeded += 1;
-    }
-
-    // Get market price
-    const itemHrid = abilityHrid.replace('/abilities/', '/items/');
-    const prices = marketAPI.getPrice(itemHrid, 0);
-
-    if (!prices) return 0;
-
+    const prices = marketAPI.getPrice(bookHrid, 0);
     // Match MCS behavior: if only one side of the order book exists, use it for both
     // (getPrice normalizes missing sides to null)
-    let ask = prices.ask;
-    let bid = prices.bid;
+    let ask = prices?.ask ?? null;
+    let bid = prices?.bid ?? null;
+    if (ask != null && bid == null) bid = ask;
+    if (bid != null && ask == null) ask = bid;
+    if (ask == null || bid == null) return { ...blank, books, xpPerBook, learnBook };
 
-    if (ask != null && bid == null) {
-        bid = ask;
-    }
-    if (bid != null && ask == null) {
-        ask = bid;
-    }
-    if (ask == null && bid == null) {
-        return 0;
-    }
-
-    // Weighted average
-    const weightedPrice = (ask + bid) / 2;
-
-    return booksNeeded * weightedPrice;
+    const bookPrice = (ask + bid) / 2;
+    return { bookHrid, bookName, books, xpPerBook, bookPrice, total: books * bookPrice, learnBook };
 }

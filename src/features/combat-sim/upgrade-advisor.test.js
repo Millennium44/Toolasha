@@ -25,7 +25,18 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: vi.fn(),
     getProductionCost: vi.fn(),
 }));
-vi.mock('../../utils/ability-cost-calculator.js', () => ({ calculateAbilityLevelUpCost: vi.fn() }));
+vi.mock('../../utils/ability-cost-calculator.js', () => ({
+    calculateAbilityLevelUpCost: vi.fn(),
+    explainAbilityLevelUpCost: vi.fn(() => ({
+        bookHrid: '/items/fireball',
+        bookName: 'Fireball',
+        books: 12.4,
+        xpPerBook: 50,
+        bookPrice: 1000,
+        total: 12_400,
+        learnBook: false,
+    })),
+}));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
 const {
@@ -53,6 +64,7 @@ const { getItemPrices } = await import('../../utils/market-data.js');
 const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
 const { getCheapestProtectionPrice } = await import('../enhancement/tooltip-enhancement.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
+const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
@@ -1181,6 +1193,68 @@ describe('explainUpgradeCost', () => {
         expect(detail.credits).toEqual([]);
         expect(detail.credit).toBe(0);
         expect(detail.net).toBe(detail.gross);
+    });
+});
+
+describe('what an ability upgrade costs', () => {
+    const levelUp = {
+        type: 'ability_level',
+        slot: 'ability_1',
+        currentHrid: '/abilities/fireball',
+        currentLevel: 48,
+        upgradeHrid: '/abilities/fireball',
+        upgradeLevel: 53,
+    };
+    const gameData = { levelExperienceTable: [0, 100, 200], itemDetailMap: {} };
+
+    test('it is books, not a listing for the ability at that level', () => {
+        // An ability is not an item: asking the market for "fireball +53" finds
+        // nothing, and the row reads "no price found" for something anyone can
+        // buy books for today
+        const detail = explainUpgradeCost(levelUp, gameData);
+
+        expect(detail.books).toMatchObject({ bookName: 'Fireball', bookPrice: 1000 });
+        expect(detail.buys).toEqual([]);
+        expect(detail.gross).toBe(12_400);
+    });
+
+    test('nothing is credited back, because levels cannot be sold', () => {
+        const detail = explainUpgradeCost(levelUp, gameData);
+
+        expect(detail.credits).toEqual([]);
+        expect(detail.credit).toBe(0);
+        expect(detail.net).toBe(detail.gross);
+    });
+
+    test('it is priced from where the ability is now', () => {
+        explainUpgradeCost(levelUp, gameData);
+
+        // XP at the current level, not from zero — the books already read count
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 0, 53);
+    });
+
+    test('but a swap is learned from scratch', () => {
+        explainUpgradeCost(
+            { type: 'ability_swap', upgradeHrid: '/abilities/critical_aura', upgradeLevel: 20 },
+            gameData
+        );
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 0, 0, 20);
+    });
+
+    test('an ability nobody is selling costs unknown rather than nothing', () => {
+        explainAbilityLevelUpCost.mockReturnValueOnce({
+            bookName: 'Fireball',
+            books: 12,
+            bookPrice: null,
+            total: null,
+        });
+
+        expect(calculateUpgradeCost(levelUp, gameData)).toBe(null);
+    });
+
+    test('and the cost is the books, when there is a price', () => {
+        expect(calculateUpgradeCost(levelUp, gameData)).toBe(12_400);
     });
 });
 

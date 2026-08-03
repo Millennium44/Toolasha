@@ -19,7 +19,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
-import { calculateAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
+import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 
 /** Enhancement breakpoints by slot type */
@@ -1445,19 +1445,10 @@ export function calculateUpgradeCost(candidate, gameData) {
         return calculateHouseUpgradeCost(candidate, gameData);
     }
 
-    if (candidate.type === 'ability_level') {
-        const levelXpTable = gameData.levelExperienceTable || [];
-        const currentXp = levelXpTable[candidate.currentLevel] || 0;
-        return calculateAbilityLevelUpCost(
-            candidate.currentHrid,
-            candidate.currentLevel,
-            currentXp,
-            candidate.upgradeLevel
-        );
-    }
-
-    if (candidate.type === 'ability_swap') {
-        return calculateAbilityLevelUpCost(candidate.upgradeHrid, 0, 0, candidate.upgradeLevel);
+    // Books, at the market price of the book — and null rather than 0 when there
+    // is no listing, so an ability nobody is selling is not ranked as free
+    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) {
+        return explainAbilityCandidateCost(candidate, gameData).net;
     }
 
     if (candidate.type === 'cross_slot') {
@@ -1573,6 +1564,43 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
     return upgradeMode ? [upgradeMode] : ['equipment'];
 }
 
+/** Candidate types paid for in ability books rather than at the equipment market */
+const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
+
+/**
+ * Itemised cost for an ability candidate: the books, and nothing coming back.
+ *
+ * Two things the equipment breakdown gets wrong about an ability. It prices the
+ * upgrade as a market listing for the ability at its level — which does not
+ * exist, so a perfectly ordinary "Fireball 48 → 53" reads as "no price found" —
+ * and it credits the resale of the level you are leaving, which cannot happen:
+ * an ability is not an item and cannot be sold back.
+ *
+ * @param {Object} candidate - Candidate of type `ability_level` or `ability_swap`
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} Same shape as `explainUpgradeCost`, plus `books`
+ */
+function explainAbilityCandidateCost(candidate, gameData) {
+    // A swap is learned from scratch; a level-up starts from where it is now
+    const swap = candidate.type === 'ability_swap';
+    const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
+    const fromLevel = swap ? 0 : candidate.currentLevel || 0;
+    const currentXp = swap ? 0 : (gameData?.levelExperienceTable || [])[fromLevel] || 0;
+    const books = explainAbilityLevelUpCost(hrid, fromLevel, currentXp, candidate.upgradeLevel || 0);
+
+    return {
+        books,
+        buys: [],
+        // Never anything here: levels spent on an ability stay spent
+        credits: [],
+        gross: books.total,
+        credit: 0,
+        net: books.total,
+        unpriced: books.total === null ? [books.bookName] : [],
+        creditApplied: false,
+    };
+}
+
 /**
  * Itemised cost for a candidate: what gets bought, at what price, and what the
  * gear it replaces would fetch. Purely for display — the ranking still uses
@@ -1583,6 +1611,8 @@ export function resolveCandidateModes(upgradeModes, upgradeMode) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced }
  */
 export function explainUpgradeCost(candidate, gameData) {
+    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData);
+
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
 
     const buys = [];
