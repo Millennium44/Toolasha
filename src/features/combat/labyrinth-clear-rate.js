@@ -18,6 +18,7 @@ import {
     outcomeKey,
     accuracyRows,
     accuracySummary,
+    accuracyBySubject,
     foldRoomResult,
 } from './labyrinth-outcome-log.js';
 import Monster from '../combat-sim/engine/monster.js';
@@ -1174,7 +1175,7 @@ class LabyrinthClearRate {
             predictedFor: (hrid, level, kind) => this.predictedClearChance(hrid, level, kind),
             interval: wilsonInterval,
         });
-        return { rows, summary: accuracySummary(rows) };
+        return { rows, summary: accuracySummary(rows), bySubject: accuracyBySubject(rows, wilsonInterval) };
     }
 
     /** Throw the fight record away and start counting again */

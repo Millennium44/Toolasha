@@ -475,6 +475,192 @@ export function accuracySummary(rows) {
 }
 
 /**
+ * The record pooled by what is in the room, across every level of it.
+ *
+ * A per-level row is the honest unit — Crafting at 190 and Crafting at 202 are
+ * different fights — but it is also a small sample, and small samples say
+ * nothing. Twenty rooms of Crafting spread over six levels can be twenty rooms
+ * of "consistent" while the sim is quietly ten points high on every one of
+ * them, because no single level ever gathers enough fights to prove it.
+ *
+ * Pooling asks the other question: over everything you have ever done in a
+ * Crafting room, did the sim's claims add up? The prediction is the
+ * attempt-weighted average of the per-level ones, which is what "expected
+ * clears ÷ attempts" means, so the comparison stays like for like.
+ *
+ * @param {Array<Object>} rows - Output of `accuracyRows`
+ * @param {Function} interval - wilsonInterval, injected to keep this pure
+ * @returns {Array<Object>} One per subject, most-fought first
+ */
+export function accuracyBySubject(rows, interval) {
+    const groups = new Map();
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+        if (!groups.has(row.subjectHrid)) {
+            groups.set(row.subjectHrid, {
+                subjectHrid: row.subjectHrid,
+                kind: row.kind,
+                monster: row.monster,
+                levels: 0,
+                attempts: 0,
+                clears: 0,
+                // Only the rows with a prediction, so the comparison is like for
+                // like — folding in unsimmed rooms would credit the sim with no
+                // expected clears for fights it made no claim about
+                judged: 0,
+                judgedClears: 0,
+                expected: 0,
+                lowestLevel: row.level,
+                highestLevel: row.level,
+            });
+        }
+
+        const group = groups.get(row.subjectHrid);
+        group.levels += 1;
+        group.attempts += row.attempts;
+        group.clears += row.clears;
+        group.lowestLevel = Math.min(group.lowestLevel, row.level);
+        group.highestLevel = Math.max(group.highestLevel, row.level);
+
+        if (row.predicted !== null) {
+            group.judged += row.attempts;
+            group.judgedClears += row.clears;
+            group.expected += row.predicted * row.attempts;
+        }
+    }
+
+    const out = [...groups.values()].map((group) => {
+        const predicted = group.judged > 0 ? group.expected / group.judged : null;
+        const check =
+            group.judged > 0
+                ? compareToPrediction(group.judgedClears, group.judged, predicted, interval)
+                : { observed: null, verdict: 'not simmed' };
+
+        return {
+            ...group,
+            predicted,
+            observed: check.observed,
+            low: check.low,
+            high: check.high,
+            verdict: group.judged > 0 ? check.verdict : 'not simmed',
+            likelihood: group.judged > 0 ? check.likelihood : null,
+            // What the pooled record says the sim owes you, in clears. The sign
+            // is the thing to read: consistently negative across levels is a
+            // model that is too optimistic about this room, whatever any one
+            // level's interval allows for.
+            offBy: group.judged > 0 ? group.judgedClears - group.expected : null,
+        };
+    });
+
+    out.sort((a, b) => b.attempts - a.attempts || b.clears - a.clears);
+    return out;
+}
+
+/**
+ * The whole record as text, for pasting somewhere it can be looked at.
+ *
+ * Plain text rather than JSON: the point of handing this over is that a person
+ * reads it, and a wall of braces is a worse answer to "does anything look off"
+ * than a table is. Everything needed to check the arithmetic is in it — the
+ * counts, not just the rates.
+ *
+ * @param {Object} snapshot - `{rows, summary, bySubject}`
+ * @param {Object} [options] - `{ name }` for what to call each subject
+ * @returns {string}
+ */
+export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {}, { name } = {}) {
+    const label = name || ((hrid) => hrid.split('/').pop());
+    const pct = (value, places = 1) => (Number.isFinite(value) ? `${(value * 100).toFixed(places)}%` : '—');
+    const out = [];
+
+    out.push('Toolasha — labyrinth sim accuracy');
+    out.push(`${summary.attempts ?? 0} fights over ${summary.buckets ?? 0} room/level buckets`);
+    if (summary.expected === null || summary.expected === undefined) {
+        out.push('No simulated rates to compare against yet.');
+    } else {
+        const off = (summary.judgedClears ?? 0) - summary.expected;
+        out.push(
+            `Judged: ${summary.judged} fights, expected ${summary.expected.toFixed(1)} clears, ` +
+                `got ${summary.judgedClears} (${off >= 0 ? '+' : ''}${off.toFixed(1)})`
+        );
+    }
+    out.push(`Rooms the record contradicts: ${summary.contested ?? 0}`);
+
+    out.push('');
+    out.push('BY ROOM TYPE (pooled across levels)');
+    out.push('subject\tkind\tlevels\tattempts\tclears\texpected\toff by\tsim\tactual\t95% band\tverdict');
+    for (const group of bySubject) {
+        out.push(
+            [
+                label(group.subjectHrid),
+                group.kind,
+                `${group.levels} (${group.lowestLevel}-${group.highestLevel})`,
+                group.attempts,
+                group.clears,
+                group.judged > 0 ? group.expected.toFixed(1) : '—',
+                group.offBy === null ? '—' : `${group.offBy >= 0 ? '+' : ''}${group.offBy.toFixed(1)}`,
+                pct(group.predicted),
+                pct(group.observed),
+                group.judged > 0 ? `${pct(group.low)}-${pct(group.high)}` : '—',
+                group.verdict,
+            ].join('\t')
+        );
+    }
+
+    out.push('');
+    out.push('BY ROOM AND LEVEL');
+    out.push('subject\tlevel\tattempts\tclears\tsim\tactual\t95% band\tverdict\tlikelihood\tsim secs\treal secs');
+    for (const row of rows) {
+        out.push(
+            [
+                label(row.subjectHrid),
+                row.level,
+                row.attempts,
+                row.clears,
+                pct(row.predicted),
+                pct(row.observed),
+                `${pct(row.low)}-${pct(row.high)}`,
+                row.verdict,
+                row.likelihood === null ? '—' : row.likelihood.toFixed(4),
+                row.timing ? row.timing.predicted.toFixed(0) : '—',
+                row.timing ? row.timing.actual.toFixed(0) : '—',
+            ].join('\t')
+        );
+    }
+
+    // The per-action rates are the sharpest test in the record — the server
+    // states its own figure, so a calculator that disagrees is wrong outright
+    // rather than unlucky — and they are worth their own table for it
+    const withRates = rows.filter((row) => row.rates);
+    if (withRates.length) {
+        out.push('');
+        out.push('PER-ACTION RATES (calc vs server vs observed)');
+        out.push(
+            'subject\tlevel\tactions\tsuccess calc\tsuccess server\tsuccess seen\tdouble calc\tdouble server\tdouble seen\tformula off'
+        );
+        for (const row of withRates) {
+            const { success, double } = row.rates;
+            out.push(
+                [
+                    label(row.subjectHrid),
+                    row.level,
+                    row.measured?.actions ?? 0,
+                    pct(success.predicted),
+                    pct(success.server),
+                    pct(success.observed),
+                    pct(double.predicted),
+                    pct(double.server),
+                    pct(double.observed),
+                    success.formulaOff || double.formulaOff ? 'YES' : '',
+                ].join('\t')
+            );
+        }
+    }
+
+    return out.join('\n');
+}
+
+/**
  * How surprising this many wins would be if the prediction were right — the
  * probability of a result at least this extreme, in the direction observed.
  * @param {number} wins - Fights won

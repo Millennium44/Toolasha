@@ -9,6 +9,8 @@ import {
     accuracySummary,
     foldRoomResult,
     roomMeasurements,
+    accuracyBySubject,
+    accuracyReport,
 } from './labyrinth-outcome-log.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
@@ -415,5 +417,163 @@ describe('binomialTailLikelihood', () => {
         expect(binomialTailLikelihood(5, 10, 0)).toBe(1);
         expect(binomialTailLikelihood(5, 10, 1)).toBe(1);
         expect(binomialTailLikelihood(0, 0, 0.5)).toBe(1);
+    });
+});
+
+describe('accuracyBySubject', () => {
+    // Crafting at three levels. Every level is a small sample the interval
+    // cannot condemn; pooled, the sim is plainly high.
+    const crafting = (level, attempts, clears, predicted) => ({
+        subjectHrid: '/skills/crafting',
+        kind: 'skilling',
+        monster: 'crafting',
+        level,
+        attempts,
+        clears,
+        predicted,
+    });
+
+    const pooled = (rows) => accuracyBySubject(rows, wilsonInterval);
+
+    test('pools every level of one room type into one reading', () => {
+        const [group] = pooled([crafting(190, 5, 1, 0.64), crafting(196, 5, 1, 0.6), crafting(202, 10, 2, 0.62)]);
+
+        expect(group.attempts).toBe(20);
+        expect(group.clears).toBe(4);
+        expect(group.levels).toBe(3);
+        expect(group.lowestLevel).toBe(190);
+        expect(group.highestLevel).toBe(202);
+    });
+
+    test('and catches what no single level could', () => {
+        // Five fights at 64% cannot be condemned; twenty at 62% can
+        const [group] = pooled([crafting(190, 5, 1, 0.64), crafting(196, 5, 1, 0.6), crafting(202, 10, 2, 0.62)]);
+        expect(group.verdict).toBe('sim too high');
+        expect(group.offBy).toBeLessThan(0);
+    });
+
+    test('the pooled prediction is weighted by how often each level was fought', () => {
+        // Not the mean of the rates: one level fought a hundred times says more
+        // about the total than one fought twice
+        const [group] = pooled([crafting(190, 1, 0, 0.9), crafting(202, 99, 0, 0.1)]);
+
+        expect(group.predicted).toBeCloseTo((1 * 0.9 + 99 * 0.1) / 100, 6);
+    });
+
+    test('unsimmed levels count towards the record but not towards what was owed', () => {
+        const [group] = pooled([crafting(190, 10, 5, 0.5), crafting(202, 6, 6, null)]);
+
+        expect(group.attempts).toBe(16);
+        expect(group.clears).toBe(11);
+        expect(group.judged).toBe(10);
+        expect(group.expected).toBeCloseTo(5, 6);
+    });
+
+    test('a subject with no prediction anywhere says so rather than reading as a disaster', () => {
+        const [group] = pooled([crafting(190, 4, 4, null)]);
+
+        expect(group.verdict).toBe('not simmed');
+        expect(group.offBy).toBeNull();
+    });
+
+    test('room types are kept apart, most-fought first', () => {
+        const groups = pooled([
+            crafting(190, 5, 1, 0.6),
+            {
+                subjectHrid: '/monsters/mimic',
+                kind: 'combat',
+                monster: 'mimic',
+                level: 250,
+                attempts: 40,
+                clears: 20,
+                predicted: 0.5,
+            },
+        ]);
+
+        expect(groups.map((group) => group.subjectHrid)).toEqual(['/monsters/mimic', '/skills/crafting']);
+    });
+
+    test('survives an empty record', () => {
+        expect(pooled([])).toEqual([]);
+        expect(pooled(null)).toEqual([]);
+    });
+});
+
+describe('accuracyReport', () => {
+    const snapshot = {
+        summary: { buckets: 1, attempts: 20, clears: 4, judged: 20, judgedClears: 4, expected: 12.4, contested: 1 },
+        bySubject: [
+            {
+                subjectHrid: '/skills/crafting',
+                kind: 'skilling',
+                levels: 2,
+                lowestLevel: 190,
+                highestLevel: 202,
+                attempts: 20,
+                clears: 4,
+                judged: 20,
+                judgedClears: 4,
+                expected: 12.4,
+                predicted: 0.62,
+                observed: 0.2,
+                low: 0.08,
+                high: 0.42,
+                offBy: -8.4,
+                verdict: 'sim too high',
+            },
+        ],
+        rows: [
+            {
+                subjectHrid: '/skills/crafting',
+                level: 190,
+                attempts: 20,
+                clears: 4,
+                predicted: 0.62,
+                observed: 0.2,
+                low: 0.08,
+                high: 0.42,
+                verdict: 'sim too high',
+                likelihood: 0.0002,
+                timing: { predicted: 162, actual: 362, ratio: 2.23, rooms: 4 },
+                measured: { actions: 117 },
+                rates: {
+                    success: { predicted: 0.34, server: 0.34, observed: 0.26, formulaOff: false },
+                    double: { predicted: 0.1, server: 0.12, observed: 0.11, formulaOff: true },
+                },
+            },
+        ],
+    };
+
+    const report = () => accuracyReport(snapshot);
+
+    test('carries the counts, not just the rates', () => {
+        // The rates can be recomputed from the counts and not the other way
+        // round, and somebody checking the arithmetic needs the counts
+        expect(report()).toContain('20');
+        expect(report()).toContain('12.4');
+        expect(report()).toContain('-8.4');
+    });
+
+    test('has a section per question being asked', () => {
+        expect(report()).toContain('BY ROOM TYPE');
+        expect(report()).toContain('BY ROOM AND LEVEL');
+        expect(report()).toContain('PER-ACTION RATES');
+    });
+
+    test('flags a formula that disagrees with the server outright', () => {
+        // No amount of play makes a wrong formula right, so this is the loudest
+        // thing the record can say
+        expect(report()).toContain('YES');
+    });
+
+    test('names things the way the panel does when told how', () => {
+        const named = accuracyReport(snapshot, { name: () => 'Crafting' });
+        expect(named).toContain('Crafting');
+    });
+
+    test('a record with nothing in it is still a readable report', () => {
+        const empty = accuracyReport({ rows: [], summary: {}, bySubject: [] });
+        expect(empty).toContain('labyrinth sim accuracy');
+        expect(empty).not.toContain('PER-ACTION RATES');
     });
 });
