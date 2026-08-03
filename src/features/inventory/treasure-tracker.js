@@ -37,7 +37,7 @@ import {
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { row, blank, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
+import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, clearGeometry } from '../../utils/panel-geometry.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -1469,7 +1469,7 @@ registerRow({
 
         const verdict = formatReturn(totals.ratio);
         row(container, [
-            { text: GLYPHS.chest },
+            glyph('chest'),
             { text: `${formatLargeNumber(totals.opened)} chests`, color: ROW_COLORS.dim },
             { text: verdict.text, color: verdict.color, bold: true, push: true },
         ]);

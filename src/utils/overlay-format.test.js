@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, test, expect } from 'vitest';
-import { signedPercent, shortDuration, drawLine, rows, ROW_COLORS } from './overlay-format.js';
+import { signedPercent, shortDuration, drawLine, rows, glyph, GLYPHS, ROW_COLORS } from './overlay-format.js';
 
 describe('signedPercent', () => {
     test('signs both directions', () => {
@@ -153,5 +153,50 @@ describe('aligned rows', () => {
 
         expect(container.style.display).toBe('flex');
         expect(container.children).toHaveLength(2);
+    });
+});
+
+describe('glyphs, as the game draws them or as text', () => {
+    /** The game has drawn from a sheet, so its URL is discoverable */
+    const drawSprite = (sheet) => {
+        document.body.innerHTML = `<svg><use href="/static/media/${sheet}_sprite.abc123.svg#anything"></use></svg>`;
+    };
+
+    // First, and deliberately so: the sheet URL is cached once found, and this
+    // is the only point in the file where it has not been
+    test('before the game has drawn one, the emoji stands in', () => {
+        // Rather than an empty box. The URL carries a build hash and can only be
+        // read off an icon the game has already put on the page.
+        document.body.innerHTML = '';
+
+        expect(glyph('coin')).toEqual({ text: GLYPHS.coin });
+    });
+
+    test("once the sheet is on the page the glyph is the game's own artwork", () => {
+        drawSprite('items');
+
+        const segment = glyph('coin');
+        expect(segment.icon).toBe('coin');
+        expect(segment.sheet).toBe('items');
+        expect(segment.text).toBeUndefined();
+    });
+
+    test('a skill glyph comes off the skills sheet, not the item one', () => {
+        drawSprite('skills');
+
+        expect(glyph('dealt')).toMatchObject({ icon: 'attack', sheet: 'skills' });
+    });
+
+    test('a concept the game has no artwork for stays text whatever is loaded', () => {
+        // A bid order and a market trend are not objects; OPanel draws these as
+        // emoji too
+        drawSprite('items');
+
+        expect(glyph('market').text).toBe(GLYPHS.market);
+        expect(glyph('watch').text).toBe(GLYPHS.watch);
+    });
+
+    test('an unknown name is empty rather than undefined', () => {
+        expect(glyph('nonsense')).toEqual({ text: '' });
     });
 });

@@ -24,7 +24,8 @@ vi.mock('../../core/storage.js', () => ({
     default: { getJSON: async (_k, _s, fallback) => fallback, setJSON: async () => true },
 }));
 
-const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked } = await import('./house-affordability.js');
+const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, roomSkill, materialsCost } =
+    await import('./house-affordability.js');
 
 describe('nextLevelCost', () => {
     test('is the difference between two cumulative totals, not a cumulative total', () => {
@@ -118,5 +119,40 @@ describe('rooms you are not saving for', () => {
         await setRoomTracked('/house_rooms/gym', true);
 
         expect(affordableUpgrades(rooms, 5000).total).toBe(2);
+    });
+});
+
+describe('JHouse’s associations', () => {
+    test('a room is drawn as the skill it boosts', () => {
+        // Which is how a grid of seventeen becomes scannable: a milk bottle says
+        // Dairy Barn before the words have been read
+        expect(roomSkill('/house_rooms/dairy_barn')).toBe('milking');
+        expect(roomSkill('/house_rooms/mystical_study')).toBe('magic');
+    });
+
+    test('a room nobody has mapped falls back to its own name', () => {
+        // Which finds no sprite and draws a spacer — a missing icon rather than
+        // somebody else's
+        expect(roomSkill('/house_rooms/newly_added')).toBe('newly_added');
+        expect(roomSkill(null)).toBe('');
+    });
+});
+
+describe('both sides of the book', () => {
+    const materials = [
+        { itemHrid: '/items/birch_lumber', count: 300 },
+        { itemHrid: '/items/coin', count: 5000 },
+    ];
+
+    test('coins count at face value rather than being looked up', () => {
+        // A coin has no bid and no ask; dropping it would understate the level
+        // by exactly the coin part
+        expect(materialsCost(materials, 'ask')).toBe(300 + 5000);
+    });
+
+    test('nothing to price is nothing, not NaN', () => {
+        expect(materialsCost([], 'ask')).toBe(0);
+        expect(materialsCost(null, 'bid')).toBe(0);
+        expect(materialsCost([{ itemHrid: '/items/x' }], 'ask')).toBe(0);
     });
 });
