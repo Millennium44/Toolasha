@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: in a five-person party, whoever tanked collected everyone else's damage
+
+Two characters was enough to show that the old rule was not losing anything. Five was enough to show what it _was_ getting wrong, and two could not: with one person holding aggro and four hitting, the character a tick is about is very often the one being **hit**.
+
+- **The bottom rung was "only one character in this tick, so it was them".** On 82 of 440 damage ticks that lone character was in the tick because their own health and damage counter had moved. They had not attacked. Crediting them handed about 8,500 points of other people's damage to whoever was tanking.
+- **It is now "the last character to swing".** A swing and the damage it does are not always in the same tick: 76 of those 82 had somebody else swinging one real tick earlier.
+- **Every payload arrives twice** — 757 of 1,465 combat messages in that recording are byte-identical to the one before. Nothing has to care, since a duplicate diffs to no change, but it is why the swing behind a hit looked two ticks back rather than one.
+- **Two characters swinging on the same tick is rare but real**: three times in fourteen hundred ticks, one of which dealt damage. That falls to mana, and failing that to whoever swung last, rather than being pretended away.
+- **The recording is a fixture**, names replaced with Player One through Player Five, and one of its tests replays the old rung to check the fault reappears.
+
 ### A recorded party, and what it settled
 
 Every recording until now was solo, and solo cannot exercise the question attribution exists to answer: when a monster loses health, which of the party did it. A rule that always names the same character passes every solo test there is.

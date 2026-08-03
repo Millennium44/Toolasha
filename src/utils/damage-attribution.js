@@ -19,13 +19,26 @@
  * sixty-nine ticks. Mana is kept below the counter, for a payload that carries
  * no counter and for the tick where two people act at once and one of them cast.
  *
- * **This is a better-founded answer, not a rescue.** A recorded two-character
- * party — twelve battles, a hundred and thirty-seven ticks that dealt damage —
- * picks the same character under both rules on every single tick. `pMap` is a
- * delta exactly as `mMap` is, so a player who did nothing is not in the tick at
- * all, and the old code's "only one player here, so it was them" was usually
- * right. It was right by inference; this is right because a counter of attacks
- * went up, and nothing guarantees the inference keeps holding.
+ * **In a party of two this changed nothing**, and it took five to show why it
+ * mattered. `pMap` is a delta exactly as `mMap` is, so a character who did
+ * nothing is not in the tick, and with two people "the only one here must be
+ * them" is usually right — the old and new rules pick the same character on all
+ * 137 damage ticks of a recorded pair.
+ *
+ * With five, one person tanks. The character a tick is about is then very often
+ * the one being **hit**, not the one attacking: on 82 of 440 damage ticks the
+ * lone character in the tick was there because their own health and damage
+ * counter had moved. Crediting them handed 8,500 points of other people's
+ * damage to whoever was holding aggro. That rung is now "the last character to
+ * swing", because a swing and its damage are not always in the same tick —
+ * 76 of those 82 had somebody else swinging one real tick earlier.
+ *
+ * ## Every payload arrives twice
+ *
+ * 757 of 1,465 `battle_updated` messages in that recording are byte-identical to
+ * the one before. Nothing here has to care — a duplicate diffs to no change and
+ * produces no events — but it is why the swing behind a hit looks two ticks back
+ * rather than one.
  *
  * ## A counter distinguishes a hit from a tick
  *
@@ -50,7 +63,16 @@
  * @returns {Object}
  */
 export function newAttributionState() {
-    return { playersMP: {}, playersAtk: {}, monstersHP: {}, dmgCounter: {}, critCounter: {}, actions: {} };
+    return {
+        playersMP: {},
+        playersAtk: {},
+        party: {},
+        lastSwing: null,
+        monstersHP: {},
+        dmgCounter: {},
+        critCounter: {},
+        actions: {},
+    };
 }
 
 /**
@@ -80,6 +102,10 @@ export function newAttributionState() {
  */
 export function noteActions(state, players) {
     for (const [index, player] of Object.entries(players || {})) {
+        // A `new_battle` carries the whole roster, which is the only place the
+        // party's size is stated — and it is what tells a solo run apart from a
+        // party where one member happens to be alone in this tick
+        state.party[index] = true;
         const ability = player?.preparingAbilityHrid || player?.abilityHrid;
         const auto = player?.isPreparingAutoAttack || player?.isAutoAtk;
 
@@ -117,21 +143,29 @@ export function findCaster(pMap, state) {
         }
     }
 
-    // `atkCounter` is what it sounds like. Across three recorded runs it rose on
-    // every tick that dealt damage, and on a two-character party it named one
-    // character and never both — 133 of the 137 damage ticks, the other four
-    // being a character's first appearance in the delta.
-    if (swung.length === 1) return swung[0];
+    // `atkCounter` is what it sounds like, and it almost always names one person:
+    // in a five-character party, two of them swung on the same tick three times
+    // in fourteen hundred, one of which dealt damage. Rare enough to identify
+    // by, not so rare that the tie can be pretended away.
+    if (swung.length === 1) {
+        state.lastSwing = swung[0];
+        return swung[0];
+    }
 
     // Two people acting at once. Mana at least separates a cast from a swing,
     // which is the older and worse answer rather than no answer.
     if (spent.length) return spent[spent.length - 1];
 
-    // One character in this tick's delta — which after a `new_battle` is most
-    // ticks, since `pMap` carries whoever acted rather than the whole party. It
-    // is also what credits a solo auto-attacker on a payload with no counter.
-    if (indices.length === 1) return indices[0];
-    return null;
+    // Nobody else it could have been. This is the rung that carries a solo run
+    // on a payload with no attack counter at all.
+    const party = Object.keys(state.party);
+    if (party.length === 1) return party[0];
+    if (!party.length && indices.length === 1) return indices[0];
+
+    // The last character to swing. A swing and the damage it does are not always
+    // in the same tick — see the note above — and the person the tick *is* about
+    // is usually the one being hit, which is who this used to credit.
+    return state.lastSwing;
 }
 
 /**
