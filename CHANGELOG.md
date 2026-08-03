@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Every sim says how long is left
+
+The progress bars said how far in a run was, which is not what anyone watching an upgrade analysis wants to know. They now also carry a time remaining — `47 / 132 · ~3m 15s left` — on every sim in both panels: the single labyrinth run and the max-level finder, the labyrinth upgrade, all-fights and skilling analyses, and the combat panel's single sim, all-zones, item seek and upgrade analysis.
+
+The estimate comes from the run's own pace, since nothing else could know it — the same analysis varies by an order of magnitude with the mode, the candidate count and the machine. It averages the whole run's average with the pace of the last few updates: the first is stable but slow to notice that a run has slowed down, the second notices at once and lurches on every expensive candidate. It stays quiet for the first second and the first couple of percent, where the only thing being measured is workers starting up, and it rounds — an estimate that ticks 2m14s, 2m11s, 2m16s claims a precision it does not have.
+
+Sims that stop early once the win rate is pinned down will beat their estimate, which is measured against the full hours.
+
 ### Ability upgrades are priced in books, and credit nothing back
 
 An expanded "Fireball Lv48 → Lv53" row read `Buy fireball +53 — no price found` and `Sell fireball +48 — 0 back`. Both were the equipment breakdown talking about something that is not equipment: it asked the market for a listing of the ability at an enhancement level, which does not exist for anything anyone can buy books for today, and then credited the resale of the level being left behind, which cannot happen — an ability is not an item and cannot be sold back.

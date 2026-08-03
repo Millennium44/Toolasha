@@ -9,6 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { createEtaTracker } from '../../utils/progress-eta.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -1362,6 +1363,8 @@ class CombatSimUI {
         resultsEl.innerHTML = '';
 
         const simStartTime = Date.now();
+        // What is left of the run, taken from the run's own pace
+        const eta = createEtaTracker();
         const zoneCount = zones.length;
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
@@ -1376,8 +1379,9 @@ class CombatSimUI {
             const simResults = await runAllZonesSimulation(
                 { gameData, playerDTOs, zones: simZones, hours, communityBuffs, useEarlyExit: false },
                 (percent) => {
+                    const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
-                    progressText.textContent = `${percent}%`;
+                    progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
                 }
             );
 
@@ -1722,6 +1726,8 @@ class CombatSimUI {
         this._switchTab('results');
 
         const simStartTime = Date.now();
+        // What is left of the run, taken from the run's own pace
+        const eta = createEtaTracker();
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
         const elapsedTimer = setInterval(() => {
@@ -1733,8 +1739,9 @@ class CombatSimUI {
             const simResult = await runSimulation(
                 { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
                 (percent) => {
+                    const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
-                    progressText.textContent = `${percent}%`;
+                    progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
                 }
             );
 
@@ -1882,6 +1889,8 @@ class CombatSimUI {
         this._switchTab('results');
 
         const simStartTime = Date.now();
+        // What is left of the run, taken from the run's own pace
+        const eta = createEtaTracker();
         const zoneCount = selectedZones.length;
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
@@ -1896,8 +1905,9 @@ class CombatSimUI {
             const simResults = await runAllZonesSimulation(
                 { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit: this._earlyExitEnabled },
                 (percent) => {
+                    const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
-                    progressText.textContent = `${percent}%`;
+                    progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
                 }
             );
 
@@ -3719,6 +3729,8 @@ class CombatSimUI {
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
+        // One tracker per run: it starts its clock where it is made
+        const eta = createEtaTracker();
 
         const communityBuffs = getCommunityBuffs();
 
@@ -3761,8 +3773,9 @@ class CombatSimUI {
                     const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
                     // The food search's sim count is an estimate, so cap the bar
                     const pct = Math.min(100, Math.round((current / total) * 100));
+                    const { text: remaining } = eta.update(total > 0 ? Math.min(1, current / total) : 0);
                     if (fill) fill.style.width = pct + '%';
-                    if (text) text.textContent = `${current} / ${total}`;
+                    if (text) text.textContent = `${current} / ${total}` + (remaining ? ` · ${remaining}` : '');
                     this._setStatus(description);
                 },
                 { abortSignal: () => this._upgradeAborted }
