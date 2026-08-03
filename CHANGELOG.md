@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The Profit panel answers for the whole party
+
+It only ever asked the calculator about one character. Loot is rolled per character against their own drop gear, so five people splitting a zone do not split it evenly — and who is actually being paid is a coarser question than which price to sell at.
+
+- **A row per character**, revenue and profit per day, in whichever of the four cases is selected. Yours is first and in gold whatever order the party arrived in.
+- **Revenue beside profit, not profit alone.** In a dungeon the two are far apart: the key is charged the moment the chest drops and the chest only pays when it is opened, so a run reads as a loss until it does not.
+- **Chests are already counted at their expected value** — what opening one is worth, rather than what it sells for. The panel now says so when a dungeon is detected, since a revenue figure built from unopened chests is worth explaining.
+- **Solo the section is not drawn at all**, because a party of one is the rest of the panel.
+
+### Party Luck cannot measure a dungeon, and should say so
+
+Not yet fixed, and worth writing down: the drop model declines dungeons deliberately — they pay from a reward table on completion rather than per monster, so a spawn table is the wrong model rather than an imprecise one. The result is that Party Luck and the Luck and Over Expected tiles show nothing at all in a dungeon, for everybody, with no explanation. Saying why would be better than being blank.
+
 ### Fixed: in a five-person party, whoever tanked collected everyone else's damage
 
 Two characters was enough to show that the old rule was not losing anything. Five was enough to show what it _was_ getting wrong, and two could not: with one person holding aggro and four hitting, the character a tick is about is very often the one being **hit**.
