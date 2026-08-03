@@ -58,6 +58,21 @@ let sessionKey = null;
 let enemyTally = {};
 
 /**
+ * This fight only, cleared when the next one starts.
+ *
+ * The session tally answers "how has this run gone"; a portrait wants "how is
+ * this fight going", and they diverge exactly when it matters — the fight you
+ * are looking at is the one you can still do something about.
+ *
+ * Enemies are keyed by **slot** here rather than by name, unlike the session
+ * tally. Two Veyes in one wave are two different fights against the same
+ * monster, and a rate that averaged them would be on both tiles and true of
+ * neither. A slot is stable for the length of a battle, which is exactly how
+ * long this lives.
+ */
+let battle = { players: {}, enemies: {}, seconds: 0 };
+
+/**
  * Monster index → `{name, maxHP}`, from `new_battle`.
  *
  * Rebuilt every battle, because an index is a slot in this fight rather than an
@@ -89,6 +104,15 @@ let filterNonDamaging = true;
 /** Below this the averages are one fight's luck rather than a measurement */
 const MIN_SECONDS = 5;
 
+/**
+ * The same idea for a single fight, but far shorter.
+ *
+ * A fight lasts seconds, so waiting five of them to give a rate would mean most
+ * fights never got one. One second is enough to divide by without the first hit
+ * reading as an enormous rate.
+ */
+const MIN_BATTLE_SECONDS = 1;
+
 /** A tick further from the last than this is a new session, not a long swing */
 const MAX_TICK_GAP_MS = 2000;
 
@@ -110,9 +134,34 @@ export function resetDamageTracker() {
     sessionKey = null;
     tally = {};
     enemyTally = {};
+    battle = { players: {}, enemies: {}, seconds: 0 };
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
+}
+
+/**
+ * What has happened in the fight on screen right now.
+ *
+ * @returns {{seconds: number, players: Object, enemies: Object}} Keyed by slot,
+ *   each `{name, damage, dps}`. `dps` is null until there is enough of a fight
+ *   to divide by — a different thing from zero, and it must not be drawn as one.
+ */
+export function battleBreakdown() {
+    const measurable = battle.seconds >= MIN_BATTLE_SECONDS;
+    const rate = (damage) => (measurable ? damage / battle.seconds : null);
+
+    const players = {};
+    for (const [index, damage] of Object.entries(battle.players)) {
+        players[index] = { name: names[index] || null, damage, dps: rate(damage) };
+    }
+
+    const enemies = {};
+    for (const [index, damage] of Object.entries(battle.enemies)) {
+        enemies[index] = { name: monsters[index]?.name || null, damage, dps: rate(damage) };
+    }
+
+    return { seconds: battle.seconds, players, enemies };
 }
 
 /**
@@ -328,6 +377,10 @@ export default {
                     names[index] = player?.name || player?.character?.name || null;
                 }
 
+                // The fight on screen is a new one, so what was on the portraits
+                // belongs to the last one
+                battle = { players: {}, enemies: {}, seconds: 0 };
+
                 // Rebuilt rather than merged: an index is a slot in this fight,
                 // and last fight's slot 0 was a different monster
                 monsters = {};
@@ -379,6 +432,24 @@ export default {
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
 
+                // The same events again, by slot and for this fight only. Folded
+                // here rather than derived from the session tally because the
+                // session tally has already lost the slot — it keys enemies by
+                // name, which is the right choice for a run and the wrong one
+                // for two identical monsters standing side by side.
+                for (const event of events) {
+                    if (event.isKill || event.isMiss || event.isHeal) continue;
+                    const amount = event.amount || 0;
+                    if (!amount) continue;
+
+                    if (event.playerIndex !== null && event.playerIndex !== undefined) {
+                        battle.players[event.playerIndex] = (battle.players[event.playerIndex] || 0) + amount;
+                    }
+                    if (event.monsterIndex !== null && event.monsterIndex !== undefined) {
+                        battle.enemies[event.monsterIndex] = (battle.enemies[event.monsterIndex] || 0) + amount;
+                    }
+                }
+
                 // After attributing, never before: the hit on this tick was cast
                 // by what was prepared before it, and by the time the payload
                 // arrives the player has started the next thing. Reading this
@@ -390,7 +461,10 @@ export default {
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none
                 const gap = now - lastTickAt;
-                if (lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) seconds += gap / 1000;
+                if (lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) {
+                    seconds += gap / 1000;
+                    battle.seconds += gap / 1000;
+                }
                 lastTickAt = now;
             } catch (error) {
                 console.error('[DamageTracker] Reading a combat tick failed:', error);

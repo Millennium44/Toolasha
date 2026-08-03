@@ -35,13 +35,15 @@
  */
 
 import config from '../../core/config.js';
-import { damageBreakdown } from './damage-tracker.js';
+import { damageBreakdown, battleBreakdown } from './damage-tracker.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { formatLargeNumber } from '../../utils/formatters.js';
+import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 
 /** Where the party's portraits live */
 const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
+/** And where the things they are fighting live */
+const MONSTERS_AREA = '[class*="BattlePanel_monstersArea"]';
 /** One character's tile inside it */
 const UNIT = '[class*="CombatUnit_combatUnit"]';
 /** The name inside a tile, which is what a meter is matched on */
@@ -100,17 +102,63 @@ export function matchPortraits(units, players) {
  * @param {Object} player - From `damageBreakdown().players`
  * @returns {{text: string, title: string}}
  */
-export function meterText(player) {
-    // Null until the run is long enough to divide by, which is a different
-    // thing from zero and should not be drawn as one
-    const dps = player.dps === null || player.dps === undefined ? null : Math.round(player.dps);
-    const damage = formatLargeNumber(Math.round(player.damage || 0));
+export function meterText(player, current = null) {
+    // Null until there is enough to divide by, which is a different thing from
+    // zero and should not be drawn as one
+    const rate = (value) => (value === null || value === undefined ? null : Math.round(value));
+
+    // The rate in full and the damage abbreviated, as DPs draws it. They are read
+    // differently: a rate is compared against another rate, where 1,052 against
+    // 1.1K is the comparison, while a running total only has to convey a size.
+    const line = (dps, damage, label) => {
+        const shown = rate(dps);
+        const figure = shown === null ? '—' : formatWithSeparator(shown);
+        return `${figure} DPS ${formatLargeNumber(Math.round(damage || 0))} ${label}`;
+    };
+
+    // This fight above the run, as DPs has it. The order is the point: the fight
+    // in front of you is the one you can still change, and the run is the
+    // context you read it against.
+    const lines = [];
+    if (current) lines.push(line(current.dps, current.damage, 'cur'));
+    lines.push(line(player.dps, player.damage, 'total'));
 
     return {
-        text: dps === null ? `— ${damage}` : `${formatLargeNumber(dps)} dps  ${damage}`,
+        lines,
         title:
-            `${player.name}: ${formatLargeNumber(Math.round(player.damage || 0))} damage this run` +
-            (dps === null ? ', not yet long enough to give a rate.' : `, ${formatLargeNumber(dps)} per second.`),
+            `${player.name}\n` +
+            (current
+                ? `This fight: ${formatLargeNumber(Math.round(current.damage || 0))} damage` +
+                  (rate(current.dps) === null
+                      ? ', too early for a rate.'
+                      : `, ${formatWithSeparator(rate(current.dps))}/s.`)
+                : '') +
+            `\nThis run: ${formatLargeNumber(Math.round(player.damage || 0))} damage` +
+            (rate(player.dps) === null
+                ? ', not yet long enough to give a rate.'
+                : `, ${formatWithSeparator(rate(player.dps))}/s.`),
+    };
+}
+
+/**
+ * What a monster's tile says: how fast it is being taken down.
+ *
+ * Per slot rather than per name, so two of the same monster side by side each
+ * carry their own rate — averaging them would put a number on both tiles that
+ * was true of neither.
+ *
+ * @param {Object} enemy - From `battleBreakdown().enemies`
+ * @returns {{text: string, title: string}}
+ */
+export function enemyMeterText(enemy) {
+    const dps = enemy.dps === null || enemy.dps === undefined ? null : Math.round(enemy.dps);
+
+    return {
+        text: dps === null ? '—' : `${formatWithSeparator(dps)}/s`,
+        title:
+            `${enemy.name || 'This enemy'}: ${formatWithSeparator(Math.round(enemy.damage || 0))} damage dealt to ` +
+            'it this fight' +
+            (dps === null ? ', too early for a rate.' : `, ${formatWithSeparator(dps)} per second.`),
     };
 }
 
@@ -145,38 +193,89 @@ class PortraitDps {
         this.isInitialized = false;
     }
 
-    /** Put a meter on every portrait whose character is in the tally */
+    /** Put a meter on every portrait, and a rate on every monster */
     _draw() {
         try {
-            const area = document.querySelector(PLAYERS_AREA);
-            if (!area) return;
-
-            const units = [...area.querySelectorAll(UNIT)];
-            if (!units.length) return;
-
-            const { players } = damageBreakdown();
-            const pairs = matchPortraits(units, players);
-
-            // Meters whose portrait has gone — somebody left, or the fight
-            // changed shape — rather than left behind pointing at nobody
-            const wanted = new Set(pairs.map((pair) => pair.unit));
-            for (const meter of area.querySelectorAll(`[${MARK}]`)) {
-                if (!wanted.has(meter.parentElement)) meter.remove();
-            }
-
-            for (const { unit, player } of pairs) this._meter(unit, player);
+            const run = damageBreakdown();
+            const fight = battleBreakdown();
+            this._drawPlayers(run, fight);
+            this._drawEnemies(fight);
         } catch (error) {
             console.error('[PortraitDps] Drawing the portrait meters failed:', error);
         }
     }
 
     /**
-     * @param {HTMLElement} unit - The portrait tile
-     * @param {Object} player - Their row from the tally
+     * @param {Object} run - From `damageBreakdown`
+     * @param {Object} fight - From `battleBreakdown`
      */
-    _meter(unit, player) {
-        const below = config.getSettingValue('portraitDpsPosition', 'above') === 'below';
-        const { text, title } = meterText(player);
+    _drawPlayers(run, fight) {
+        const area = document.querySelector(PLAYERS_AREA);
+        if (!area) return;
+
+        const units = [...area.querySelectorAll(UNIT)];
+        const pairs = matchPortraits(units, run.players);
+
+        // The current-fight row is keyed by slot, and the run's row is keyed by
+        // name — so the join between them goes through the name, which is the
+        // only thing meaningful in both
+        const currentByName = new Map();
+        for (const entry of Object.values(fight.players || {})) {
+            if (entry?.name) currentByName.set(entry.name, entry);
+        }
+
+        this._prune(area, new Set(pairs.map((pair) => pair.unit)));
+        for (const { unit, player } of pairs) {
+            this._meter(unit, meterText(player, currentByName.get(player.name) || null));
+        }
+    }
+
+    /**
+     * @param {Object} fight - From `battleBreakdown`
+     */
+    _drawEnemies(fight) {
+        const area = document.querySelector(MONSTERS_AREA);
+        if (!area) return;
+
+        // Monsters are joined by slot rather than by name, which is the opposite
+        // of the players and right for the opposite reason: two of the same
+        // monster are two different fights, and their names cannot tell them
+        // apart. A slot is stable for the length of a battle, and the tiles are
+        // rebuilt when it ends.
+        const units = [...area.querySelectorAll(UNIT)];
+        const wanted = new Set();
+
+        units.forEach((unit, index) => {
+            const enemy = fight.enemies?.[index];
+            if (!enemy) return;
+
+            wanted.add(unit);
+            this._meter(unit, enemyMeterText(enemy), true);
+        });
+
+        this._prune(area, wanted);
+    }
+
+    /**
+     * Take away meters whose tile is no longer one we are drawing on.
+     *
+     * @param {HTMLElement} area - Players or monsters
+     * @param {Set<HTMLElement>} wanted - Tiles that should keep theirs
+     */
+    _prune(area, wanted) {
+        for (const meter of area.querySelectorAll(`[${MARK}]`)) {
+            if (!wanted.has(meter.parentElement)) meter.remove();
+        }
+    }
+
+    /**
+     * @param {HTMLElement} unit - The tile
+     * @param {{text: string, lines: Array<string>, title: string}} content - What it says
+     * @param {boolean} [atBottom] - Force it under the tile, as monsters want
+     */
+    _meter(unit, content, atBottom = false) {
+        const below = atBottom || config.getSettingValue('portraitDpsPosition', 'above') === 'below';
+        const lines = content.lines || [content.text];
 
         let meter = unit.querySelector(`:scope > [${MARK}]`);
         if (!meter) {
@@ -185,7 +284,7 @@ class PortraitDps {
             // In the flow of the tile rather than positioned over it. The first
             // version hung the meter outside the tile's box at `top: -14px`,
             // which drew nothing visible: the battle panel clips its children,
-            // so the meter was there and cropped away. MCS makes room for its
+            // so the meter was there and cropped away. DPs makes room for its
             // own lines the same way — the tile simply gets taller.
             Object.assign(meter.style, {
                 textAlign: 'center',
@@ -198,6 +297,7 @@ class PortraitDps {
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 padding: '1px 2px',
+                color: ROW_COLORS.bad,
             });
         }
 
@@ -210,9 +310,17 @@ class PortraitDps {
             else unit.insertBefore(meter, unit.firstChild);
         }
 
-        meter.style.color = player.dps === null || player.dps === undefined ? ROW_COLORS.dim : ROW_COLORS.gold;
-        if (meter.textContent !== text) meter.textContent = text;
-        meter.title = title;
+        const text = lines.join('\n');
+        if (meter.dataset.text !== text) {
+            meter.dataset.text = text;
+            meter.replaceChildren();
+            for (const line of lines) {
+                const row = document.createElement('div');
+                row.textContent = line;
+                meter.appendChild(row);
+            }
+        }
+        meter.title = content.title;
     }
 }
 
