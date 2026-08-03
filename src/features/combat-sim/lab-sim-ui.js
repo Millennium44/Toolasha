@@ -207,10 +207,6 @@ class LabSimUI {
                 <option value="/items/advanced_food_crate">Advanced</option>
                 <option value="/items/expert_food_crate" selected>Expert</option>
             </select>
-            <label id="mwi-labsim-crit-aura-label" style="color:#888; display:none; align-items:center; gap:5px; cursor:pointer;">
-                <input id="mwi-labsim-crit-aura" type="checkbox">
-                <span>Crit aura</span>
-            </label>
         `;
 
         const editorArea = document.createElement('div');
@@ -346,6 +342,10 @@ class LabSimUI {
                 title="Sim each fight at its automation skip level (effective combat level + skip − 1) instead of the current run's live room levels">
                 <input type="checkbox" id="mwi-labsim-allfights-useskip" checked style="margin:0; cursor:pointer;">
                 Use Skip Levels
+            </label>
+            <label id="mwi-labsim-crit-aura-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-labsim-crit-aura" style="margin:0; cursor:pointer;">
+                Crit Aura
             </label>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto;
@@ -964,7 +964,7 @@ class LabSimUI {
             return;
         }
 
-        const playerDTOs = [this._critAuraSwap(selfDTO)];
+        const playerDTOs = [selfDTO];
 
         const communityBuffs = getCommunityBuffs();
         const zones = getCombatZones();
@@ -1182,8 +1182,10 @@ class LabSimUI {
             return;
         }
 
-        // Yours only. You own one aura, so putting it on every party member
-        // would be simulating a party nobody could field.
+        // Yours only, and here only. You own one aura, so putting it on every
+        // party member would be simulating a party nobody could field — and
+        // this is an upgrade question rather than a "how far can I get" one, so
+        // Max Level is left simulating the gear you actually have on.
         const selfHrid = this._editor?.getSelfHrid();
         playerDTOs = playerDTOs.map((dto) => (!selfHrid || dto?.hrid === selfHrid ? this._critAuraSwap(dto) : dto));
 
@@ -2359,9 +2361,10 @@ class LabSimUI {
 
         box.checked = Boolean(config.getSetting('labSim_critAura'));
         label.title =
-            `Simulate wearing your Critical Aura${owned.enhancementLevel ? ` +${owned.enhancementLevel}` : ''} ` +
-            'in place of whatever trinket the character has on. Labyrinth fights are short and often decided by a ' +
-            'crit, so the aura you run outside is not always the one you would want inside.';
+            `Analyse upgrades with your Critical Aura${owned.enhancementLevel ? ` +${owned.enhancementLevel}` : ''} ` +
+            'on, in place of whatever trinket you are wearing. An upgrade is worth a different amount depending on ' +
+            'what else is equipped, and a labyrinth fight is short enough to be decided by a crit — so the answer ' +
+            'to "what should I buy next" can change with the aura. Affects the Upgrade analysis only.';
     }
 
     /**

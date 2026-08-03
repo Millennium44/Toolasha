@@ -1164,10 +1164,10 @@ export const settingsGroups = {
             },
             labSim_critAura: {
                 id: 'labSim_critAura',
-                label: 'Lab Simulator: Simulate with your Critical Aura equipped',
+                label: 'Lab Simulator: Analyse upgrades with your Critical Aura on',
                 type: 'checkbox',
                 default: false,
-                help: 'Swaps whatever trinket the simulated character is wearing for your own Critical Aura, at the enhancement level you own it at. Labyrinth fights are short and often decided by a crit, so the aura you run outside the labyrinth is not always the one you would want inside it — this asks what the fight looks like with it on without making you change gear. Off when you do not own one. The Lab Simulator has the same switch',
+                help: 'Swaps whatever trinket you are wearing for your own Critical Aura, at the enhancement level you own it at, for the Upgrade analysis only. An upgrade is worth a different amount depending on what else is equipped, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura on. Max Level is left simulating the gear you actually have. Hidden when you do not own one. The Lab Simulator\'s Upgrade tab has the same switch',
             },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',

@@ -14,9 +14,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
 
-### And can simulate with your Critical Aura on
+### And can analyse upgrades with your Critical Aura on
 
-A **Crit aura** switch in the Configure tab swaps whatever trinket the character is wearing for your own Critical Aura, at the level you own it at. A labyrinth fight is short and often decided by a crit, so the aura you run outside is not always the one worth wearing inside — and swapping gear to find out is a lot of clicking for a question the simulator can answer.
+A **Crit Aura** switch on the **Upgrade** tab, beside Use Skip Levels, swaps whatever trinket you are wearing for your own Critical Aura at the level you own it at. An upgrade is worth a different amount depending on what else is equipped, and a labyrinth fight is short enough to be decided by a crit — so the answer to "what should I buy next" can change with the aura on, and swapping gear to find out is a lot of clicking for a question the simulator can answer.
+
+The Upgrade analysis only. Max Level asks how far your gear gets you, which is a question about the gear you actually have.
 
 Yours only: you own one aura, so putting it on every party member would be simulating a party nobody could field. The switch is hidden when you do not own one, because a switch that cannot do anything reads as broken rather than as inapplicable. The aura is found by slot and name rather than a hardcoded hrid, so a Critical Pendant is not mistaken for one and a renamed aura is still found.
 
