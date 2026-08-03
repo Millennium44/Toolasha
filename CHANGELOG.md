@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The sim accuracy record can leave the browser
+
+An **Export** button on the Sim accuracy tab copies the whole record as text. The record is the only thing that can say whether the model is wrong, and until now it sat in one browser's IndexedDB where nobody could look at it.
+
+Text rather than JSON, because the point of handing it over is that a person reads it. Three tables: pooled by room type, per room and level, and the per-action rates. Counts as well as rates — the rates can be recomputed from the counts and not the other way round, and anybody checking the arithmetic needs the counts.
+
+### And a reading per room type, across every level of it
+
+A per-level row is the honest unit — Crafting at 190 and Crafting at 202 are different fights — but it is also a small sample, and small samples say nothing. Twenty rooms of Crafting spread over six levels can be six rows of "consistent" while the sim is ten points high on every one of them, because no single level ever gathers enough fights to prove it.
+
+Each room type now gets a pooled row above the per-level ones: what the sim owed you over everything you have ever done in that kind of room, against what you got. The pooled prediction is weighted by how often each level was fought, so it is "expected clears ÷ attempts" rather than an average of rates — a level fought a hundred times says more about the total than one fought twice.
+
 ### Consumables are coloured against the target you set
 
 A consumable lasting two days is fine if you asked for one and is the thing to go and fix if you asked for three. The tile and the panel both used a fixed one-hour threshold, so with "3 days" chosen the tile called Dragon Fruit Yogurt green while the panel's own Buy column said to buy 1.15K of it — two halves of one feature disagreeing.

@@ -27,6 +27,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
+import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 
 const STORAGE_KEY = 'labyrinthRoomLogs';
@@ -972,6 +973,14 @@ class LabyrinthRoomLogs {
             this.syncTabButton();
         });
 
+        this.exportButton = document.createElement('button');
+        this.exportButton.textContent = 'Export';
+        this.exportButton.title = 'Copy the whole fight record as text, so it can be looked at somewhere else';
+        this.exportButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+        this.exportButton.addEventListener('click', () => this.exportAccuracy());
+
+        actions.appendChild(this.exportButton);
         actions.appendChild(this.clearButton);
         actions.appendChild(closeBtn);
         header.appendChild(tabs);
@@ -1018,6 +1027,9 @@ class LabyrinthRoomLogs {
         if (!this.clearButton) return;
 
         const accuracy = this.view === 'accuracy';
+        // Only the accuracy tab has a record worth exporting; the room log is
+        // one run and is on screen already
+        if (this.exportButton) this.exportButton.style.display = accuracy ? '' : 'none';
         this.clearButton.textContent = accuracy ? (this.resetArmed ? 'Sure?' : 'Reset') : 'Clear';
         this.clearButton.title = accuracy
             ? 'Throw away every recorded fight and start the accuracy record over'
@@ -1415,8 +1427,103 @@ class LabyrinthRoomLogs {
             return;
         }
 
+        this.lastAccuracy = snapshot;
         list.appendChild(this.renderAccuracySummary(summary));
+        for (const group of snapshot.bySubject || []) list.appendChild(this.renderSubjectRow(group));
         for (const row of rows) list.appendChild(this.renderAccuracyRow(row));
+    }
+
+    /**
+     * One room type, pooled across every level of it.
+     *
+     * Drawn above the per-level rows because it answers the question they
+     * cannot: a level with nine fights is always "consistent", and nine levels
+     * of that can still be a sim ten points high on every one of them.
+     *
+     * @param {Object} group - From `accuracyBySubject`
+     * @returns {HTMLElement}
+     */
+    renderSubjectRow(group) {
+        const pct = (v, places = 0) => (Number.isFinite(v) ? `${(v * 100).toFixed(places)}%` : '—');
+
+        const card = document.createElement('div');
+        card.style.cssText =
+            'border:1px solid rgba(146,182,255,0.18); border-left:3px solid rgba(146,182,255,0.5); ' +
+            'border-radius:5px; background:rgba(18,26,38,0.92); padding:5px 7px; font-size:11px; line-height:1.35;';
+
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex; justify-content:space-between; gap:6px; font-weight:700;';
+        const name = document.createElement('span');
+        name.textContent = `${this.prettyMonsterName(group.subjectHrid)} — all levels`;
+        const record = document.createElement('span');
+        record.style.cssText = 'opacity:0.85;';
+        record.textContent = `${group.clears}/${group.attempts}`;
+        header.append(name, record);
+        card.appendChild(header);
+
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
+        const numbers = document.createElement('span');
+        numbers.style.color = 'rgba(221,232,255,0.92)';
+        if (group.judged > 0) {
+            const sign = group.offBy >= 0 ? '+' : '';
+            numbers.textContent =
+                `Sim ${pct(group.predicted)} → actual ${pct(group.observed)} · ` +
+                `${sign}${group.offBy.toFixed(1)} clears against ${group.expected.toFixed(1)} expected`;
+        } else {
+            numbers.textContent = `Never simmed — you clear ${pct(group.observed)}`;
+        }
+        line.appendChild(numbers);
+        const colour = VERDICT_COLORS[group.verdict];
+        if (colour) line.appendChild(this.makeChip(group.verdict, 'rgba(255,255,255,0.08)', colour));
+        card.appendChild(line);
+
+        const spread = document.createElement('div');
+        spread.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
+        spread.textContent =
+            group.lowestLevel === group.highestLevel
+                ? `Lv.${group.lowestLevel} only`
+                : `${group.levels} levels, Lv.${group.lowestLevel}–${group.highestLevel}`;
+        card.appendChild(spread);
+        return card;
+    }
+
+    /**
+     * Put the whole record on the clipboard.
+     *
+     * The record is the only thing that can say whether the model is wrong, and
+     * it lives in one browser's IndexedDB where nobody can look at it. Text
+     * rather than JSON because the point is that a person reads it.
+     */
+    async exportAccuracy() {
+        const snapshot = this.lastAccuracy || (await this.simSource?.accuracy?.());
+        if (!snapshot?.rows?.length) {
+            this.flashExport('Nothing recorded yet');
+            return;
+        }
+
+        const report = accuracyReport(snapshot, { name: (hrid) => this.prettyMonsterName(hrid) });
+        try {
+            await navigator.clipboard.writeText(report);
+            this.flashExport('Copied ✓');
+        } catch (error) {
+            // A clipboard that refuses is not a reason to lose the report
+            console.error('[LabyrinthRoomLogs] Copying the accuracy report failed:', error);
+            console.log(report);
+            this.flashExport('In console');
+        }
+    }
+
+    /**
+     * @param {string} text - What the button should say for a moment
+     */
+    flashExport(text) {
+        if (!this.exportButton) return;
+        this.exportButton.textContent = text;
+        clearTimeout(this._exportFlash);
+        this._exportFlash = setTimeout(() => {
+            if (this.exportButton) this.exportButton.textContent = 'Export';
+        }, 1600);
     }
 
     renderAccuracySummary(summary) {
