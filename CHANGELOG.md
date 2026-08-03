@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: the Overlay switch was invisible
+
+It was added to the strip, positioned, kept in place, and could not be seen. The switch is a clone of one of the game's own tabs, so that it looks like whatever the game currently thinks a tab looks like — and it was cloning a hidden one.
+
+- **It is no longer copied from a tab the game has hidden.** With "show Toolasha tab by default" on, the game's own Inventory tab is set to `display: none` — and it is the first tab in the strip, so it was exactly what the search picked. The clone brought that inline style along with it.
+- **It no longer inherits its model's position.** Tab Reorder lays the strip out with CSS `order`, and a clone carries that number, which would park the switch on top of the very tab it was copied from.
+- **Nor its model's drag handle**, which survived cloning without the handlers that gave it meaning.
+- **Injected tabs are not used as the model.** Toolasha and Optimizer are added by this script; cloning one would copy whatever that feature had done to itself.
+
 ### Fixed: docking cut the bottom row of tiles off
 
 The column did not shrink to make room — it grew, so the docked panel hung off the bottom of the window with its last row of tiles sliced in half.
