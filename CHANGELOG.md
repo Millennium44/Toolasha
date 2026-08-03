@@ -14,6 +14,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
 
+### Skilling upgrades can suggest gear you do not own yet
+
+The skilling advisor could only ever offer to **enhance what was already on**, which meant it was silent about the two upgrades that actually move a labyrinth skilling room: a celestial tool, and the skill's own outfit. Neither is on the character, so neither was ever a candidate — an analysis that can only say "+1 on what you have" cannot say "buy the brush".
+
+Each slot now also offers the best piece you are not wearing, at +0, priced as a purchase net of selling what it replaces. One per slot rather than every tier of the same tool: the analysis simulates each candidate, and six tiers would spend the run proving the best one is the best one. Gear you cannot equip yet is left out, since it would sit at the top of a ranked list pushing down what you could buy today.
+
+**Each piece only counts for its own skill.** A Milking outfit does nothing in a Crafting room, and the analysis runs over every skill at once — a candidate with no skill attached is applied to all of them, so an outfit would appear to help rooms it cannot affect, which is the kind of wrong that reads as right. Every candidate carries the skill it belongs to and is installed in that skill's kit alone. Generic skilling gear, whose stats say `skillingSpeed` rather than `milkingSpeed`, is still offered to everybody — which is what generic means.
+
+What counts as "for this skill" comes from the stats rather than a list of names: an item is for Milking if its `noncombatStats` carry a milking stat. That is exactly what a celestial milking tool and a milking outfit have in common, and what a name list would need updating for on every content patch.
+
 ### Bulk Sell never sells gear that is in a loadout
 
 A loadout is a claim on an item: you are still using it, just not right now, and you find out it is gone the next time you switch to that loadout. It goes through the same hold mechanism other scripts use, so it is counted and reported rather than silently filtered — the panel says how many were held back and why.
