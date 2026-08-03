@@ -16,6 +16,7 @@ import panelSizeMemory from '../features/ui/panel-size-memory.js';
 import tabReorder from '../features/ui/tab-reorder.js';
 import draggableModals from '../features/ui/draggable-modals.js';
 import overlayPanel from '../features/ui/overlay-panel.js';
+import overlayTabButton from '../features/ui/overlay-tab-button.js';
 // Side-effect import: registers the Houses overlay row at module scope
 import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
@@ -124,6 +125,7 @@ toolashaRoot.UI = {
     tabReorder,
     draggableModals,
     overlayPanel,
+    overlayTabButton,
     combatPanelScale,
     altClickNavigation,
     collectionNavigation,
