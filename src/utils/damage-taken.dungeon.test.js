@@ -103,3 +103,38 @@ describe('a recorded dungeon, every field kept', () => {
         expect(monsterStates.some((monster) => 'atkCounter' in monster)).toBe(true);
     });
 });
+
+describe('what a kill is worth', () => {
+    test('every monster a tick mentions states its own full health', () => {
+        // `mHP`, on all 176 monster entries here and all 116 of the refresh
+        // recording, agreeing with `new_battle` every time. The DPs panel prices
+        // a kill by it, and taking it from the tick means a monster first met
+        // after a reload is priced like any other.
+        const entries = recording.ticks
+            .filter((tick) => tick.type !== 'new_battle')
+            .flatMap((tick) => Object.values(tick.payload.mMap || {}));
+
+        expect(entries.length).toBeGreaterThan(100);
+        expect(entries.every((monster) => Number.isFinite(monster.mHP))).toBe(true);
+    });
+
+    test('and it agrees with what the battle said it was', () => {
+        const declared = {};
+        let compared = 0;
+
+        for (const tick of recording.ticks) {
+            if (tick.type === 'new_battle') {
+                for (const [index, monster] of Object.entries(tick.payload.monsters || {})) {
+                    declared[index] = monster?.combatDetails?.maxHitpoints;
+                }
+                continue;
+            }
+            for (const [index, monster] of Object.entries(tick.payload.mMap || {})) {
+                if (declared[index] === undefined) continue;
+                expect(monster.mHP).toBe(declared[index]);
+                compared += 1;
+            }
+        }
+        expect(compared).toBeGreaterThan(100);
+    });
+});

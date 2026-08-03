@@ -38,33 +38,27 @@ describe('reading one tile', () => {
     const TILE = ['Eyes', '2215/2215', '2215/2215', 'T2', 'Auto Attack', '0/s'];
 
     test('the name is the first part with no digit in it', () => {
-        expect(parseUnitTexts(TILE)).toEqual({ name: 'Eyes', hp: 2215, max: 2215 });
+        expect(parseUnitTexts(TILE)).toEqual({ name: 'Eyes', hp: 2215 });
     });
 
     test('the health is the first bar, not the mana one under it', () => {
-        expect(parseUnitTexts(['Eye', '1348/2035', '2035/2035'])).toEqual({ name: 'Eye', hp: 1348, max: 2035 });
+        expect(parseUnitTexts(['Eye', '1348/2035', '2035/2035'])).toEqual({ name: 'Eye', hp: 1348 });
     });
 
-    test('the two bars are read apart, not run together', () => {
+    test('the health is read from the bar alone, not from a run-together string', () => {
         // Flattened, this tile reads `2215/22152215/2215` and there is no way to
-        // tell where the first denominator ends. The first draft got the health
-        // right by luck and the maximum as 22152215, which would have priced
-        // every kill of the monster wrongly for the rest of the session.
-        expect(parseUnitTexts(TILE).max).toBe(2215);
+        // tell where the first denominator ends. Only the numerator is taken now,
+        // because the tick states the maximum itself as `mHP`.
+        expect(parseUnitTexts(TILE).hp).toBe(2215);
+        expect(parseUnitTexts(TILE).max).toBeUndefined();
     });
 
     test('thousands separators are read as numbers', () => {
-        expect(parseUnitTexts(['Giant Eye', '12,480/40,000'])).toEqual({
-            name: 'Giant Eye',
-            hp: 12480,
-            max: 40000,
-        });
+        expect(parseUnitTexts(['Giant Eye', '12,480/40,000'])).toEqual({ name: 'Giant Eye', hp: 12480 });
     });
 
-    test('bars that are not their own parts give the health and no maximum', () => {
-        // Rather than a maximum taken from a run-together string, which is the
-        // one number here that a wrong value would poison downstream
-        expect(parseUnitTexts(['Eyes', '2215/22152215/2215'])).toEqual({ name: 'Eyes', hp: 2215, max: null });
+    test('bars that are not their own parts still give the health', () => {
+        expect(parseUnitTexts(['Eyes', '2215/22152215/2215'])).toEqual({ name: 'Eyes', hp: 2215 });
     });
 
     test('a tile with no separable name is nothing at all', () => {
@@ -93,8 +87,8 @@ describe('reading the panel', () => {
         );
 
         expect(units).toEqual([
-            { name: 'Eyes', hp: 2215, max: 2215 },
-            { name: 'Veyes', hp: 1200, max: 2395 },
+            { name: 'Eyes', hp: 2215 },
+            { name: 'Veyes', hp: 1200 },
         ]);
     });
 
@@ -108,47 +102,47 @@ describe('joining the panel to the tick', () => {
         // Positionally would be an assumption about how the panel handles a dead
         // monster; health is a fact both sides state
         const units = [
-            { name: 'Eyes', hp: 2215, max: 2215 },
-            { name: 'Veyes', hp: 1200, max: 2395 },
+            { name: 'Eyes', hp: 2215 },
+            { name: 'Veyes', hp: 1200 },
         ];
         const names = matchMonsterNames(units, { 0: { cHP: 1200 }, 1: { cHP: 2215 } });
 
-        expect(names).toEqual({ 0: { name: 'Veyes', max: 2395 }, 1: { name: 'Eyes', max: 2215 } });
+        expect(names).toEqual({ 0: 'Veyes', 1: 'Eyes' });
     });
 
     test('two of a kind at the same health are not ambiguous', () => {
         // A wave of three Eyes at full health is the common case, and whichever
         // one this is, it is called Eyes
         const units = [
-            { name: 'Eyes', hp: 2215, max: 2215 },
-            { name: 'Eyes', hp: 2215, max: 2215 },
+            { name: 'Eyes', hp: 2215 },
+            { name: 'Eyes', hp: 2215 },
         ];
-        expect(matchMonsterNames(units, { 0: { cHP: 2215 } })).toEqual({ 0: { name: 'Eyes', max: 2215 } });
+        expect(matchMonsterNames(units, { 0: { cHP: 2215 } })).toEqual({ 0: 'Eyes' });
     });
 
     test('two different monsters at the same health claim nothing', () => {
         // A wrong name is worse than no name: it would move damage from one
         // monster of the wave onto another and read as evidence
         const units = [
-            { name: 'Eye', hp: 2215, max: 2215 },
-            { name: 'Eyes', hp: 2215, max: 2215 },
+            { name: 'Eye', hp: 2215 },
+            { name: 'Eyes', hp: 2215 },
         ];
         expect(matchMonsterNames(units, { 0: { cHP: 2215 } })).toEqual({});
     });
 
     test('a monster whose health matches nothing drawn is left alone', () => {
-        const units = [{ name: 'Eyes', hp: 2215, max: 2215 }];
+        const units = [{ name: 'Eyes', hp: 2215 }];
         expect(matchMonsterNames(units, { 0: { cHP: 9 } })).toEqual({});
     });
 
     test('some identified and some not is a partial answer, not none', () => {
         const units = [
-            { name: 'Eye', hp: 100, max: 2035 },
-            { name: 'Eye', hp: 2215, max: 2035 },
-            { name: 'Eyes', hp: 2215, max: 2215 },
+            { name: 'Eye', hp: 100 },
+            { name: 'Eye', hp: 2215 },
+            { name: 'Eyes', hp: 2215 },
         ];
         expect(matchMonsterNames(units, { 0: { cHP: 100 }, 1: { cHP: 2215 } })).toEqual({
-            0: { name: 'Eye', max: 2035 },
+            0: 'Eye',
         });
     });
 
@@ -167,9 +161,9 @@ describe('end to end, from a panel and a tick', () => {
         const names = recoverMonsterNames({ 0: { cHP: 2215 }, 1: { cHP: 1900 }, 2: { cHP: 2395 } }, root);
 
         expect(names).toEqual({
-            0: { name: 'Eyes', max: 2215 },
-            1: { name: 'Eyes', max: 2215 },
-            2: { name: 'Veyes', max: 2395 },
+            0: 'Eyes',
+            1: 'Eyes',
+            2: 'Veyes',
         });
     });
 

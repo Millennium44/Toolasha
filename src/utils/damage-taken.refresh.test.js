@@ -55,8 +55,8 @@ function replay(untilAnnounced) {
         const open = untilAnnounced ? !announced : !Object.keys(monsters).length;
         if (open && tick.panel?.tiles) {
             const units = tick.panel.tiles.map(parseUnitTexts).filter(Boolean);
-            for (const [index, found] of Object.entries(matchMonsterNames(units, tick.payload.mMap))) {
-                if (!monsters[index]) monsters[index] = found.name;
+            for (const [index, name] of Object.entries(matchMonsterNames(units, tick.payload.mMap))) {
+                if (!monsters[index]) monsters[index] = name;
             }
         }
 

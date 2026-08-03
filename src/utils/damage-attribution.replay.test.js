@@ -108,6 +108,18 @@ describe('a recorded run', () => {
         expect(summed).toBe(player.damage);
     });
 
+    test('every monster the tick mentions states its own full health', () => {
+        // Which is what a kill is priced by. Taking it from the tick rather than
+        // only from the start of a battle means a monster first met after a
+        // reload is priced like any other, with no screen-reading involved.
+        const entries = recording.ticks
+            .filter((tick) => tick.type !== 'new_battle')
+            .flatMap((tick) => Object.values(tick.payload.mMap || {}));
+
+        // This fixture is hand-trimmed and has none; the untrimmed ones do
+        expect(entries.every((monster) => 'mHP' in monster)).toBe(false);
+    });
+
     test('the monsters of the zone are named and counted', () => {
         expect(Object.keys(enemies).sort()).toEqual(['Eye', 'Eyes', 'Veyes']);
 
