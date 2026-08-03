@@ -6,6 +6,34 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### One purchase now counts for every loadout it would improve
+
+A tier upgrade is one item that every loadout can share, but which rooms it was credited for was decided by matching the **exact piece it replaces** — and each candidate carries whichever piece the first loadout to generate it happened to wear. Buy the Magician's Hat and the loadouts wearing some _other_ hat were never asked whether it would beat theirs: one price, a fraction of the benefit, and a `1 / 10` in the Rooms column that looked like a considered answer.
+
+A tier upgrade now applies wherever it would actually be an upgrade — same slot, not a step down in tier, not a style the loadout does not fight in, and not a damage piece dropped into a defensive slot. Enhancements are unchanged: enhancing your boots only helps loadouts wearing _those_ boots. An empty slot counts as improvable, except a hand a two-hander is already using, where installing a one-hander beside it would build a kit the game would never wear — trading between the two is what the cross-slot candidates are for. The per-room breakdown names what the piece displaces in each room, since with one purchase serving several loadouts that is no longer the same answer everywhere.
+
+### ΔAttempts says how much of itself is noise
+
+Every win rate is a proportion measured over a finite number of simulated attempts, and the headline figure sums ten of them through `1/p`, which magnifies the error badly at low win rates. A run of luck on one 30% room could read as a 1.6B item being worth buying, and nothing in the table said otherwise.
+
+Each row now carries `±` one standard error of its own change, and a change smaller than about twice that is drawn grey rather than green — it has not been measured. Both sims are counted in the error, which overstates it slightly since they share a seed and their errors partly cancel: colouring an honest row grey costs nothing, while the other way round recommends a purchase that did nothing.
+
+### Budget mode: what to actually buy
+
+Type a budget — `500m`, `1.2b`, `750,000,000` — and the panel plans the best set that fits, rather than repeating that one item is the best single item. It walks the table in value order taking what fits, **one upgrade per slot** (two upgrades to the same boots are alternatives, and buying both spends the second one's gold on nothing), and skips anything inside the noise band above.
+
+Greedy rather than an exact knapsack, deliberately: the values are estimates with real error bars, an optimum computed from them is false precision, and a list you can read off the table beats one that is a percent better and inexplicable.
+
+### Verify together, because gains do not simply add up
+
+Every row is measured on its own against the same baseline. That is the right way to rank them and the wrong way to total them: two upgrades that both rescue the same failing room are each credited with rescuing it, and the sum promises a saving neither will deliver.
+
+**Verify together** runs one more pass with the whole plan installed at once — same seed, same trial counts, each piece going only where it belongs — and reports what the set is really worth beside what the parts promised, with the overlap as a percentage. If the difference is inside the noise it says so instead: the sum holds.
+
+### Per 1B is now Per 1M
+
+The value column reads in attempts saved per million coins. Small figures get more decimal places so a modest value does not print as `0.00`.
+
 ### All Fights columns sort, and the panel opens big enough to read
 
 Every column in the All Fights table is a sort now — click Cost for the cheapest first, Rooms to see what reaches the whole run, Avg ΔWin for the biggest single-room gain. A second click reverses it; a new column starts at whichever end of it is the good news. Candidates with no coin price sort last either way rather than pretending to be free. The CSV export follows whatever order is on screen.

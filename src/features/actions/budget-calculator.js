@@ -9,7 +9,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
-import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, parseKMB } from '../../utils/formatters.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
@@ -23,20 +23,6 @@ const PRODUCTION_TYPES = [
 ];
 
 const UI_ID = 'mwi-budget-calculator';
-
-/**
- * Parse a KMB shorthand string to a number.
- * e.g. "50m" → 50000000, "1.5b" → 1500000000, "100k" → 100000
- * @param {string} str
- * @returns {number} Parsed value, or NaN if invalid
- */
-function parseKMB(str) {
-    const s = str.trim().toLowerCase();
-    const match = s.match(/^(\d+\.?\d*)\s*([kmb]?)$/);
-    if (!match) return NaN;
-    const multipliers = { k: 1e3, m: 1e6, b: 1e9 };
-    return parseFloat(match[1]) * (multipliers[match[2]] || 1);
-}
 
 /**
  * Get action HRID from panel element.

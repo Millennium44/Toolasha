@@ -35,6 +35,9 @@ const PHILO_START_LEVEL = 5;
 const PHILO_HRID_PREFIX = '/items/philosophers_';
 
 const CHARM_SLOT = '/equipment_types/charm';
+const MAIN_HAND_SLOT = '/equipment_types/main_hand';
+const OFF_HAND_SLOT = '/equipment_types/off_hand';
+const TWO_HAND_SLOT = '/equipment_types/two_hand';
 
 /** Highest level a house room can reach */
 const MAX_HOUSE_LEVEL = 8;
@@ -2641,6 +2644,161 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 /** Win-rate floor for expected-attempts math so 0% fights stay finite (= 1000 tries) */
 const ATTEMPT_WIN_RATE_FLOOR = 0.001;
 
+/** How many standard errors a gain has to clear before it is called a gain */
+const SIGNIFICANCE_Z = 1.96;
+
+/**
+ * The sampling error on "attempts saved across the run".
+ *
+ * Every win rate here is a proportion measured over a finite number of simulated
+ * attempts, so every one carries an error — and the table's headline figure is a
+ * sum of ten of them, put through 1/p, which magnifies the error badly at low
+ * win rates. Without this, a run of luck on one 30% room reads as a 1.6B item
+ * being worth buying.
+ *
+ * Per fight the standard error of the rate is the binomial √(p(1−p)/n), and
+ * 1/p turns that into se/p² (the derivative of 1/p). Baseline and candidate are
+ * added in quadrature, which is conservative: they share a seed, so their errors
+ * are correlated and partly cancel. Overstating the noise costs a few honest
+ * rows their colour; understating it recommends purchases that did nothing.
+ *
+ * @param {Array<Object>} appliedFights - The candidate's fights, applied ones only
+ * @param {Array<Object>} baselineFights - The baseline, index-aligned by monster
+ * @returns {number} One standard error of the attempts delta
+ */
+export function attemptsNoise(appliedFights, baselineFights = []) {
+    const byMonster = new Map(
+        (baselineFights || []).map((fight) => [`${fight.monsterHrid}@${fight.roomLevel}`, fight])
+    );
+
+    let variance = 0;
+    for (const fight of appliedFights || []) {
+        const base = byMonster.get(`${fight.monsterHrid}@${fight.roomLevel}`);
+        for (const side of [fight, base]) {
+            if (!side) continue;
+            const trials = Math.max(1, Number(side.trials) || 0);
+            const rate = Math.max(ATTEMPT_WIN_RATE_FLOOR, Math.min(1, Number(side.winRate) || 0));
+            // d(1/p)/dp = −1/p², so the error on the tries figure is se/p²
+            const standardError = Math.sqrt((rate * (1 - rate)) / trials);
+            variance += (standardError / (rate * rate)) ** 2;
+        }
+    }
+    return Math.sqrt(variance);
+}
+
+/**
+ * The piece a candidate would displace in one particular loadout.
+ *
+ * One purchase serves every loadout, and with tier upgrades applying wherever
+ * they would help, "what it replaces" is a different answer per room. The row's
+ * own description can only name one of them.
+ *
+ * @param {Object} candidate - The upgrade
+ * @param {Object} dto - The loadout
+ * @param {Object} [gameData] - For the item's name
+ * @returns {string} Display name, or '' where it displaces nothing
+ */
+export function replacedIn(candidate, dto, gameData) {
+    const slots = candidate.addedSlots ? Object.keys(candidate.addedSlots) : [candidate.slot];
+    const names = [];
+    for (const slot of slots) {
+        const worn = dto?.equipment?.[slot];
+        if (!worn?.hrid || worn.hrid === candidate.upgradeHrid) continue;
+        const detail = gameData?.itemDetailMap?.[worn.hrid];
+        const name = detail?.name || worn.hrid.split('/').pop().replace(/_/g, ' ');
+        names.push(worn.enhancementLevel ? `${name} +${worn.enhancementLevel}` : name);
+    }
+    return names.join(' + ');
+}
+
+/**
+ * What two upgrades have to share before buying both is wasteful.
+ *
+ * You wear one item per slot, so two upgrades to the same slot are alternatives
+ * and not a shopping list — a plan that buys both has spent the second one's
+ * gold for nothing. The same is true of two levels of one ability, or of one
+ * combat skill: the higher target already includes the lower.
+ *
+ * @param {Object} candidate - The upgrade
+ * @returns {string} Key that conflicting candidates share
+ */
+export function conflictKey(candidate) {
+    if (candidate.type === 'combat_level') return `skill:${candidate.skillKey}`;
+    if (candidate.type === 'house') return `house:${candidate.slot}`;
+    if (candidate.slot?.startsWith('ability_')) return `ability:${candidate.upgradeHrid}`;
+
+    const slots = candidate.addedSlots
+        ? [...Object.keys(candidate.addedSlots), ...(candidate.clearedSlots || [])]
+        : [candidate.slot];
+    // A two-hander and a main-hand+off-hand pair are competing for the same
+    // hands even though they name different slots
+    const hands = ['/equipment_types/two_hand', '/equipment_types/main_hand', '/equipment_types/off_hand'];
+    if (slots.some((slot) => hands.includes(slot))) return 'slot:weapon';
+    return `slot:${[...new Set(slots)].sort().join('+')}`;
+}
+
+/**
+ * The best set of upgrades a budget will buy.
+ *
+ * Greedy by value per coin rather than an exact knapsack, deliberately: the
+ * values are simulated estimates with real error bars on them, an optimum
+ * computed from them is false precision, and a list whose order can be read off
+ * the table is worth more than one that is a percent better and inexplicable.
+ *
+ * Two rules do the work. Only one upgrade per conflict group — you wear one
+ * chestpiece — and nothing that failed the significance test, since spending a
+ * budget on gains that were never measured is the specific mistake this is here
+ * to prevent.
+ *
+ * The total assumes the gains add up, which is exactly what the combination
+ * check is for: two upgrades that fix the same failing room overlap, and the
+ * sum overstates them.
+ *
+ * @param {Array<Object>} results - Ranked analysis results
+ * @param {number} budget - Coins available
+ * @param {Object} [options] - `{ includeUnmeasured }` to spend on noise anyway
+ * @returns {{picks: Array<Object>, totalCost: number, attemptsSaved: number,
+ *   skipped: Array<{result: Object, reason: string}>, budget: number}}
+ */
+export function planWithinBudget(results, budget, { includeUnmeasured = false } = {}) {
+    const affordable = (results || [])
+        .filter((result) => Number.isFinite(result.cost) && result.cost >= 0)
+        .filter((result) => result.attemptsDelta < 0)
+        .sort((a, b) => (b.attemptsSavedPerMillion ?? 0) - (a.attemptsSavedPerMillion ?? 0));
+
+    const picks = [];
+    const skipped = [];
+    const taken = new Set();
+    let spent = 0;
+
+    for (const result of affordable) {
+        if (!includeUnmeasured && result.significant === false) {
+            skipped.push({ result, reason: 'within the noise of the simulation' });
+            continue;
+        }
+        const key = conflictKey(result.candidate);
+        if (taken.has(key)) {
+            skipped.push({ result, reason: 'another upgrade already takes that slot' });
+            continue;
+        }
+        if (spent + result.cost > budget) {
+            skipped.push({ result, reason: 'over budget' });
+            continue;
+        }
+        taken.add(key);
+        picks.push(result);
+        spent += result.cost;
+    }
+
+    return {
+        picks,
+        totalCost: spent,
+        attemptsSaved: picks.reduce((sum, result) => sum - result.attemptsDelta, 0),
+        skipped,
+        budget,
+    };
+}
+
 /** Expected labyrinth attempts to clear one fight (retry until win) */
 function expectedFightAttempts(winRate) {
     return 1 / Math.max(winRate, ATTEMPT_WIN_RATE_FLOOR);
@@ -2730,7 +2888,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         .map((candidate) => ({
             ...candidate,
             cost: candidate.cost ?? calculateUpgradeCost(candidate, gameData),
-            appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto)),
+            appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
         }))
         .filter((candidate) => candidate.appliesTo.some(Boolean));
 
@@ -2766,7 +2924,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         });
         const attempts = simResult.labyAttemptCount || 1;
         if (!rule) pairedRules.set(fightIndex, pairedTrialRule(simResult));
-        return (simResult.encounters || 0) / attempts;
+        return { winRate: (simResult.encounters || 0) / attempts, trials: attempts };
     };
 
     const fightMeta = (fight) => ({
@@ -2782,8 +2940,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const fight = fights[i];
         if (abortSignal?.()) return { baseline: null, results: [] };
         onProgress?.({ current, total, description: `Baseline: ${fight.monsterName}` });
-        const winRate = await simFightWinRate(fight, null, fightSeed(i), i);
-        baselineFights.push({ ...fightMeta(fight), winRate });
+        const { winRate, trials } = await simFightWinRate(fight, null, fightSeed(i), i);
+        baselineFights.push({ ...fightMeta(fight), winRate, trials });
         current++;
     }
     const baselineRunClear = baselineFights.reduce((product, f) => product * f.winRate, 1);
@@ -2812,12 +2970,16 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             }
             onProgress?.({ current, total, description: `${candidate.description}: ${fights[i].monsterName}` });
             const boostedDTO = applyCandidateToDTO(fights[i].dto, candidate);
-            const winRate = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
+            const { winRate, trials } = await simFightWinRate(fights[i], boostedDTO, fightSeed(i), i);
             fightResults.push({
                 ...fightMeta(fights[i]),
                 winRate,
+                trials,
                 winRateDelta: winRate - baselineFights[i].winRate,
                 applied: true,
+                // What it goes in place of *here* — with one purchase serving
+                // several loadouts, that is not the same piece in every room
+                replaced: replacedIn(candidate, fights[i].dto, gameData),
             });
             current++;
         }
@@ -2826,6 +2988,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
         const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
+        const attemptsDeltaNoise = attemptsNoise(applied, baselineFights);
         // Averaged over the rooms it reaches rather than every room: a weapon
         // that only goes in two of eight loadouts is not a quarter as good at
         // its job, and dividing by eight would say it was
@@ -2838,7 +3001,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         // says so. Candidates with no gold price — a combat level costs
         // experience — get null rather than a zero that would sort them last.
         const attemptsSaved = -attemptsDelta;
-        const perGold = cost > 0 ? (attemptsSaved / cost) * 1e9 : null;
+        const perGold = cost > 0 ? (attemptsSaved / cost) * 1e6 : null;
 
         results.push({
             candidate,
@@ -2848,9 +3011,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             runClearDelta: runClearChance - baselineRunClear,
             expectedAttempts,
             attemptsDelta,
+            attemptsDeltaNoise,
+            // A gain smaller than the sampling error of the sims it came from is
+            // not a gain that has been measured, whatever the number says
+            significant: Math.abs(attemptsDelta) > SIGNIFICANCE_Z * attemptsDeltaNoise,
             avgWinDelta,
             cost,
-            attemptsSavedPerBillion: perGold,
+            attemptsSavedPerMillion: perGold,
         });
     }
 
@@ -2858,10 +3025,10 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // gain — a combat level and a helmet cannot be ranked against each other in
     // coins, and pretending otherwise would bury one of them
     results.sort((a, b) => {
-        const priced = (result) => (result.attemptsSavedPerBillion === null ? 1 : 0);
+        const priced = (result) => (result.attemptsSavedPerMillion === null ? 1 : 0);
         return (
             priced(a) - priced(b) ||
-            (b.attemptsSavedPerBillion ?? 0) - (a.attemptsSavedPerBillion ?? 0) ||
+            (b.attemptsSavedPerMillion ?? 0) - (a.attemptsSavedPerMillion ?? 0) ||
             a.attemptsDelta - b.attemptsDelta
         );
     });
@@ -2869,6 +3036,108 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     return {
         baseline: { fights: baselineFights, runClearChance: baselineRunClear, expectedAttempts: baselineAttempts },
         results,
+        // Handed back so a combination check re-runs against the same random
+        // draws and the same trial counts, rather than against a fresh sample
+        pairing: { seed: simSeed, rules: [...pairedRules.entries()] },
+        context: { fights, crates, hours, communityBuffs, labyrinthCombatBuffs },
+    };
+}
+
+/**
+ * What a set of upgrades is worth bought *together*.
+ *
+ * Every row in the table was measured on its own against the same baseline, and
+ * that is the right way to rank them — but it is the wrong way to add them up.
+ * Two upgrades that both rescue the same failing room each get credited with
+ * rescuing it, and the sum promises a saving neither the pair nor anything else
+ * will deliver. The overlap can only be found by running them together.
+ *
+ * The same seed and the same trial counts as the analysis it came from, so the
+ * combined figure is comparable with the individual ones rather than being a
+ * fresh sample that differs for its own reasons.
+ *
+ * @param {Object} params - `{ picks, baseline, pairing, context }` from an
+ *   all-fights analysis, where `picks` are the results to install together
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal }
+ * @returns {Promise<Object>} `{ fights, expectedAttempts, attemptsDelta,
+ *   summedDelta, overlap }` — overlap is how much of the promised saving the
+ *   upgrades take from each other
+ */
+export async function runLabyrinthCombinationCheck(params, onProgress, options = {}) {
+    const { picks, baseline, pairing, context } = params;
+    const { abortSignal } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+    if (!picks?.length || !baseline?.fights?.length) throw new Error('Nothing to check');
+
+    const { fights, crates, hours, communityBuffs, labyrinthCombatBuffs = [] } = context || {};
+    const zoneHrid =
+        Object.keys(gameData.actionDetailMap).find((k) => k.includes('/actions/combat/')) || '/actions/combat/fly';
+    const rules = new Map(pairing?.rules || []);
+    const total = fights.length;
+    let current = 0;
+
+    const fightResults = [];
+    for (let i = 0; i < fights.length; i++) {
+        if (abortSignal?.()) return null;
+        const fight = fights[i];
+        onProgress?.({ current, total, description: `Together: ${fight.monsterName}` });
+
+        // Each upgrade goes on only where it belongs, exactly as it did when it
+        // was measured alone — a set is not an excuse to dress a loadout in
+        // something the single-candidate pass would have refused it
+        let dto = fight.dto;
+        const installed = [];
+        for (const pick of picks) {
+            if (!candidateAppliesToDTO(pick.candidate, dto, gameData)) continue;
+            dto = applyCandidateToDTO(dto, pick.candidate);
+            installed.push(pick.candidate.description);
+        }
+
+        const rule = rules.get(i) || null;
+        const simResult = await runLabyrinthSimulation({
+            gameData,
+            playerDTOs: [dto],
+            zoneHrid,
+            monsterHrid: fight.monsterHrid,
+            roomLevel: fight.roomLevel,
+            crates,
+            hours: rule ? hours * PAIRED_TIME_HEADROOM : hours,
+            precision: rule,
+            communityBuffs,
+            labyrinthCombatBuffs,
+            seed: deriveSeed(pairing?.seed ?? null, i),
+        });
+        const attempts = simResult.labyAttemptCount || 1;
+        const winRate = (simResult.encounters || 0) / attempts;
+
+        fightResults.push({
+            monsterHrid: fight.monsterHrid,
+            monsterName: fight.monsterName,
+            roomLevel: fight.roomLevel,
+            loadoutName: fight.loadoutName,
+            winRate,
+            trials: attempts,
+            winRateDelta: winRate - (baseline.fights[i]?.winRate ?? 0),
+            installed,
+        });
+        current++;
+    }
+
+    const expectedAttempts = fightResults.reduce((sum, f) => sum + expectedFightAttempts(f.winRate), 0);
+    const attemptsDelta = expectedAttempts - baseline.expectedAttempts;
+    const summedDelta = picks.reduce((sum, pick) => sum + pick.attemptsDelta, 0);
+
+    return {
+        fights: fightResults,
+        expectedAttempts,
+        attemptsDelta,
+        summedDelta,
+        // Positive means the set delivers less than the parts promised, which is
+        // the usual direction: two fixes for one room cannot both be the fix
+        overlap: attemptsDelta - summedDelta,
+        noise: attemptsNoise(fightResults, baseline.fights),
     };
 }
 
@@ -3187,7 +3456,7 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
  * @param {Object} dto - The loadout a fight is assigned
  * @returns {boolean} Whether applying it to this loadout means anything
  */
-export function candidateAppliesToDTO(candidate, dto) {
+export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     if (!candidate || !dto) return false;
 
     // The character's own, wherever they are worn: skills and rooms are not
@@ -3223,11 +3492,77 @@ export function candidateAppliesToDTO(candidate, dto) {
     const worn = equipment[candidate.slot];
     // A bare slot is only bare in the loadouts where it is bare
     if (!candidate.currentHrid) return !worn?.hrid;
-    if (worn?.hrid !== candidate.currentHrid) return false;
-    // Same item: an enhancement, and nothing to measure at or above the target
+
+    // Enhancing is about one particular item: it helps the loadouts wearing
+    // *that* item and nobody else, and not once it is already at the target
     if (candidate.upgradeHrid === candidate.currentHrid) {
+        if (worn?.hrid !== candidate.currentHrid) return false;
         return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
     }
+
+    return tierAppliesToWorn(candidate, worn, equipment, gameData);
+}
+
+/**
+ * Whether buying this piece would improve the slot a loadout has filled.
+ *
+ * A tier upgrade is one purchase that every loadout can share, and matching on
+ * the exact item it replaces was too narrow: a candidate generated from the
+ * loadout wearing a Fine Sword was credited for that room alone, while the
+ * loadout wearing a Cursed Sword — which the same purchase would also improve —
+ * was recorded as untouched. One price, a fraction of the benefit.
+ *
+ * So the question is not "is this the item I named" but "would this item be an
+ * upgrade here": same slot, not a style the loadout does not fight in, and not a
+ * step down in tier.
+ *
+ * @param {Object} candidate - A tier candidate
+ * @param {Object|null} worn - What the loadout has in that slot
+ * @param {Object|null} gameData - For item levels and styles; without it this
+ *   falls back to the exact-item rule rather than guessing
+ * @returns {boolean}
+ */
+function tierAppliesToWorn(candidate, worn, equipment, gameData) {
+    // An empty hand is not a free slot when the other one holds a two-hander:
+    // installing a sword beside a bow builds a kit the game would never let you
+    // wear. Trading between the two is a cross-slot swap, which has its own
+    // candidates and prices the trade properly.
+    const twoHand = equipment?.['/equipment_types/two_hand'];
+    const oneHand = equipment?.['/equipment_types/main_hand'];
+    if (twoHand?.hrid && (candidate.slot === MAIN_HAND_SLOT || candidate.slot === OFF_HAND_SLOT)) return false;
+    if (oneHand?.hrid && candidate.slot === TWO_HAND_SLOT) return false;
+
+    // Nothing there is improved by anything
+    if (!worn?.hrid) return true;
+    // Already the piece being bought: only the enhancement could differ
+    if (worn.hrid === candidate.upgradeHrid) {
+        return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+    }
+
+    const details = gameData?.itemDetailMap;
+    const upgrade = details?.[candidate.upgradeHrid];
+    const current = details?.[worn.hrid];
+    if (!upgrade || !current) return worn.hrid === candidate.currentHrid;
+
+    // A lower-tier piece is not an upgrade for this room even though it is for
+    // the room the candidate came from
+    if ((upgrade.itemLevel || 0) < (current.itemLevel || 0)) return false;
+
+    const upgradeStats = upgrade.equipmentDetail?.combatStats;
+    const currentStats = current.equipmentDetail?.combatStats;
+    const upgradeStyle = getItemDamageStyle(upgradeStats);
+    const currentStyle = getItemDamageStyle(currentStats);
+    // Armour and jewellery have no style of their own, and swapping one in is
+    // fair game for any loadout; two *weapons* of different styles are not
+    // substitutes, whatever their item levels say
+    if (upgradeStyle !== 'unknown' && currentStyle !== 'unknown' && upgradeStyle !== currentStyle) return false;
+
+    // Nor is a damage piece a substitute for a defensive one — the loadout was
+    // built around what it is wearing
+    const upgradeRole = getItemRole(upgradeStats);
+    const currentRole = getItemRole(currentStats);
+    if (upgradeRole !== 'unknown' && currentRole !== 'unknown' && upgradeRole !== currentRole) return false;
+
     return true;
 }
 

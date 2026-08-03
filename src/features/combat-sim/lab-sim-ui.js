@@ -23,9 +23,11 @@ import {
     computeSkillingClearRatesFromEditor,
     runSkillingUpgradeAnalysis,
     getStyleExcludedSkills,
+    planWithinBudget,
+    runLabyrinthCombinationCheck,
 } from './upgrade-advisor.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
@@ -1534,6 +1536,149 @@ class LabSimUI {
     }
 
     /**
+     * The shopping list a budget buys, above the table it came from.
+     *
+     * The table answers "what is the best single thing"; nobody buys one thing.
+     * This answers the question people actually have — "I have 500M, what should
+     * I get" — by walking the table in value order and taking what fits, one
+     * upgrade per slot, skipping anything whose gain is inside the simulation's
+     * own error.
+     *
+     * @param {Array<Object>} results - Ranked results
+     * @returns {string} HTML
+     * @private
+     */
+    _renderBudgetPlan(results) {
+        const budget = this._allFightsBudget ?? 0;
+        const money = (value) => formatKMB(Math.round(value));
+        const inputStyle =
+            'width:90px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'padding:2px 6px; font-size:11px;';
+        const btnStyle =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'padding:2px 8px; font-size:11px; cursor:pointer;';
+
+        let body = '';
+        if (budget > 0) {
+            const plan = planWithinBudget(results, budget);
+            if (!plan.picks.length) {
+                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${
+                    plan.skipped.length ? ' — the cheapest measured upgrade costs more.' : '.'
+                }</div>`;
+            } else {
+                const rows = plan.picks
+                    .map(
+                        (pick) =>
+                            `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
+                                <span style="color:#e0e0e0;">${pick.candidate.description}</span>
+                                <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
+                                    <span style="color:#4caf50;">${pick.attemptsDelta.toFixed(1)} attempts</span></span>
+                            </div>`
+                    )
+                    .join('');
+                const noise = plan.skipped.filter((s) => s.reason.startsWith('within the noise')).length;
+                body =
+                    rows +
+                    `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
+                        ${plan.picks.length} upgrades · ${money(plan.totalCost)} of ${money(budget)} ·
+                        <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
+                        <span style="color:#666;"> if the gains add up</span>
+                        <button id="mwi-labsim-verify-combo" style="${btnStyle} margin-left:8px;"
+                            title="Run one more pass with all of these installed at once. Upgrades that fix the same failing room overlap, and the total above counts that room twice.">Verify together</button>
+                    </div>` +
+                    (noise
+                        ? `<div style="color:#666; font-size:10px; margin-top:2px;">${noise} skipped as within the simulation's own error</div>`
+                        : '') +
+                    `<div id="mwi-labsim-combo-result" style="margin-top:4px; font-size:11px;"></div>`;
+            }
+        }
+
+        return `<div id="mwi-labsim-budget" style="margin-bottom:8px; padding:6px 8px; background:#0d0d1a;
+            border:1px solid #222; border-radius:4px;">
+            <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888;">
+                <span style="color:${ACCENT}; font-weight:700;">Budget</span>
+                <input id="mwi-labsim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
+                    value="${this._allFightsBudgetText || ''}" style="${inputStyle}">
+                <button id="mwi-labsim-budget-plan" style="${btnStyle}">Plan</button>
+                <span style="color:#555;">best set that fits, one per slot, skipping gains inside the noise</span>
+            </div>
+            ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
+        </div>`;
+    }
+
+    /**
+     * Make the budget box work: parse what was typed, re-render on Plan, and run
+     * the combination check on Verify.
+     * @private
+     */
+    _wireBudgetPlan(container, results, baseline) {
+        const input = container.querySelector('#mwi-labsim-budget-input');
+        const plan = () => {
+            this._allFightsBudgetText = input?.value || '';
+            const typed = parseKMB(this._allFightsBudgetText);
+            this._allFightsBudget = Number.isFinite(typed) ? typed : 0;
+            this._renderAllFightsResults(this._allFightsResult, container);
+        };
+        container.querySelector('#mwi-labsim-budget-plan')?.addEventListener('click', plan);
+        input?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') plan();
+        });
+
+        container.querySelector('#mwi-labsim-verify-combo')?.addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            const output = container.querySelector('#mwi-labsim-combo-result');
+            const picks = planWithinBudget(results, this._allFightsBudget ?? 0).picks;
+            if (!picks.length || !output) return;
+
+            button.disabled = true;
+            button.textContent = 'Checking…';
+            try {
+                const check = await runLabyrinthCombinationCheck(
+                    {
+                        picks,
+                        baseline,
+                        pairing: this._allFightsResult?.pairing,
+                        context: this._allFightsResult?.context,
+                    },
+                    ({ current, total, description }) => {
+                        button.textContent = `${current} / ${total} ${description}`;
+                    },
+                    { abortSignal: () => this._upgradeAborted }
+                );
+                output.innerHTML = check ? this._renderComboCheck(check) : '';
+            } catch (error) {
+                console.error('[LabSimUI] Combination check failed:', error);
+                output.innerHTML = '<span style="color:#f44336;">Combination check failed — see console.</span>';
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Verify together';
+            }
+        });
+    }
+
+    /**
+     * What the set turned out to be worth, next to what the parts promised.
+     * @private
+     */
+    _renderComboCheck(check) {
+        const promised = -check.summedDelta;
+        const actual = -check.attemptsDelta;
+        // Overlap is the usual outcome and not a fault: two upgrades that both
+        // rescue the same failing room cannot both be the thing that rescued it
+        const lost = promised - actual;
+        const share = promised > 0 ? Math.round((lost / promised) * 100) : 0;
+        const colour = lost > check.noise ? '#ff9800' : '#4caf50';
+        return `<span style="color:#e0e0e0;">Together: <b>−${actual.toFixed(1)}</b> attempts</span>
+            <span style="color:#888;">vs −${promised.toFixed(1)} promised by the parts</span>
+            <span style="color:${colour};">${
+                lost > check.noise
+                    ? `— ${share}% of it was double-counted (they overlap)`
+                    : '— they do not overlap, the sum holds'
+            }</span>
+            <span style="color:#555;">±${check.noise.toFixed(1)}</span>`;
+    }
+
+    /**
      * Render the all-fights combat level analysis: candidates ranked by how
      * many expected combat attempts they save across the whole run (retrying
      * failed rooms), with a per-fight breakdown on click.
@@ -1559,6 +1704,9 @@ class LabSimUI {
         // Fewer expected attempts = better, so the good direction is negative
         const attemptsDeltaColor = (v) => (v < -0.05 ? '#4caf50' : v > 0.05 ? '#f44336' : '#888');
         const fmtAttempts = (v) => v.toFixed(1);
+        // Per-million values run small — two decimals would print most of them
+        // as 0.00, which reads as "no value" rather than "a modest one"
+        const fmtPerMillion = (v) => (v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toPrecision(2));
         const fmtAttemptsDelta = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
         const expectedTries = (winRate) => 1 / Math.max(winRate, 0.001);
         const thStyle =
@@ -1571,7 +1719,7 @@ class LabSimUI {
         const SORTS = {
             upgrade: { get: (r) => r.candidate?.description || '', dir: 'asc' },
             cost: { get: (r) => r.cost, dir: 'asc' },
-            perBillion: { get: (r) => r.attemptsSavedPerBillion, dir: 'desc' },
+            perMillion: { get: (r) => r.attemptsSavedPerMillion, dir: 'desc' },
             attempts: { get: (r) => r.expectedAttempts, dir: 'asc' },
             attemptsDelta: { get: (r) => r.attemptsDelta, dir: 'asc' },
             rooms: { get: (r) => r.appliedFights ?? r.fights.length, dir: 'desc' },
@@ -1598,7 +1746,8 @@ class LabSimUI {
             `<th data-af-sort="${key}" style="${thStyle} cursor:pointer; user-select:none;" title="${title}">` +
             `${label}${arrow(key)}</th>`;
 
-        let html = `
+        let html = this._renderBudgetPlan(results);
+        html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
                 expected combat attempts to clear all ${baseline.fights.length} fights
@@ -1608,9 +1757,9 @@ class LabSimUI {
             <thead><tr>
                 ${th('upgrade', 'Upgrade', 'Sort by name')}
                 ${th('cost', 'Cost', 'What it would cost in coins. Combat levels cost experience, not gold.')}
-                ${th('perBillion', 'Per 1B', 'Attempts saved across a whole run per billion coins spent — the value figure. Blank where there is no coin price.')}
+                ${th('perMillion', 'Per 1M', 'Attempts saved across a whole run per million coins spent — the value figure. Blank where there is no coin price.')}
                 ${th('attempts', 'Attempts', 'Expected combat attempts to clear every fight once (retrying failed rooms)')}
-                ${th('attemptsDelta', 'ΔAttempts', 'Change in expected attempts vs baseline — negative is better')}
+                ${th('attemptsDelta', 'ΔAttempts', 'Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation; a change smaller than about twice that has not been measured, and is shown grey.')}
                 ${th('rooms', 'Rooms', 'How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.')}
                 ${th('avgWinDelta', 'Avg ΔWin', 'Average win rate change across the rooms it reaches')}
             </tr></thead><tbody>`;
@@ -1628,15 +1777,21 @@ class LabSimUI {
             const reach = r.appliedFights ?? r.fights.length;
             const total = r.fights.length;
             const perGold =
-                r.attemptsSavedPerBillion === null
+                r.attemptsSavedPerMillion === null
                     ? '—'
-                    : `${r.attemptsSavedPerBillion >= 0 ? '' : '−'}${Math.abs(r.attemptsSavedPerBillion).toFixed(2)}`;
+                    : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
+            // A change smaller than the sampling error of the sims behind it has
+            // not been measured — colouring it green sells an upgrade on noise
+            const measured = r.significant !== false;
+            const noise =
+                r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
-                <td style="${tdStyle} color:${r.attemptsSavedPerBillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
+                <td style="${tdStyle} color:${measured && r.attemptsSavedPerMillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
                 <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
-                <td style="${tdStyle} color:${attemptsDeltaColor(r.attemptsDelta)}; ${isBest ? 'font-weight:700;' : ''}">${fmtAttemptsDelta(r.attemptsDelta)}</td>
+                <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
+                    title="${measured ? '' : 'Smaller than the simulation’s own error — not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
                 <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
                 <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
             </tr>`;
@@ -1656,7 +1811,8 @@ class LabSimUI {
                         ? `<span style="color:#666;">not in this loadout — ${pct(base.winRate)} unchanged</span>`
                         : `${pct(base.winRate)} → ${pct(fight.winRate)}
                         <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
-                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries</span>`;
+                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
+                          `${fight.replaced ? `, over ${fight.replaced}` : ''}</span>`;
                 fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>
@@ -1674,9 +1830,11 @@ class LabSimUI {
             columns: [
                 { key: 'upgrade', label: 'Upgrade' },
                 { key: 'cost', label: 'Cost' },
-                { key: 'perBillion', label: 'Attempts saved per 1B' },
+                { key: 'perMillion', label: 'Attempts saved per 1M' },
                 { key: 'attempts', label: 'Expected attempts' },
                 { key: 'attemptsDelta', label: 'Change in attempts' },
+                { key: 'attemptsNoise', label: 'Change std error' },
+                { key: 'measured', label: 'Above noise' },
                 { key: 'roomsApplied', label: 'Rooms reached' },
                 { key: 'roomsTotal', label: 'Rooms total' },
                 { key: 'avgWinDelta', label: 'Avg win rate change' },
@@ -1686,9 +1844,11 @@ class LabSimUI {
             rows: sorted.map((r) => ({
                 upgrade: r.candidate?.description || '',
                 cost: r.cost ?? null,
-                perBillion: r.attemptsSavedPerBillion ?? null,
+                perMillion: r.attemptsSavedPerMillion ?? null,
                 attempts: r.expectedAttempts,
                 attemptsDelta: r.attemptsDelta,
+                attemptsNoise: r.attemptsDeltaNoise ?? null,
+                measured: r.significant !== false,
                 roomsApplied: r.appliedFights ?? r.fights.length,
                 roomsTotal: r.fights.length,
                 avgWinDelta: r.avgWinDelta,
@@ -1703,6 +1863,8 @@ class LabSimUI {
                 }
             });
         });
+
+        this._wireBudgetPlan(container, results, baseline);
 
         container.querySelectorAll('[data-af-sort]').forEach((header) => {
             header.addEventListener('click', () => {

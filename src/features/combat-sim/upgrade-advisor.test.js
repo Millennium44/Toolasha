@@ -46,6 +46,7 @@ const {
     findMatchingCharmForSkill,
     getMainTrainingSkills,
     runLabyrinthAllFightsAnalysis,
+    runLabyrinthCombinationCheck,
     generateSkillingEquipmentCandidates,
     generateHouseCandidates,
     houseRoomAffectsCombat,
@@ -54,6 +55,9 @@ const {
     candidateAssignmentKey,
     candidateAppliesToDTO,
     applyToEquipment,
+    attemptsNoise,
+    conflictKey,
+    planWithinBudget,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -576,6 +580,12 @@ describe('runLabyrinthAllFightsAnalysis', () => {
 
     test('and the room it does not reach keeps its baseline exactly', async () => {
         const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_bow'] = {
+            name: 'Fine Bow',
+            itemLevel: 50,
+            sortIndex: 5,
+            equipmentDetail: { type: '/equipment_types/two_hand', combatStats: { rangedDamage: 12 } },
+        };
         buildGameDataPayload.mockReturnValue(gameData);
         // The ranged room would come back at a different rate if it were simmed
         // with a sword in hand; it must not be simmed at all
@@ -602,7 +612,13 @@ describe('runLabyrinthAllFightsAnalysis', () => {
                         monsterHrid: '/monsters/wisp',
                         monsterName: 'Wisp',
                         roomLevel: 110,
-                        dto: { equipment: { [BACK]: { hrid: '/items/plain_cape', enhancementLevel: 0 } } },
+                        // A two-hander: a main-hand sword cannot go in beside it
+                        dto: {
+                            equipment: {
+                                '/equipment_types/two_hand': { hrid: '/items/fine_bow', enhancementLevel: 0 },
+                                [BACK]: { hrid: '/items/plain_cape', enhancementLevel: 0 },
+                            },
+                        },
                     },
                 ],
                 crates: [],
@@ -615,8 +631,44 @@ describe('runLabyrinthAllFightsAnalysis', () => {
             {}
         );
 
-        const sword = result.results.find((r) => r.candidate.slot === MAIN_HAND);
+        const sword = result.results.find(
+            (r) => r.candidate.slot === MAIN_HAND && r.candidate.currentHrid === '/items/fine_sword'
+        );
         expect(sword.fights[1].winRate).toBe(result.baseline.fights[1].winRate);
+    });
+
+    test('each result carries the error behind its own number', async () => {
+        // Without it a lucky run on one 30% room reads as an upgrade worth
+        // billions, and nothing in the table says otherwise
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 200, encounters: 100 });
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    {
+                        monsterHrid: '/monsters/goblin',
+                        monsterName: 'Goblin',
+                        roomLevel: 100,
+                        dto: { staminaLevel: 50, meleeLevel: 50 },
+                    },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                combatLevelTargets: { meleeLevel: 60 },
+            },
+            null,
+            {}
+        );
+
+        const row = result.results[0];
+        expect(row.attemptsDeltaNoise).toBeGreaterThan(0);
+        // Identical sims mean a delta of exactly zero, which is the clearest
+        // case of "not measured" there is
+        expect(row.significant).toBe(false);
     });
 
     test('the progress total counts the sims it will actually run', async () => {
@@ -674,7 +726,7 @@ describe('whether an upgrade is about this loadout at all', () => {
         expect(candidateAppliesToDTO({ type: 'combat_level', skillKey: 'meleeLevel' }, swordDTO)).toBe(true);
     });
 
-    test('a tier upgrade only where the piece it replaces is worn', () => {
+    test('a tier upgrade where the piece it replaces is worn', () => {
         const candidate = {
             type: 'tier',
             slot: MAIN_HAND,
@@ -684,7 +736,74 @@ describe('whether an upgrade is about this loadout at all', () => {
         };
 
         expect(candidateAppliesToDTO(candidate, swordDTO)).toBe(true);
-        expect(candidateAppliesToDTO(candidate, { equipment: {} })).toBe(false);
+    });
+
+    test('and anywhere else the same purchase would be an upgrade too', () => {
+        // One purchase serves every loadout. Matching only the exact item it was
+        // generated against credited it for one room and charged full price
+        const candidate = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+        };
+        const otherSword = { equipment: { [MAIN_HAND]: { hrid: '/items/plain_sword', enhancementLevel: 0 } } };
+        const gameData = {
+            itemDetailMap: {
+                '/items/regal_sword_refined': {
+                    itemLevel: 60,
+                    equipmentDetail: { combatStats: { slashDamage: 15 } },
+                },
+                '/items/plain_sword': { itemLevel: 40, equipmentDetail: { combatStats: { slashDamage: 5 } } },
+                '/items/master_sword': { itemLevel: 80, equipmentDetail: { combatStats: { slashDamage: 25 } } },
+                '/items/fine_staff': { itemLevel: 40, equipmentDetail: { combatStats: { magicDamage: 9 } } },
+            },
+        };
+
+        expect(candidateAppliesToDTO(candidate, otherSword, gameData)).toBe(true);
+    });
+
+    test('but never a step down, nor into a loadout that fights another way', () => {
+        const candidate = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+        };
+        const gameData = {
+            itemDetailMap: {
+                '/items/regal_sword_refined': {
+                    itemLevel: 60,
+                    equipmentDetail: { combatStats: { slashDamage: 15 } },
+                },
+                '/items/master_sword': { itemLevel: 80, equipmentDetail: { combatStats: { slashDamage: 25 } } },
+                '/items/fine_staff': { itemLevel: 40, equipmentDetail: { combatStats: { magicDamage: 9 } } },
+            },
+        };
+        const better = { equipment: { [MAIN_HAND]: { hrid: '/items/master_sword', enhancementLevel: 0 } } };
+        const caster = { equipment: { [MAIN_HAND]: { hrid: '/items/fine_staff', enhancementLevel: 0 } } };
+
+        expect(candidateAppliesToDTO(candidate, better, gameData)).toBe(false);
+        expect(candidateAppliesToDTO(candidate, caster, gameData)).toBe(false);
+    });
+
+    test('and not into a hand that a two-hander is already using', () => {
+        // A sword installed beside a bow is a kit the game would never wear;
+        // trading between them is what the cross-slot candidates are for
+        const candidate = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+        };
+        const archer = {
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/fine_bow', enhancementLevel: 0 } },
+        };
+
+        expect(candidateAppliesToDTO(candidate, archer, {})).toBe(false);
     });
 
     test('an enhancement not once the piece is already at that level', () => {
@@ -866,6 +985,263 @@ describe('the off-hand a two-hander is traded for', () => {
         };
 
         expect(offHandsOffered(gameData)).toContain('/items/knights_aegis');
+    });
+});
+
+describe('what a set of upgrades is worth together', () => {
+    const MAIN = '/equipment_types/main_hand';
+
+    function comboSetup() {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        const fights = [
+            {
+                monsterHrid: '/monsters/goblin',
+                monsterName: 'Goblin',
+                roomLevel: 100,
+                dto: { equipment: { [MAIN]: { hrid: '/items/fine_sword', enhancementLevel: 0 } }, meleeLevel: 50 },
+            },
+        ];
+        return {
+            picks: [
+                {
+                    candidate: {
+                        type: 'combat_level',
+                        skillKey: 'meleeLevel',
+                        slot: 'combat_level|meleeLevel',
+                        upgradeLevel: 55,
+                        description: 'Melee 50 → 55',
+                    },
+                    attemptsDelta: -1,
+                },
+                {
+                    candidate: {
+                        type: 'tier',
+                        slot: MAIN,
+                        currentHrid: '/items/fine_sword',
+                        upgradeHrid: '/items/regal_sword_refined',
+                        upgradeLevel: 10,
+                        description: 'Fine Sword → Regal Sword',
+                    },
+                    attemptsDelta: -1,
+                },
+            ],
+            baseline: {
+                fights: [{ monsterHrid: '/monsters/goblin', roomLevel: 100, winRate: 0.5, trials: 100 }],
+                expectedAttempts: 2,
+            },
+            context: { fights, crates: [], hours: 1, communityBuffs: {}, labyrinthCombatBuffs: [] },
+            pairing: { seed: 7, rules: [] },
+        };
+    }
+
+    test('the pair is simulated wearing both at once', async () => {
+        const setup = comboSetup();
+        runLabyrinthSimulation.mockImplementation(async ({ playerDTOs }) => {
+            const dto = playerDTOs[0];
+            const both = dto.meleeLevel === 55 && dto.equipment[MAIN].hrid === '/items/regal_sword_refined';
+            return { labyAttemptCount: 100, encounters: both ? 80 : 50 };
+        });
+
+        const check = await runLabyrinthCombinationCheck(setup, null, {});
+
+        expect(check.fights[0].winRate).toBeCloseTo(0.8, 5);
+        expect(check.fights[0].installed).toHaveLength(2);
+    });
+
+    test('and the overlap is what the parts promised but the set did not deliver', async () => {
+        // Two upgrades that both rescue the same room each got credited with
+        // rescuing it; only one of them can be the reason it is now won
+        const setup = comboSetup();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 66.7 });
+
+        const check = await runLabyrinthCombinationCheck(setup, null, {});
+
+        expect(check.summedDelta).toBe(-2);
+        expect(check.attemptsDelta).toBeCloseTo(1.5 - 2, 1);
+        expect(check.overlap).toBeGreaterThan(0);
+    });
+
+    test('an upgrade that does not belong in a loadout is not installed there', async () => {
+        const setup = comboSetup();
+        setup.context.fights[0].dto.equipment = {
+            '/equipment_types/two_hand': { hrid: '/items/grand_cape_refined', enhancementLevel: 0 },
+        };
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+
+        const check = await runLabyrinthCombinationCheck(setup, null, {});
+
+        expect(check.fights[0].installed).toEqual(['Melee 50 → 55']);
+    });
+
+    test('nothing to check is an error rather than a confident zero', async () => {
+        const setup = comboSetup();
+
+        await expect(runLabyrinthCombinationCheck({ ...setup, picks: [] }, null, {})).rejects.toThrow();
+    });
+});
+
+describe('how much of a gain is measurement', () => {
+    const fight = (winRate, trials, monsterHrid = '/monsters/goblin', roomLevel = 100) => ({
+        monsterHrid,
+        roomLevel,
+        winRate,
+        trials,
+    });
+
+    test('a bigger sample is a smaller error', () => {
+        const few = attemptsNoise([fight(0.5, 100)], [fight(0.5, 100)]);
+        const many = attemptsNoise([fight(0.5, 10_000)], [fight(0.5, 10_000)]);
+
+        expect(many).toBeLessThan(few / 5);
+    });
+
+    test('a low win rate is far noisier, because 1/p magnifies it', () => {
+        // The tries figure at 5% moves twenty times as far per point of win
+        // rate as it does at 50% — which is exactly where a lucky run reads as
+        // an upgrade worth billions
+        const middling = attemptsNoise([fight(0.5, 1000)], [fight(0.5, 1000)]);
+        const desperate = attemptsNoise([fight(0.05, 1000)], [fight(0.05, 1000)]);
+
+        expect(desperate).toBeGreaterThan(middling * 10);
+    });
+
+    test('every room the upgrade touches adds its own', () => {
+        const one = attemptsNoise([fight(0.5, 1000)], [fight(0.5, 1000)]);
+        const four = attemptsNoise(
+            [fight(0.5, 1000, '/monsters/a'), fight(0.5, 1000, '/monsters/b')],
+            [fight(0.5, 1000, '/monsters/a'), fight(0.5, 1000, '/monsters/b')]
+        );
+
+        expect(four).toBeCloseTo(one * Math.SQRT2, 5);
+    });
+
+    test('rooms it does not touch add none', () => {
+        // They are not simulated — the number is copied from the baseline, so
+        // it carries no error of its own into the comparison
+        expect(attemptsNoise([], [fight(0.5, 1000)])).toBe(0);
+    });
+
+    test('a certain win is not an infinite error', () => {
+        expect(Number.isFinite(attemptsNoise([fight(1, 1000)], [fight(1, 1000)]))).toBe(true);
+        expect(Number.isFinite(attemptsNoise([fight(0, 1000)], [fight(0, 1000)]))).toBe(true);
+    });
+});
+
+describe('what cannot be bought together', () => {
+    test('two upgrades to one slot are alternatives', () => {
+        const boots = (hrid) => ({ type: 'tier', slot: '/equipment_types/feet', upgradeHrid: hrid });
+
+        expect(conflictKey(boots('/items/a'))).toBe(conflictKey(boots('/items/b')));
+    });
+
+    test('different slots are not', () => {
+        expect(conflictKey({ type: 'tier', slot: '/equipment_types/feet' })).not.toBe(
+            conflictKey({ type: 'tier', slot: '/equipment_types/head' })
+        );
+    });
+
+    test('a two-hander competes with a main hand, whatever the slot names say', () => {
+        const twoHand = { type: 'tier', slot: '/equipment_types/two_hand' };
+        const mainHand = { type: 'tier', slot: '/equipment_types/main_hand' };
+        const swap = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/main_hand': {} },
+            clearedSlots: ['/equipment_types/two_hand'],
+        };
+
+        expect(conflictKey(twoHand)).toBe(conflictKey(mainHand));
+        expect(conflictKey(swap)).toBe(conflictKey(twoHand));
+    });
+
+    test('two targets for one ability are one purchase, not two', () => {
+        const level = (upgradeLevel) => ({
+            type: 'ability_level',
+            slot: 'ability_1',
+            upgradeHrid: '/abilities/fireball',
+            upgradeLevel,
+        });
+
+        expect(conflictKey(level(50))).toBe(conflictKey(level(60)));
+    });
+
+    test('nor are two levels of one combat skill', () => {
+        expect(conflictKey({ type: 'combat_level', skillKey: 'meleeLevel', upgradeLevel: 105 })).toBe(
+            conflictKey({ type: 'combat_level', skillKey: 'meleeLevel', upgradeLevel: 110 })
+        );
+    });
+});
+
+describe('what a budget buys', () => {
+    const pick = (over = {}) => ({
+        candidate: { type: 'tier', slot: over.slot || '/equipment_types/feet', upgradeHrid: over.hrid || '/items/x' },
+        cost: over.cost ?? 100,
+        attemptsDelta: over.attemptsDelta ?? -1,
+        attemptsSavedPerMillion: over.per ?? 10,
+        significant: over.significant ?? true,
+    });
+
+    test('best value first, until the money runs out', () => {
+        const plan = planWithinBudget(
+            [
+                pick({ per: 5, cost: 100, slot: '/equipment_types/head' }),
+                pick({ per: 20, cost: 100, slot: '/equipment_types/feet' }),
+            ],
+            100
+        );
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.picks[0].attemptsSavedPerMillion).toBe(20);
+        expect(plan.skipped.some((s) => s.reason === 'over budget')).toBe(true);
+    });
+
+    test('never two things for one slot', () => {
+        // You wear one pair of boots; the second is gold spent on nothing
+        const plan = planWithinBudget(
+            [pick({ per: 20, cost: 10, hrid: '/items/a' }), pick({ per: 15, cost: 10, hrid: '/items/b' })],
+            1000
+        );
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.skipped[0].reason).toContain('slot');
+    });
+
+    test('nothing whose gain is inside the noise', () => {
+        const plan = planWithinBudget([pick({ per: 99, significant: false })], 1000);
+
+        expect(plan.picks).toHaveLength(0);
+        expect(plan.skipped[0].reason).toContain('noise');
+    });
+
+    test('unless you ask for it anyway', () => {
+        const plan = planWithinBudget([pick({ per: 99, significant: false })], 1000, { includeUnmeasured: true });
+
+        expect(plan.picks).toHaveLength(1);
+    });
+
+    test('and nothing priceless, since a budget is in coins', () => {
+        const plan = planWithinBudget([{ ...pick(), cost: null }], 1000);
+
+        expect(plan.picks).toHaveLength(0);
+    });
+
+    test('nor anything that made the run worse', () => {
+        const plan = planWithinBudget([pick({ attemptsDelta: 0.4 }), pick({ attemptsDelta: 0 })], 1000);
+
+        expect(plan.picks).toHaveLength(0);
+    });
+
+    test('the totals are what was actually picked', () => {
+        const plan = planWithinBudget(
+            [
+                pick({ per: 20, cost: 100, attemptsDelta: -2, slot: '/equipment_types/feet' }),
+                pick({ per: 10, cost: 250, attemptsDelta: -1, slot: '/equipment_types/head' }),
+            ],
+            1000
+        );
+
+        expect(plan.totalCost).toBe(350);
+        expect(plan.attemptsSaved).toBe(3);
     });
 });
 
