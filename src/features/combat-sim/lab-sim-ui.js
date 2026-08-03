@@ -25,12 +25,14 @@ import {
     getStyleExcludedSkills,
 } from './upgrade-advisor.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { formatWithSeparator } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { SimEditor } from './sim-editor.js';
 import labyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
+/** Upgrade modes that walk every labyrinth fight rather than one room */
+const ALL_FIGHT_MODES = new Set(['combat_level_all', 'everything_all']);
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -307,23 +309,31 @@ class LabSimUI {
 
         const upgradeControls = document.createElement('div');
         upgradeControls.style.cssText = `
-            display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
             padding: 10px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
         `;
+        // The shared select style is `flex:1; min-width:0`, which is right for a
+        // row of two and wrong for this one: seven controls sharing the width
+        // squeezed Player and Mode down to a caret and nothing else. These size
+        // to their content with a floor, and the row wraps instead of crushing.
+        const upgradeSelectStyle =
+            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
+            'padding:3px 6px; font-size:12px; flex:0 1 auto; min-width:150px; max-width:100%;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
-            <select id="mwi-labsim-upgrade-player" style="${selectStyle}"></select>
+            <select id="mwi-labsim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Mode</label>
-            <select id="mwi-labsim-upgrade-mode" style="${selectStyle}">
+            <select id="mwi-labsim-upgrade-mode" style="${upgradeSelectStyle}">
                 <option value="equipment">Equipment</option>
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
                 <option value="combat_level">Combat Levels</option>
                 <option value="combat_level_all">Combat Levels — All Fights</option>
+                <option value="everything_all">Everything — All Fights, per gold</option>
             </select>
             <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
-                <select id="mwi-labsim-upgrade-level-type" style="${selectStyle}">
+                <select id="mwi-labsim-upgrade-level-type" style="${upgradeSelectStyle} min-width:110px;">
                     <option value="increment">+Levels</option>
                     <option value="target">Target Lv</option>
                 </select>
@@ -348,7 +358,7 @@ class LabSimUI {
                 Crit Aura
             </label>
             <button id="mwi-labsim-upgrade-run" style="
-                margin-left: auto;
+                margin-left: auto; flex-shrink: 0;
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
                 border: 1px solid ${ACCENT_BTN_BORDER};
@@ -689,7 +699,7 @@ class LabSimUI {
                 this.panel.querySelector('#mwi-labsim-ability-targets').style.display = 'none';
             }
             const useSkipLabel = this.panel.querySelector('#mwi-labsim-allfights-useskip-label');
-            if (useSkipLabel) useSkipLabel.style.display = e.target.value === 'combat_level_all' ? 'flex' : 'none';
+            if (useSkipLabel) useSkipLabel.style.display = ALL_FIGHT_MODES.has(e.target.value) ? 'flex' : 'none';
         });
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
@@ -1156,7 +1166,7 @@ class LabSimUI {
             10000,
             Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-hours')?.value) || 10)
         );
-        const isAllFights = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value === 'combat_level_all';
+        const isAllFights = ALL_FIGHT_MODES.has(this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value);
 
         if (!monsterHrid && !isAllFights) {
             this._setStatus('Select a monster in the Configure tab first.');
@@ -1221,6 +1231,13 @@ class LabSimUI {
                     );
                     return;
                 }
+                // "Everything" is the same walk over every fight, with the
+                // equipment and ability candidates in as well — and ranked by
+                // what each buys per coin rather than by raw gain
+                const modes =
+                    upgradeMode === 'everything_all'
+                        ? ['equipment', 'ability_level', 'combat_level']
+                        : ['combat_level'];
                 const analysisResult = await runLabyrinthAllFightsAnalysis(
                     {
                         fights,
@@ -1230,6 +1247,10 @@ class LabSimUI {
                         labyrinthCombatBuffs,
                         abilityTargetLevel,
                         combatLevelTargets,
+                        abilityTargets,
+                        modes,
+                        extraCandidates:
+                            upgradeMode === 'everything_all' ? this._critAuraCandidates(fights[0]?.dto) : [],
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
@@ -1308,7 +1329,7 @@ class LabSimUI {
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const boost = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value) || 5;
-        const isAllFights = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value === 'combat_level_all';
+        const isAllFights = ALL_FIGHT_MODES.has(this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value);
 
         const gameData = buildGameDataPayload();
         const excluded = !isAllFights && dto && gameData ? getStyleExcludedSkills(dto, gameData) : new Set();
@@ -1462,7 +1483,9 @@ class LabSimUI {
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
-                <th style="${thStyle}">Skill</th>
+                <th style="${thStyle}">Upgrade</th>
+                <th style="${thStyle}" title="What it would cost in coins. Combat levels cost experience, not gold.">Cost</th>
+                <th style="${thStyle}" title="Attempts saved across a whole run per billion coins spent — the value figure. Blank where there is no coin price.">Per 1B</th>
                 <th style="${thStyle}" title="Expected combat attempts to clear every fight once (retrying failed rooms)">Attempts</th>
                 <th style="${thStyle}" title="Change in expected attempts vs baseline — negative is better">ΔAttempts</th>
                 <th style="${thStyle}" title="Average per-fight win rate change">Avg ΔWin</th>
@@ -1471,8 +1494,18 @@ class LabSimUI {
         results.forEach((r, i) => {
             const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
             const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
+            // A dash rather than a zero where there is no coin price: a combat
+            // level is not free, it is paid for in experience, and a zero here
+            // would read as "costs nothing" instead of "not a coin question"
+            const cost = r.cost > 0 ? formatKMB(r.cost) : r.cost === 0 ? 'free' : '—';
+            const perGold =
+                r.attemptsSavedPerBillion === null
+                    ? '—'
+                    : `${r.attemptsSavedPerBillion >= 0 ? '' : '−'}${Math.abs(r.attemptsSavedPerBillion).toFixed(2)}`;
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
                 <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle} color:#aaa;">${cost}</td>
+                <td style="${tdStyle} color:${r.attemptsSavedPerBillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
                 <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
                 <td style="${tdStyle} color:${attemptsDeltaColor(r.attemptsDelta)}; ${isBest ? 'font-weight:700;' : ''}">${fmtAttemptsDelta(r.attemptsDelta)}</td>
                 <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
@@ -1493,7 +1526,7 @@ class LabSimUI {
                 </div>`;
             }
             html += `<tr data-allfights-detail="${i}" style="display:none;">
-                <td colspan="4" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
+                <td colspan="6" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">${fightRows}</td>
             </tr>`;
         });
 

@@ -30,6 +30,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() })
 
 const {
     generateCandidates,
+    applyCandidateToDTO,
     calculateUpgradeCost,
     findMatchingCharmForSkill,
     getMainTrainingSkills,
@@ -1361,5 +1362,69 @@ describe('default score selection', () => {
     test('the Time column is not among the scored metrics', () => {
         // It is cost divided by a constant, so it duplicates Cost exactly
         expect(SCORE_METRICS.map((m) => m.key)).not.toContain('payback');
+    });
+});
+
+describe('applying one candidate to a player', () => {
+    const player = () => ({
+        hrid: '/players/me',
+        magicLevel: 100,
+        abilities: [{ hrid: '/abilities/fierce_aura', level: 10, triggers: ['keep me'] }, null, null, null, null],
+        equipment: { '/equipment_types/head': { hrid: '/items/hat', enhancementLevel: 2 } },
+    });
+
+    test('a piece of equipment lands in its slot', () => {
+        const dto = applyCandidateToDTO(player(), {
+            slot: '/equipment_types/head',
+            upgradeHrid: '/items/better_hat',
+            upgradeLevel: 5,
+            type: 'enhancement',
+        });
+
+        expect(dto.equipment['/equipment_types/head']).toEqual({ hrid: '/items/better_hat', enhancementLevel: 5 });
+    });
+
+    test('levelling the ability already slotted keeps its triggers', () => {
+        // They were configured on purpose; a level-up is not a reason to lose them
+        const dto = applyCandidateToDTO(player(), {
+            slot: 'ability_0',
+            upgradeHrid: '/abilities/fierce_aura',
+            upgradeLevel: 25,
+        });
+
+        expect(dto.abilities[0]).toMatchObject({ level: 25, triggers: ['keep me'] });
+    });
+
+    test('swapping in a different one does not inherit them', () => {
+        const dto = applyCandidateToDTO(player(), {
+            slot: 'ability_0',
+            upgradeHrid: '/abilities/critical_aura',
+            upgradeLevel: 20,
+        });
+
+        expect(dto.abilities[0]).toEqual({ hrid: '/abilities/critical_aura', level: 20, triggers: null });
+    });
+
+    test('a combat level sets the skill', () => {
+        const dto = applyCandidateToDTO(player(), {
+            type: 'combat_level',
+            skillKey: 'magicLevel',
+            upgradeLevel: 110,
+        });
+
+        expect(dto.magicLevel).toBe(110);
+    });
+
+    test('and the player it was given is never touched', () => {
+        // A dozen candidates measured against a DTO carrying the last one's
+        // change would each be measuring the pile rather than the piece
+        const original = player();
+        applyCandidateToDTO(original, {
+            slot: '/equipment_types/head',
+            upgradeHrid: '/items/better_hat',
+            upgradeLevel: 5,
+        });
+
+        expect(original.equipment['/equipment_types/head'].hrid).toBe('/items/hat');
     });
 });

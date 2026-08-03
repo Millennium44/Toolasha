@@ -14,6 +14,24 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped — the one case where the panel silently disagreed with every other monster in the list. It now applies it on the first open, and only then: reapplying on every open would throw away gear changed by hand since.
 
+### Everything — All Fights, per gold
+
+A new Upgrade mode that walks **every labyrinth fight** at its skip level with its own assigned loadout, sims equipment, ability levels and combat levels against all of them, and ranks by what each buys per coin.
+
+The figure is **attempts saved across a whole run per billion coins**. Ranking by raw gain answers the wrong question: a cheap thing that helps a little routinely beats an expensive thing that helps a lot, and a list sorted by gain never says so. Candidates with no coin price — a combat level is paid for in experience — show a dash and are ranked after the priced ones by raw gain, because burying them under a zero would be worse than admitting they cannot be compared in coins.
+
+Candidates are the **union** across every fight's loadout rather than per-fight, since the question is what to buy once for all of them. Each is applied through the same code path the single-room analysis uses, so a candidate means the same thing in both views.
+
+It is a long run: roughly every fight × every candidate, against one room × every candidate for the ordinary mode. Progress and Stop work throughout.
+
+### Skilling gear is offered at +5
+
+Nobody buys a celestial tool and leaves it at +0, so pricing and simulating one there answered a question nobody asked — and understated both its cost and its gain against every other candidate, which are judged at the level they would actually be run at. The same +5 the philosopher's accessories already use.
+
+### The Upgrade tab's controls fit
+
+The shared select style is `flex: 1; min-width: 0`, which is right for a row of two and wrong for a row of seven: Player and Mode were squeezed down to a caret and nothing else. Those selects size to their content with a floor now, and the row wraps instead of crushing.
+
 ### Skilling upgrades can suggest gear you do not own yet
 
 The skilling advisor could only ever offer to **enhance what was already on**, which meant it was silent about the two upgrades that actually move a labyrinth skilling room: a celestial tool, and the skill's own outfit. Neither is on the character, so neither was ever a candidate — an analysis that can only say "+1 on what you have" cannot say "buy the brush".
