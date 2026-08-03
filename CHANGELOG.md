@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Portrait meters read like DPs, and the monsters get one too
+
+- **Two lines per character**, this fight above the run: `1,052 DPS 1.9k cur` over `374 DPS 88.5k total`. The order is the point — the fight in front of you is the one you can still change, and the run is what you read it against.
+- **The rate in full, the damage abbreviated.** They are read differently: a rate is compared against another rate, where `1,052` against `1.1K` _is_ the comparison, while a running total only has to convey a size.
+- **A rate under every monster**, showing how fast that one is coming down.
+- **Monsters are joined by slot, players by name** — opposite rules, for opposite reasons. Two Veyes side by side are two different fights that their names cannot tell apart, so a name-keyed rate would appear on both tiles and be true of neither. A slot is stable for the length of a battle, which is exactly how long the figure lives. Players keep the name join, because a slot stops meaning the same person the moment somebody leaves the party.
+- **A per-fight tally now sits beside the per-run one** in the damage tracker, cleared when the next battle starts. The run's tally keys enemies by name, which is right for a run and cannot answer "which of these two", so the fight keeps its own.
+
 ### No arrow on the time-to-level tile
 
 `Defense → 130:` ellipsised to `Defense → 1…` and lost the very number the arrow was introducing. The tile has no width to spare, so the arrow is gone in every case and the label is simply the level being worked towards. The starting level and where the target came from are in the tooltip.

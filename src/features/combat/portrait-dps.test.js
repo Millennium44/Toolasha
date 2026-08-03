@@ -11,17 +11,26 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const opts = vi.hoisted(() => ({ position: 'above', players: [] }));
+const opts = vi.hoisted(() => ({ position: 'above', players: [], fight: { players: {}, enemies: {} } }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: () => opts.position },
 }));
-vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => ({ players: opts.players }) }));
+vi.mock('./damage-tracker.js', () => ({
+    damageBreakdown: () => ({ players: opts.players }),
+    battleBreakdown: () => opts.fight,
+}));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerInterval: () => {}, clearAll: () => {} }),
 }));
 
-const { matchPortraits, portraitName, meterText, default: portraitDps } = await import('./portrait-dps.js');
+const {
+    matchPortraits,
+    portraitName,
+    meterText,
+    enemyMeterText,
+    default: portraitDps,
+} = await import('./portrait-dps.js');
 
 /** A portrait tile as the game builds it, hashed class names and all */
 const portrait = (name) => {
@@ -85,17 +94,30 @@ describe('pairing portraits with the tally', () => {
 });
 
 describe('what a meter says', () => {
-    test('the rate first, because it is the comparable figure', () => {
-        // Total damage rewards whoever has been in the fight longest, which
-        // after somebody dies is not a measure of anything
-        expect(meterText({ name: 'A', damage: 98000, dps: 239.4 }).text).toContain('239');
+    test('the run alone is one line', () => {
+        const meter = meterText({ name: 'A', damage: 98000, dps: 239.4 });
+
+        expect(meter.lines).toHaveLength(1);
+        expect(meter.lines[0]).toContain('239');
+        expect(meter.lines[0]).toContain('total');
+    });
+
+    test('with a fight in progress it is two, this fight first', () => {
+        // DPs' order, and the point of it: the fight in front of you is the one
+        // you can still change, the run is what you read it against
+        const meter = meterText({ name: 'A', damage: 88500, dps: 374 }, { damage: 1900, dps: 1052 });
+
+        expect(meter.lines).toHaveLength(2);
+        expect(meter.lines[0]).toContain('cur');
+        expect(meter.lines[1]).toContain('total');
+        expect(meter.lines[0]).toContain('1,052');
     });
 
     test('too early for a rate reads as no rate, not as zero', () => {
         const meter = meterText({ name: 'A', damage: 120, dps: null });
 
-        expect(meter.text).toContain('—');
-        expect(meter.text).not.toContain('0 dps');
+        expect(meter.lines[0]).toContain('—');
+        expect(meter.lines[0]).not.toContain('0 DPS');
         expect(meter.title).toContain('not yet long enough');
     });
 });
@@ -117,6 +139,7 @@ describe('putting a meter on the tile', () => {
     beforeEach(() => {
         opts.position = 'above';
         opts.players = [{ name: 'Millennium44', damage: 20_100, dps: 316 }];
+        opts.fight = { players: {}, enemies: {} };
     });
 
     afterEach(() => portraitDps.cleanup());
@@ -158,5 +181,56 @@ describe('putting a meter on the tile', () => {
         portraitDps.initialize();
 
         expect(meterOf(unit)).toBeNull();
+    });
+});
+
+describe('a rate on the monsters', () => {
+    test('per slot, so two of the same monster differ', () => {
+        // Averaging by name would put one number on both tiles that was true of
+        // neither — which is the whole reason enemies are keyed by slot for a
+        // fight and by name for a run
+        expect(enemyMeterText({ name: 'Veyes', damage: 987, dps: 493 }).text).toBe('493/s');
+        expect(enemyMeterText({ name: 'Veyes', damage: 1188, dps: 594 }).text).toBe('594/s');
+    });
+
+    test('too early for a rate is a dash', () => {
+        expect(enemyMeterText({ name: 'Eye', damage: 40, dps: null }).text).toBe('—');
+    });
+});
+
+describe('drawing on the monster tiles', () => {
+    const monstersArea = (count) => {
+        document.body.innerHTML = '';
+        const area = document.createElement('div');
+        area.className = 'BattlePanel_monstersArea__7z1k';
+        for (let i = 0; i < count; i++) area.appendChild(portrait('Veyes'));
+        document.body.appendChild(area);
+        return [...area.children];
+    };
+
+    afterEach(() => portraitDps.cleanup());
+
+    test('each tile gets its own slot’s rate', () => {
+        const tiles = monstersArea(2);
+        opts.players = [];
+        opts.fight = {
+            players: {},
+            enemies: { 0: { name: 'Veyes', damage: 987, dps: 493 }, 1: { name: 'Veyes', damage: 1188, dps: 594 } },
+        };
+
+        portraitDps.initialize();
+
+        expect(tiles[0].textContent).toContain('493/s');
+        expect(tiles[1].textContent).toContain('594/s');
+    });
+
+    test('a tile with no slot in the fight gets nothing', () => {
+        const tiles = monstersArea(2);
+        opts.players = [];
+        opts.fight = { players: {}, enemies: { 0: { name: 'Veyes', damage: 987, dps: 493 } } };
+
+        portraitDps.initialize();
+
+        expect(tiles[1].querySelector('[data-toolasha-portrait-dps]')).toBeNull();
     });
 });
