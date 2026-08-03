@@ -36,7 +36,7 @@ import { expectedSpawnsPerWave } from './spawn-expectation.js';
 const NO_DROP_BONUSES = { combatDropRate: 0, combatRareFind: 0, combatDropQuantity: 0 };
 
 /** Zones without their own figure send a boss every this many battles */
-const DEFAULT_BATTLES_PER_BOSS = 10;
+export const DEFAULT_BATTLES_PER_BOSS = 10;
 
 /** A dungeon hands its whole party this much more of each drop */
 const DUNGEON_QUANTITY_MULTIPLIER = 5;
