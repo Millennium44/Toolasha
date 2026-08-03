@@ -7,9 +7,20 @@
  *
  * It is worth its own replay for a reason the unit tests cannot cover: the two
  * halves are measuring opposite ends of the same ticks, and the arithmetic that
- * makes one of them right can quietly break the other. A built payload has one
- * monster and no ambiguity; a real wave has three, and whether the attacker can
- * be named at all is a property of the recording rather than of the code.
+ * makes one of them right can quietly break the other.
+ *
+ * ## Do not derive anything from this fixture
+ *
+ * `combat-run.json` was **hand-trimmed to five fields per monster** when it was
+ * made. That is fine for the outgoing side, which reads exactly those fields,
+ * and it is a trap for the incoming one: a rung of the attacker ladder was once
+ * derived from "these monsters are unchanged", which was true only because the
+ * trimming had removed everything that changes. Against a real payload it fired
+ * never and a whole session went to Unknown Enemy.
+ *
+ * `damage-taken.dungeon.test.js` replays a recording with every field intact,
+ * and that is the one to reason from. This one checks the arithmetic still holds
+ * on a thinner payload, which is worth knowing and is all it is worth.
  */
 
 import { describe, test, expect } from 'vitest';

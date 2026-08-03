@@ -170,10 +170,42 @@ describe('which monster did it', () => {
         expect(findAttackers({}, newTakenState())).toEqual([]);
     });
 
-    test("a monster's first appearance says nothing about it", () => {
-        // There is no previous state to compare against, so "unchanged" is not
-        // a claim that can be made
-        expect(findAttackers({ 0: { cHP: 500, cMP: 100, dmgCounter: 5 } }, newTakenState())).toEqual([]);
+    test('an attack counter that rose outranks everything else', () => {
+        // What the name says: it goes up when that monster attacks. On a
+        // recorded dungeon it identified the attacker on thirty-two of the
+        // thirty-eight ticks the character was hit.
+        const state = newTakenState();
+        seed(state, {
+            0: { cHP: 500, cMP: 100, atkCounter: 4, dmgCounter: 5 },
+            1: { cHP: 400, cMP: 100, atkCounter: 9, dmgCounter: 5 },
+        });
+
+        const attackers = findAttackers(
+            {
+                0: { cHP: 300, cMP: 60, atkCounter: 4, dmgCounter: 6 },
+                1: { cHP: 400, cMP: 100, atkCounter: 10, dmgCounter: 5 },
+            },
+            state
+        );
+        expect(attackers).toEqual(['1']);
+    });
+
+    test("a monster's first appearance counts only when it is the whole tick", () => {
+        // There is no baseline to compare against, so all that is known is that
+        // the server mentioned it — worth something only if it mentioned nothing
+        // else, which is what the other six of those thirty-eight ticks were
+        expect(findAttackers({ 0: { cHP: 500, cMP: 100, atkCounter: 4 } }, newTakenState())).toEqual(['0']);
+    });
+
+    test('and not when something else in the tick has a better claim', () => {
+        const state = newTakenState();
+        seed(state, { 0: { cHP: 500, cMP: 100, atkCounter: 4 } });
+
+        const attackers = findAttackers(
+            { 0: { cHP: 500, cMP: 100, atkCounter: 5 }, 1: { cHP: 400, cMP: 100, atkCounter: 2 } },
+            state
+        );
+        expect(attackers).toEqual(['0']);
     });
 });
 

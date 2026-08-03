@@ -17,37 +17,47 @@
  * "took 3,400 and healed 3,600" is the reading that says whether a zone is
  * survivable and a net figure is not.
  *
- * ## `mMap` is a delta, and that is the whole trick
+ * ## `atkCounter` says who attacked
  *
- * A tick does not carry the wave. It carries the units whose state the server
- * touched, which across a recorded run of six battles meant nought or one entry
- * per tick against rosters of three. And on every one of the forty-two ticks
- * where the character was hit, the delta held exactly one monster **whose fields
- * had not changed at all** — same health, same mana, same counters.
- *
- * A monster with nothing to report is in the delta because it *acted*. That is
- * the attacker, named by the payload, and it is a far better signal than the one
- * this module first shipped with.
+ * `mMap` is a delta — it carries the units the server touched this tick, not the
+ * wave, so it is usually nought or one entry against a roster of three. And each
+ * monster in it carries `atkCounter`, which is exactly what its name suggests:
+ * it goes up when that monster attacks. On a recorded dungeon it rose on exactly
+ * one monster for thirty-two of the thirty-eight ticks the character was hit,
+ * and the other six were a monster's first appearance in the delta, alone.
  *
  * ## The ladder
  *
- * 1. **A monster's mana fell** — it cast an ability. In that recording no
- *    monster ever cast one, so this rung is rarer than it sounds.
- * 2. **A monster is in the delta with nothing changed** — it swung. This is what
- *    identifies the attacker in practice.
- * 3. **Several of those, all of the same kind** — which one it was does not
- *    matter, because "what hit me" has the same answer either way.
- * 4. **A monster's own `dmgCounter` rose** — it was hit this tick. MCS's proxy,
- *    kept but demoted below everything above: being hit is not attacking, and
- *    what it names is the monster *you* attacked.
- * 5. **Nobody** — no candidate rather than a guess, and shown as "Unknown Enemy".
+ * 1. **`atkCounter` rose** — it attacked. This is the answer nearly every time.
+ * 2. **`cMP` fell** — it cast, for a payload that does not carry `atkCounter`.
+ * 3. **Its first appearance in the delta, alone** — there is no baseline to
+ *    compare against, but the server mentioned it and nothing else.
+ * 4. **Nothing about it changed at all** — the same idea for a payload with
+ *    fewer fields; a monster with nothing to report is in the delta because it
+ *    acted.
+ * 5. **`dmgCounter` rose** — it was hit this tick. MCS's proxy, kept last:
+ *    being hit is not attacking, and what it names is the monster *you* hit.
+ * 6. **Nobody** — no candidate rather than a guess, shown as "Unknown Enemy".
  *
- * The first version had "there is only one monster in the tick" as rung 2 and
- * justified it as "no ambiguity to resolve". It gave the right answer most of
- * the time for the wrong reason: the wave was usually still three strong, and
- * what made the tick unambiguous was the delta, not the fight. Believing the
- * wrong reason is what left this crediting the monster you were attacking
- * whenever two units reported on the same tick.
+ * Several candidates of the same kind resolve rather than falling through, since
+ * "what hit me" has the same answer either way.
+ *
+ * ## Two wrong turns worth remembering
+ *
+ * The first version had "there is only one monster in the tick" as its second
+ * rung, justified as "no ambiguity to resolve". It was right most of the time
+ * for the wrong reason — the wave was usually still three strong, and what made
+ * the tick unambiguous was the delta, not the fight — so it fell through to
+ * rung 5 and credited the monster you were attacking whenever two units
+ * reported together.
+ *
+ * The second version replaced it with "nothing about it changed", measured off a
+ * recorded run where that held on thirty-seven of forty-two hits. That recording
+ * had been **hand-trimmed** down to five fields when it was made into a fixture,
+ * and the trimming was what made the monsters look unchanged. Against a real
+ * payload it fires never, and everything went to Unknown Enemy. The fixture for
+ * this module now keeps every field a tick carries, which is the only reason
+ * `atkCounter` was visible at all.
  *
  * The model is IHurt's, from MWI Combat Suite by Frotty (MIT) — see
  * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
@@ -94,24 +104,33 @@ function unchanged(before, now) {
  */
 export function findAttackers(mMap, state) {
     const entries = Object.entries(mMap || {}).filter(([, monster]) => monster);
+    const attacked = [];
     const cast = [];
-    const acted = [];
+    const fresh = [];
+    const quiet = [];
     const struck = [];
 
     for (const [index, monster] of entries) {
         const before = state.monsters[index];
         state.monsters[index] = monster;
-        // Nothing to compare against, so nothing to conclude — a monster's first
-        // appearance in a delta says only that the server mentioned it
-        if (!before) continue;
 
-        if (Number(monster.cMP) < Number(before.cMP)) cast.push(index);
+        // No baseline to diff against. All that is known is that the server
+        // mentioned it, which is only worth anything if it mentioned nothing else
+        if (!before) {
+            fresh.push(index);
+            continue;
+        }
+
+        if (Number(monster.atkCounter ?? 0) > Number(before.atkCounter ?? 0)) attacked.push(index);
+        else if (Number(monster.cMP) < Number(before.cMP)) cast.push(index);
         else if (Number(monster.dmgCounter ?? 0) > Number(before.dmgCounter ?? 0)) struck.push(index);
-        else if (unchanged(before, monster)) acted.push(index);
+        else if (unchanged(before, monster)) quiet.push(index);
     }
 
+    if (attacked.length) return attacked;
     if (cast.length) return cast;
-    if (acted.length) return acted;
+    if (fresh.length === 1 && entries.length === 1) return fresh;
+    if (quiet.length) return quiet;
     return struck;
 }
 
