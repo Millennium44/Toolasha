@@ -143,15 +143,20 @@ export function chestPerformance(entry, dropTable, priceOf) {
         });
     }
 
-    // Sorted by what each item was supposed to be worth, so the rows that
-    // dominate the verdict are the rows at the top. Unpriced rows have no worth
-    // to sort by and go last, ordered by how many were owed so the ones the
-    // chest is really about lead them.
-    items.sort((a, b) => {
-        if (a.unpriced !== b.unpriced) return a.unpriced ? 1 : -1;
-        if (a.unpriced) return b.expectedCount - a.expectedCount;
-        return b.expectedValue - a.expectedValue;
-    });
+    // Sorted by how much of each the chest owes you, commonest first, and by
+    // nothing else.
+    //
+    // It used to be sorted by what each was worth, which meant the rows moved
+    // whenever a price moved and whenever the cape or cowbell valuation was
+    // changed — a list you had learned the shape of rearranged itself for
+    // reasons that had nothing to do with the chest. A drop table does not
+    // change, so an order taken from it does not either. It is also the order
+    // TReasure lists them in.
+    //
+    // An item that dropped but is not in the table is owed nothing and goes
+    // last; the hrid tie-break is only there so that group has a fixed order
+    // rather than the map's.
+    items.sort((a, b) => b.expectedCount - a.expectedCount || a.itemHrid.localeCompare(b.itemHrid));
 
     return {
         opened,

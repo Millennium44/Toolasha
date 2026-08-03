@@ -297,7 +297,8 @@ registerRow({
     key: 'consumables',
     empty: 'Nothing slotted',
     name: 'Consumables',
-    defaultSize: { width: 240, height: 58 },
+    // Four lines now the cost label has one of its own, as CRack has it
+    defaultSize: { width: 240, height: 76 },
     render: (container) => {
         const players = consumablePlayers();
         const { you, party, partyName } = partyOutlook(players);
@@ -328,34 +329,54 @@ registerRow({
         if (partyName) first.title = `${partyName} runs out first in the party.`;
         container.appendChild(first);
 
-        // The item that stops you, with its icon — clicking either opens the
-        // marketplace, which is where you go next when the answer is "soon"
+        // The item that stops you: how many are left, then its icon, then its
+        // name — CRack's order, and the reason for it is the count. It is a
+        // stock figure rather than a sum of money, and "3.17K remaining" is a
+        // worse answer than "3,170" to the only question being asked, which is
+        // whether to top up now. Clicking any of the three opens the
+        // marketplace, which is where you go next when the answer is "soon".
         const limiting = you || party;
         const second = document.createElement('div');
         Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
 
+        const count = document.createElement('span');
+        count.textContent = formatWithSeparator(limiting.held);
+        count.style.color = runOutColor(limiting);
+        count.style.fontWeight = 'bold';
+
         const icon = itemIcon(limiting.itemHrid, 16);
-        linkToMarketplace(icon, limiting.itemHrid, navigateToMarketplace);
 
-        const remaining = document.createElement('span');
-        remaining.textContent = `${formatLargeNumber(limiting.held)} remaining`;
-        remaining.style.color = runOutColor(limiting);
-        Object.assign(remaining.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-        linkToMarketplace(remaining, limiting.itemHrid, navigateToMarketplace);
+        const name = document.createElement('span');
+        name.textContent = itemNameOf(limiting.itemHrid);
+        Object.assign(name.style, {
+            color: ROW_COLORS.dim,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+        });
 
-        second.append(icon, remaining);
+        for (const part of [count, icon, name]) linkToMarketplace(part, limiting.itemHrid, navigateToMarketplace);
+        second.append(count, icon, name);
         container.appendChild(second);
 
-        const third = document.createElement('div');
-        drawLine(third, [
-            { text: 'Cost/day', color: ROW_COLORS.dim },
-            {
-                text: `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`,
-                color: ROW_COLORS.bad,
-                push: true,
-            },
-        ]);
-        container.appendChild(third);
+        // The label above its figures rather than beside them, as CRack has it.
+        // On a tile this narrow the two never fitted on one line anyway — they
+        // simply ran together instead of admitting it.
+        const label = document.createElement('div');
+        label.textContent = 'Total Cost/Day:';
+        Object.assign(label.style, { color: ROW_COLORS.good, fontWeight: 'bold', fontSize: '90%' });
+        container.appendChild(label);
+
+        const cost = document.createElement('div');
+        cost.textContent = `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`;
+        Object.assign(cost.style, {
+            color: ROW_COLORS.neutral,
+            fontSize: '90%',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+        });
+        container.appendChild(cost);
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
@@ -465,6 +486,17 @@ function runOutColor(entry) {
     if (!entry) return ROW_COLORS.dim;
     // An hour is the point at which it is worth stopping what you are doing
     return entry.secondsLeft < 3600 ? ROW_COLORS.bad : ROW_COLORS.good;
+}
+
+/**
+ * An item's name, falling back to its hrid so an item the game data does not
+ * know about still reads as something rather than as a blank.
+ * @param {string} itemHrid - The item
+ * @returns {string} Name
+ */
+function itemNameOf(itemHrid) {
+    const details = dataManager.getItemDetails?.(itemHrid);
+    return details?.name || String(itemHrid).replace('/items/', '').replace(/_/g, ' ');
 }
 
 /**
