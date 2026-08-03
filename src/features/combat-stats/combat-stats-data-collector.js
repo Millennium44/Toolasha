@@ -7,6 +7,16 @@ import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 
+/**
+ * How long a finished run stays on the overlay.
+ *
+ * Long enough to read what you just earned after combat stops, short enough that
+ * a rate dividing by a clock nobody stopped does not sit there looking like a
+ * measurement. Only ever consulted when the character is *not* in combat — a run
+ * still under way is never withheld, however old its snapshot.
+ */
+const STALE_AFTER_MS = 10 * 60 * 1000;
+
 class CombatStatsDataCollector {
     constructor() {
         this.isInitialized = false;
@@ -506,6 +516,11 @@ class CombatStatsDataCollector {
                 timestamp: Date.now(),
                 battleId: battleId,
                 combatStartTime: data.combatStartTime,
+                // Which zone this run was, so a restored snapshot can be told
+                // apart from the run the character is in now. Time alone cannot
+                // do it: a character left fighting overnight has an old snapshot
+                // of a run that is still going.
+                actionHrid: this.currentCombatAction(),
                 durationSeconds: durationSeconds,
                 players: data.players.map((player) => {
                     // Check if this player is the current user by matching character ID
@@ -630,11 +645,80 @@ class CombatStatsDataCollector {
     }
 
     /**
+     * The combat zone the character is fighting in right now, if any.
+     *
+     * @returns {string|null} Action hrid, or null when not in combat or when the
+     *   character's actions have not loaded yet — which are different things and
+     *   the caller has to treat them differently
+     */
+    currentCombatAction() {
+        try {
+            const actions = dataManager.getCurrentActions?.();
+            if (!Array.isArray(actions)) return null;
+
+            const combat = actions.find(
+                (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
+            );
+            return combat?.actionHrid || null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Whether a run restored from storage still describes what is happening.
+     *
+     * A restored snapshot is a photograph of the run as it stood when the tab was
+     * last open, and there are two quite different reasons it might be old:
+     *
+     * - **The run is still going.** The character kept fighting while the tab was
+     *   shut, so the snapshot understates a run that is very much alive. Showing
+     *   it is right: it is the correct run, a little behind, and the next battle
+     *   corrects it. Blanking here would reintroduce exactly the gap this was
+     *   meant to close.
+     * - **The run is over.** Combat stopped hours ago and the figures describe
+     *   something finished. Presenting them as live is the thing worth avoiding —
+     *   the per-day rates keep dividing by a clock that never stopped, so they
+     *   decay towards zero and read as a run going badly rather than as a run
+     *   that is not happening.
+     *
+     * Elapsed time cannot tell those apart, which is why the current action
+     * decides it and the clock is only the fallback for when there is nothing to
+     * ask. A different zone in progress means the snapshot is somebody else's
+     * run entirely.
+     *
+     * @returns {boolean}
+     */
+    isRestoredRunCurrent() {
+        const data = this.latestCombatData;
+        if (!data) return false;
+
+        const current = this.currentCombatAction();
+
+        // Fighting somewhere else: whatever this is, it is not that
+        if (current && data.actionHrid && current !== data.actionHrid) return false;
+        // The same run, still under way — age is irrelevant
+        if (current && (!data.actionHrid || current === data.actionHrid)) return true;
+
+        // Not in combat, or not yet able to tell. A short grace period so the run
+        // you have just finished is still on screen while you look at it, and
+        // then it belongs to the popup rather than to the overlay.
+        return Date.now() - (data.timestamp || 0) < STALE_AFTER_MS;
+    }
+
+    /**
      * Get the latest combat data
+     *
+     * Live data is returned as-is. A snapshot restored from storage is withheld
+     * once it stops describing what is happening — see `isRestoredRunCurrent`.
+     *
      * @returns {Object|null} Latest combat data
      */
     getLatestData() {
-        return this.latestCombatData;
+        if (!this.latestCombatData) return null;
+        if (!this.latestCombatData.restored) return this.latestCombatData;
+
+        return this.isRestoredRunCurrent() ? this.latestCombatData : null;
     }
 
     /**
@@ -644,9 +728,12 @@ class CombatStatsDataCollector {
     async loadLatestData() {
         const data = await storage.getJSON('latestCombatRun', 'combatStats', null);
         if (data) {
-            this.latestCombatData = data;
+            // Marked so `getLatestData` knows this came out of storage rather
+            // than off the wire, and can stop offering it once it stops being
+            // true. Live data is never withheld.
+            this.latestCombatData = { ...data, restored: true };
         }
-        return data;
+        return this.latestCombatData;
     }
 
     /**
