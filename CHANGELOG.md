@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Fixed: in a party, the Damage panel was throwing away nine hits in ten
+
+The same recordings that fixed the incoming side turned out to carry the answer for the outgoing one. Every player has an `atkCounter`, and it goes up when they attack — across two recorded runs it rose on **every** tick that dealt damage, sixty-nine of sixty-nine.
+
+- **The caster is identified by that counter now**, not by mana. Mana was the original answer and a much weaker one: only an ability costs any, so `cMP` falling named the actor on eight of those sixty-nine ticks.
+- **Solo, this changed nothing** — a single player was already credited directly whatever the payload said, which is why the fault never showed.
+- **In a party it changed everything.** With nobody identified, a hit is dropped, so the panel was losing every auto-attack. Replaying a recording with a second party member spliced in who does nothing: the totals are now identical with and without them, and on a payload carrying no attack counter the same replay loses four fifths of the run. That second figure is what a real party used to see.
+- **Mana is kept below the counter**, for the tick where two people act at once and one of them cast, and for a payload that carries no counter at all.
+
+### The auto-record switch turns itself off
+
+It writes its file and puts the switch back, so the next load is an ordinary one. A switch that downloads something on every page load until somebody remembers it is a switch left on by accident, and collecting one recording is finished the moment the file exists. It stays armed if there was nothing to save — loading outside combat is not the recording anybody was after.
+
 ### Fixed: a refresh named the first monster of the wave and no others
 
 The battle panel is read for the monsters' names after a reload, because the client never receives the message that names them. That reading stopped as soon as it had found anything — and `mMap` is a delta, so a wave of two arrives across several ticks: the first monster reported on the very first tick, the second not for another two. The first got a name, the second never did, and every hit it landed went to Unknown Enemy for the rest of the fight.

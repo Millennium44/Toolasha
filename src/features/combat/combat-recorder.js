@@ -39,6 +39,11 @@
  * without being asked. It also snapshots the battle panel on every tick until
  * the first `new_battle` arrives, because whether the names can be read off the
  * screen during that window is the other half of the same question.
+ *
+ * **It disarms itself once it has a file.** A switch that downloads something on
+ * every page load until somebody remembers to turn it off is a switch left on by
+ * accident, and the thing it is for — collecting one recording to hand over — is
+ * finished the moment the file exists. Turn it on again for the next one.
  */
 
 import config from '../../core/config.js';
@@ -118,8 +123,11 @@ export function startRecording({ seconds = 0, thenDownload = false } = {}) {
         stopTimer = setTimeout(() => {
             stopRecording();
             // Unattended by definition: nobody is watching a recording that
-            // started itself, so it has to hand over the file on its own
-            if (thenDownload) downloadRecording();
+            // started itself, so it has to hand over the file on its own — and
+            // then put the switch back, so the next load is an ordinary one
+            if (!thenDownload) return;
+
+            if (downloadRecording()) config.setSetting('combatRecorder_autoStart', false);
         }, seconds * 1000);
     }
 }

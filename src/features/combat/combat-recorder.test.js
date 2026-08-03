@@ -1,6 +1,12 @@
 /**
+ * @vitest-environment happy-dom
+ *
  * The combat recorder, checked for the two things that would make a recording
  * useless: keeping the wrong fields, and never stopping.
+ *
+ * A DOM because writing the file out is part of what it does, and the automatic
+ * recording only disarms itself once a file has actually been written — which is
+ * not something that can be observed without somewhere to write to.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -12,6 +18,9 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => (key === 'combatRecorder_autoStart' ? settings.autoStart : false),
         getSettingValue: (key, fallback) => (key === 'combatRecorder_autoStartSeconds' ? settings.seconds : fallback),
+        setSetting: (key, value) => {
+            if (key === 'combatRecorder_autoStart') settings.autoStart = value;
+        },
     },
 }));
 vi.mock('../../utils/battle-panel-monsters.js', () => ({
@@ -114,6 +123,33 @@ describe('recording the first seconds of a session', () => {
         vi.advanceTimersByTime(30_000);
         expect(recorder.isRecording()).toBe(false);
         expect(recorder.recordingFile().ticks.length).toBe(1);
+        vi.useRealTimers();
+    });
+
+    test('and then puts the switch back, so the next load is an ordinary one', () => {
+        // A switch that downloads a file on every load until somebody remembers
+        // it is a switch left on by accident, and collecting one recording is
+        // finished the moment the file exists
+        vi.useFakeTimers();
+        settings.autoStart = true;
+        settings.seconds = 30;
+        recorder.default.initialize();
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        vi.advanceTimersByTime(30_000);
+        expect(settings.autoStart).toBe(false);
+        vi.useRealTimers();
+    });
+
+    test('but stays armed when there was nothing to save', () => {
+        // Loading outside combat is not the recording anybody was after
+        vi.useFakeTimers();
+        settings.autoStart = true;
+        settings.seconds = 30;
+        recorder.default.initialize();
+
+        vi.advanceTimersByTime(30_000);
+        expect(settings.autoStart).toBe(true);
         vi.useRealTimers();
     });
 

@@ -1636,7 +1636,7 @@ export const settingsGroups = {
                 label: 'Auto-record combat on load',
                 type: 'checkbox',
                 default: false,
-                help: 'Starts the combat recorder the moment the page loads and writes the file out on its own. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Leave off unless you are collecting a recording to send',
+                help: 'Starts the combat recorder the moment the page loads and writes the file out on its own, then switches itself back off. The Record button in the Damage panel cannot capture the first seconds of a session, which is exactly when a reload lands mid-fight and the client never sees what it is fighting. Turn it on again for each recording you want',
             },
             combatRecorder_autoStartSeconds: {
                 id: 'combatRecorder_autoStartSeconds',
