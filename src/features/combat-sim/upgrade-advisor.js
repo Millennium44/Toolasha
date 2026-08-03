@@ -716,21 +716,46 @@ function getItemDamageStyle(combatStats) {
 }
 
 /**
+ * Which attack styles an item's offensive stats are for.
+ *
+ * An off-hand carrying melee accuracy is a melee off-hand, whatever else it
+ * gives — pairing it with a crossbow offers a bow user a shield whose entire
+ * offensive contribution is dead weight.
+ *
+ * @param {Object} stats - `equipmentDetail.combatStats`
+ * @returns {Set<string>} Any of `magic`, `ranged`, `melee`; empty when the piece
+ *   is purely defensive and so fits any style
+ */
+function offensiveStyles(stats = {}) {
+    const styles = new Set();
+    if ((stats.magicDamage || 0) > 0 || (stats.magicAccuracy || 0) > 0) styles.add('magic');
+    if ((stats.rangedDamage || 0) > 0 || (stats.rangedAccuracy || 0) > 0) styles.add('ranged');
+    const meleeDamage = (stats.stabDamage || 0) + (stats.slashDamage || 0) + (stats.smashDamage || 0);
+    const meleeAccuracy = (stats.stabAccuracy || 0) + (stats.slashAccuracy || 0) + (stats.smashAccuracy || 0);
+    if (meleeDamage > 0 || meleeAccuracy > 0) styles.add('melee');
+    return styles;
+}
+
+/**
  * Find candidate off-hand items for a given combat style and level range.
  * Returns up to two options (deduped):
  *  - Style-matched: highest-itemLevel off-hand whose offensive stats match the
  *    weapon's damage style (e.g. Manticore Shield for ranged).
- *  - Highest-itemLevel: the strongest off-hand by item level overall, regardless
- *    of style fit (e.g. Knight's Aegis for any cross-slot upgrade).
+ *  - Highest-itemLevel: the strongest off-hand by item level among those that
+ *    fit the style — either matching it or carrying no offensive stats at all.
+ *
+ * That second one used to be the strongest off-hand *overall*, which paired a
+ * ranged main hand with a melee shield and offered it as an upgrade. An
+ * off-hand built for another style is not a better off-hand, whatever its item
+ * level says; a purely defensive one is still fair game for anybody.
+ *
  * @param {Object} gameData - Game data
  * @param {string} damageStyle - Primary damage style of the weapon
  * @param {number} maxItemLevel - Maximum item level to consider
  * @returns {Array<{hrid: string, itemLevel: number}>}
  */
 function findBestOffHand(gameData, damageStyle, maxItemLevel) {
-    const isMagic = damageStyle === 'magic';
-    const isRanged = damageStyle === 'ranged';
-    const isMelee = damageStyle === 'slash' || damageStyle === 'stab' || damageStyle === 'smash';
+    const family = damageStyle === 'magic' ? 'magic' : damageStyle === 'ranged' ? 'ranged' : 'melee';
 
     let styleMatched = null; // highest-itemLevel off-hand with style-matched stats
     let highest = null; // highest-itemLevel off-hand overall (with magic-exclusion for non-magic)
@@ -742,36 +767,20 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
         if ((item.itemLevel || 0) > maxItemLevel) continue;
 
         const level = item.itemLevel || 0;
-        const stats = eq.combatStats || {};
-        const hasMagicStats = (stats.magicDamage || 0) > 0 || (stats.magicAccuracy || 0) > 0;
+        const styles = offensiveStyles(eq.combatStats);
 
-        // Build "highest overall" candidate (mirrors original behavior)
-        if (isMagic) {
-            if (!highest) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
-            } else if (hasMagicStats && !highest.isMagic) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: true };
-            } else if (hasMagicStats === highest.isMagic && level > highest.itemLevel) {
-                highest = { hrid: itemHrid, itemLevel: level, isMagic: hasMagicStats };
-            }
-        } else if (!hasMagicStats && (!highest || level > highest.itemLevel)) {
-            // For non-magic, exclude off-hands with magic stats from "highest"
+        // An off-hand whose offensive stats are for another style is not an
+        // upgrade for this weapon at any item level; one with none at all is
+        // pure defence and fits anybody
+        if ([...styles].some((style) => style !== family)) continue;
+
+        if (!highest || level > highest.itemLevel) {
             highest = { hrid: itemHrid, itemLevel: level };
         }
 
-        // Build "style-matched" candidate — highest itemLevel among off-hands whose
-        // offensive stats match the weapon's damage style.
-        let styleMatch = false;
-        if (isMagic) {
-            styleMatch = hasMagicStats;
-        } else if (isRanged) {
-            styleMatch = (stats.rangedDamage || 0) > 0 || (stats.rangedAccuracy || 0) > 0;
-        } else if (isMelee) {
-            const meleeDmg = (stats.stabDamage || 0) + (stats.slashDamage || 0) + (stats.smashDamage || 0);
-            const meleeAcc = (stats.stabAccuracy || 0) + (stats.slashAccuracy || 0) + (stats.smashAccuracy || 0);
-            styleMatch = meleeDmg > 0 || meleeAcc > 0;
-        }
-        if (styleMatch && (!styleMatched || level > styleMatched.itemLevel)) {
+        // Style-matched: the highest one that actually contributes to this
+        // weapon's damage, rather than merely not clashing with it
+        if (styles.has(family) && (!styleMatched || level > styleMatched.itemLevel)) {
             styleMatched = { hrid: itemHrid, itemLevel: level };
         }
     }

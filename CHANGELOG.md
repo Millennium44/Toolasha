@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### All Fights columns sort, and the panel opens big enough to read
+
+Every column in the All Fights table is a sort now — click Cost for the cheapest first, Rooms to see what reaches the whole run, Avg ΔWin for the biggest single-room gain. A second click reverses it; a new column starts at whichever end of it is the good news. Candidates with no coin price sort last either way rather than pretending to be free. The CSV export follows whatever order is on screen.
+
+The panel opens at 900×700 rather than 560×600, which is what a seven-column table needs, and it now has a grip in the **bottom-left** corner as well as the bottom-right. A panel sitting against the right edge of the screen could only be widened by pushing it further off-screen.
+
+### No more melee shields recommended to ranged builds
+
+Trading a two-hander for a main-hand plus off-hand offered two off-hands: the best one matching the weapon's style, and the highest-item-level one overall. That second rule was style-blind — "Cursed Bow → Sundering Crossbow + Knight's Aegis" put a melee shield on a ranged build because it had the higher item level, and every point of its melee accuracy is dead weight there.
+
+An off-hand carrying offensive stats for another style is no longer offered at all, whatever its item level says. One with no offensive stats — pure armour and evasion — is still offered to everybody, which is what made the rule worth having.
+
+### Cached labyrinth sims notice when you enhance something
+
+The fingerprint that decides whether a cached room sim is still good was taken over the stored loadout contents. For a loadout wearing the highest copy you own, enhancing an item changes what it puts on without changing anything stored — so the sim cached against the old level outlived the upgrade that made it wrong. The fingerprint now covers the levels actually worn.
+
 ### Loadouts are read at the enhancement levels they actually wear
 
 A loadout snapshot is parsed from the game's wearable hash, and that hash carries the enhancement level from the moment the loadout was last saved — for a loadout using "Use highest enhancement level" (the default) it is usually 0, because the level is not part of what the loadout stores. The game resolves it at equip time by putting on the best copy you own. Reading the stored number back reported a Refined Gatherer Cape at +0 while the character was standing there wearing it at +10, and every number computed from that loadout was wrong in the same direction.

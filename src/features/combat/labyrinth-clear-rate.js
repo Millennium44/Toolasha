@@ -2530,9 +2530,22 @@ class LabyrinthClearRate {
      */
     _snapshotContentFingerprint() {
         try {
-            return this._hashString(
-                JSON.stringify(loadoutSnapshot.snapshots || {}, (key, value) => (key === 'savedAt' ? undefined : value))
+            const stored = JSON.stringify(loadoutSnapshot.snapshots || {}, (key, value) =>
+                key === 'savedAt' ? undefined : value
             );
+            // The stored level is not the worn level for a loadout in "highest
+            // owned" mode: enhancing an item changes what it puts on without
+            // changing anything above, and a sim cached against the old level
+            // would otherwise outlive the upgrade that made it wrong
+            const worn = Object.values(loadoutSnapshot.snapshots || {})
+                .map((snapshot) =>
+                    loadoutSnapshot
+                        .resolveEquipment(snapshot)
+                        .map((equip) => `${equip.itemHrid}+${equip.enhancementLevel}`)
+                        .join(',')
+                )
+                .join('|');
+            return this._hashString(`${stored}||${worn}`);
         } catch {
             // Unhashable → treat as changed so stale sims never survive
             return `err-${Date.now()}`;
