@@ -71,6 +71,10 @@ const VERDICT_COLORS = {
     'sim too high': '#ff8a8a',
     'sim too low': '#8ac6ff',
     consistent: '#8fe3b0',
+    // Fights taking longer than simulated is the same kind of news as a clear
+    // rate that is too optimistic, so it reads in the same colour
+    'sim too fast': '#ff8a8a',
+    'sim too slow': '#8ac6ff',
 };
 
 /**
@@ -160,6 +164,9 @@ class LabyrinthRoomLogs {
         // the one worth reading first — the levels are what you open when it
         // says something.
         this.expandedSubjects = new Set();
+        // Whether the accuracy view is showing everything or only what has
+        // happened since the baseline was marked
+        this.sinceBaseline = false;
     }
 
     /** How many rooms of history to keep */
@@ -796,6 +803,15 @@ class LabyrinthRoomLogs {
         const seconds = Math.max(0, (session.endedAt - session.startedAt) / 1000);
         const skilling = session.mode !== 'combat';
 
+        // A combat room's only other signal is how long its fights ran. Clears
+        // over attempts needs hundreds of fights to say anything and a room
+        // gives you ten; fight length is measured on every attempt, win or
+        // lose, and the sim already predicts it — so a model that has the fight
+        // wrong shows up in a handful rather than in a season.
+        const fights = skilling ? [] : session.actions || [];
+        const fightSeconds = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0), 0);
+        const fightSquares = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0) ** 2, 0);
+
         Promise.resolve(
             this.simSource.record({
                 subjectHrid: session.subjectHrid,
@@ -807,6 +823,10 @@ class LabyrinthRoomLogs {
                 actions: skilling ? session.actionCount : 0,
                 successes: skilling ? session.successCount : 0,
                 doubles: skilling ? session.doubleCount : 0,
+                fights: fights.length,
+                fightSeconds,
+                fightSquares,
+                predictedFightSeconds: session.forecast?.avgFightSeconds,
                 predictedSeconds: session.forecast?.expectedSeconds,
                 predictedSuccess: session.forecast?.successChance,
                 predictedDouble: session.forecast?.doubleChance,
@@ -1413,7 +1433,7 @@ class LabyrinthRoomLogs {
 
         let snapshot;
         try {
-            snapshot = await this.simSource.accuracy();
+            snapshot = await this.simSource.accuracy({ since: this.sinceBaseline });
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the fight record failed:', error);
             list.appendChild(this.makeNote('Could not read the fight record.'));
@@ -1427,13 +1447,19 @@ class LabyrinthRoomLogs {
         const { rows, summary } = snapshot;
         if (!rows.length) {
             list.appendChild(
-                this.makeNote('No labyrinth fights recorded yet. Fight some combat rooms and they will show up here.')
+                this.makeNote(
+                    snapshot.since
+                        ? 'Nothing recorded since the mark yet.'
+                        : 'No labyrinth fights recorded yet. Fight some combat rooms and they will show up here.'
+                )
             );
+            // Still offered, or a view showing nothing would have no way back
+            if (snapshot.baselineAt) list.appendChild(this.renderBaselineLine(snapshot));
             return;
         }
 
         this.lastAccuracy = snapshot;
-        list.appendChild(this.renderAccuracySummary(summary));
+        list.appendChild(this.renderAccuracySummary(summary, snapshot));
 
         // Each room type's pooled reading followed by its own levels, in the
         // game's order and by level within it. Every pooled row first and every
@@ -1559,7 +1585,7 @@ class LabyrinthRoomLogs {
         }, 1600);
     }
 
-    renderAccuracySummary(summary) {
+    renderAccuracySummary(summary, snapshot = {}) {
         const card = document.createElement('div');
         card.style.cssText =
             'border:1px solid rgba(146,182,255,0.35); border-radius:5px; background:rgba(30,44,64,0.95); padding:6px 7px; ' +
@@ -1577,19 +1603,121 @@ class LabyrinthRoomLogs {
         } else {
             const off = summary.judgedClears - summary.expected;
             const direction = off >= 0 ? 'above' : 'below';
+            // With the spread beside it, because a shortfall of ten is a shrug
+            // over one sample and a finding over another, and the figure alone
+            // cannot say which
+            const spread = summary.sd ? ` — ${Math.abs(summary.sigma).toFixed(1)} sd` : '';
             body.textContent =
                 `Over the ${summary.judged} it had a rate for, the sim expected ${summary.expected.toFixed(1)} clears ` +
-                `and you got ${summary.judgedClears} — ${Math.abs(off).toFixed(1)} ${direction}.`;
+                `and you got ${summary.judgedClears} — ${Math.abs(off).toFixed(1)} ${direction}${spread}.`;
         }
         card.appendChild(body);
 
+        if (summary.sd) {
+            const scale = document.createElement('div');
+            scale.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
+            scale.textContent =
+                Math.abs(summary.sigma) < 2
+                    ? 'Within what chance allows for — a record this size wanders by about ' +
+                      `${summary.sd.toFixed(1)} clears on its own.`
+                    : 'Further out than chance comfortably explains — a record this size wanders by about ' +
+                      `${summary.sd.toFixed(1)} clears on its own.`;
+            card.appendChild(scale);
+        }
+
+        card.appendChild(this.renderBaselineLine(snapshot));
+
         if (summary.contested > 0) {
             const flag = document.createElement('div');
-            flag.style.cssText = 'font-size:10px; color:#ff8a8a; font-weight:700;';
-            flag.textContent = `${summary.contested} room${summary.contested === 1 ? '' : 's'} the record contradicts`;
+            const chance = summary.contestedByChance;
+            // A 95% interval is wrong one room in twenty by construction, so a
+            // raw count of contradictions is not a finding until it is set
+            // against the number this record would throw up anyway
+            const alarming = chance === null || summary.contested > chance * 2;
+            flag.style.cssText = `font-size:10px; font-weight:700; color:${alarming ? '#ff8a8a' : 'rgba(221,232,255,0.7)'};`;
+            flag.textContent =
+                `${summary.contested} room${summary.contested === 1 ? '' : 's'} the record contradicts` +
+                (chance === null ? '' : ` — about ${chance.toFixed(1)} would be flagged by chance alone`);
             card.appendChild(flag);
         }
         return card;
+    }
+
+    /**
+     * Marking a point to measure from, and switching between the two views.
+     *
+     * In the summary card rather than the header because it is a thing you do
+     * once and then read, and the header already carries Export, Reset and the
+     * tabs. Reset is left where it is — it answers a different question, which
+     * is "throw this away", and sometimes that is the one being asked.
+     *
+     * @param {Object} snapshot - `{ baselineAt, since }`
+     * @returns {HTMLElement}
+     */
+    renderBaselineLine(snapshot) {
+        const line = document.createElement('div');
+        line.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55); margin-top:2px;';
+
+        const act = (text, onClick, title) => {
+            const button = document.createElement('span');
+            button.textContent = text;
+            button.title = title;
+            button.style.cssText = 'color:#9ec4ff; cursor:pointer; text-decoration:underline dotted;';
+            button.addEventListener('click', onClick);
+            return button;
+        };
+
+        if (!snapshot.baselineAt) {
+            line.append(
+                'Everything ever recorded · ',
+                act(
+                    'mark a point to measure from',
+                    () => this.markBaseline(),
+                    'Keeps the whole record and lets you read only what has happened since — which is what ' +
+                        'Reset was being used for, without losing anything'
+                )
+            );
+            return line;
+        }
+
+        const when = new Date(snapshot.baselineAt).toLocaleDateString();
+        line.append(
+            snapshot.since ? `Since ${when} · ` : `Everything ever recorded · marked ${when} · `,
+            act(
+                snapshot.since ? 'show everything' : 'show only since then',
+                () => {
+                    this.sinceBaseline = !this.sinceBaseline;
+                    this.render();
+                },
+                'Switch between the whole record and the period since the mark'
+            ),
+            ' · ',
+            act('re-mark', () => this.markBaseline(), 'Move the mark to now'),
+            ' · ',
+            act(
+                'forget the mark',
+                () => {
+                    Promise.resolve(this.simSource?.clearBaseline?.())
+                        .then(() => {
+                            this.sinceBaseline = false;
+                            this.render();
+                        })
+                        .catch((error) => console.error('[LabyrinthRoomLogs] Forgetting the mark failed:', error));
+                },
+                'The record itself is untouched either way'
+            )
+        );
+        return line;
+    }
+
+    /** Mark now as the point to measure from, and show the period since */
+    markBaseline() {
+        Promise.resolve(this.simSource?.markBaseline?.())
+            .then(() => {
+                this.sinceBaseline = true;
+                this.render();
+            })
+            .catch((error) => console.error('[LabyrinthRoomLogs] Marking a baseline failed:', error));
     }
 
     renderAccuracyRow(row) {
@@ -1657,6 +1785,23 @@ class LabyrinthRoomLogs {
             card.appendChild(actionLine);
         }
 
+        // A combat room's per-fight reading, which is the only thing that can
+        // say anything about it before hundreds of fights have gone by
+        if (row.fightLength) {
+            const fl = row.fightLength;
+            const fightLine = document.createElement('div');
+            fightLine.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:10px;';
+            const text = document.createElement('span');
+            text.style.color = 'rgba(221,232,255,0.8)';
+            text.textContent =
+                `Fight — sim ${Math.round(fl.predicted)}s, ran ${Math.round(fl.actual)}s ` +
+                `over ${fl.fights} fight${fl.fights === 1 ? '' : 's'}`;
+            fightLine.appendChild(text);
+            const colour = VERDICT_COLORS[fl.verdict];
+            if (colour) fightLine.appendChild(this.makeChip(fl.verdict, 'rgba(255,255,255,0.08)', colour));
+            card.appendChild(fightLine);
+        }
+
         const throughput = [];
         if (row.timing)
             throughput.push(`${Math.round(row.timing.actual)}s vs ${Math.round(row.timing.predicted)}s est per clear`);
@@ -1708,6 +1853,16 @@ class LabyrinthRoomLogs {
                         'rate it is actually using, so no amount of play will bring the two together'
                 );
             }
+        }
+        if (row.fightLength) {
+            const fl = row.fightLength;
+            const band = fl.low === null ? '' : ` (${Math.round(fl.low)}–${Math.round(fl.high)}s)`;
+            lines.push(
+                `A fight ran ${Math.round(fl.actual)}s on average over ${fl.fights} attempt(s)${band}, against ` +
+                    `${Math.round(fl.predicted)}s simulated — ${fl.ratio.toFixed(2)}x. Every attempt counts here, ` +
+                    "won or lost, and the sim's figure is the same kind of average, so this needs far fewer fights " +
+                    'than a clear rate does before it can say anything'
+            );
         }
         if (row.timing) {
             lines.push(

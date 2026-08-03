@@ -284,7 +284,14 @@ export function foldRoomResult(totals, result) {
     // prediction with one made for gear you have since replaced produces a
     // number nothing ever claimed.
     const stamp = {};
-    for (const field of ['predictedSeconds', 'predictedSuccess', 'predictedDouble', 'serverSuccess', 'serverDouble']) {
+    for (const field of [
+        'predictedSeconds',
+        'predictedFightSeconds',
+        'predictedSuccess',
+        'predictedDouble',
+        'serverSuccess',
+        'serverDouble',
+    ]) {
         const value = rateOrNaN(result[field]);
         if (Number.isFinite(value)) stamp[field] = value;
     }
@@ -304,6 +311,9 @@ export function foldRoomResult(totals, result) {
             actions: add('actions', result.actions),
             successes: add('successes', result.successes),
             doubles: add('doubles', result.doubles),
+            fights: add('fights', result.fights),
+            fightSeconds: add('fightSeconds', result.fightSeconds),
+            fightSquares: add('fightSquares', result.fightSquares),
             ...ratios,
             ...stamp,
         },
@@ -478,6 +488,7 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
             verdict: known ? verdict.verdict : 'not simmed',
             measured,
             timing: roomTiming(bucket, measured),
+            fightLength: fightLength(bucket),
             rates: actionRates(bucket, measured, interval),
         });
     }
@@ -570,6 +581,45 @@ function roomTiming(bucket, measured) {
 }
 
 /**
+ * How long a fight ran, against how long the sim thought it would.
+ *
+ * The sharpest thing a combat room can say. Its clear rate needs hundreds of
+ * fights before an interval closes far enough to contradict anything, and a
+ * room gives you ten — but every attempt has a duration, win or lose, and the
+ * sim predicts one. A model that has the fight itself wrong shows up here in a
+ * handful of attempts.
+ *
+ * Nothing is conditioned on: `avgFightSeconds` is the mean over every simulated
+ * fight including the losses, and this is the mean over every attempt including
+ * the losses. The spread is the sample's own, so two fights make a reading and
+ * not a verdict.
+ *
+ * @param {Object} bucket - Accumulator bucket
+ * @returns {Object|null}
+ */
+function fightLength(bucket) {
+    const predicted = rateOrNaN(bucket?.predictedFightSeconds);
+    const fights = Math.max(0, Math.floor(Number(bucket?.fights) || 0));
+    const total = Math.max(0, Number(bucket?.fightSeconds) || 0);
+    if (!fights || !total || !Number.isFinite(predicted) || predicted <= 0) return null;
+
+    const actual = total / fights;
+    const squares = Math.max(0, Number(bucket.fightSquares) || 0);
+    const variance = fights > 1 ? Math.max(0, (squares - fights * actual * actual) / (fights - 1)) : 0;
+    const margin = fights > 1 ? 1.96 * Math.sqrt(variance / fights) : null;
+
+    const low = margin === null ? null : Math.max(0, actual - margin);
+    const high = margin === null ? null : actual + margin;
+
+    let verdict = 'consistent';
+    if (low === null) verdict = 'too few fights';
+    else if (predicted < low) verdict = 'sim too fast';
+    else if (predicted > high) verdict = 'sim too slow';
+
+    return { predicted, actual, fights, low, high, verdict, ratio: actual / predicted };
+}
+
+/**
  * Per-action success and double: what the calculator predicted, what the server
  * says it is using, and what the actions actually did.
  *
@@ -636,22 +686,159 @@ function actionRates(bucket, measured, interval) {
  * it look pessimistic in exactly the cases where it said nothing at all.
  *
  * @param {Array<Object>} rows - Output of accuracyRows
+ * @param {Function} [interval] - wilsonInterval, for the chance-level figures
  * @returns {{buckets: number, attempts: number, clears: number, judged: number,
- *   expected: number|null, contested: number}}
+ *   expected: number|null, sd: number|null, sigma: number|null,
+ *   contested: number, contestedByChance: number|null}}
  */
-export function accuracySummary(rows) {
+export function accuracySummary(rows, interval) {
     const list = Array.isArray(rows) ? rows : [];
     const judged = list.filter((row) => row.predicted !== null);
+
+    const expected = judged.length ? judged.reduce((sum, row) => sum + row.predicted * row.attempts, 0) : null;
+    const judgedClears = judged.reduce((sum, row) => sum + row.clears, 0);
+
+    // How far the total is allowed to wander if every prediction is right. Most
+    // rooms are near-certain and contribute almost nothing, so nearly all of it
+    // comes from the handful that are genuinely uncertain — which is why "ten
+    // clears below" can be a shrug or a finding and the figure alone cannot say
+    // which.
+    const variance = judged.reduce((sum, row) => sum + row.attempts * row.predicted * (1 - row.predicted), 0);
+    const sd = judged.length && variance > 0 ? Math.sqrt(variance) : null;
 
     return {
         buckets: list.length,
         attempts: list.reduce((sum, row) => sum + row.attempts, 0),
         clears: list.reduce((sum, row) => sum + row.clears, 0),
         judged: judged.reduce((sum, row) => sum + row.attempts, 0),
-        judgedClears: judged.reduce((sum, row) => sum + row.clears, 0),
-        expected: judged.length ? judged.reduce((sum, row) => sum + row.predicted * row.attempts, 0) : null,
+        judgedClears,
+        expected,
+        sd,
+        sigma: sd && expected !== null ? (judgedClears - expected) / sd : null,
         contested: list.filter((row) => row.verdict === 'sim too high' || row.verdict === 'sim too low').length,
+        contestedByChance: interval ? judged.reduce((sum, row) => sum + flagChance(row, interval), 0) : null,
     };
+}
+
+/**
+ * The chance this room would be flagged even though its prediction is right.
+ *
+ * A 95% interval is wrong one time in twenty by construction, so a record of two
+ * hundred rooms is *expected* to contradict a handful of them and a raw count of
+ * contradictions says nothing on its own. This is what that count has to be read
+ * against.
+ *
+ * Computed rather than assumed at one in twenty, because most rooms cannot be
+ * flagged at all: a room entered twice has an interval so wide that no
+ * prediction falls outside it, and counting it as a test would overstate the
+ * chance level several times over. Summed across rooms it gives the number of
+ * false alarms to expect from this particular record.
+ *
+ * @param {Object} row - A row from `accuracyRows`
+ * @param {Function} interval - wilsonInterval
+ * @returns {number} 0..1
+ */
+function flagChance(row, interval) {
+    const n = Math.max(0, Math.floor(row.attempts));
+    const p = Math.min(1, Math.max(0, row.predicted));
+    if (!n || !(p > 0) || !(p < 1)) return 0;
+
+    let chance = 0;
+    let pmf = (1 - p) ** n;
+    for (let k = 0; k <= n; k++) {
+        const { low, high } = interval(k, n);
+        if (p < low || p > high) chance += pmf;
+        // Step the binomial rather than recomputing the coefficient each time
+        pmf *= ((n - k) / (k + 1)) * (p / (1 - p));
+    }
+    return chance;
+}
+
+/**
+ * Every counter in the record, so a baseline can be subtracted field by field.
+ *
+ * Named rather than inferred: the buckets also carry the stamped predictions and
+ * the room's identity, and subtracting a prediction from a prediction would be
+ * nonsense.
+ */
+const COUNTERS = [
+    'attempts',
+    'clears',
+    'rooms',
+    'seconds',
+    'clearedRooms',
+    'clearedSeconds',
+    'xp',
+    'actions',
+    'successes',
+    'doubles',
+    'fights',
+    'fightSeconds',
+    'successRatioSum',
+    'successRatioSquares',
+    'successRatioRooms',
+    'doubleRatioSum',
+    'doubleRatioSquares',
+    'doubleRatioRooms',
+];
+
+/**
+ * The record since a mark, rather than since the beginning.
+ *
+ * The buckets are running totals with no timestamps in them, so "since Tuesday"
+ * cannot be filtered out of them — but it can be subtracted, because every
+ * figure in a bucket is a sum. A baseline is a copy of the totals taken at the
+ * moment it was marked, and the difference between then and now is the record
+ * since.
+ *
+ * That is what makes a baseline better than the Reset it sits beside: Reset
+ * answers "start measuring from here" by destroying everything that came
+ * before, and this answers it while keeping it.
+ *
+ * The stamped predictions are carried through unchanged. They are the claim
+ * being tested rather than a quantity, and last-write-wins is already how they
+ * behave.
+ *
+ * @param {Object} totals - The record now
+ * @param {Object} baseline - The record when the mark was made
+ * @returns {Object} Totals covering the period since
+ */
+export function totalsSince(totals, baseline) {
+    if (!baseline) return totals || {};
+
+    const out = {};
+    for (const [key, bucket] of Object.entries(totals || {})) {
+        const before = baseline[key];
+        if (!before) {
+            // A room first entered after the mark belongs to the period whole
+            out[key] = bucket;
+            continue;
+        }
+
+        // The record has gone backwards, so the mark is describing a record
+        // that no longer exists — imported over, or wiped and rebuilt. Taking
+        // the difference would subtract a history this bucket never had and
+        // leave it looking empty, so the mark is treated as stale for it.
+        if ((Number(bucket.attempts) || 0) < (Number(before.attempts) || 0)) {
+            out[key] = bucket;
+            continue;
+        }
+
+        const since = { ...bucket };
+        for (const field of COUNTERS) {
+            const now = Number(bucket[field]) || 0;
+            const then = Number(before[field]) || 0;
+            // Floored at zero even so: individual counters were added at
+            // different times and an old record may not carry all of them
+            if (now || then) since[field] = Math.max(0, now - then);
+        }
+
+        // Nothing has happened here since the mark, so it is not part of the
+        // period at all — listing it would fill the panel with empty rooms
+        if (!(since.attempts > 0) && !(since.rooms > 0)) continue;
+        out[key] = since;
+    }
+    return out;
 }
 
 /**
@@ -770,10 +957,16 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
         const off = (summary.judgedClears ?? 0) - summary.expected;
         out.push(
             `Judged: ${summary.judged} fights, expected ${summary.expected.toFixed(1)} clears, ` +
-                `got ${summary.judgedClears} (${off >= 0 ? '+' : ''}${off.toFixed(1)})`
+                `got ${summary.judgedClears} (${off >= 0 ? '+' : ''}${off.toFixed(1)}` +
+                (summary.sd ? `, ${summary.sigma.toFixed(1)} sd on a spread of ${summary.sd.toFixed(1)})` : ')')
         );
     }
-    out.push(`Rooms the record contradicts: ${summary.contested ?? 0}`);
+    out.push(
+        `Rooms the record contradicts: ${summary.contested ?? 0}` +
+            (summary.contestedByChance === null || summary.contestedByChance === undefined
+                ? ''
+                : ` (about ${summary.contestedByChance.toFixed(1)} expected by chance)`)
+    );
 
     out.push('');
     out.push('BY ROOM TYPE (pooled across levels)');
@@ -821,6 +1014,30 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
                 row.timing?.perFinishedVisit ? row.timing.perFinishedVisit.toFixed(0) : '—',
             ].join('\t')
         );
+    }
+
+    const withFights = rows.filter((row) => row.fightLength);
+    if (withFights.length) {
+        out.push('');
+        out.push('FIGHT LENGTH (combat rooms)');
+        out.push('Every attempt counts, won or lost, and the sim predicts the same kind of average —');
+        out.push('so this says something about a room in ten fights where a clear rate needs hundreds.');
+        out.push('subject\tlevel\tfights\tsim secs\tran secs\t95% band\tratio\tverdict');
+        for (const row of withFights) {
+            const fl = row.fightLength;
+            out.push(
+                [
+                    label(row.subjectHrid),
+                    row.level,
+                    fl.fights,
+                    fl.predicted.toFixed(0),
+                    fl.actual.toFixed(0),
+                    fl.low === null ? '—' : `${fl.low.toFixed(0)}-${fl.high.toFixed(0)}`,
+                    fl.ratio.toFixed(2),
+                    fl.verdict,
+                ].join('\t')
+            );
+        }
     }
 
     // The per-action rates are the sharpest test in the record — the server

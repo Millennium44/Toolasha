@@ -11,6 +11,7 @@ import {
     roomMeasurements,
     accuracyBySubject,
     accuracyReport,
+    totalsSince,
 } from './labyrinth-outcome-log.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
@@ -858,5 +859,174 @@ describe('the order the record is listed in', () => {
         const pooled = accuracyBySubject(rows, wilsonInterval, (hrid) => ORDER[hrid]);
 
         expect(pooled.map((group) => group.monster)).toEqual(['milking', 'brewing', 'mimic']);
+    });
+});
+
+describe('putting the headline figures on a scale', () => {
+    const row = (attempts, clears, predicted, verdict = 'consistent') => ({
+        attempts,
+        clears,
+        predicted,
+        verdict,
+    });
+
+    test('the spread of expected clears comes from the uncertain rooms', () => {
+        // A hundred near-certain rooms barely move; ten coin flips do all the
+        // wandering, which is why a raw "ten below" cannot be read on its own
+        const certain = accuracySummary([row(100, 100, 0.999)], wilsonInterval);
+        const uncertain = accuracySummary([row(100, 50, 0.5)], wilsonInterval);
+
+        expect(certain.sd).toBeLessThan(1);
+        expect(uncertain.sd).toBeCloseTo(5, 0);
+    });
+
+    test('and the shortfall is reported in units of it', () => {
+        const summary = accuracySummary([row(100, 40, 0.5)], wilsonInterval);
+
+        expect(summary.expected).toBeCloseTo(50, 6);
+        expect(summary.sigma).toBeCloseTo(-2, 1);
+    });
+
+    test('a record with nothing uncertain in it has no scale to give', () => {
+        expect(accuracySummary([row(2, 2, 1)], wilsonInterval).sd).toBeNull();
+        expect(accuracySummary([], wilsonInterval).sigma).toBeNull();
+    });
+
+    test('rooms too small to contradict anything are not counted as tests', () => {
+        // Two attempts give an interval so wide nothing falls outside it, so
+        // calling it a test at one-in-twenty would overstate the chance level
+        const tiny = accuracySummary([row(2, 1, 0.5)], wilsonInterval);
+
+        expect(tiny.contestedByChance).toBeLessThan(0.01);
+    });
+
+    test('a room big enough to be wrong contributes about the interval’s own error rate', () => {
+        const big = accuracySummary([row(200, 100, 0.5)], wilsonInterval);
+
+        expect(big.contestedByChance).toBeGreaterThan(0.01);
+        expect(big.contestedByChance).toBeLessThan(0.1);
+    });
+
+    test('which is what the count of contradicted rooms has to be read against', () => {
+        // Twenty coin-flip rooms: some will be flagged whatever the model does
+        const rows = [...Array(20)].map(() => row(200, 100, 0.5));
+        const summary = accuracySummary(rows, wilsonInterval);
+
+        expect(summary.contestedByChance).toBeGreaterThan(0.5);
+    });
+
+    test('and is simply absent when nothing was passed to compute it with', () => {
+        expect(accuracySummary([row(200, 100, 0.5)]).contestedByChance).toBeNull();
+    });
+});
+
+describe('reading the record since a mark', () => {
+    const bucket = (over = {}) => ({
+        subjectHrid: '/skills/milking',
+        roomLevel: 200,
+        kind: 'skilling',
+        attempts: 10,
+        clears: 5,
+        rooms: 10,
+        seconds: 600,
+        actions: 100,
+        successes: 40,
+        predictedSuccess: 0.5,
+        ...over,
+    });
+
+    test('the difference between then and now, field by field', () => {
+        const before = { a: bucket() };
+        const now = { a: bucket({ attempts: 14, clears: 8, rooms: 14, seconds: 900, actions: 150, successes: 62 }) };
+
+        expect(totalsSince(now, before).a).toMatchObject({
+            attempts: 4,
+            clears: 3,
+            rooms: 4,
+            seconds: 300,
+            actions: 50,
+            successes: 22,
+        });
+    });
+
+    test('the prediction is carried through rather than subtracted', () => {
+        // It is the claim being tested, not a quantity
+        const since = totalsSince({ a: bucket({ attempts: 12 }) }, { a: bucket() });
+        expect(since.a.predictedSuccess).toBe(0.5);
+    });
+
+    test('a room untouched since the mark is not in the period at all', () => {
+        // Listing it would fill the panel with rooms showing nothing
+        expect(totalsSince({ a: bucket() }, { a: bucket() })).toEqual({});
+    });
+
+    test('a room first entered after the mark belongs to the period whole', () => {
+        const since = totalsSince({ b: bucket() }, { a: bucket() });
+        expect(since.b.attempts).toBe(10);
+    });
+
+    test('a record that has gone backwards means the mark is stale, not that nothing happened', () => {
+        // Wiped and rebuilt, or imported over. Subtracting a history this
+        // bucket never had would leave it reading empty.
+        const since = totalsSince({ a: bucket({ attempts: 3, clears: 1 }) }, { a: bucket() });
+
+        expect(since.a.attempts).toBe(3);
+        expect(since.a.clears).toBe(1);
+    });
+
+    test('no mark means the whole record', () => {
+        const now = { a: bucket() };
+        expect(totalsSince(now, null)).toBe(now);
+    });
+});
+
+describe('how long a fight ran', () => {
+    const fight = (over = {}) => ({
+        subjectHrid: '/monsters/mimic',
+        roomLevel: 200,
+        kind: 'combat',
+        cleared: false,
+        seconds: 40,
+        fights: 1,
+        fightSeconds: 40,
+        fightSquares: 1600,
+        predictedFightSeconds: 30,
+        ...over,
+    });
+    const fold = (visits) => visits.reduce((totals, next) => foldRoomResult(totals, next), {});
+    const length = (visits) => accuracyRows(fold(visits), { interval: wilsonInterval })[0].fightLength;
+
+    test('every attempt counts, won or lost', () => {
+        // Which is what makes this usable where a clear rate is not: the sim's
+        // own figure averages its losses in too
+        const fl = length([fight(), fight({ cleared: true, fightSeconds: 20, fightSquares: 400 })]);
+
+        expect(fl.fights).toBe(2);
+        expect(fl.actual).toBeCloseTo(30, 6);
+    });
+
+    test('fights that consistently run long are called out', () => {
+        const fl = length([...Array(8)].map(() => fight({ fights: 1, fightSeconds: 45, fightSquares: 2025 })));
+
+        expect(fl.verdict).toBe('sim too fast');
+        expect(fl.ratio).toBeCloseTo(1.5, 6);
+    });
+
+    test('and ones that run short the other way', () => {
+        const fl = length([...Array(8)].map(() => fight({ fights: 1, fightSeconds: 18, fightSquares: 324 })));
+
+        expect(fl.verdict).toBe('sim too slow');
+    });
+
+    test('one fight is a reading, not a verdict', () => {
+        expect(length([fight()]).verdict).toBe('too few fights');
+    });
+
+    test('a room with no simulated fight length has nothing to compare', () => {
+        expect(length([fight({ predictedFightSeconds: undefined })])).toBeNull();
+    });
+
+    test('and a skilling room has no fights at all', () => {
+        expect(length([fight({ fights: 0, fightSeconds: 0, fightSquares: 0 })])).toBeNull();
     });
 });

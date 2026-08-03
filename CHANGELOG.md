@@ -6,6 +6,32 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The headline figures come with a scale
+
+Two numbers on the summary card had no way of being read.
+
+**"10.7 below expectation"** — a shortfall of ten is a shrug over one record and a finding over another, and the figure alone cannot say which. It now carries the spread: how far the total is allowed to wander if every prediction is right, `sqrt(Σ nᵢpᵢ(1−pᵢ))` over the judged rooms. Nearly all of that comes from the handful of genuinely uncertain rooms — a hundred near-certain ones contribute almost nothing — which is why the answer is not obvious by eye.
+
+**"11 rooms the record contradicts"** — a 95% interval is wrong one room in twenty by construction, so a record of two hundred rooms is _expected_ to contradict a few and the raw count is not news. It now says how many this particular record would flag anyway. Computed rather than assumed at one in twenty, because most rooms cannot be flagged at all: a room entered twice has an interval so wide nothing falls outside it, and counting it as a test would overstate the chance level several times over.
+
+On one real record: 5 rooms flagged against about 1.5 expected by chance, and a shortfall of 3 sd. Both were findings, and neither was legible before.
+
+### Combat rooms can say something in ten fights
+
+Only skilling rooms recorded per-action data, so a combat room's entire signal was clears over attempts — which needs hundreds of fights to close an interval, and a room gives you ten. Half the room types in a record could therefore never say anything at all.
+
+Fight duration is recorded now, and set against the `avgFightSeconds` the sim already predicts. Nothing is conditioned on: the sim's figure averages its losses in, and so does this, so a model that has the fight itself wrong shows up in a handful of attempts rather than in a season of them. The spread is the sample's own, so two fights make a reading and not a verdict.
+
+### Mark a point to measure from, instead of throwing the record away
+
+Reset was the only way to answer "has it been right _since_ I changed something?", and it answers it by destroying everything that came before.
+
+The summary card now offers a mark. The buckets are running totals with no timestamps in them, so a period cannot be filtered out of them — but it can be subtracted, because every figure in a bucket is a sum, and a baseline is a copy of the totals at the moment it was marked. Switch between the whole record and the period since, re-mark, or forget the mark; the record itself is untouched by all three.
+
+Reset is still there. It answers a different question — "throw this away" — and sometimes that is the one being asked.
+
+A record that has gone backwards since the mark, from an import or a wipe, treats the mark as stale for that room rather than subtracting a history it never had.
+
 ### And each room type opens on a click
 
 Closed to start with. The record runs to a couple of hundred rooms and opening on all of them is a wall rather than a list — the pooled reading is the one to read first, and the levels are what you open when it says something. A caret and "click to open" say there is more behind it, and one room type opening leaves the others alone.
