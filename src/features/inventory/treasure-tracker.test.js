@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 import { describe, test, expect, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, Z_FLOATING_PANEL: 1100 } }));
@@ -6,7 +8,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null) },
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
 // Pricing untradables at their token cost reaches the market API, which opens a
 // socket on import; the unit under test here is the formatting, not the pricing
 vi.mock('../../utils/token-valuation.js', () => ({ calculateDungeonTokenValue: () => 0 }));
@@ -16,7 +18,14 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-const { formatReturn, itemName, worthShowing, capHeightToWindow } = await import('./treasure-tracker.js');
+const {
+    formatReturn,
+    itemName,
+    worthShowing,
+    capHeightToWindow,
+    pricingBasis,
+    default: treasureTracker,
+} = await import('./treasure-tracker.js');
 
 describe('formatReturn', () => {
     test('reads as a gain or a shortfall against expectation', () => {
@@ -112,5 +121,59 @@ describe('the popup gets a height of its own', () => {
 
         expect(element.style.maxHeight).toBeUndefined();
         expect(element.style.height).toBeTruthy();
+    });
+});
+
+describe('the header when the settings arrive late', () => {
+    // The panel is reopened at start-up and builds its header before the
+    // settings come back from storage, so the header sat there claiming the
+    // defaults until it was closed and opened again
+    const build = () => {
+        treasureTracker.settings = {
+            capeValue: 'token',
+            valueCowbells: true,
+            hiddenChests: [],
+            popupPinned: false,
+            sortMode: 'luck',
+        };
+        return treasureTracker._createHeader();
+    };
+
+    test('the toggles catch up', () => {
+        const header = build();
+        expect(header.textContent).toContain('Token value');
+        expect(header.textContent).toContain('Cowbells counted');
+
+        treasureTracker.settings.capeValue = 'zero';
+        treasureTracker.settings.valueCowbells = false;
+        treasureTracker._refreshToggles();
+
+        expect(header.textContent).toContain('No value');
+        expect(header.textContent).toContain('Cowbells at zero');
+    });
+
+    test('and so does the sort picker', () => {
+        build();
+        treasureTracker.settings.sortMode = 'name';
+        treasureTracker._refreshToggles();
+
+        expect(treasureTracker.sortPicker.value).toBe('name');
+    });
+
+    test('a stored order the list no longer offers falls back rather than blanking', () => {
+        build();
+        treasureTracker.settings.sortMode = 'by-vibes';
+        treasureTracker._refreshToggles();
+
+        expect(treasureTracker.sortPicker.value).toBe('luck');
+    });
+});
+
+describe('which side of the book the figures are', () => {
+    test('is said, because it is a setting rather than a constant', () => {
+        // TReasure always prices at bid and says "bid"; Toolasha follows the
+        // profit pricing mode, so the same chest can be worth two different
+        // numbers and neither of them is wrong
+        expect(pricingBasis()).toBe('bid');
     });
 });
