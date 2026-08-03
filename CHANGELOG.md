@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The treasure popup, closer to TReasure
+
+- **Rows that say nothing are gone.** A chest's drop table runs to thirty-odd entries, most of them equipment at rates so long that a lifetime of opening owes you a hundredth of one. Listed, they read "0, 0.00 expected, −100%" — three figures agreeing that nothing happened, pushing the rows that did happen off the bottom. Anything that actually dropped is kept however unlikely it was, because that is exactly the row worth seeing.
+- **Smaller**, and capped against the window rather than left to grow past the bottom of the screen.
+- **Clicking away closes it**, as the game's own loot dialog does. Armed a tick late so the click that opened it does not immediately close it, and skipped once the popup has been dragged — moving it is how you say "stay".
+- **Opening the full stats no longer closes it.** It is the thing you were reading when you decided you wanted more; taking it away answers the question by removing it.
+- **An unpriced drop gets a real percentage now.** It used to read "no price" where the verdict goes. But an item nothing will price still has a drop rate, and "four when you were owed two and a quarter" is the same fact whether or not the market has an opinion — it is only the _total_ it cannot join, which the row still says.
+
 ### Portrait meters read like DPs, and the monsters get one too
 
 - **Two lines per character**, this fight above the run: `1,052 DPS 1.9k cur` over `374 DPS 88.5k total`. The order is the point — the fight in front of you is the one you can still change, and the run is what you read it against.
