@@ -315,6 +315,8 @@ registerRow({
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
+            alignItems: 'stretch',
+            textAlign: 'left',
             lineHeight: '1.3',
             overflow: 'hidden',
         });
@@ -362,9 +364,17 @@ registerRow({
         // The label above its figures rather than beside them, as CRack has it.
         // On a tile this narrow the two never fitted on one line anyway — they
         // simply ran together instead of admitting it.
+        // Both left-aligned, like the two lines above them. The tile centres its
+        // text, which a flex line is unaffected by and a plain div is not — so
+        // these two sat in the middle while everything else started at the edge.
         const label = document.createElement('div');
         label.textContent = 'Total Cost/Day:';
-        Object.assign(label.style, { color: ROW_COLORS.good, fontWeight: 'bold', fontSize: '90%' });
+        Object.assign(label.style, {
+            color: ROW_COLORS.good,
+            fontWeight: 'bold',
+            fontSize: '90%',
+            textAlign: 'left',
+        });
         container.appendChild(label);
 
         const cost = document.createElement('div');
@@ -372,6 +382,7 @@ registerRow({
         Object.assign(cost.style, {
             color: ROW_COLORS.neutral,
             fontSize: '90%',
+            textAlign: 'left',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',

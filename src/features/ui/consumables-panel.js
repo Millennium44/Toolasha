@@ -33,11 +33,12 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -58,6 +59,7 @@ import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js
 
 const PANEL_ID = 'toolasha-consumables-panel';
 const GEOMETRY_KEY = 'consumablesPanel';
+const SETTINGS_KEY = 'consumablesSettings';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
 
@@ -93,8 +95,13 @@ class ConsumablesPanel {
         this.autofill.initialize?.();
     }
 
-    /** Open the panel, or raise it if it is already up */
-    show() {
+    /**
+     * Open the panel, or raise it if it is already up.
+     * @param {Object} [options] - `remember: false` when reopening at start-up,
+     *   so restoring a panel is not itself recorded as opening one
+     */
+    show({ remember = true } = {}) {
+        if (remember) saveOpenState(GEOMETRY_KEY, true);
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
             return;
@@ -102,13 +109,44 @@ class ConsumablesPanel {
         this._create();
     }
 
-    hide() {
+    hide({ remember = true } = {}) {
+        if (remember) saveOpenState(GEOMETRY_KEY, false);
         this._remove();
     }
 
     toggle() {
         if (this.panel) this.hide();
         else this.show();
+    }
+
+    /** Reopen if the page was left with this panel up */
+    restore() {
+        reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
+    }
+
+    /**
+     * Read back the duration everything is measured against.
+     *
+     * It is the one setting this panel has, and it changes every figure in it —
+     * a panel that forgets it does not merely lose a preference, it shows you a
+     * day's shortfall when you asked for a week's and looks right doing it.
+     */
+    async loadSettings() {
+        try {
+            const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
+            const index = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
+            // A stored value from an older list must not win over the code's
+            if (index >= 0) this.targetIndex = index;
+            this._render();
+        } catch (error) {
+            console.error('[Consumables] Reading the saved target failed:', error);
+        }
+    }
+
+    _saveSettings() {
+        storage.setJSON(SETTINGS_KEY, { targetSeconds: this.target.seconds }, 'settings').catch((error) => {
+            console.error('[Consumables] Saving the target failed:', error);
+        });
     }
 
     /** The duration everything is measured against */
@@ -211,8 +249,9 @@ class ConsumablesPanel {
     _openShoppingList(shortfall) {
         try {
             // Out of the way first: it is a floating panel and the marketplace it
-            // is sending you to opens underneath it
-            this.hide();
+            // is sending you to opens underneath it. Not recorded as closing it
+            // — you went shopping, you did not put the panel away.
+            this.hide({ remember: false });
             openShoppingList(shortfall);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the shopping list failed:', error);
@@ -233,7 +272,7 @@ class ConsumablesPanel {
     _buy(entry, count) {
         if (!count) return;
         try {
-            this.hide();
+            this.hide({ remember: false });
             this.autofill.setQuantity(count);
             navigateToMarketplace(entry.itemHrid);
         } catch (error) {
@@ -327,6 +366,7 @@ class ConsumablesPanel {
         this.targetBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             this.targetIndex = (this.targetIndex + 1) % TARGETS.length;
+            this._saveSettings();
             this._render();
         });
 
@@ -647,6 +687,12 @@ class ConsumablesPanel {
 }
 
 export const consumablesPanel = new ConsumablesPanel();
+
+// Both at module scope, and both wait on storage internally: the target has to
+// be back before the panel draws a week's shortfall as a day's, and the panel
+// has to reopen if the page was left with it up.
+consumablesPanel.loadSettings();
+consumablesPanel.restore();
 
 /** Console handle, since a panel that only opens from the overlay is hard to reach */
 if (typeof window !== 'undefined') {

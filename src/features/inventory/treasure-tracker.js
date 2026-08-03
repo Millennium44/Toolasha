@@ -39,7 +39,7 @@ import {
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
+import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import {
     restoreGeometry,
@@ -247,6 +247,12 @@ class TreasureTracker {
         this.tally = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
         const saved = await storage.getJSON(SETTINGS_KEY, 'settings', null);
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
+
+        // A panel reopened at start-up is created before this runs, so it drew
+        // the whole chest list against an empty ledger and read "Nothing opened
+        // yet" until it was closed and opened again. It is a no-op when the
+        // panel is not up, which is the usual case.
+        this._render();
 
         this.lootOpenedHandler = (data) => this._onLootOpened(data);
         webSocketHook.on('loot_opened', this.lootOpenedHandler);
@@ -1696,7 +1702,10 @@ registerRow({
 
         const verdict = formatReturn(totals.ratio);
         row(container, [
-            glyph('chest'),
+            // The chest itself rather than the overlay's generic chest glyph:
+            // this tile is about chests specifically, and the item art says so
+            // at a glance where a symbol has to be learned
+            { icon: 'large_treasure_chest', size: 16 },
             { text: `${formatLargeNumber(totals.opened)} chests`, color: ROW_COLORS.dim },
             { text: verdict.text, color: verdict.color, bold: true, push: true },
         ]);
