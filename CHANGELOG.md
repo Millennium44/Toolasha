@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### And each room type opens on a click
+
+Closed to start with. The record runs to a couple of hundred rooms and opening on all of them is a wall rather than a list — the pooled reading is the one to read first, and the levels are what you open when it says something. A caret and "click to open" say there is more behind it, and one room type opening leaves the others alone.
+
 ### The accuracy list is in the game's order
 
 It was sorted by how often each room happened to be fought, which is no order at all if you are looking for a particular room — and it put every pooled row first and every per-level row after them, reading as two unrelated lists.
