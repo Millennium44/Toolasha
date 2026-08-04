@@ -35,6 +35,11 @@ import { describeAlchemyMenus } from '../features/alchemy/alchemy-item-selector.
 // Skilling optimizer
 import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer-ui.js';
 
+// Goal planner. It lives here rather than in the ui bundle because everything it
+// composes already does: the buy-vs-craft model above, and the enhancement path
+// optimiser the missing-materials button pulls in.
+import goalPlanner from '../features/planner/goal-planner-ui.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -71,6 +76,7 @@ toolashaRoot.Actions = {
     pinnedActionsPage,
     drinkTimer,
     skillingOptimizer,
+    goalPlanner,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because

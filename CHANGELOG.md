@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Goal Planner
+
+- **New Goal Planner panel**: state a goal — a gold amount, an item at an enhancement level, a skill level, or a house room — and get the ordered steps to it with gold and time on each: earn (best of your gathering/production rates), buy vs craft (whichever current prices favor), the enhancement run costed through the real Markov chain with your own stats, training steps inserted before crafts that need levels, and a funding step whenever the plan spends more than you hold. Steps strike through as they're satisfied; plans reprice on refresh; goals are per character.
+
 ### Sim state scoped, and honest enhancement numbers in the tooltip
 
 - **The last cross-character leaks in the sims are closed**: the all-zones snapshot, upgrade-tab selections (both sims), lab skilling loadouts, and the new lab comparison runs are all per character now. Snapshots and loadout maps from another character are discarded rather than inherited — a sim result against someone else's gear is worse than none.

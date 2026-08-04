@@ -2332,6 +2332,20 @@ export const settingsGroups = {
                 requiresRefresh: true,
                 help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
             },
+            goalPlanner: {
+                id: 'goalPlanner',
+                label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help:
+                    'A floating panel (Ctrl+K → Goal Planner) that turns a goal — 500M coins, Sinister Cape +10, ' +
+                    'Enhancing 110, Observatory 8 — into the ordered steps to get there, each with its own cost and ' +
+                    'time. Composes the calculators the rest of the script already uses: buy-versus-craft, the ' +
+                    'enhancement path optimiser on your own stats, profit and experience per hour, house upgrade ' +
+                    'costs. Press Refresh to re-price against the current market; steps you have since satisfied ' +
+                    'come back struck through rather than disappearing',
+            },
             draggableModals: {
                 id: 'draggableModals',
                 label: 'Draggable modals',
