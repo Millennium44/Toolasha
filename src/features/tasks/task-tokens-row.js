@@ -1,35 +1,36 @@
 /**
  * Task Tokens overlay row
  *
- * What the task board is worth in tokens, and what a token is worth in coins.
+ * What the task board is worth in tokens, what a token is worth in coins, and —
+ * once there is anything to measure it from — what tasks are actually paying per
+ * hour.
  *
- * ## Why this is not tokens per hour
+ * ## The rate, and where it comes from
  *
- * It was asked for as a rate, and a rate is not honestly available. A rate needs
- * two things: tokens earned, and the time they took. Nothing in this codebase
- * records a completed task — the reroll tracker records rerolls, the statistics
- * panel reads the board as it stands now, and neither keeps a history of tasks
- * turned in. The only per-task duration that exists comes out of
- * `calculateTaskProfit`, which prices every input and output of the action
- * against the order book; that is an `await` and a market pass, and a row
- * redrawn once a second may not do either.
+ * This tile used to say outright that a rate was not available, and it was
+ * right: a rate needs tokens earned and the time they took, and nothing in the
+ * codebase recorded a finished task. `task-completion-tracker.js` records them
+ * now — one entry per claimed task, with the tokens and coins it paid — so the
+ * rate here is measured from claims that actually happened rather than modelled
+ * from the board.
  *
- * The remaining option was to measure the task token count in the inventory over
- * time, which would have been a rate about *spending*: the number falls every
- * time you buy anything in the Task Shop, so an afternoon of shopping reads as
- * negative tokens per hour. A tile that goes negative while you are earning is
- * worse than a tile that does not claim to be a rate.
+ * It is a wall-clock rate: the tracker knows when tasks were claimed and not how
+ * many of the hours between them were spent playing. The tooltip says so, in
+ * those words, because a number labelled "tokens/hr" that quietly counts a night
+ * of sleep is worse than one that admits what it measured.
  *
- * So it reports what is actually known: the tokens the tasks on the board will
- * pay when they are finished, and what the Task Shop says a token is worth.
- * Both are read synchronously from state the game already has.
+ * The alternative — measuring the task token count in the inventory over time —
+ * would have been a rate about *spending*: the number falls every time you buy
+ * anything in the Task Shop, so an afternoon of shopping would read as negative
+ * tokens per hour.
  */
 
 import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { calculateTaskTokenValue } from './task-profit-calculator.js';
+import taskCompletionTracker from './task-completion-tracker.js';
 import taskStatistics from './task-statistics.js';
 
 /** The board's own token, for the icon */
@@ -71,13 +72,81 @@ export function boardTokens() {
 }
 
 /**
+ * A per-hour figure at a width a tile can afford.
+ *
+ * Small rates keep a decimal — the difference between 4 and 4.2 tokens an hour
+ * is most of the reason to look — and large ones do not, because at 12,400 coins
+ * an hour the decimal is noise.
+ *
+ * @param {number} value - Per-hour figure
+ * @returns {string} Formatted, or an em dash when there is no figure
+ */
+export function formatRate(value) {
+    if (!Number.isFinite(value)) return '—';
+    if (Math.abs(value) >= 100) return formatLargeNumber(Math.round(value));
+    return value.toFixed(1);
+}
+
+/**
+ * The measured rates, or null when the tracker cannot answer.
+ *
+ * The tile is drawn about once a second and a throw here would take the whole
+ * overlay row with it, which is a high price for a figure the tile can simply
+ * leave out.
+ *
+ * @returns {Object|null} `{session, week, total}` as the tracker computes them
+ */
+function measuredRates() {
+    try {
+        return taskCompletionTracker.rates();
+    } catch (error) {
+        console.error('[TaskTokensRow] The measured task rate could not be read:', error);
+        return null;
+    }
+}
+
+/**
+ * What the tooltip says about the rate.
+ *
+ * @param {Object|null} rates - `{session, week}` from the tracker
+ * @returns {string} Lines for the tooltip, starting with a newline, or ''
+ */
+function rateTooltip(rates) {
+    const week = rates?.week;
+    if (!week) return '';
+
+    if (week.completions < 2) {
+        const seen = week.completions === 0 ? 'No tasks' : 'One task';
+        return (
+            `\n${seen} claimed in the last 7 days — a rate needs two, ` +
+            'since the first one is only the moment the clock starts.'
+        );
+    }
+
+    const hours = week.spanMs / 3600000;
+    const lines = [
+        `\n${formatRate(week.tokensPerHour)} tokens/hr and ${formatRate(week.coinsPerHour)} coins/hr, ` +
+            `from ${week.completions} tasks claimed over ${hours.toFixed(1)}h.`,
+        'Wall-clock rate: measured between your first and last claim in the window, ' +
+            'including any hours the game was closed. The first claim starts the clock, so its rewards are not counted.',
+    ];
+
+    const session = rates.session;
+    if (session?.tokensPerHour !== null && session?.tokensPerHour !== undefined) {
+        lines.push(`Today: ${formatRate(session.tokensPerHour)} tokens/hr from ${session.completions} tasks.`);
+    }
+
+    return lines.join('\n');
+}
+
+/**
  * Open the task statistics popup, or close it if it is already up.
  *
- * The popup is the tile's own figures in full — every task, what each pays, and
- * what the board has already cost in rerolls — so it is what belongs behind a
- * double-click. It builds itself asynchronously and the overlay calls `onOpen`
- * inside a synchronous try/catch, so the rejection is caught here rather than
- * escaping as an unhandled promise.
+ * The popup is the tile's own figures in full — every task, what each pays, what
+ * the board has already cost in rerolls, and the completions the rate is
+ * measured from — so it is what belongs behind a double-click. It builds itself
+ * asynchronously and the overlay calls `onOpen` inside a synchronous try/catch,
+ * so the rejection is caught here rather than escaping as an unhandled promise.
  *
  * @returns {Promise<void>}
  */
@@ -95,7 +164,7 @@ registerRow({
     name: 'Task Tokens',
     empty: 'No tasks on the board',
     defaultVisible: false,
-    defaultSize: { width: 200, height: 30 },
+    defaultSize: { width: 200, height: 44 },
     render: (container) => {
         const { tasks, tokens } = boardTokens();
         if (!tasks) return blank(container);
@@ -104,15 +173,32 @@ registerRow({
         const perToken = valuation?.totalPerToken;
         const worth = Number.isFinite(perToken) ? tokens * perToken : null;
 
-        row(container, [
-            { icon: TASK_TOKEN_HRID, size: 18 },
-            { text: formatWithSeparator(tokens), color: ROW_COLORS.violet, bold: true },
-            {
-                text: worth === null ? '—' : formatLargeNumber(Math.round(worth)),
-                color: worth === null ? ROW_COLORS.dim : ROW_COLORS.gold,
-                push: true,
-            },
-        ]);
+        const rates = measuredRates();
+        const week = rates?.week;
+        const hasRate = Number.isFinite(week?.tokensPerHour);
+
+        const lines = [
+            [
+                { icon: TASK_TOKEN_HRID, size: 18 },
+                { text: formatWithSeparator(tokens), color: ROW_COLORS.violet, bold: true },
+                {
+                    text: worth === null ? '—' : formatLargeNumber(Math.round(worth)),
+                    color: worth === null ? ROW_COLORS.dim : ROW_COLORS.gold,
+                    push: true,
+                },
+            ],
+        ];
+
+        // Only once two tasks have been claimed: one claim is a timestamp, not
+        // a rate, and a tile that showed a figure from it would be inventing one
+        if (hasRate) {
+            lines.push([
+                { text: `${formatRate(week.tokensPerHour)} tokens/hr`, color: ROW_COLORS.violet },
+                { text: 'this week', color: ROW_COLORS.dim, push: true },
+            ]);
+        }
+
+        rows(container, lines);
 
         container.title =
             `${formatWithSeparator(tokens)} task tokens across ${tasks} task${tasks === 1 ? '' : 's'} in progress.\n` +
@@ -120,8 +206,20 @@ registerRow({
                 ? `A token is worth about ${Math.round(perToken).toLocaleString()} coins, ` +
                   'from the best line in the Task Shop plus a prorated Purple’s Gift.'
                 : `Token value unavailable: ${valuation?.error || 'the Task Shop has not loaded'}.`) +
-            '\nThis is what the board will pay, not a rate — nothing here records finished tasks.' +
+            '\nThat figure is what the board will pay when it is finished, not a rate.' +
+            rateTooltip(rates) +
             '\nDouble-click for the task statistics.';
     },
     onOpen: toggleStatistics,
 });
+
+/**
+ * Start recording completions.
+ *
+ * Here because this module is imported unconditionally by the UI bundle while
+ * the tracker is what the rate above is made of, and because recording has to
+ * carry on whether or not the tile is switched on — a rate that only accrues
+ * while you are looking at it is not a rate. The tracker is idempotent and
+ * swallows its own failures, so this is a call and not a promise anyone waits on.
+ */
+taskCompletionTracker.initialize();

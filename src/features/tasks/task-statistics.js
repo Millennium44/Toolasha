@@ -15,6 +15,7 @@ import {
     getCowbellValue,
 } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
+import taskCompletionTracker from './task-completion-tracker.js';
 import taskRerollTracker from './task-reroll-tracker.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
@@ -131,12 +132,62 @@ class TaskStatistics {
         const overflowData = this.calculateOverflowTime();
         const slotStatus = this.calculateSlotStatus();
         const rewardsSummary = await this.calculateRewardsSummary();
+        const completions = await this.calculateCompletions();
 
         return {
             overflow: overflowData,
             slots: slotStatus,
             rewards: rewardsSummary,
+            completions,
         };
+    }
+
+    /**
+     * What the board has actually paid out, and what it cost to get there.
+     *
+     * The rest of this panel is a forecast: the board as it stands, priced. This
+     * is the only part of it made of things that happened — claims the
+     * completion tracker recorded, set against the reroll spend on the tasks
+     * that have already left the board. The two come from different recorders
+     * and are joined here because that is the only place both are in hand.
+     *
+     * @param {number} [now] - Milliseconds since the epoch
+     * @returns {Promise<Object|null>} Completion figures, or null when they cannot be read
+     */
+    async calculateCompletions(now = Date.now()) {
+        try {
+            const { rates, recent } = await taskCompletionTracker.summary(now);
+            const week = rates.week;
+
+            const tokenValue = calculateTaskTokenValue();
+            const perToken = tokenValue?.totalPerToken;
+            const rewardValue = Number.isFinite(perToken) ? week.coins + week.tokens * perToken : null;
+
+            // Only the rerolls paid on tasks retired inside the same window, so
+            // the two halves of the net are measuring the same seven days
+            const windowStart = now - 7 * 24 * 60 * 60 * 1000;
+            const history = await taskRerollTracker.loadHistory();
+            let gold = 0;
+            let cowbells = 0;
+            for (const retired of history) {
+                if (!(retired?.retiredAt >= windowStart)) continue;
+                gold += retired.goldSpent || 0;
+                cowbells += retired.cowbellsSpent || 0;
+            }
+            const spendValue = gold + cowbells * getCowbellValue();
+
+            return {
+                week,
+                session: rates.session,
+                recent: recent.slice(0, 5),
+                rerollSpend: { gold, cowbells, totalValue: spendValue },
+                rewardValue,
+                netValue: rewardValue === null ? null : rewardValue - spendValue,
+            };
+        } catch (error) {
+            console.error('[TaskStatistics] Reading the recorded completions failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -447,6 +498,9 @@ class TaskStatistics {
         // Content sections
         popup.appendChild(this.createOverflowSection(statsData.overflow, textColor));
         popup.appendChild(this.createRewardsSection(statsData.rewards, textColor));
+        if (statsData.completions) {
+            popup.appendChild(this.createCompletionsSection(statsData.completions, textColor));
+        }
         popup.appendChild(this.createActionProfitSection(statsData.rewards));
         popup.appendChild(this.createCompletionTimeSection(statsData.rewards, textColor));
 
@@ -676,6 +730,86 @@ class TaskStatistics {
 
             const netColor = rewards.netTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             section.appendChild(this.createRow('Net of Rerolls', formatKMB(Math.round(rewards.netTotal)), netColor));
+        }
+
+        return section;
+    }
+
+    /**
+     * Create the recorded-completions section.
+     *
+     * Everything above it is what the board is worth; this is what tasks have
+     * paid. The rate is labelled wall-clock in the panel as well as in the tile,
+     * because a number carried between two places loses its caveat exactly once.
+     *
+     * @param {Object} completions - From {@link calculateCompletions}
+     * @param {string} textColor - Text color
+     * @returns {HTMLElement} Section element
+     */
+    createCompletionsSection(completions, textColor) {
+        const section = this.createSection('Claimed Tasks (last 7 days)');
+        const week = completions.week;
+
+        if (!week.completions) {
+            section.appendChild(this.createRow('Claimed', 'Nothing recorded yet', config.COLOR_TEXT_SECONDARY));
+            return section;
+        }
+
+        section.appendChild(this.createRow('Tasks Claimed', String(week.completions), textColor));
+        section.appendChild(this.createRow('Task Tokens', String(week.tokens), textColor));
+        section.appendChild(this.createRow('Coins', formatKMB(week.coins), config.COLOR_GOLD));
+
+        if (week.tokensPerHour === null) {
+            section.appendChild(this.createRow('Rate', 'Needs a second claim', config.COLOR_TEXT_SECONDARY));
+        } else {
+            const hours = week.spanMs / 3600000;
+            section.appendChild(this.createRow('Tokens / hr', `${week.tokensPerHour.toFixed(1)}`, config.COLOR_ACCENT));
+            section.appendChild(
+                this.createRow('Coins / hr', formatKMB(Math.round(week.coinsPerHour)), config.COLOR_GOLD)
+            );
+            section.appendChild(
+                this.createRow('Measured over', `${hours.toFixed(1)}h wall-clock`, config.COLOR_TEXT_SECONDARY)
+            );
+        }
+
+        // What those claims cost: the rerolls paid on tasks retired in the same
+        // window, and what is left after them
+        const spend = completions.rerollSpend;
+        if (spend.totalValue > 0) {
+            const parts = [];
+            if (spend.gold > 0) parts.push(`${formatKMB(Math.round(spend.gold))}💰`);
+            if (spend.cowbells > 0) parts.push(`${spend.cowbells}🔔`);
+            section.appendChild(
+                this.createRow(
+                    'Reroll Spend',
+                    `-${formatKMB(Math.round(spend.totalValue))} (${parts.join(' + ')})`,
+                    config.COLOR_LOSS
+                )
+            );
+        }
+
+        if (completions.netValue !== null) {
+            const separator = document.createElement('div');
+            separator.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
+            section.appendChild(separator);
+            section.appendChild(
+                this.createRow(
+                    'Net Task Income',
+                    formatKMB(Math.round(completions.netValue)),
+                    completions.netValue >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS
+                )
+            );
+        }
+
+        for (const entry of completions.recent) {
+            const when = formatDateTime(new Date(entry.completedAt), { includeSeconds: false });
+            section.appendChild(
+                this.createRow(
+                    `${entry.name || 'Task'} — ${when}`,
+                    `${entry.tokens}🎫 + ${formatKMB(entry.coins)}`,
+                    config.COLOR_TEXT_SECONDARY
+                )
+            );
         }
 
         return section;
