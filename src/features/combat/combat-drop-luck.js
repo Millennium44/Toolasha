@@ -717,28 +717,84 @@ export function describeChestRun(player) {
 }
 
 /**
+ * A percentile as a tile figure: where a haul sat among the ones it could have been.
+ *
+ * @param {number|null|undefined} percentile - In [0, 1], or nothing when it cannot be placed
+ * @returns {Object} A segment for `rows`
+ */
+function luckCell(percentile) {
+    if (percentile === null || percentile === undefined) return { text: '—', bold: true, color: ROW_COLORS.dim };
+
+    return {
+        text: `${(percentile * 100).toFixed(1)}%`,
+        bold: true,
+        color: { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
+            describeLuck(percentile).tone
+        ],
+    };
+}
+
+/**
+ * Takings against expectation as a tile figure.
+ *
+ * @param {number|null|undefined} percent - Signed percentage, or nothing when there is no expectation to divide by
+ * @returns {Object} A segment for `rows`
+ */
+function overCell(percent) {
+    if (percent === null || percent === undefined) return { text: '—', color: ROW_COLORS.dim };
+
+    const over = signedPercent(percent);
+    return { text: over.text, color: over.color };
+}
+
+/**
+ * One line of the tile: who, where they sat, and how far off expectation.
+ *
+ * @param {string} name - Whose
+ * @param {boolean} mine - Whether it is the current player
+ * @param {Object[]} figures - The cells after the name
+ * @param {boolean} onlyNumbers - Whether the name has been switched off
+ * @returns {Object[]} A line for `rows`
+ */
+function tileLine(name, mine, figures, onlyNumbers) {
+    if (onlyNumbers) return figures;
+    return [{ text: name, color: mine ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true }, ...figures];
+}
+
+/**
+ * How far a player's chests are off what they were owed.
+ *
+ * @param {Object} player - One entry from `dungeonChestLuck().players`
+ * @returns {number|null} Signed percentage, or null when nothing was owed
+ */
+function chestOverExpected(player) {
+    if (!player.luck || !(player.luck.expected > 0)) return null;
+    return (player.luck.chests / player.luck.expected - 1) * 100;
+}
+
+/**
  * The chest rows a dungeon shows in place of a percentile it cannot compute.
  *
  * @param {HTMLElement} container - The tile
  * @param {Object} chest - From `dungeonChestLuck`
- * @param {Function} figureOf - A player to `{text, color}`
- * @param {string} keyPrefix - Which tile's row options to honour
+ * @param {Object} options - How the tile has been narrowed
+ * @param {boolean} options.onlyNumbers - Drop the names
+ * @param {boolean} options.onlyPlayer - Only the current player's row
  */
-function drawChestRows(container, chest, figureOf, keyPrefix) {
-    const onlyNumbers = rowOption(`${keyPrefix}OnlyNumbers`);
-    const onlyPlayer = rowOption(`${keyPrefix}OnlyPlayer`);
-
+function drawChestRows(container, chest, { onlyNumbers, onlyPlayer }) {
     const shown = onlyPlayer ? chest.players.filter((player) => player.isCurrentPlayer) : chest.players;
     rows(
         container,
-        shown.map((player) => {
-            const figure = figureOf(player);
-            if (onlyNumbers) return [figure];
-            return [
-                { text: player.name, color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true },
-                figure,
-            ];
-        }),
+        shown.map((player) =>
+            tileLine(
+                player.name,
+                player.isCurrentPlayer,
+                // The level gap is inside the expectation now, so the percentile
+                // is about their luck again rather than about their party
+                [luckCell(player.luck?.percentile), overCell(chestOverExpected(player))],
+                onlyNumbers
+            )
+        ),
         { align: true }
     );
 
@@ -763,40 +819,35 @@ function drawChestRows(container, chest, figureOf, keyPrefix) {
 
 // Registered at module scope so the overlay has the row regardless of start-up
 // order. Shows the last session analysed, and nothing before there is one.
+//
+// One tile rather than the two this used to be. Drop Luck and Over Expected %
+// were the same measurement of the same run drawn twice — the same placeholder,
+// the same empty state, the same panel behind them — and the pair cost two tiles
+// of width to say what two columns say. The percentile is where the run sat
+// among the runs it could have been; the percentage is how much better or worse
+// off it left you, and on a zone whose value rides on one rare those two say
+// quite different things about the same session. Side by side is where that is
+// visible.
 registerRow({
     key: 'luck',
     empty: 'No run measured yet',
-    name: 'Drop Luck',
-    defaultSize: { width: 200, height: 40 },
-    // LYuck behind the tile that carries its headline: a percentile cannot say
+    name: 'Drop Luck & Expected',
+    // Wider than the percentile alone needed: three columns rather than two
+    defaultSize: { width: 240, height: 40 },
+    // Luck behind the tile that carries its headline: a percentile cannot say
     // which drop is the reason, and that is the question a long run raises
     onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
     render: (container) => {
+        // Either tile's options narrow the merged one, so somebody who set them
+        // on the Expected half keeps what they set rather than silently losing it
+        const onlyNumbers = rowOption('luckOnlyNumbers') || rowOption('expectedOnlyNumbers');
+        const onlyPlayer = rowOption('luckOnlyPlayer') || rowOption('expectedOnlyPlayer');
+
         // A dungeon first, because it has an answer where the per-monster model
         // has none — and because a stale percentile from the zone fought before
         // the dungeon is worse than no percentile at all
         const chest = combatDropLuck.dungeonChestLuck();
-        if (chest) {
-            return drawChestRows(
-                container,
-                chest,
-                (player) => {
-                    // The level gap is inside the expectation now, so the
-                    // percentile is about their luck again rather than about
-                    // their party
-                    if (player.luck?.percentile == null) return { text: '—', bold: true, color: ROW_COLORS.dim };
-
-                    return {
-                        text: `${(player.luck.percentile * 100).toFixed(1)}%`,
-                        bold: true,
-                        color: { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
-                            describeLuck(player.luck.percentile).tone
-                        ],
-                    };
-                },
-                'luck'
-            );
-        }
+        if (chest) return drawChestRows(container, chest, { onlyNumbers, onlyPlayer });
 
         const result = combatDropLuck.lastResult;
         if (!result) return blank(container);
@@ -806,149 +857,90 @@ registerRow({
         // lines and pushed the number out of sight. It is the tooltip now.
         const { text } = describeLuck(result.percentile);
 
-        // Your name on the left and the figure on the right, which is the shape
-        // Lucky's tile has. One row rather than one per player: the percentile
-        // is a property of the session — how unusual this run was against the
-        // zone's own distribution — and there is no honest way to split it
-        // between the people who were in it. What *can* be split is takings
-        // against expectation, and that is the Over Expected tile.
         const party = partyLuck(combatDropLuck.context);
         const me = party.players.find((player) => player.isCurrentPlayer) || party.players[0];
-
-        const onlyNumbers = rowOption('luckOnlyNumbers');
-        const onlyPlayer = rowOption('luckOnlyPlayer');
-
-        /**
-         * One row: who, and where their haul sat among the ones they could have had.
-         * @param {string} name - Whose
-         * @param {number|null} value - Percentile, 0 to 1
-         * @param {boolean} mine - Whether it is the current player
-         * @returns {Array<Object>}
-         */
-        const luckRow = (name, value, mine) => {
-            const figure = {
-                text: value === null ? '—' : `${(value * 100).toFixed(1)}%`,
-                bold: true,
-                color:
-                    value === null
-                        ? ROW_COLORS.dim
-                        : { lucky: ROW_COLORS.good, unlucky: ROW_COLORS.bad, normal: ROW_COLORS.neutral }[
-                              describeLuck(value).tone
-                          ],
-            };
-            if (onlyNumbers) return [figure];
-            return [{ text: name, color: mine ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true }, figure];
-        };
+        const overFor = (name) => party.players.find((player) => player.name === name)?.percent ?? null;
 
         // A row each where there is a party, because everybody's drop gear
         // differs and so does everybody's distribution — the same haul is
-        // remarkable for one of them and ordinary for another. The figures are
-        // computed when the session is analysed, not here: inverting a
+        // remarkable for one of them and ordinary for another. The percentiles
+        // are computed when the session is analysed, not here: inverting a
         // distribution costs ten milliseconds a player.
         const each = result.players || [];
         if (each.length > 1) {
             const shown = onlyPlayer ? each.filter((player) => player.isCurrentPlayer) : each;
-            rows(
-                container,
-                shown.map((player) => luckRow(player.name, player.percentile, player.isCurrentPlayer)),
-                { align: true }
+            const lines = shown.map((player) =>
+                tileLine(
+                    player.name,
+                    player.isCurrentPlayer,
+                    [luckCell(player.percentile), overCell(overFor(player.name))],
+                    onlyNumbers
+                )
             );
-            container.title =
-                `${formatOrdinal(result.percentile)} percentile for the party — ${text}\n` +
-                'Per player: their own haul against their own drop gear\u2019s distribution, so the figures are ' +
-                'comparable even when the gear is not.';
+
+            // The party's own line: one percentile for the session, because how
+            // unusual a run was is a property of the run and there is no honest
+            // way to split it between the people who were in it — and the
+            // party's takings against the party's expectation, which is not an
+            // average of the rows above it. An average weights somebody who
+            // looted one item the same as somebody who looted a hundred.
+            // Dropped when the tile has been narrowed to one player: a total of
+            // one row is that row again.
+            if (!onlyPlayer) {
+                const totals = [luckCell(result.percentile), overCell(party.total?.percent)];
+                lines.push(
+                    onlyNumbers ? totals : [{ text: 'TOTAL', color: ROW_COLORS.neutral, bold: true }, ...totals]
+                );
+            }
+
+            rows(container, lines, { align: true });
+            container.title = explainTile(result, text, true);
             return;
         }
 
-        // The aligned layout even for one line, so this tile's figure sits at
-        // the same height as the first line of DPS and Over Expected beside it
-        rows(container, [luckRow(me?.name || 'Luck', result.percentile, true)], { align: true });
-        container.title = `${formatOrdinal(result.percentile)} percentile — ${text}`;
+        // Solo, one line: the session percentile already is this player's — the
+        // model was built from their bonuses — and a TOTAL underneath a single
+        // row is that row printed twice.
+        const name = me?.name || 'Luck';
+        const over = overFor(name) ?? (result.expected > 0 ? (result.income / result.expected - 1) * 100 : null);
+        rows(container, [tileLine(name, true, [luckCell(result.percentile), overCell(over)], onlyNumbers)], {
+            align: true,
+        });
+        container.title = explainTile(result, text, false);
     },
 });
 
 /**
- * How far the run's takings are from what the zone owed.
+ * The tile's hover text, where the coins and the caveats live.
  *
- * The companion to Drop luck, in coins rather than in percentiles. Where the
- * percentile says how unusual the run was, this says how much better or worse
- * off it left you — and on a zone whose value rides on one rare, those two say
- * quite different things about the same session.
+ * The figures the percentage came from are here rather than on the tile: they
+ * are what makes it meaningful, and they are also three times as wide as the
+ * space there is.
+ *
+ * @param {Object} result - From `_analyse`
+ * @param {string} text - The percentile in words, from `describeLuck`
+ * @param {boolean} party - Whether there is more than one player in it
+ * @returns {string} Tooltip
  */
-registerRow({
-    key: 'overExpected',
-    empty: 'No run measured yet',
-    name: 'Over Expected %',
-    defaultSize: { width: 200, height: 40 },
-    render: (container) => {
-        // In a dungeon the same question is chests against chests owed, which is
-        // the one figure a dungeon payout can honestly be held to
-        const chest = combatDropLuck.dungeonChestLuck();
-        if (chest) {
-            return drawChestRows(
-                container,
-                chest,
-                (player) => {
-                    if (!player.luck || !(player.luck.expected > 0)) return { text: '—', color: ROW_COLORS.dim };
+function explainTile(result, text, party) {
+    const lines = [`${formatOrdinal(result.percentile)} percentile${party ? ' for the party' : ''} — ${text}`];
 
-                    const over = signedPercent((player.luck.chests / player.luck.expected - 1) * 100);
-                    return { text: over.text, color: over.color };
-                },
-                'expected'
-            );
-        }
-
-        const result = combatDropLuck.lastResult;
-        if (!result || !(result.expected > 0)) return blank(container);
-
-        const verdict = signedPercent((result.income / result.expected - 1) * 100);
-
-        // A row per player and then the total, whether or not there is anybody
-        // else in the party — which is the shape Lucky's tile has, and one
-        // fewer layout to keep matching. The coins the percentage came from are
-        // the tooltip: they are what makes the figure meaningful, and they are
-        // also three times as wide as the tile.
-        const party = partyLuck(combatDropLuck.context);
-        const onlyNumbers = rowOption('expectedOnlyNumbers');
-        const onlyPlayer = rowOption('expectedOnlyPlayer');
-
-        const shown = onlyPlayer ? party.players.filter((player) => player.isCurrentPlayer) : party.players;
-        const lines = shown.map((player) => {
-            const each = signedPercent(player.percent ?? 0);
-            const figure = { text: player.percent === null ? '—' : each.text, color: each.color };
-            if (onlyNumbers) return [figure];
-
-            return [
-                {
-                    text: player.name,
-                    color: player.isCurrentPlayer ? ROW_COLORS.gold : ROW_COLORS.dim,
-                    ellipsis: true,
-                },
-                figure,
-            ];
-        });
-
-        // The party against the party's expectation, not an average of the
-        // percentages — an average weights somebody who looted one item the
-        // same as somebody who looted a hundred. Dropped when the tile has been
-        // narrowed to one player: a total of one row is that row again.
-        if (!onlyPlayer) {
-            const total = party.total ? signedPercent(party.total.percent ?? 0) : verdict;
-            const figure = { text: total.text, color: total.color, bold: true };
-            lines.push(onlyNumbers ? [figure] : [{ text: 'TOTAL', color: ROW_COLORS.neutral, bold: true }, figure]);
-        }
-
-        rows(container, lines, { align: true });
-        container.title =
+    // Nothing to divide by means nothing to compare against, and a tooltip
+    // saying "NaN expected" is worse than one that does not mention it
+    if (result.expected > 0) {
+        lines.push(
             `${formatLargeNumber(Math.round(result.income))} of ` +
-            `${formatLargeNumber(Math.round(result.expected))} expected over ${result.battles} battles.\n` +
-            'Each player against what their own drop gear was owed; a player with no drop gear is owed less.\n' +
-            'Drops with no market price are left out of both sides.';
-    },
-    // Both luck tiles open the same panel. Two panels split one question — a
-    // percentile in one and the item table that explains it in the other — and
-    // the answer is always in the half you did not open.
-    onOpen: () => window.Toolasha?.Combat?.partyLuckPanel?.toggle(),
-});
+                `${formatLargeNumber(Math.round(result.expected))} expected over ${result.battles} battles.`
+        );
+    }
+    if (party) {
+        lines.push(
+            'Per player: their own haul against their own drop gear’s distribution and against what that gear ' +
+                'was owed, so the figures are comparable even when the gear is not.'
+        );
+    }
+    lines.push('Drops with no market price are left out of both sides.');
+    return lines.join('\n');
+}
 
 export default combatDropLuck;

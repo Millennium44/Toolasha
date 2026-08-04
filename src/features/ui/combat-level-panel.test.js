@@ -47,6 +47,26 @@ vi.mock('../../core/storage.js', () => ({
     default: { getJSON: async () => null, setJSON: async () => {} },
 }));
 
+/**
+ * The WebSocket hook, reduced to the handlers the panel registers.
+ *
+ * The session is armed by combat rather than by the panel, so the messages are
+ * what these tests have to be able to send — and a real hook would need a real
+ * socket to send them down.
+ */
+const socket = vi.hoisted(() => ({ handlers: {} }));
+
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => {
+            (socket.handlers[type] ||= []).push(handler);
+        },
+        off: (type, handler) => {
+            socket.handlers[type] = (socket.handlers[type] || []).filter((entry) => entry !== handler);
+        },
+    },
+}));
+
 vi.mock('../../utils/experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({
         totalWisdom: 62.65,
@@ -55,6 +75,8 @@ vi.mock('../../utils/experience-parser.js', () => ({
         totalMultiplier: 1.6265,
     }),
 }));
+
+const config = (await import('../../core/config.js')).default;
 
 const {
     combatLevelPanel,
@@ -125,10 +147,21 @@ function rowFor(name) {
     return line?.textContent ?? '';
 }
 
+/**
+ * Send one of the messages the panel listens to.
+ * @param {string} type - Message type
+ * @param {Object} [data] - Payload, which the session tracker does not read
+ */
+function fire(type, data = {}) {
+    for (const handler of socket.handlers[type] || []) handler(data);
+}
+
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-02T12:00:00Z'));
     character();
+    // Out of combat, so a test that starts a fight starts a session with it
+    fire('battle_unit_fetched');
     resetSession(combatSkillState().skills);
 });
 
@@ -619,5 +652,96 @@ describe('Primary and Focus point the measured shares somewhere else', () => {
         // gaining what Melee is — which is the question the selector asks
         expect(rowFor('Ranged')).toContain('12,000,000');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('the session starts when combat does', () => {
+    /** The Session card's text, which is where the clock and the totals are */
+    const sessionText = () => text().slice(text().indexOf('Start:'), text().indexOf('Target Selector'));
+
+    test('a session opened into is already running, with the run’s figures on it', () => {
+        // The bug this replaced: the clock started on the first render, so a
+        // panel opened an hour into a grind said 5s, 0 exp and "measuring…" —
+        // three figures about the panel rather than about the run
+        // Ten minutes of not fighting first, so a clock that started at the
+        // page load rather than at the fight would read forty minutes here
+        vi.setSystemTime(new Date('2026-08-02T12:10:00Z'));
+        fire('new_battle');
+
+        grant('melee', 250_000);
+        vi.setSystemTime(new Date('2026-08-02T12:40:00Z'));
+        combatLevelPanel.show();
+
+        expect(sessionText()).toContain('0h 30m 00s');
+        expect(sessionText()).toContain('250,000');
+        expect(sessionText()).not.toContain('measuring…');
+    });
+
+    test('nothing is tracked while the feature is switched off', () => {
+        vi.setSystemTime(new Date('2026-08-02T12:10:00Z'));
+        vi.spyOn(config, 'getSetting').mockReturnValue(false);
+        fire('new_battle');
+
+        // The session the character already had, ten minutes old, rather than a
+        // new one started by a battle nobody asked to be watched
+        combatLevelPanel.show();
+        expect(sessionText()).toContain('0h 10m 00s');
+
+        // And the switch is read each time, not once at start-up
+        vi.restoreAllMocks();
+        fire('new_battle');
+        combatLevelPanel._render();
+        expect(sessionText()).toContain('0s');
+    });
+
+    test('every battle of a run is the same session', () => {
+        vi.setSystemTime(new Date('2026-08-02T12:05:00Z'));
+        fire('new_battle');
+        grant('melee', 100_000);
+        vi.setSystemTime(new Date('2026-08-02T12:25:00Z'));
+        fire('new_battle');
+        grant('melee', 100_000);
+
+        combatLevelPanel.show();
+        expect(sessionText()).toContain('0h 20m 00s');
+        expect(sessionText()).toContain('200,000');
+    });
+
+    test('leaving combat and going back is a new session', () => {
+        fire('new_battle');
+        grant('melee', 100_000);
+
+        vi.setSystemTime(new Date('2026-08-02T12:20:00Z'));
+        fire('battle_unit_fetched');
+        // Idle for five minutes, which is not part of either run
+        vi.setSystemTime(new Date('2026-08-02T12:25:00Z'));
+        fire('new_battle');
+
+        combatLevelPanel.show();
+        expect(sessionText()).toContain('0s');
+        expect(sessionText()).toContain('Exp:0');
+    });
+
+    test('Reset starts the clock again, and the run does not restart it', () => {
+        fire('new_battle');
+        grant('melee', 100_000);
+        vi.setSystemTime(new Date('2026-08-02T12:05:00Z'));
+        combatLevelPanel.show();
+
+        const reset = [...combatLevelPanel.panel.querySelectorAll('button')].find(
+            (button) => button.textContent === 'Reset'
+        );
+        reset.click();
+        expect(sessionText()).toContain('Exp:0');
+
+        // Still the same fight, so the next battle joins the session Reset just
+        // started rather than starting a third one
+        vi.setSystemTime(new Date('2026-08-02T12:06:00Z'));
+        fire('new_battle');
+        grant('melee', 50_000);
+        combatLevelPanel._render();
+
+        expect(sessionText()).toContain('0h 01m 00s');
+        expect(sessionText()).toContain('50,000');
     });
 });

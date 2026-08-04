@@ -47,6 +47,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import webSocketHook from '../../core/websocket.js';
 import { loadWhenReady } from '../../utils/deferred-load.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -77,6 +78,17 @@ const GEOMETRY_KEY = 'combatLevelPanel';
 const DEFAULT_PANEL = { width: 560, height: 720 };
 const REFRESH_MS = 5000;
 const COMBAT_ACTION_TYPE = '/action_types/combat';
+
+/**
+ * The switch the background session tracker obeys.
+ *
+ * The panel has no entry of its own in the settings schema — it is reached from
+ * the overlay and the command palette rather than switched on — so this reads
+ * as on unless somebody has explicitly turned it off. Written as a setting
+ * rather than as `true` so that adding the switch is all adding the switch
+ * takes: nothing here has to change to be obeyed.
+ */
+const TRACKING_SETTING = 'combatLevelPanel';
 
 /** How far back the rate behind each countdown is measured */
 const WINDOW_MS = 10 * 60 * 1000;
@@ -135,8 +147,77 @@ function sample() {
  * Closing a panel is not the same gesture as starting a new measurement, and
  * conflating them means the one number you cannot recover — how long you have
  * been at this — is thrown away by tidying up.
+ *
+ * Opening one is not that gesture either, which is the bug this used to have:
+ * the clock started on the first render, so a panel opened an hour into a grind
+ * said `Duration: 5s`, `Exp: 0` and `Exp/Hr: measuring…` — three figures that
+ * were all about the panel rather than about the run. It is started by combat
+ * now (see {@link watchCombat}), so opening the panel joins a session already in
+ * progress rather than beginning one.
  */
 let session = null;
+
+/**
+ * Whether a fight is under way.
+ *
+ * The session is armed on the first battle after this goes false, which is what
+ * makes "a session" mean a run rather than a page load: leaving combat arms the
+ * next start, and every battle in between is the same session.
+ */
+let inCombat = false;
+
+/**
+ * Combat has started, so the session starts with it.
+ *
+ * Deliberately cheap — a settings read, the skill list the data manager already
+ * holds, and a baseline object — because this runs off a WebSocket message that
+ * every other combat feature is also listening to, and none of it touches the
+ * DOM. The panel is not involved and does not need to exist.
+ *
+ * Skills that have not loaded yet leave this disarmed rather than baselined
+ * against nothing: battles arrive every few seconds, so the next one starts it.
+ */
+function combatStarted() {
+    try {
+        if (inCombat) return;
+        if (!config.getSetting(TRACKING_SETTING, true)) return;
+
+        const state = combatSkillState();
+        if (!state?.skills.length) return;
+
+        inCombat = true;
+        resetSession(state.skills);
+    } catch (error) {
+        console.error('[CombatLevel] Starting the session with combat failed:', error);
+    }
+}
+
+/**
+ * Combat is over, so the next battle is a new session.
+ *
+ * The figures are left standing rather than cleared: the tile and the panel are
+ * read *after* a run as often as during one, and the clock going on ticking
+ * through the idle afterwards is the behaviour this panel has always had.
+ */
+function combatEnded() {
+    inCombat = false;
+}
+
+/**
+ * Listen for combat, from module scope.
+ *
+ * At module scope because this file has no feature entry to be initialised from
+ * — it is imported for its panel and its two overlay rows — and because a
+ * tracker that only runs while something else is open is the thing being fixed.
+ * Subscribing costs a map entry; the handlers do nothing until a battle arrives.
+ */
+function watchCombat() {
+    // `new_battle` is the signal the rest of the combat features start on, and
+    // `battle_unit_fetched` is the one they treat as leaving combat
+    webSocketHook.on('new_battle', combatStarted);
+    webSocketHook.on('battle_unit_fetched', combatEnded);
+}
+watchCombat();
 
 /**
  * The current character's combat skills, levels and measured rates.
@@ -661,11 +742,16 @@ class CombatLevelPanel {
         const progress = sessionFor(state.skills);
         const started = new Date(progress.startedAt);
 
+        const start = this._value(
+            started.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        );
+        start.title =
+            'The session starts when combat does, not when this panel opens — so these figures are the run’s ' +
+            'rather than the panel’s.';
+
         card.append(
             this._label('Start:'),
-            this._value(
-                started.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-            ),
+            start,
             this._label('Duration:'),
             this._value(timeReadable(Math.round(progress.seconds))),
             this._label('Exp:'),
