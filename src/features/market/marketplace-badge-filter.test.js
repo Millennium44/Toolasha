@@ -18,6 +18,10 @@ const game = vi.hoisted(() => ({ listings: null, styles: new Map() }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { register: () => () => {} } }));
+// The badge and the "a listing finished" notification read the same count.
+// These tests are about the badge, so the telling half is stubbed out — the
+// alternative is a real toast for every listing this file invents.
+vi.mock('../notifications/notification-service.js', () => ({ default: { notify: () => ({ fired: true }) } }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         get characterData() {

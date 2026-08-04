@@ -6,6 +6,7 @@
 import marketAPI from '../api/marketplace.js';
 import config from '../core/config.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
+import { formatRelativeTime } from './formatters.js';
 
 // Track logged warnings to prevent console spam
 const loggedWarnings = new Set();
@@ -96,6 +97,39 @@ export function getItemPrice(itemHrid, options = {}) {
         default:
             return resolvePrice(priceData.ask);
     }
+}
+
+/**
+ * Check whether a custom price override applies to a given item/side.
+ * `getItemPrice` returns a bare number for backward compatibility, so callers that need to
+ * know whether that number came from the user's own price overrides (rather than the market)
+ * can check this in parallel instead of relying on `getItemPrice`'s return shape.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Enhancement level
+ * @param {string} [side='sell'] - Transaction side ('buy'|'sell')
+ * @returns {boolean} True if a custom price override is set for this item/enhancement/side
+ */
+export function isPriceOverridden(itemHrid, enhancementLevel = 0, side = 'sell') {
+    if (!itemHrid || typeof itemHrid !== 'string') {
+        return false;
+    }
+
+    return getCustomPrice(itemHrid, enhancementLevel, side) !== null;
+}
+
+/**
+ * Get a short, human-readable description of how stale the current market price data is.
+ * Backed by marketAPI's fetch timestamp (data is refreshed at most every CACHE_DURATION).
+ * @returns {string|null} e.g. "prices 4m old", "prices updated just now", or null if no data loaded yet
+ */
+export function getPriceAgeString() {
+    const ageMs = marketAPI.getDataAge();
+    if (ageMs === null) {
+        return null;
+    }
+
+    const relative = formatRelativeTime(ageMs);
+    return relative === 'Just now' ? 'prices updated just now' : `prices ${relative} old`;
 }
 
 /**
@@ -246,4 +280,6 @@ export default {
     formatPrice,
     getPricingMode,
     getItemPricesBatch,
+    isPriceOverridden,
+    getPriceAgeString,
 };

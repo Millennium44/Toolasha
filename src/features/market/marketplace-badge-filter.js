@@ -29,6 +29,8 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import notificationService from '../notifications/notification-service.js';
+import { listingsNewlyFinished } from '../notifications/notification-predicates.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 
 const STYLE_ID = 'mwi-marketplace-badge-filter';
@@ -113,10 +115,23 @@ class MarketplaceBadgeFilter {
         /** Watches the sidebar item's own text, since React rewrites it */
         this.textWatcher = null;
         this.watchedNav = null;
+        /**
+         * Finished count at the previous observation, for the notification.
+         *
+         * Separate from `showing`, which is what the badge is *displaying* and
+         * stays null while the filter itself is switched off — the notification
+         * has to work in that case too.
+         */
+        this.lastFinishedCount = null;
     }
 
     initialize() {
-        if (!config.getSetting('market_badgeOnlyWhenFinished')) return;
+        // Two features now read the same listings: this filter, and the "a
+        // listing finished" notification. Either being on is reason enough to
+        // listen, and each decides for itself what to do with the count
+        const wantsBadge = config.getSetting('market_badgeOnlyWhenFinished');
+        const wantsNotification = config.getSetting('notifications_marketListingFilled');
+        if (!wantsBadge && !wantsNotification) return;
 
         // The payload is kept as well as read from the character's book, because
         // the two have disagreed: whichever of them has listings is the one to
@@ -159,7 +174,35 @@ class MarketplaceBadgeFilter {
         // anything collectable, so a filled order beside a buy order that has
         // taken 130 of 719 reads "2" — and collecting the 130 does nothing but
         // silence it. One of those is finished, so the badge should say one.
-        this.apply(this.book().filter(isFinishedWithSpoils).length);
+        const finished = this.book().filter(isFinishedWithSpoils).length;
+
+        this.announce(finished);
+        if (config.getSetting('market_badgeOnlyWhenFinished')) this.apply(finished);
+    }
+
+    /**
+     * Say so when another listing has finished.
+     *
+     * Deliberately not "the badge is showing something": the badge also shows
+     * something the entire time you leave one uncollected, and a notification
+     * for a state rather than an event is a notification you learn to ignore.
+     * Only a rise counts.
+     *
+     * @param {number} finished - How many listings have finished now
+     */
+    announce(finished) {
+        if (!config.getSetting('notifications_marketListingFilled')) {
+            // Still tracked while switched off, so turning it on mid-session
+            // does not announce a backlog that was already sitting there
+            this.lastFinishedCount = finished;
+            return;
+        }
+
+        if (listingsNewlyFinished(this.lastFinishedCount, finished)) {
+            const noun = finished === 1 ? 'listing has' : 'listings have';
+            notificationService.notify('market-listing-filled', `${finished} market ${noun} finished.`);
+        }
+        this.lastFinishedCount = finished;
     }
 
     /**
@@ -306,6 +349,7 @@ class MarketplaceBadgeFilter {
         removeStyles(STYLE_ID);
         this.hidden = false;
         this.showing = null;
+        this.lastFinishedCount = null;
     }
 }
 
