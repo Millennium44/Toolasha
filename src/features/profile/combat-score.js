@@ -166,6 +166,52 @@ class CombatScore {
     }
 
     /**
+     * The guild shrine contribution line, or nothing at all.
+     *
+     * Shrine levels are known for exactly one character — yours. Every other
+     * profile the panel opens is a `profile_shared` payload that has never
+     * carried them, so there is no figure to show and a zero would be a lie
+     * about the player rather than about the data. The line is therefore built
+     * only when the score says the levels were actually read, and only when
+     * something was bought: a shrine at level 0 is worth no row.
+     *
+     * Scored the same way House and Ability are — what it cost, in millions of
+     * coins — so the three lines under a score add up in the same units. Guild
+     * tokens have no gold price and never will, so they ride in the tooltip.
+     *
+     * @param {Object} scoreData - Result of `calculateCombatScore`
+     * @param {string} scope - 'combat' or 'skiller'
+     * @returns {string} HTML for the toggle and its breakdown, or ''
+     */
+    buildGuildShrineHTML(scoreData, scope) {
+        if (!scoreData?.guildShrineKnown) return '';
+
+        const isCombat = scope === 'combat';
+        const score = (isCombat ? scoreData.guildShrineCombat : scoreData.skillerGuildShrine) || 0;
+        const tokens = (isCombat ? scoreData.guildShrineCombatTokens : scoreData.skillerGuildShrineTokens) || 0;
+        const breakdown =
+            (isCombat ? scoreData.breakdown?.guildShrinesCombat : scoreData.skillerBreakdown?.guildShrines) || [];
+        if (!(score > 0)) return '';
+
+        const prefix = isCombat ? 'mwi-guild-shrine' : 'mwi-skiller-guild-shrine';
+        const rows = breakdown
+            .map(
+                (item) =>
+                    `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${escapeHtml(item.name)}: ${escapeHtml(item.value)}</div>`
+            )
+            .join('');
+
+        return `
+                <div style="cursor: pointer; margin-bottom: 4px;" id="${prefix}-toggle" title="Guild shrine levels bought, priced in guild credits. ${tokens} guild tokens also spent — tokens have no market price, so they are not counted.">
+                    + Guild Shrine: ${numberFormatter(score.toFixed(1))}
+                </div>
+                <div id="${prefix}-breakdown" style="display: none; margin-bottom: 6px;">
+                    ${rows}
+                </div>
+        `;
+    }
+
+    /**
      * Show combat score panel next to profile
      * @param {Object} profileData - Profile data
      * @param {Object} scoreData - Calculated score data
@@ -229,6 +275,11 @@ class CombatScore {
                     `<div style="margin-left: 10px; font-size: 0.8rem; color: ${config.COLOR_TEXT_SECONDARY};">${item.name}: ${item.value}</div>`
             )
             .join('');
+
+        // Guild shrine lines — present only for your own profile, where the
+        // levels are actually known
+        const guildShrineHTML = this.buildGuildShrineHTML(scoreData, 'combat');
+        const skillerGuildShrineHTML = this.buildGuildShrineHTML(scoreData, 'skiller');
 
         // Build View Card button HTML (only if characterCard setting is enabled)
         const viewCardButtonHTML = config.getSetting('characterCard')
@@ -308,6 +359,7 @@ class CombatScore {
                 <div id="mwi-equipment-breakdown" style="display: none;">
                     ${equipmentBreakdownHTML}
                 </div>
+                ${guildShrineHTML}
             </div>
 
             <div style="cursor: pointer; font-weight: bold; margin-top: 12px; margin-bottom: 8px; color: ${config.COLOR_PROFIT}; ${!config.getSetting('combatScore') ? 'display: none;' : ''}" id="mwi-skiller-score-toggle">
@@ -320,6 +372,7 @@ class CombatScore {
                 <div id="mwi-skiller-equipment-breakdown" style="display: none;">
                     ${skillerEquipmentBreakdownHTML}
                 </div>
+                ${skillerGuildShrineHTML}
             </div>
 
             <div id="mwi-button-container" style="margin-top: 12px; display: flex; flex-direction: column; gap: 6px;">
@@ -517,6 +570,22 @@ class CombatScore {
                 skillerEquipmentToggle.textContent =
                     (isCollapsed ? '- ' : '+ ') +
                     `Equipment: ${numberFormatter(scoreData.skillerEquipment.toFixed(1))}`;
+            });
+        }
+
+        // Toggle guild shrine breakdowns — absent on every profile but your own
+        for (const [prefix, score] of [
+            ['mwi-guild-shrine', scoreData.guildShrineCombat],
+            ['mwi-skiller-guild-shrine', scoreData.skillerGuildShrine],
+        ]) {
+            const shrineToggle = panel.querySelector(`#${prefix}-toggle`);
+            const shrineBreakdown = panel.querySelector(`#${prefix}-breakdown`);
+            if (!shrineToggle || !shrineBreakdown) continue;
+            shrineToggle.addEventListener('click', () => {
+                const isCollapsed = shrineBreakdown.style.display === 'none';
+                shrineBreakdown.style.display = isCollapsed ? 'block' : 'none';
+                shrineToggle.textContent =
+                    (isCollapsed ? '- ' : '+ ') + `Guild Shrine: ${numberFormatter((score || 0).toFixed(1))}`;
             });
         }
 

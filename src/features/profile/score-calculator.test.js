@@ -114,4 +114,60 @@ describe('guild shrine score', () => {
         expect(score.guildShrine).toBe(0);
         expect(score.breakdown.guildShrines).toEqual([]);
     });
+
+    describe('combat and skilling are scored apart', () => {
+        test('each shrine lands in the bucket its isCombat flag names', async () => {
+            const score = await calculateCombatScore(
+                profileWithShrines({ '/guild_buffs/force_combat': 2, '/guild_buffs/scholar_skilling': 1 })
+            );
+
+            // Force levels 1+2 = 30 credits at 750; Scholar level 1 = 4 credits
+            expect(score.guildShrineCombat).toBeCloseTo(22_500 / 1_000_000, 10);
+            expect(score.guildShrineCombatTokens).toBe(30);
+            expect(score.skillerGuildShrine).toBeCloseTo(3000 / 1_000_000, 10);
+            expect(score.skillerGuildShrineTokens).toBe(5);
+            expect(score.guildShrine).toBeCloseTo(score.guildShrineCombat + score.skillerGuildShrine, 10);
+        });
+
+        test('each breakdown carries only its own shrines', async () => {
+            const score = await calculateCombatScore(
+                profileWithShrines({ '/guild_buffs/force_combat': 1, '/guild_buffs/scholar_skilling': 1 })
+            );
+
+            expect(score.breakdown.guildShrinesCombat.map((row) => row.name)).toEqual(['Force 1']);
+            expect(score.skillerBreakdown.guildShrines.map((row) => row.name)).toEqual(['Scholar 1']);
+        });
+    });
+
+    describe('knowing versus having none', () => {
+        test('a payload carrying levels is known', async () => {
+            const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/force_combat': 1 }));
+            expect(score.guildShrineKnown).toBe(true);
+        });
+
+        test("another player's profile is not, so no line can be drawn", async () => {
+            const score = await calculateCombatScore({ profile: { equippedAbilities: [], wearableItemMap: {} } });
+
+            expect(score.guildShrineKnown).toBe(false);
+            expect(score.guildShrineCombat).toBe(0);
+            expect(score.skillerGuildShrine).toBe(0);
+            expect(score.breakdown.guildShrinesCombat).toEqual([]);
+            expect(score.skillerBreakdown.guildShrines).toEqual([]);
+        });
+
+        test('an empty map is the same as no map — guild traffic has not arrived', async () => {
+            const score = await calculateCombatScore({
+                profile: { characterGuildBuffMap: {}, equippedAbilities: [], wearableItemMap: {} },
+            });
+
+            expect(score.guildShrineKnown).toBe(false);
+        });
+
+        test('the levels being all zero is a real reading, not an absent one', async () => {
+            const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/force_combat': 0 }));
+
+            expect(score.guildShrineKnown).toBe(true);
+            expect(score.guildShrineCombat).toBe(0);
+        });
+    });
 });

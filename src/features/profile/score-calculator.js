@@ -99,7 +99,7 @@ function categorizeEquipmentItem(slot, equipmentDetail) {
 /**
  * Calculate combat score from profile data
  * @param {Object} profileData - Profile data from game
- * @returns {Promise<Object>} {total, house, ability, equipment, guildShrine, breakdown}
+ * @returns {Promise<Object>} {total, house, ability, equipment, guildShrine, guildShrineKnown, breakdown}
  */
 export async function calculateCombatScore(profileData) {
     try {
@@ -132,6 +132,11 @@ export async function calculateCombatScore(profileData) {
             // your score incomparable with everybody else's
             guildShrine: guildShrineResult.score,
             guildShrineTokens: guildShrineResult.tokens,
+            // False for every profile that is not your own — the display leaves
+            // the line out rather than printing a zero for what it cannot see
+            guildShrineKnown: guildShrineResult.known,
+            guildShrineCombat: guildShrineResult.combat.score,
+            guildShrineCombatTokens: guildShrineResult.combat.tokens,
             equipmentHidden: profileData.profile?.hideWearableItems || false,
             hasEquipmentData: combatEquipmentResult.hasEquipmentData,
             breakdown: {
@@ -139,12 +144,16 @@ export async function calculateCombatScore(profileData) {
                 abilities: abilityResult.breakdown,
                 equipment: combatEquipmentResult.breakdown,
                 guildShrines: guildShrineResult.breakdown,
+                guildShrinesCombat: guildShrineResult.combat.breakdown,
             },
             // Skiller score (skilling equipment only)
             skillerTotal: skillerTotalScore,
             skillerEquipment: skillerEquipmentResult.score,
+            skillerGuildShrine: guildShrineResult.skilling.score,
+            skillerGuildShrineTokens: guildShrineResult.skilling.tokens,
             skillerBreakdown: {
                 equipment: skillerEquipmentResult.breakdown,
+                guildShrines: guildShrineResult.skilling.breakdown,
             },
         };
     } catch (error) {
@@ -156,12 +165,17 @@ export async function calculateCombatScore(profileData) {
             equipment: 0,
             guildShrine: 0,
             guildShrineTokens: 0,
+            guildShrineKnown: false,
+            guildShrineCombat: 0,
+            guildShrineCombatTokens: 0,
             equipmentHidden: false,
             hasEquipmentData: false,
-            breakdown: { houses: [], abilities: [], equipment: [], guildShrines: [] },
+            breakdown: { houses: [], abilities: [], equipment: [], guildShrines: [], guildShrinesCombat: [] },
             skillerTotal: 0,
             skillerEquipment: 0,
-            skillerBreakdown: { equipment: [] },
+            skillerGuildShrine: 0,
+            skillerGuildShrineTokens: 0,
+            skillerBreakdown: { equipment: [], guildShrines: [] },
         };
     }
 }
@@ -307,16 +321,29 @@ function calculateAbilityScore(profileData) {
  *
  * Only scored when the payload carries the levels. A shared profile does not, and
  * reading the current character's shrines while showing somebody else's card
- * would put your guild's investment on their score.
+ * would put your guild's investment on their score. `known` says which of those
+ * two happened, so a display can leave the line out entirely rather than print a
+ * zero that reads as "this player has bought nothing".
+ *
+ * The split into combat and skilling follows the game's own `isCombat` flag on
+ * each buff rather than a list of shrine names: Force sells both a combat buff
+ * and a skilling one, and only the flag tells them apart.
  *
  * @param {Object} profileData - Profile data
- * @returns {{score: number, tokens: number, breakdown: Array<Object>}}
+ * @returns {{known: boolean, score: number, tokens: number, breakdown: Array<Object>,
+ *   combat: {score: number, tokens: number, breakdown: Array<Object>},
+ *   skilling: {score: number, tokens: number, breakdown: Array<Object>}}}
  */
 function calculateGuildShrineScore(profileData) {
+    const emptyBucket = () => ({ score: 0, tokens: 0, breakdown: [] });
+    const unknown = { known: false, ...emptyBucket(), combat: emptyBucket(), skilling: emptyBucket() };
+
     const buffMap = profileData?.profile?.characterGuildBuffMap;
     const gameData = dataManager.getInitClientData();
     const detailMap = gameData?.guildBuffDetailMap;
-    if (!buffMap || !detailMap) return { score: 0, tokens: 0, breakdown: [] };
+    // An empty map is not a reading: shrine levels ride on guild traffic that
+    // may never arrive, and `{}` is what a character looks like before it does
+    if (!buffMap || Object.keys(buffMap).length === 0 || !detailMap) return unknown;
 
     // Built once and shared: every level of every shrine prices the same credits
     const goldPerCredit = buildGoldPerCredit('ask');
@@ -324,6 +351,8 @@ function calculateGuildShrineScore(profileData) {
     let totalCost = 0;
     let totalTokens = 0;
     const breakdown = [];
+    const combat = { cost: 0, tokens: 0, breakdown: [] };
+    const skilling = { cost: 0, tokens: 0, breakdown: [] };
 
     for (const [buffHrid, entry] of Object.entries(buffMap)) {
         const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
@@ -352,12 +381,28 @@ function calculateGuildShrineScore(profileData) {
             .split('_')
             .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
-        breakdown.push({ name: `${name} ${level}`, value: (cost / 1_000_000).toFixed(1) });
+        const row = { name: `${name} ${level}`, value: (cost / 1_000_000).toFixed(1) };
+        breakdown.push(row);
+
+        const bucket = detail.isCombat ? combat : skilling;
+        bucket.cost += cost;
+        bucket.tokens += tokens;
+        bucket.breakdown.push(row);
     }
 
-    breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+    const byValue = (a, b) => parseFloat(b.value) - parseFloat(a.value);
+    breakdown.sort(byValue);
+    combat.breakdown.sort(byValue);
+    skilling.breakdown.sort(byValue);
 
-    return { score: totalCost / 1_000_000, tokens: totalTokens, breakdown };
+    return {
+        known: true,
+        score: totalCost / 1_000_000,
+        tokens: totalTokens,
+        breakdown,
+        combat: { score: combat.cost / 1_000_000, tokens: combat.tokens, breakdown: combat.breakdown },
+        skilling: { score: skilling.cost / 1_000_000, tokens: skilling.tokens, breakdown: skilling.breakdown },
+    };
 }
 
 /**

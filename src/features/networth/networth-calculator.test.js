@@ -20,7 +20,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key], getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback,
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -67,10 +70,22 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({ DUNGEON_CHEST_CHE
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: (hrid) => mocks.shopCosts[hrid] ?? 0 }));
 vi.mock('./networth-exclusions.js', () => ({ isExcluded: () => false, getExclusions: () => [] }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));
+// Guild credits are never listed, so their gold value comes from conversions.
+// Priced here at a flat rate so the shrine arithmetic is the only thing under test.
+vi.mock('../../utils/guild-credit-pricing.js', () => ({
+    buildGoldPerCredit: (mode) => ({ '/items/guild_credit_1': mode === 'bid' ? 500 : 750 }),
+    priceGuildCreditCosts: (costs, { goldPerCredit }) => ({
+        lines: (costs || []).map(({ itemHrid, count }) => {
+            const each = goldPerCredit[itemHrid] ?? null;
+            return { itemHrid, count, goldEach: each, gold: each === null ? null : each * count };
+        }),
+        total: null,
+        unpriced: [],
+    }),
+}));
 
-const { calculateItemValue, calculateAllHousesCost, calculateAllAbilitiesCost } = await import(
-    './networth-calculator.js'
-);
+const { calculateItemValue, calculateAllHousesCost, calculateAllAbilitiesCost, calculateGuildShrinesCost } =
+    await import('./networth-calculator.js');
 
 beforeEach(() => {
     mocks.settings = {};
@@ -230,5 +245,101 @@ describe('calculateAllAbilitiesCost', () => {
             equippedBreakdown: [],
             otherBreakdown: [],
         });
+    });
+});
+
+describe('calculateGuildShrinesCost', () => {
+    const CREDIT = '/items/guild_credit_1';
+
+    beforeEach(() => {
+        mocks.initData.guildBuffDetailMap = {
+            '/guild_buffs/force_combat': {
+                shrineHrid: '/guild_shrines/force',
+                isCombat: true,
+                levelCosts: {
+                    1: { guildTokenCost: 10, creditCosts: [{ itemHrid: CREDIT, count: 10 }] },
+                    2: { guildTokenCost: 20, creditCosts: [{ itemHrid: CREDIT, count: 20 }] },
+                    3: { guildTokenCost: 30, creditCosts: [{ itemHrid: CREDIT, count: 40 }] },
+                },
+            },
+            '/guild_buffs/scholar_skilling': {
+                shrineHrid: '/guild_shrines/scholar',
+                isCombat: false,
+                levelCosts: { 1: { guildTokenCost: 5, creditCosts: [{ itemHrid: CREDIT, count: 4 }] } },
+            },
+        };
+    });
+
+    /**
+     * A shrine map in the shape data-manager holds it.
+     * @param {Object} levels - buffHrid → level
+     * @returns {Object} characterGuildBuffMap
+     */
+    function shrines(levels) {
+        const map = {};
+        for (const [hrid, level] of Object.entries(levels)) map[hrid] = { guildBuffHrid: hrid, level };
+        return map;
+    }
+
+    test('every level bought so far is charged, not just the current one', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }));
+
+        // levels 1+2+3 = 10+20+40 = 70 credits at 750 gold each
+        expect(result.totalCost).toBe(52_500);
+        expect(result.tokens).toBe(60);
+        expect(result.known).toBe(true);
+    });
+
+    test('the pricing mode reaches the credit conversion, like the rest of net worth', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 1 }), 'bid');
+
+        expect(result.totalCost).toBe(5000); // 10 credits at the bid rate of 500
+    });
+
+    test('shrines are listed separately, named per buff, sorted by cost', () => {
+        const result = calculateGuildShrinesCost(
+            shrines({ '/guild_buffs/scholar_skilling': 1, '/guild_buffs/force_combat': 2 })
+        );
+
+        expect(result.breakdown.map((r) => r.name)).toEqual(['Force Combat 2', 'Scholar Skilling 1']);
+        expect(result.breakdown[0]).toMatchObject({ hrid: '/guild_buffs/force_combat', level: 2, tokens: 30 });
+        expect(result.totalCost).toBe(22_500 + 3000);
+    });
+
+    test('tokens are counted but never priced into the gold total', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/scholar_skilling': 1 }));
+
+        expect(result.tokens).toBe(5);
+        expect(result.totalCost).toBe(3000); // 4 credits at 750, and nothing for the 5 tokens
+    });
+
+    test('a shrine at level 0 contributes no row', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 0 }));
+
+        expect(result.totalCost).toBe(0);
+        expect(result.breakdown).toEqual([]);
+        expect(result.known).toBe(true);
+    });
+
+    test('levels that never reached the client read as unknown, not as zero', () => {
+        expect(calculateGuildShrinesCost(undefined).known).toBe(false);
+        expect(calculateGuildShrinesCost(null).known).toBe(false);
+        expect(calculateGuildShrinesCost({}).known).toBe(false);
+        expect(calculateGuildShrinesCost({}).breakdown).toEqual([]);
+    });
+
+    test('without the game cost table there is nothing to price, so nothing is claimed', () => {
+        mocks.initData.guildBuffDetailMap = undefined;
+
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }));
+
+        expect(result).toEqual({ totalCost: 0, tokens: 0, breakdown: [], known: false });
+    });
+
+    test('a buff the cost table does not know is skipped rather than counted as free', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/mystery_shrine': 5 }));
+
+        expect(result.breakdown).toEqual([]);
+        expect(result.totalCost).toBe(0);
     });
 });

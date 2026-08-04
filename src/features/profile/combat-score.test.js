@@ -149,6 +149,81 @@ describe('getAbilitiesSpriteUrl / getItemsSpriteUrl', () => {
     });
 });
 
+describe('buildGuildShrineHTML', () => {
+    /**
+     * A scored profile with shrine levels read off the current character.
+     * @param {Object} overrides - Fields to change
+     * @returns {Object} scoreData in the shape `calculateCombatScore` returns
+     */
+    function scored(overrides = {}) {
+        return {
+            guildShrineKnown: true,
+            guildShrineCombat: 12,
+            guildShrineCombatTokens: 340,
+            skillerGuildShrine: 3,
+            skillerGuildShrineTokens: 60,
+            breakdown: { guildShrinesCombat: [{ name: 'Force 4', value: '12.0' }] },
+            skillerBreakdown: { guildShrines: [{ name: 'Scholar 2', value: '3.0' }] },
+            ...overrides,
+        };
+    }
+
+    test('the combat line reads the combat figure and lists its shrines', () => {
+        const html = combatScore.buildGuildShrineHTML(scored(), 'combat');
+
+        expect(html).toContain('Guild Shrine: 12');
+        expect(html).toContain('Force 4');
+        expect(html).toContain('id="mwi-guild-shrine-toggle"');
+        expect(html).not.toContain('Scholar 2');
+    });
+
+    test('the skiller line reads the skilling figure and its own shrines', () => {
+        const html = combatScore.buildGuildShrineHTML(scored(), 'skiller');
+
+        expect(html).toContain('Guild Shrine: 3');
+        expect(html).toContain('Scholar 2');
+        expect(html).toContain('id="mwi-skiller-guild-shrine-toggle"');
+        expect(html).not.toContain('Force 4');
+    });
+
+    test('tokens are named in the tooltip and never in the score', () => {
+        const html = combatScore.buildGuildShrineHTML(scored(), 'combat');
+
+        expect(html).toContain('340 guild tokens');
+        expect(html).toContain('Guild Shrine: 12');
+    });
+
+    test("another player's profile draws no line at all, rather than a zero", () => {
+        const html = combatScore.buildGuildShrineHTML(
+            {
+                guildShrineKnown: false,
+                guildShrineCombat: 0,
+                skillerGuildShrine: 0,
+                breakdown: {},
+                skillerBreakdown: {},
+            },
+            'combat'
+        );
+
+        expect(html).toBe('');
+    });
+
+    test('a shared profile missing every shrine field neither throws nor shows a zero', () => {
+        expect(combatScore.buildGuildShrineHTML({ breakdown: {}, skillerBreakdown: {} }, 'combat')).toBe('');
+        expect(combatScore.buildGuildShrineHTML({}, 'skiller')).toBe('');
+        expect(combatScore.buildGuildShrineHTML(null, 'combat')).toBe('');
+    });
+
+    test('a character who has bought nothing gets no line either', () => {
+        const html = combatScore.buildGuildShrineHTML(
+            scored({ guildShrineCombat: 0, guildShrineCombatTokens: 0, breakdown: { guildShrinesCombat: [] } }),
+            'combat'
+        );
+
+        expect(html).toBe('');
+    });
+});
+
 describe('buildAbilitiesTriggersHTML', () => {
     test('empty when the profile has no abilities and no triggers at all', () => {
         document.body.innerHTML = '';
