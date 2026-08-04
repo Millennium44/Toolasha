@@ -330,6 +330,16 @@ class TreasureTracker {
         // it was measured against.
         const pinned = this.settings.popupPinned;
         restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned }).then(() => {
+            // The height fits the chest being shown, not the chest the popup was
+            // once resized on. capHeightToWindow already sized it to its content
+            // above; restoring a stored height on top of that clipped every
+            // chest with more rows than the one the resize happened on. Width is
+            // the half of a resize worth keeping, and it changes how rows wrap —
+            // so the height is re-fitted after the width lands.
+            if (this.popup) {
+                this.popup.style.height = '';
+                capHeightToWindow(this.popup);
+            }
             if (!pinned) this._placeBesideDialog(0);
         });
     }
@@ -675,11 +685,13 @@ class TreasureTracker {
         });
         body.appendChild(full);
 
-        // Moving it is what pins it. Nothing else in the popup says "stay here",
-        // and a dedicated pin button would be a control most people never need.
+        // Moving it says "here, for now" — it no longer flips the
+        // follows-the-dialog setting, which lives in the settings gear alone.
+        // Moving-to-pin read as the popup silently changing its own setting:
+        // one nudge and it stopped following the chest dialog with nothing on
+        // screen saying why. The position is still saved, so a popup that *is*
+        // pinned keeps opening where it was last put.
         this._detachPopupDrag = makeDraggable(popup, header, (position) => {
-            this.settings.popupPinned = true;
-            this._saveSettings();
             saveGeometry(POPUP_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
         this._detachPopupResize = makeResizable(popup, {

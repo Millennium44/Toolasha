@@ -42,7 +42,7 @@ export const settingsGroups = {
                 label: 'Chat: Clickable names in announcements',
                 type: 'checkbox',
                 default: true,
-                help: 'Makes the player name in system announcements (e.g. "Az0r has reached level 150 Magic!") clickable — clicking it fills "/profile name" into the chat input.',
+                help: 'Makes the player name in system announcements (e.g. "PlayerName has reached level 150 Magic!" or "PlayerName has joined the guild!") clickable — clicking it fills "/profile name" into the chat input.',
             },
             chat_popOut: {
                 id: 'chat_popOut',
