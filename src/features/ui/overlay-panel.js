@@ -69,6 +69,14 @@ import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../..
 import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import {
+    loadLayouts,
+    saveLayout,
+    deleteLayout,
+    layoutNames,
+    normalizeName,
+    MAX_NAME_LENGTH as MAX_LAYOUT_NAME,
+} from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
     resolveLayout,
@@ -192,6 +200,8 @@ class OverlayPanel {
         this.interacting = false;
         /** The layout before the last bulk change, so it can be put back */
         this.undoState = null;
+        /** Saved layout names as last read; null until storage has been asked */
+        this.savedLayouts = null;
     }
 
     async initialize() {
@@ -602,6 +612,11 @@ class OverlayPanel {
             if (opening) {
                 this._renderPicker();
                 this._placePicker();
+                // Storage is not synchronous and the popover is; the layout bar
+                // draws from the last reading and corrects itself when this lands
+                this._refreshLayoutNames().catch((error) => {
+                    console.error('[OverlayPanel] Reading the saved layouts failed:', error);
+                });
             }
             this._refreshStacking();
         });
@@ -766,6 +781,230 @@ class OverlayPanel {
         this.pickerEl.appendChild(chips);
 
         this.pickerEl.appendChild(this._layoutControls());
+        this.pickerEl.appendChild(this._namedLayoutBar());
+    }
+
+    /**
+     * Read the saved layout names and redraw the popover around them.
+     *
+     * Kept off the render path — the popover is built synchronously and storage
+     * is not — so the bar draws from whatever was last read and corrects itself
+     * a moment later. The alternative is an async render, which means the gear
+     * opens onto an empty popover.
+     *
+     * @returns {Promise<void>}
+     */
+    async _refreshLayoutNames() {
+        this.savedLayouts = layoutNames(await loadLayouts());
+        if (this.isPickerOpen) {
+            this._renderPicker();
+            this._placePicker();
+        }
+    }
+
+    /**
+     * Save, switch and delete, for layouts that have a name.
+     *
+     * Beside the row list rather than in a settings dialog, for the same reason
+     * the display options are: somebody arranging an overlay is already looking
+     * here, and a layout switcher two dialogs away is one nobody switches with.
+     *
+     * @returns {HTMLElement}
+     */
+    _namedLayoutBar() {
+        const bar = document.createElement('div');
+        Object.assign(bar.style, {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            flexWrap: 'wrap',
+            marginTop: '8px',
+            paddingTop: '7px',
+            borderTop: `1px solid ${COLORS.separator}`,
+        });
+
+        const label = document.createElement('span');
+        label.textContent = 'Layouts';
+        label.style.color = COLORS.textDim;
+        bar.appendChild(label);
+
+        const names = this.savedLayouts || [];
+
+        const select = document.createElement('select');
+        Object.assign(select.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 4px',
+            maxWidth: '150px',
+        });
+        // A placeholder rather than pre-selecting the first: this dropdown is a
+        // switch, and one that arrives already reading "Dungeon" implies a
+        // layout is in force that may not be
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = names.length ? 'Switch to…' : 'None saved';
+        select.appendChild(placeholder);
+        for (const name of names) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            select.appendChild(option);
+        }
+        select.disabled = !names.length;
+        select.addEventListener('change', async () => {
+            const name = select.value;
+            select.value = '';
+            if (name) await this.applyNamedLayout(name);
+        });
+        bar.appendChild(select);
+
+        const saveBtn = this._textButton('Save as…', 'Keep this arrangement under a name', () =>
+            this._promptSaveLayout(bar)
+        );
+        bar.appendChild(saveBtn);
+
+        const deleteBtn = this._textButton('Delete', 'Forget a saved layout', () => this._promptDeleteLayout(select));
+        deleteBtn.style.color = '#ff9d9d';
+        deleteBtn.disabled = !names.length;
+        if (!names.length) deleteBtn.style.opacity = '0.5';
+        bar.appendChild(deleteBtn);
+
+        return bar;
+    }
+
+    /**
+     * Ask for a name, inline.
+     *
+     * `window.prompt` is blocked in a userscript context often enough to be
+     * unreliable, and the choice dialog answers a question with buttons rather
+     * than with text. One input in the bar it was summoned from is less than
+     * either and is where the eye already is.
+     *
+     * @param {HTMLElement} bar - The layout bar to draw the input into
+     */
+    _promptSaveLayout(bar) {
+        if (bar.querySelector('input[type="text"]')) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Layout name';
+        input.maxLength = MAX_LAYOUT_NAME;
+        Object.assign(input.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '2px 6px',
+            width: '130px',
+        });
+
+        const commit = async () => {
+            const name = normalizeName(input.value);
+            input.remove();
+            if (name) await this.saveNamedLayout(name);
+        };
+
+        input.addEventListener('keydown', (event) => {
+            // Kept off the game, which listens for keys on the document
+            event.stopPropagation();
+            if (event.key === 'Enter') commit();
+            else if (event.key === 'Escape') input.remove();
+        });
+        input.addEventListener('blur', () => commit());
+
+        bar.appendChild(input);
+        input.focus();
+    }
+
+    /**
+     * Confirm and forget the layout the dropdown is showing, or the only one.
+     * @param {HTMLSelectElement} select - The layout dropdown
+     */
+    async _promptDeleteLayout(select) {
+        const names = this.savedLayouts || [];
+        if (!names.length) return;
+
+        const answer = await askChoice({
+            title: 'Delete a saved layout',
+            message: 'Which one should be forgotten? The arrangement on screen is not touched.',
+            choices: [
+                ...names.map((name) => ({ value: name, label: name, tone: 'danger' })),
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        if (!answer) return;
+
+        select.value = '';
+        this.savedLayouts = layoutNames(await deleteLayout(answer));
+        if (this.isPickerOpen) {
+            this._renderPicker();
+            this._placePicker();
+        }
+    }
+
+    /**
+     * The names of every saved layout, for anything outside the panel.
+     * @returns {Promise<string[]>} Names
+     */
+    async listLayouts() {
+        this.savedLayouts = layoutNames(await loadLayouts());
+        return [...this.savedLayouts];
+    }
+
+    /**
+     * Keep the current arrangement under a name.
+     *
+     * Written through `toOPanelConfig`, which is exactly what the export button
+     * writes to a file — so a saved layout and an exported one are the same
+     * thing, and switching to one goes through the reader the import already
+     * uses rather than through a second path of its own.
+     *
+     * @param {string} name - What to call it
+     * @returns {Promise<boolean>} Whether it was saved
+     */
+    async saveNamedLayout(name) {
+        const key = normalizeName(name);
+        if (!key) return false;
+
+        try {
+            const geometry = (await allGeometry())[GEOMETRY_KEY] || null;
+            this.savedLayouts = layoutNames(await saveLayout(key, toOPanelConfig(this.settings, geometry)));
+            if (this.isPickerOpen) {
+                this._renderPicker();
+                this._placePicker();
+            }
+            return true;
+        } catch (error) {
+            console.error('[OverlayPanel] Saving the named layout failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Switch to a saved layout.
+     *
+     * @param {string} name - Which one
+     * @returns {Promise<boolean>} Whether it was applied
+     */
+    async applyNamedLayout(name) {
+        try {
+            const map = await loadLayouts();
+            const saved = map[normalizeName(name)]?.file;
+            if (!saved) return false;
+
+            const read = fromOPanelConfig(saved);
+            if (!read) return false;
+
+            await this._applyLayout(read, `switch to ${normalizeName(name)}`);
+            return true;
+        } catch (error) {
+            console.error('[OverlayPanel] Switching to the saved layout failed:', error);
+            return false;
+        }
     }
 
     /**
@@ -1086,83 +1325,100 @@ class OverlayPanel {
                 });
                 if (!answer) return;
 
-                this._snapshot('Import');
-
-                // A file this overlay wrote already holds this overlay's own
-                // coordinates, measured against this overlay's own tiles. There
-                // is nothing to correct, and correcting it anyway is what turned
-                // an export and a re-import on the *same character* into a
-                // different layout: growing sizes to fit and then repacking the
-                // columns moves tiles that were exactly where they were put.
-                // Refitting is for OPanel's files, whose sizes measure OPanel's
-                // rendering rather than ours.
-                if (read.native) {
-                    this.settings = { ...this.settings, ...read.settings };
-                } else {
-                    this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
-
-                    // Laid out against the width the file asks for, not the width
-                    // the panel happens to be. Using the current width clamps every
-                    // tile that sits beyond the right edge back inside it, which
-                    // drops a second column on top of the first — and settling then
-                    // stacks the collision into one very tall column. The panel is
-                    // resized to fit a moment later, so the width it is about to
-                    // have is the honest one to lay out against.
-                    const laidWidth = this._importWidth(this.settings);
-                    const laid = resolveLayout(
-                        resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                        this.settings,
-                        laidWidth
-                    );
-
-                    // OPanel measured those tiles against OPanel's rendering, and
-                    // the same rows drawn here are not the same size — so they are
-                    // grown to fit and then settled, which resolves the collisions
-                    // that causes and closes the gaps it leaves
-                    const positions = { ...this.settings.positions };
-                    for (const { key, x, y } of compactColumns(laid, laidWidth)) positions[key] = { x, y };
-                    this.settings.positions = positions;
-                }
-
-                this._save();
-
-                // The frame came sized for OPanel's tiles too, so it is grown to
-                // whatever ours actually need. Left smaller, the imported layout
-                // arrives half below the fold, which reads as tiles that failed
-                // to import rather than as a panel that needs dragging. Our own
-                // file needs none of that — it was written from a frame that
-                // already fitted, so it is restored as it was written.
-                const geometry = read.geometry || {};
-                if (read.native) {
-                    if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
-                } else {
-                    const width = this._importWidth(this.settings);
-                    const bounds = contentBounds(
-                        resolveLayout(
-                            resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                            this.settings,
-                            width
-                        )
-                    );
-                    await saveGeometry(GEOMETRY_KEY, {
-                        ...geometry,
-                        width: Math.max(geometry.width || 0, bounds.width + 30),
-                        height: Math.max(geometry.height || 0, bounds.height + 80),
-                    });
-                }
-                await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
-
-                this._refreshLockButton();
-                this._refreshStacking();
-                this._renderPicker();
-                this._renderBody();
-                this._placePicker();
+                await this._applyLayout(read, 'Import');
             } catch (error) {
                 console.error('[OverlayPanel] Importing the layout failed:', error);
                 window.alert('Could not read that file.');
             }
         });
         input.click();
+    }
+
+    /**
+     * Put a layout that has already been read into effect.
+     *
+     * Split out of `_importLayout` rather than left inside it because a named
+     * layout is the same operation with the file coming from storage instead of
+     * from disk — and a second copy of this is a second set of bugs about tiles
+     * arriving unplaced. Everything here works on `read` as `fromOPanelConfig`
+     * returns it, so both callers agree by construction.
+     *
+     * @param {Object} read - What `fromOPanelConfig` returned
+     * @param {string} what - What to call this on the Undo button
+     * @returns {Promise<void>}
+     */
+    async _applyLayout(read, what) {
+        this._snapshot(what);
+
+        // A file this overlay wrote already holds this overlay's own
+        // coordinates, measured against this overlay's own tiles. There
+        // is nothing to correct, and correcting it anyway is what turned
+        // an export and a re-import on the *same character* into a
+        // different layout: growing sizes to fit and then repacking the
+        // columns moves tiles that were exactly where they were put.
+        // Refitting is for OPanel's files, whose sizes measure OPanel's
+        // rendering rather than ours.
+        if (read.native) {
+            this.settings = { ...this.settings, ...read.settings };
+        } else {
+            this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
+
+            // Laid out against the width the file asks for, not the width
+            // the panel happens to be. Using the current width clamps every
+            // tile that sits beyond the right edge back inside it, which
+            // drops a second column on top of the first — and settling then
+            // stacks the collision into one very tall column. The panel is
+            // resized to fit a moment later, so the width it is about to
+            // have is the honest one to lay out against.
+            const laidWidth = this._importWidth(this.settings);
+            const laid = resolveLayout(
+                resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                this.settings,
+                laidWidth
+            );
+
+            // OPanel measured those tiles against OPanel's rendering, and
+            // the same rows drawn here are not the same size — so they are
+            // grown to fit and then settled, which resolves the collisions
+            // that causes and closes the gaps it leaves
+            const positions = { ...this.settings.positions };
+            for (const { key, x, y } of compactColumns(laid, laidWidth)) positions[key] = { x, y };
+            this.settings.positions = positions;
+        }
+
+        this._save();
+
+        // The frame came sized for OPanel's tiles too, so it is grown to
+        // whatever ours actually need. Left smaller, the imported layout
+        // arrives half below the fold, which reads as tiles that failed
+        // to import rather than as a panel that needs dragging. Our own
+        // file needs none of that — it was written from a frame that
+        // already fitted, so it is restored as it was written.
+        const geometry = read.geometry || {};
+        if (read.native) {
+            if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
+        } else {
+            const width = this._importWidth(this.settings);
+            const bounds = contentBounds(
+                resolveLayout(
+                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
+                    this.settings,
+                    width
+                )
+            );
+            await saveGeometry(GEOMETRY_KEY, {
+                ...geometry,
+                width: Math.max(geometry.width || 0, bounds.width + 30),
+                height: Math.max(geometry.height || 0, bounds.height + 80),
+            });
+        }
+        await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
+
+        this._refreshLockButton();
+        this._refreshStacking();
+        this._renderPicker();
+        this._renderBody();
+        this._placePicker();
     }
 
     /**

@@ -27,6 +27,14 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+vi.mock('./combat-sim-ui.js', () => ({
+    default: {
+        upgradeRowPurchase: () => null,
+        upgradeRowActionsHtml: () => '',
+        wireUpgradeRowActions: () => {},
+    },
+}));
+
 const { criticalAuraAbility, criticalAuraCandidate } = await import('./lab-sim-ui.js');
 
 const CRIT = '/abilities/critical_aura';

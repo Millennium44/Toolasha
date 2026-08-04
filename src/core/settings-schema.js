@@ -2274,6 +2274,14 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
             },
+            commandPalette: {
+                id: 'commandPalette',
+                label: 'Command palette (Ctrl+K)',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
+            },
             draggableModals: {
                 id: 'draggableModals',
                 label: 'Draggable modals',

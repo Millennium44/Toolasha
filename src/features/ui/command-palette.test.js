@@ -1,0 +1,316 @@
+/**
+ * @vitest-environment happy-dom
+ *
+ * The two things about a palette that are worth testing.
+ *
+ * **What a query matches.** The whole point is that four letters find the one
+ * thing you wanted out of several hundred, and the ordering is what makes the
+ * difference between pressing Enter and reading a list.
+ *
+ * **When the hotkey does not fire.** The game has a chat box. A palette that
+ * opens over the message you are halfway through typing is a palette that gets
+ * switched off, and nothing about the arithmetic above would catch it.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
+}));
+vi.mock('../../core/settings-schema.js', () => ({
+    settingsGroups: {
+        ui: {
+            title: 'UI & Appearance',
+            settings: {
+                overlayPanel: { id: 'overlayPanel', label: 'Overlay Panel: one floating panel', type: 'checkbox' },
+                draggableModals: { id: 'draggableModals', label: 'Draggable modals', type: 'checkbox' },
+            },
+        },
+    },
+}));
+vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 1199 }));
+
+const rows = vi.hoisted(() => ({ current: [] }));
+vi.mock('../../utils/overlay-rows.js', () => ({ registeredRows: () => rows.current }));
+
+const overlay = vi.hoisted(() => ({
+    toggle: vi.fn(),
+    listLayouts: vi.fn(async () => []),
+    applyNamedLayout: vi.fn(async () => true),
+}));
+vi.mock('./overlay-panel.js', () => ({ default: overlay }));
+
+const {
+    default: palette,
+    fuzzyScore,
+    filterCommands,
+    isTypingTarget,
+    isPaletteHotkey,
+} = await import('./command-palette.js');
+
+/**
+ * A command in the shape the filter expects.
+ * @param {string} label - What it reads as
+ * @param {string} [group] - Which section
+ * @returns {Object}
+ */
+function command(label, group = 'Panel') {
+    return { label, group, search: `${label} ${group}`.toLowerCase(), run: () => {} };
+}
+
+/** The labels currently drawn, top to bottom. @returns {string[]} */
+function drawnLabels() {
+    return [...document.querySelectorAll('[data-command-label]')].map((row) => row.dataset.commandLabel);
+}
+
+/**
+ * Type into the palette's box and let it redraw.
+ * @param {string} text - What to type
+ */
+function type(text) {
+    palette.input.value = text;
+    palette.input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/**
+ * @param {string} key - Which key
+ * @returns {KeyboardEvent}
+ */
+function press(key) {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    palette.input.dispatchEvent(event);
+    return event;
+}
+
+beforeEach(() => {
+    rows.current = [];
+    overlay.toggle.mockClear();
+    overlay.listLayouts.mockClear();
+    overlay.listLayouts.mockResolvedValue([]);
+    overlay.applyNamedLayout.mockClear();
+    document.body.replaceChildren();
+});
+
+afterEach(() => {
+    palette.cleanup();
+});
+
+describe('fuzzyScore', () => {
+    test('a whole-query run beats scattered letters', () => {
+        expect(fuzzyScore('sim', 'Combat Simulator')).toBeGreaterThan(fuzzyScore('sim', 'Show Item Menu'));
+    });
+
+    test('initials find a multi-word name', () => {
+        expect(fuzzyScore('cs', 'Combat Simulator')).toBeGreaterThan(0);
+        expect(fuzzyScore('cs', 'Consumables')).toBeGreaterThan(0);
+        expect(fuzzyScore('cs', 'Combat Simulator')).toBeGreaterThan(fuzzyScore('cs', 'Consumables'));
+    });
+
+    test('letters that are not there in order do not match', () => {
+        expect(fuzzyScore('zx', 'Combat Simulator')).toBe(-1);
+        expect(fuzzyScore('rotalumis', 'Combat Simulator')).toBe(-1);
+    });
+
+    test('an empty query matches everything equally', () => {
+        expect(fuzzyScore('', 'Anything')).toBe(0);
+        expect(fuzzyScore('   ', 'Anything')).toBe(0);
+    });
+
+    test('a match at the start beats the same match in the middle', () => {
+        expect(fuzzyScore('over', 'Overlay Panel')).toBeGreaterThan(fuzzyScore('over', 'Drop Over Expected'));
+    });
+
+    test('spaces in the query are gaps rather than characters to find', () => {
+        expect(fuzzyScore('com sim', 'CombatSimulator')).toBeGreaterThan(0);
+    });
+});
+
+describe('filterCommands', () => {
+    const commands = [
+        command('Overlay'),
+        command('Treasure Tracker'),
+        command('Combat Simulator'),
+        command('Draggable modals', 'Setting'),
+        command('Layout: Dungeon', 'Overlay layout'),
+    ];
+
+    test('no query keeps the original order', () => {
+        expect(filterCommands(commands, '').map((c) => c.label)).toEqual(commands.map((c) => c.label));
+    });
+
+    test('the best match comes first', () => {
+        expect(filterCommands(commands, 'treas')[0].label).toBe('Treasure Tracker');
+        expect(filterCommands(commands, 'dungeon')[0].label).toBe('Layout: Dungeon');
+    });
+
+    test('the group is searchable, so a section can be listed on its own', () => {
+        const labels = filterCommands(commands, 'overlay layout').map((c) => c.label);
+        expect(labels[0]).toBe('Layout: Dungeon');
+    });
+
+    test('nothing matching gives nothing back', () => {
+        expect(filterCommands(commands, 'qqqq')).toEqual([]);
+    });
+
+    test('the limit is honoured', () => {
+        expect(filterCommands(commands, '', 2)).toHaveLength(2);
+    });
+});
+
+describe('the hotkey', () => {
+    test('Ctrl+K and Cmd+K both count, and nothing else does', () => {
+        expect(isPaletteHotkey({ ctrlKey: true, key: 'k' })).toBe(true);
+        expect(isPaletteHotkey({ metaKey: true, key: 'K' })).toBe(true);
+        expect(isPaletteHotkey({ ctrlKey: true, key: 'j' })).toBe(false);
+        expect(isPaletteHotkey({ key: 'k' })).toBe(false);
+        expect(isPaletteHotkey({ ctrlKey: true, altKey: true, key: 'k' })).toBe(false);
+        expect(isPaletteHotkey(null)).toBe(false);
+    });
+});
+
+describe('isTypingTarget', () => {
+    test('inputs, textareas and selects are typing', () => {
+        for (const tag of ['input', 'textarea', 'select']) {
+            expect(isTypingTarget(document.createElement(tag))).toBe(true);
+        }
+    });
+
+    test('a contenteditable, and anything inside one, is typing', () => {
+        const editable = document.createElement('div');
+        editable.setAttribute('contenteditable', 'true');
+        const inner = document.createElement('span');
+        editable.appendChild(inner);
+        document.body.appendChild(editable);
+
+        expect(isTypingTarget(editable)).toBe(true);
+        expect(isTypingTarget(inner)).toBe(true);
+    });
+
+    test('an ordinary element is not', () => {
+        expect(isTypingTarget(document.createElement('div'))).toBe(false);
+        expect(isTypingTarget(null)).toBe(false);
+    });
+});
+
+describe('the palette in the page', () => {
+    test('Ctrl+K opens it, and again closes it', () => {
+        palette.initialize();
+        expect(palette.isOpen).toBe(false);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        expect(palette.isOpen).toBe(true);
+
+        // The chord fires from inside the palette's own input, which the typing
+        // guard would otherwise decline — that exception is the point
+        palette.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        expect(palette.isOpen).toBe(false);
+    });
+
+    test('it stays shut while the chat box has focus', () => {
+        palette.initialize();
+
+        const chat = document.createElement('input');
+        document.body.appendChild(chat);
+        chat.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+
+        expect(palette.isOpen).toBe(false);
+    });
+
+    test('it stays shut while a contenteditable has focus', () => {
+        palette.initialize();
+
+        const editable = document.createElement('div');
+        editable.setAttribute('contenteditable', 'true');
+        document.body.appendChild(editable);
+        editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+
+        expect(palette.isOpen).toBe(false);
+    });
+
+    test('it lists panels, rows with an onOpen, and settings by label', async () => {
+        const opened = vi.fn();
+        rows.current = [
+            { key: 'dps', name: 'DPS', onOpen: opened },
+            { key: 'coins', name: 'Coins' },
+        ];
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        const labels = drawnLabels();
+        expect(labels).toContain('Overlay');
+        expect(labels).toContain('DPS');
+        // No onOpen means nothing to open
+        expect(labels).not.toContain('Coins');
+        expect(labels).toContain('Draggable modals');
+    });
+
+    test('saved layouts arrive as their own entries and can be chosen', async () => {
+        overlay.listLayouts.mockResolvedValue(['Dungeon', 'Market']);
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(drawnLabels()).toContain('Layout: Dungeon'));
+
+        type('market');
+        expect(drawnLabels()[0]).toBe('Layout: Market');
+
+        press('Enter');
+        expect(overlay.applyNamedLayout).toHaveBeenCalledWith('Market');
+        expect(palette.isOpen).toBe(false);
+    });
+
+    test('arrows move the selection and Enter runs it', async () => {
+        palette.initialize();
+        palette.open();
+        type('overlay');
+
+        expect(palette.selected).toBe(0);
+        press('ArrowDown');
+        expect(palette.selected).toBe(1);
+        press('ArrowUp');
+        expect(palette.selected).toBe(0);
+
+        press('Enter');
+        expect(overlay.toggle).toHaveBeenCalled();
+    });
+
+    test('Escape closes it', () => {
+        palette.initialize();
+        palette.open();
+        press('Escape');
+        expect(palette.isOpen).toBe(false);
+    });
+
+    test('ordinary typing never reaches the game', () => {
+        palette.initialize();
+        palette.open();
+        const event = press('a');
+        // Not cancelled — the box still gets the character — but stopped, so the
+        // game's own single-key handlers do not see it
+        expect(event.defaultPrevented).toBe(false);
+        expect(event.cancelBubble).toBe(true);
+    });
+
+    test('focus is pulled back when something else takes it', () => {
+        palette.initialize();
+        palette.open();
+
+        const outside = document.createElement('input');
+        document.body.appendChild(outside);
+        outside.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+
+        expect(document.activeElement).toBe(palette.input);
+    });
+
+    test('cleanup takes it down and unhooks the chord', () => {
+        palette.initialize();
+        palette.open();
+        palette.cleanup();
+
+        expect(palette.isOpen).toBe(false);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        expect(palette.isOpen).toBe(false);
+    });
+});

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
     upgradeResult: { baseline: null, results: [], food: null },
     onRun: null,
     zones: [],
+    saved: [],
+    watched: [],
+    store: new Map(),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -23,11 +26,40 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-vi.mock('../../core/storage.js', () => ({
-    default: {
-        get: async (_key, _store, fallback) => fallback,
-        set: async () => {},
-    },
+// An in-memory stand-in rather than a stub returning the default, so a snapshot
+// written by one call is there for the next one to read
+vi.mock('../../core/storage.js', () => {
+    const keyOf = (key, store) => `${store}:${key}`;
+    return {
+        default: {
+            get: async (key, store, fallback) => {
+                const value = mocks.store.get(keyOf(key, store));
+                return value === undefined ? fallback : value;
+            },
+            set: async (key, value, store) => {
+                mocks.store.set(keyOf(key, store), value);
+                return true;
+            },
+            getJSON: async (key, store, fallback) => {
+                const value = mocks.store.get(keyOf(key, store));
+                return value === undefined ? fallback : value;
+            },
+            setJSON: async (key, value, store) => {
+                mocks.store.set(keyOf(key, store), value);
+                return true;
+            },
+        },
+    };
+});
+
+// The two handoff targets are module-scope panels of their own; this file is
+// about what the sim panel hands them, not about their storage or their DOM
+vi.mock('../inventory/equipment-savings-row.js', () => ({
+    watchTarget: (itemHrid, enhancementLevel) => mocks.saved.push({ itemHrid, enhancementLevel }),
+}));
+
+vi.mock('../inventory/watchlist.js', () => ({
+    watchItem: (itemHrid) => mocks.watched.push({ itemHrid }),
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -132,6 +164,13 @@ const {
     columnMenuLabel,
     upgradeRowKey,
     UPGRADE_PLAN_METRICS,
+    gearFingerprint,
+    buildAllZonesSnapshot,
+    saveAllZonesSnapshot,
+    loadAllZonesSnapshot,
+    upgradeRowPurchase,
+    upgradeRowActionsHtml,
+    wireUpgradeRowActions,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -444,5 +483,162 @@ describe('the panel', () => {
         expect(seek).toBeTruthy();
         expect(seek.build().rows[0]).toMatchObject({ zone: 'Smelly Planet', tier: 2, itemsPerHour: 1.5 });
         delete ui._wireCsvButton;
+    });
+});
+
+describe('gearFingerprint', () => {
+    const dto = (equipment, hrid = 'player1') => ({ hrid, equipment });
+
+    test('the same loadout signs the same however the slots are ordered', () => {
+        const a = dto({
+            '/equipment_types/body': { hrid: '/items/plate', enhancementLevel: 5 },
+            '/equipment_types/head': { hrid: '/items/helm', enhancementLevel: 0 },
+        });
+        const b = dto({
+            '/equipment_types/head': { hrid: '/items/helm', enhancementLevel: 0 },
+            '/equipment_types/body': { hrid: '/items/plate', enhancementLevel: 5 },
+        });
+
+        expect(gearFingerprint([a])).toBe(gearFingerprint([b]));
+    });
+
+    test('an enhancement level is part of the gear', () => {
+        const at = (level) => dto({ '/equipment_types/body': { hrid: '/items/plate', enhancementLevel: level } });
+        expect(gearFingerprint([at(5)])).not.toBe(gearFingerprint([at(6)]));
+    });
+
+    test('losing a party member changes what the run describes', () => {
+        const solo = dto({ '/equipment_types/body': { hrid: '/items/plate', enhancementLevel: 0 } });
+        const mate = dto({ '/equipment_types/body': { hrid: '/items/robe', enhancementLevel: 0 } }, 'player2');
+
+        expect(gearFingerprint([solo, mate])).not.toBe(gearFingerprint([solo]));
+    });
+
+    test('nothing to sign is null rather than a signature of nothing', () => {
+        expect(gearFingerprint([])).toBeNull();
+        expect(gearFingerprint(null)).toBeNull();
+    });
+});
+
+describe('all-zones snapshot', () => {
+    const HOUR_NS = 3600 * 1e9;
+
+    const zoneResult = (name, { tier = 0, profit = 100, xp = 50, hours = 2 } = {}) => ({
+        zone: { zoneHrid: `/actions/combat/${name}`, name, difficultyTier: tier },
+        simResult: {
+            simulatedTime: hours * HOUR_NS,
+            experienceGained: { player1: { attack: xp * hours, stamina: xp * hours } },
+        },
+        revenue: { netPerHour: profit },
+    });
+
+    beforeEach(() => {
+        mocks.store.clear();
+    });
+
+    test('rates come off the simulator’s own clock, not the hours asked for', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly', { xp: 50, hours: 2 })], { hours: 10 });
+
+        expect(snapshot.zones).toHaveLength(1);
+        // 100 XP in each of two skills, over the two hours actually simulated —
+        // not over the ten the run was asked for
+        expect(snapshot.zones[0].xpPerHour).toBeCloseTo(100);
+        expect(snapshot.zones[0].profitPerHour).toBe(100);
+    });
+
+    test('round-trips through storage with its timestamp and fingerprint', async () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly'), zoneResult('Jungle', { tier: 2 })], {
+            hours: 4,
+            fingerprint: 'abc123',
+            savedAt: 1700000000000,
+        });
+
+        expect(await saveAllZonesSnapshot(snapshot)).toBe(true);
+        const loaded = await loadAllZonesSnapshot();
+
+        expect(loaded.savedAt).toBe(1700000000000);
+        expect(loaded.fingerprint).toBe('abc123');
+        expect(loaded.zones.map((z) => z.zoneName)).toEqual(['Fly', 'Jungle']);
+        expect(loaded.zones[1].difficultyTier).toBe(2);
+    });
+
+    test('a zone with no result is left out rather than stored as a zero', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly'), null, { zone: { name: 'X' } }]);
+        expect(snapshot.zones).toHaveLength(1);
+    });
+
+    test('nothing stored reads as nothing, not as an empty run', async () => {
+        expect(await loadAllZonesSnapshot()).toBeNull();
+    });
+});
+
+describe('upgrade row handoff', () => {
+    const candidate = (overrides) => ({ candidate: { description: 'Something', ...overrides } });
+
+    beforeEach(() => {
+        mocks.saved.length = 0;
+        mocks.watched.length = 0;
+    });
+
+    test('an equipment row buys the upgrade at its enhancement level', () => {
+        const buy = upgradeRowPurchase(candidate({ upgradeHrid: '/items/plate', upgradeLevel: 7, type: 'tier' }));
+        expect(buy).toMatchObject({ itemHrid: '/items/plate', enhancementLevel: 7, savable: true });
+        expect(buy.name).toContain('+7');
+    });
+
+    test('an ability row buys the book, and cannot be saved for a slot', () => {
+        const buy = upgradeRowPurchase(
+            candidate({ upgradeHrid: '/abilities/fireball', upgradeLevel: 53, type: 'ability_level' })
+        );
+        expect(buy).toMatchObject({ itemHrid: '/items/fireball', enhancementLevel: 0, savable: false });
+    });
+
+    test('combat levels and house rooms buy nothing', () => {
+        expect(upgradeRowPurchase(candidate({ type: 'combat_level', slot: 'attack' }))).toBeNull();
+        expect(upgradeRowPurchase(candidate({ type: 'house', upgradeHrid: '/house_rooms/dairy_barn' }))).toBeNull();
+        expect(upgradeRowPurchase(null)).toBeNull();
+    });
+
+    test('a row that buys nothing draws no buttons', () => {
+        expect(upgradeRowActionsHtml(candidate({ type: 'combat_level' }))).toBe('');
+    });
+
+    test('the buttons add the item to savings and to the watchlist', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' })
+        );
+        wireUpgradeRowActions(container);
+
+        container.querySelector('[data-buy-action="save"]').click();
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.saved).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate' }]);
+    });
+
+    test('clicking a button does not also unfold the row it sits in', () => {
+        const row = document.createElement('div');
+        let rowClicks = 0;
+        row.addEventListener('click', () => {
+            rowClicks++;
+        });
+        row.innerHTML = upgradeRowActionsHtml(candidate({ upgradeHrid: '/items/plate', type: 'tier' }));
+        wireUpgradeRowActions(row);
+
+        row.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.watched).toHaveLength(1);
+        expect(rowClicks).toBe(0);
+    });
+
+    test('an ability row offers Watch only', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/abilities/fireball', upgradeLevel: 20, type: 'ability_swap' })
+        );
+
+        expect(container.querySelector('[data-buy-action="save"]')).toBeNull();
+        expect(container.querySelector('[data-buy-action="watch"]')).toBeTruthy();
     });
 });

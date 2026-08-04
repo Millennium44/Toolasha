@@ -902,6 +902,16 @@ function registerFeatures() {
                 }),
         },
         {
+            key: 'commandPalette',
+            name: 'Command Palette',
+            category: 'Interface',
+            module: UI.commandPalette,
+            async: false,
+            // No entry in config's own feature map, so the schema switch is what
+            // decides — without this the palette would be on regardless
+            customCheck: () => config.getSetting('commandPalette'),
+        },
+        {
             key: 'draggableModals',
             name: 'Draggable Modals',
             category: 'UI',
