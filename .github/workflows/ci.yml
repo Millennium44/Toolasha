@@ -62,8 +62,12 @@ jobs:
               # enough that a genuinely new duplicate still trips it, which is the
               # whole point of having the check.
               run: |
-                  limit=2621440
-                  human="2.5MB"
+                  # Raised 2.5 -> 3 MiB: the ui bundle sat ~60 KB under after a
+                  # feature-heavy session with no new duplication (the guard's
+                  # actual target). A genuine duplicate still jumps far more
+                  # than the remaining headroom.
+                  limit=3145728
+                  human="3MB"
                   entrypoint_size=$(wc -c < "dist/Toolasha.user.js")
                   if [ "$entrypoint_size" -gt "$limit" ]; then
                     echo "❌ dist/Toolasha.user.js is over the $human limit ($entrypoint_size bytes)"

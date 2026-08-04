@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Housekeeping
+
+- **The CI bundle ceiling moves 2.5 → 3 MiB** with the reasoning in the workflow: the ui bundle grew honestly to ~60KB under the old line; the guard exists to catch sudden duplication jumps, which still trip it.
+
 ### The books balance: first swings were invisible
 
 - **The Sim Accuracy undercount is fixed**: the battle feed only reports monsters that changed, and the replay refused to score a monster's first appearance — so the opening swing on every monster of every wave went unrecorded (12–19% of swings, ~21% of damage on real fixtures). Wave baselines now seed from the battle-open message; the reported swings/damage deficit should vanish without changing anything about how you fight. The clock, task damage, and spear multi-hit were all ruled out and pinned by tests. The check sims 12 hours of the zone's own encounter mix — that's now stated on the panel.
