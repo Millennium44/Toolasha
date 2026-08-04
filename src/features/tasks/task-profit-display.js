@@ -7,7 +7,6 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
-import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
@@ -25,6 +24,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { debugEquipmentSpeedBonuses, parseEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import {
     buildAllPlayerDTOs,
@@ -45,6 +45,12 @@ function getLoadoutSnapshot() {
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
 const RATING_MODE_TOKENS = 'tokens';
 const RATING_MODE_GOLD = 'gold';
+
+/**
+ * Solo/Zone, per character: which one is right depends on what that character
+ * fights, and the iron cow does not want the market character's answer.
+ */
+const ESTIMATE_MODE_KEY = 'taskEstimateMode';
 
 /**
  * The rating mode to use when the setting has not been stored yet.
@@ -1074,7 +1080,10 @@ class TaskProfitDisplay {
      */
     async _loadEstimateMode() {
         try {
-            const mode = await storage.get('taskEstimateMode', 'settings', 'solo');
+            // Back to the default first: this runs again after a character
+            // switch, and the last character's choice is not this one's
+            this._estimateMode = 'solo';
+            const mode = await readScoped(ESTIMATE_MODE_KEY, 'settings', 'solo', { migrate: 'adopt' });
             if (mode === 'solo' || mode === 'zone') this._estimateMode = mode;
         } catch (error) {
             console.error('[TaskProfitDisplay] Failed to load estimate mode:', error);
@@ -1192,7 +1201,7 @@ class TaskProfitDisplay {
             }
             // Remember the choice for future cards and auto-estimates
             this._estimateMode = modeBtn.dataset.mode;
-            storage.set('taskEstimateMode', this._estimateMode, 'settings');
+            writeScoped(ESTIMATE_MODE_KEY, this._estimateMode, 'settings');
         });
 
         container.querySelector('.mwi-combat-est-btn').addEventListener('click', () => {
