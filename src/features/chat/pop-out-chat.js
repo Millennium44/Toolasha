@@ -11,6 +11,7 @@ import domObserver from '../../core/dom-observer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { chatBlockList } from './chat-block-list.js';
+import { ANNOUNCE_RE, VALID_NAME_RE } from './chat-profile-link.js';
 
 const RELAY_CHANNEL = 'mwi-chat-relay';
 const SEND_CHANNEL = 'mwi-chat-send';
@@ -580,6 +581,9 @@ class PopOutChat {
   .msg-text { color: var(--text); }
   .msg-link { color: #60a5fa; font-size: 11px; margin-left: 4px; }
   .msg-system { color: var(--system); font-style: italic; }
+  .msg-name-link { cursor: pointer; }
+  .msg-name-link:hover { text-decoration: underline; }
+  .msg-system .msg-name-link { color: var(--accent); font-style: normal; }
 
   /* Footer / input */
   .pane-footer {
@@ -626,6 +630,16 @@ class PopOutChat {
   const SEND  = '${SEND_CHANNEL}';
   const MAX_PER_CHANNEL = 500;
   const STORAGE_KEY = 'mwi-chat-popout-layout';
+  // Shared with chat-profile-link.js — same "click a name to fill /profile <name>" behavior,
+  // reusing its exact regex/name-validity rules instead of re-deriving them here.
+  const ANNOUNCE_RE = ${ANNOUNCE_RE};
+  const VALID_NAME_RE = ${VALID_NAME_RE};
+
+  function fillProfileCommand(paneObj, name) {
+    if (!paneObj || !paneObj.input) return;
+    paneObj.input.value = '/profile ' + name;
+    paneObj.input.focus();
+  }
 
   const FILTER_PRESETS = [
     { value: 'none',         label: 'No filter',      regex: null },
@@ -1016,7 +1030,29 @@ class PopOutChat {
       timeEl.textContent = formatTime(msg.t);
       const textEl = document.createElement('span');
       textEl.className = 'msg-text';
-      textEl.textContent = msg.m;
+
+      // "<Name> has <verb> ..." announcements get the same clickable name as the main
+      // chat window (chat-profile-link.js) and as regular sender names below.
+      const text = msg.m || '';
+      const match = text.match(ANNOUNCE_RE);
+      const name = match ? match[1] : null;
+      const idx = name ? text.indexOf(name) : -1;
+      if (name && idx !== -1 && VALID_NAME_RE.test(name)) {
+        textEl.appendChild(document.createTextNode(text.slice(0, idx)));
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'msg-name-link';
+        nameSpan.textContent = name;
+        nameSpan.title = 'Fill "/profile ' + name + '" into chat';
+        nameSpan.addEventListener('click', (e) => {
+          e.stopPropagation();
+          fillProfileCommand(paneObj, name);
+        });
+        textEl.appendChild(nameSpan);
+        textEl.appendChild(document.createTextNode(text.slice(idx + name.length)));
+      } else {
+        textEl.textContent = text;
+      }
+
       row.appendChild(timeEl);
       row.appendChild(textEl);
     } else {
@@ -1027,6 +1063,14 @@ class PopOutChat {
       const nameEl = document.createElement('span');
       nameEl.className = 'msg-name';
       nameEl.textContent = msg.sName;
+      if (msg.sName && VALID_NAME_RE.test(msg.sName)) {
+        nameEl.classList.add('msg-name-link');
+        nameEl.title = 'Fill "/profile ' + msg.sName + '" into chat';
+        nameEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          fillProfileCommand(paneObj, msg.sName);
+        });
+      }
 
       const textEl = document.createElement('span');
       textEl.className = 'msg-text';
@@ -1154,6 +1198,10 @@ class PopOutChat {
         this.initialized = false;
     }
 }
+
+// Exported for tests: the pop-out window is a separate self-contained document, so its
+// generated markup/script is what a test can actually inspect.
+export { PopOutChat };
 
 export default {
     name: 'Pop-Out Chat',
