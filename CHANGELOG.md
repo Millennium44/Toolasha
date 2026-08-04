@@ -8,6 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Backups say whose they are, and adoption asks first
 
+- **`Toolasha.debug.claimLegacyData(charId)`** force-completes adoption after a backup restore: it hands every bare legacy value to the chosen character, overwriting the stale scoped copies that would otherwise shadow the restored data (the market listing log merges instead, so recent entries survive). `{dryRun: true}` previews.
+
 - **"Back Up Everything" filenames now carry the character and game mode** — `toolasha-backup-2026-08-04-millennium44-MC.json` — matching the hand-renamed convention; MC/IC/LC for standard, iron cow, legacy iron cow.
 - **Adoption is consent-gated**: the first time pre-scoping data is found, a dialog asks which character should inherit it (heuristics only preselect the recommendation) — nothing moves until you confirm. Reopen anytime with `Toolasha.debug.chooseDataOwner()`.
 

@@ -13,7 +13,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { moveScopedData } from '../../utils/scoped-data-repair.js';
+import { moveScopedData, claimLegacyData } from '../../utils/scoped-data-repair.js';
 import { resetAdoptionDecision, requestAdoptionConsent } from '../../utils/adoption-consent.js';
 
 /**
@@ -124,6 +124,7 @@ export function exposeShrineDebug() {
             await resetAdoptionDecision();
             return requestAdoptionConsent({});
         };
+        target.Toolasha.debug.claimLegacyData = (toId, options) => claimLegacyData(String(toId), options);
         return true;
     } catch (error) {
         console.error('[Chat Commands] Failed to expose the shrine debug helper:', error);

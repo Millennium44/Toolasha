@@ -55,6 +55,58 @@ export const ADOPTED_BASES = {
     combatExport: ['allZonesSnapshot'],
 };
 
+/** Bases whose bare and scoped arrays are merged (deduped by id) rather than overwritten. */
+const MERGE_BASES = new Set(['marketListingTimestamps']);
+
+/**
+ * Force-complete adoption: hand every bare legacy value to one character,
+ * OVERWRITING that character's scoped copy.
+ *
+ * This exists for the restore-after-decision trap: a backup restore brings
+ * the bare legacy keys back, but stale (often empty) scoped keys written
+ * during the broken period shadow them — `readScoped` prefers a scoped value
+ * that exists, so adoption never re-fires. Overwriting is the point here;
+ * use {@link moveScopedData} when the destination's data must be preserved.
+ *
+ * @param {string} toId - Character id that inherits every bare legacy value
+ * @param {{dryRun?: boolean}} [options] - dryRun lists claims without acting
+ * @returns {Promise<{claimed: string[]}>} Store-qualified keys claimed
+ */
+export async function claimLegacyData(toId, options = {}) {
+    const { dryRun = false } = options;
+    const claimed = [];
+
+    if (!toId) {
+        throw new Error('[ScopedDataRepair] claimLegacyData needs a character id');
+    }
+
+    for (const [storeName, bases] of Object.entries(ADOPTED_BASES)) {
+        for (const base of bases) {
+            const bare = await storage.get(base, storeName, null);
+            if (bare === null) continue;
+
+            let value = bare;
+            if (MERGE_BASES.has(base)) {
+                const scoped = await storage.get(`${base}_${toId}`, storeName, null);
+                if (Array.isArray(bare) && Array.isArray(scoped)) {
+                    const seen = new Set(bare.map((entry) => entry?.id));
+                    value = bare.concat(scoped.filter((entry) => entry && !seen.has(entry.id)));
+                }
+            }
+
+            if (!dryRun) {
+                await storage.set(`${base}_${toId}`, value, storeName, true);
+                await storage.delete(base, storeName);
+            }
+            claimed.push(`${storeName}:${base}`);
+        }
+    }
+
+    const verb = dryRun ? 'would claim' : 'claimed';
+    console.log(`[ScopedDataRepair] ${verb} ${claimed.length} legacy keys for ${toId}`, { claimed });
+    return { claimed };
+}
+
 /**
  * Move every adopt-class scoped value from one character to another.
  *
