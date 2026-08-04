@@ -25,7 +25,23 @@ import {
     getStyleExcludedSkills,
     planWithinBudget,
     runLabyrinthCombinationCheck,
+    generateCandidates,
 } from './upgrade-advisor.js';
+import {
+    LabComparisonStore,
+    makeLabRunEntry,
+    renderLabComparisonPanel,
+    wireLabComparisonPanel,
+} from './lab-sim-comparison.js';
+import {
+    LAB_UPGRADE_DIMENSIONS,
+    LAB_SCOPES,
+    sanitizeLabUpgradeSelection,
+    labScopeTargetCount,
+    labDimensionAvailability,
+    labAbilityLevelTypeAvailability,
+    planLabUpgradeRun,
+} from './lab-sim-upgrade-modes.js';
 // The upgrade-row vocabulary — what a row would have you buy, and the handoff
 // buttons for it — belongs to the combat sim panel; a labyrinth pick is the same
 // candidate shape, so it gets the same two buttons rather than a second pair.
@@ -68,13 +84,61 @@ const GEOMETRY_KEY = 'labSimPanel';
 const MIN_PANEL_WIDTH = 400;
 const MIN_PANEL_HEIGHT = 300;
 
-/** Upgrade modes that walk every labyrinth fight rather than one room */
-const ALL_FIGHT_MODES = new Set(['combat_level_all', 'everything_all']);
+/** Which candidate sets the Upgrade tab has checked. */
+const UPGRADE_DIMENSIONS_KEY = 'labSimUpgradeDimensions';
+
+/** Which fights the Upgrade tab is weighing them for: `{ mode, monsters }`. */
+const UPGRADE_SCOPE_KEY = 'labSimUpgradeScope';
+
+/**
+ * The retired single `Mode` dropdown's value.
+ *
+ * Read once, on the way to the new keys, so anyone who had a mode remembered
+ * lands on the equivalent dimension-and-scope selection instead of on the
+ * defaults. Never written.
+ */
+const LEGACY_UPGRADE_MODE_KEY = 'labSimUpgradeMode';
+
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
 const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+
+/** Shared styling for the small inputs and buttons inside an upgrade chip. */
+const CHIP_INPUT_STYLE =
+    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
+const CHIP_BUTTON_STYLE =
+    'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
+    'font-size:11px; cursor:pointer; font-family:inherit;';
+
+/**
+ * Options that belong to one candidate set, drawn inside that set's chip.
+ *
+ * Same arrangement as the combat sim panel: an option sits with the checkbox it
+ * modifies, so it is never ambiguous which box the +Levels box is about. They
+ * stay in the DOM while their set is unchecked and are hidden by
+ * `_onUpgradeSelectionChanged`.
+ */
+const LAB_MODE_OPTIONS = {
+    ability_level: `
+        <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <select id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
+                <option value="increment">+Levels</option>
+                <option value="target">Target Lv</option>
+            </select>
+            <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="200" value="5" style="
+                width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Number of levels to add to each ability">
+            <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+    combat_level: `
+        <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
+        </span>`,
+};
 
 /**
  * @param {number} seconds
@@ -193,6 +257,11 @@ class LabSimUI {
         this._loadoutsCollapsed = true;
         this._upgradeSortHandler = null;
         this._skillingSortHandler = null;
+        // Recorded single-target runs, so a fight can be read against the last
+        // time it was asked rather than only against itself
+        this._comparison = new LabComparisonStore();
+        // Which labyrinth fights the target picker was last built from
+        this._upgradeTargetHrids = null;
     }
 
     buildPanel() {
@@ -450,38 +519,21 @@ class LabSimUI {
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
             <select id="mwi-labsim-upgrade-player" style="${upgradeSelectStyle}"></select>
-            <label style="color:#888; font-size:12px;">Mode</label>
-            <select id="mwi-labsim-upgrade-mode" style="${upgradeSelectStyle}">
-                <option value="equipment">Equipment</option>
-                <option value="ability_level">Ability Levels</option>
-                <option value="ability_swap">Ability Swaps</option>
-                <option value="combined">Equipment + Abilities</option>
-                <option value="guild_shrine">Guild Shrines</option>
-                <option value="combat_level">Combat Levels</option>
-                <option value="combat_level_all">Combat Levels — All Fights</option>
-                <option value="everything_all">Everything — All Fights, per gold</option>
-            </select>
-            <span id="mwi-labsim-upgrade-level-group" style="display:none; align-items:center; gap:4px;">
-                <select id="mwi-labsim-upgrade-level-type" style="${upgradeSelectStyle} min-width:110px;">
-                    <option value="increment">+Levels</option>
-                    <option value="target">Target Lv</option>
-                </select>
-                <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="200" value="5" style="
-                    width:55px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
-                    border-radius:3px; padding:3px 5px; font-size:12px; text-align:center;"
-                    title="Number of levels to add to each ability">
-                <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="
-                    background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                    padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-            </span>
-            <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="
-                display:none; background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa;
-                padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Targets</button>
-            <label id="mwi-labsim-allfights-useskip-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
-                title="Sim each fight at its automation skip level (effective combat level + skip − 1) instead of the current run's live room levels">
-                <input type="checkbox" id="mwi-labsim-allfights-useskip" checked style="margin:0; cursor:pointer;">
-                Use Skip Levels
-            </label>
+            <label style="color:#888; font-size:12px;">Include</label>
+            ${LAB_UPGRADE_DIMENSIONS.map(
+                (dimension) => `
+            <span data-lab-mode-chip="${dimension.key}" style="display:inline-flex; align-items:center; gap:6px;
+                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                <label data-lab-mode-label="${dimension.key}" title="${dimension.title.replace(/"/g, '&quot;')}"
+                    style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" data-lab-upgrade-dimension="${dimension.key}" style="margin:0; cursor:pointer;"${
+                        dimension.defaultOn ? ' checked' : ''
+                    }>
+                    ${dimension.label}
+                </label>
+                ${LAB_MODE_OPTIONS[dimension.key] || ''}
+            </span>`
+            ).join('')}
             <label id="mwi-labsim-crit-aura-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-labsim-crit-aura" style="margin:0; cursor:pointer;">
                 Crit Aura
@@ -509,6 +561,40 @@ class LabSimUI {
                 cursor:pointer;
                 font-family:inherit;">Stop</button>
         `;
+
+        // Which fights the checked candidate sets are weighed for. Orthogonal to
+        // the sets themselves, which is why it is its own row rather than more
+        // entries in a mode list.
+        const upgradeScopeRow = document.createElement('div');
+        upgradeScopeRow.style.cssText = `
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+            padding: 6px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
+        `;
+        upgradeScopeRow.innerHTML = `
+            <label style="color:#888; font-size:12px;">Targets</label>
+            <select id="mwi-labsim-upgrade-scope" style="${upgradeSelectStyle}">
+                ${LAB_SCOPES.map(
+                    (scope) =>
+                        `<option value="${scope.key}" title="${scope.title.replace(/"/g, '&quot;')}">${scope.label}</option>`
+                ).join('')}
+            </select>
+            <label id="mwi-labsim-allfights-useskip-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
+                title="Sim each fight at its automation skip level (effective combat level + skip − 1) instead of the current run's live room levels">
+                <input type="checkbox" id="mwi-labsim-allfights-useskip" checked style="margin:0; cursor:pointer;">
+                Use Skip Levels
+            </label>
+            <span id="mwi-labsim-scope-summary" style="color:#666; font-size:11px;"></span>
+        `;
+
+        // The subset picker itself: one checkbox per labyrinth fight, filled in
+        // when the tab is opened because game data is not loaded when the panel
+        // is built
+        const labTargetList = document.createElement('div');
+        labTargetList.id = 'mwi-labsim-target-list';
+        labTargetList.style.cssText =
+            'display:none; padding:4px 14px 8px; flex-shrink:0; gap:6px 14px; flex-wrap:wrap; align-items:center; border-left:3px solid ' +
+            ACCENT_BTN_BORDER +
+            ';';
 
         // Per-ability target levels for Ability Levels / combined modes
         // (hidden until toggled; inputs built from equipped abilities on open)
@@ -561,6 +647,8 @@ class LabSimUI {
         upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
 
         upgradeContent.appendChild(upgradeControls);
+        upgradeContent.appendChild(upgradeScopeRow);
+        upgradeContent.appendChild(labTargetList);
         upgradeContent.appendChild(labAbilityTargets);
         upgradeContent.appendChild(labCombatTargets);
         upgradeContent.appendChild(upgradeProgress);
@@ -813,31 +901,22 @@ class LabSimUI {
 
         // Upgrade listeners
         this.panel.querySelector('#mwi-labsim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
-        this.panel.querySelector('#mwi-labsim-upgrade-mode').addEventListener('change', (e) => {
-            const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
-            const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
-            const levelInput = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
-            const isLevelMode = e.target.value === 'ability_level' || e.target.value === 'combined';
-            const isCombatLevelMode = e.target.value === 'combat_level' || e.target.value === 'combat_level_all';
-            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
-            // Combat Levels modes reuse the number input as the +N levels per
-            // skill; the increment/target selector doesn't apply
-            if (levelType) levelType.style.display = isCombatLevelMode ? 'none' : '';
-            if (levelInput && isCombatLevelMode) levelInput.value = 5;
-            const targetsToggle = this.panel.querySelector('#mwi-labsim-combat-targets-toggle');
-            if (targetsToggle) targetsToggle.style.display = isCombatLevelMode ? '' : 'none';
-            if (!isCombatLevelMode) {
-                this.panel.querySelector('#mwi-labsim-combat-targets').style.display = 'none';
-            }
-            // Per-ability targets only apply to ability-level candidates
-            const abilityTargetsToggle = this.panel.querySelector('#mwi-labsim-ability-targets-toggle');
-            if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
-            if (!isLevelMode) {
-                this.panel.querySelector('#mwi-labsim-ability-targets').style.display = 'none';
-            }
-            const useSkipLabel = this.panel.querySelector('#mwi-labsim-allfights-useskip-label');
-            if (useSkipLabel) useSkipLabel.style.display = ALL_FIGHT_MODES.has(e.target.value) ? 'flex' : 'none';
+        this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
+            box.addEventListener('change', () => {
+                this._onUpgradeSelectionChanged();
+                void this._saveUpgradeSelection();
+            });
         });
+        this.panel.querySelector('#mwi-labsim-upgrade-scope').addEventListener('change', () => {
+            this._populateUpgradeTargets();
+            this._onUpgradeSelectionChanged();
+            void this._saveUpgradeSelection();
+        });
+        this.panel.querySelector('#mwi-labsim-allfights-useskip').addEventListener('change', () => {
+            this._populateUpgradeTargets(this._getChosenTargets());
+            this._onUpgradeSelectionChanged();
+        });
+        void this._restoreUpgradeSelection();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -877,6 +956,9 @@ class LabSimUI {
         });
 
         this._populateMonsters();
+        // Recorded runs outlive the session, so they are read back as the panel
+        // is built rather than when the first one is added
+        void this._comparison.load();
         // Here rather than at module scope, where the other panels ask: this one
         // is built by its feature module and only if the setting is on, so
         // asking any earlier would be asking about a panel that does not exist
@@ -933,6 +1015,287 @@ class LabSimUI {
             option.textContent = 'Player 1';
             select.appendChild(option);
         }
+    }
+
+    /**
+     * The candidate sets currently checked on the Upgrade tab.
+     * @returns {string[]}
+     * @private
+     */
+    _getUpgradeDimensions() {
+        return [...(this.panel?.querySelectorAll('[data-lab-upgrade-dimension]') || [])]
+            .filter((box) => box.checked && !box.disabled)
+            .map((box) => box.getAttribute('data-lab-upgrade-dimension'));
+    }
+
+    /**
+     * Which fights the Upgrade tab is weighing them for.
+     * @returns {string} `current` | `all` | `selected`
+     * @private
+     */
+    _getUpgradeScopeMode() {
+        return this.panel?.querySelector('#mwi-labsim-upgrade-scope')?.value || 'current';
+    }
+
+    /**
+     * The monsters ticked in the subset picker.
+     * @returns {string[]}
+     * @private
+     */
+    _getChosenTargets() {
+        return [...(this.panel?.querySelectorAll('[data-lab-target]') || [])]
+            .filter((box) => box.checked)
+            .map((box) => box.getAttribute('data-lab-target'));
+    }
+
+    /**
+     * Every labyrinth fight the current Use Skip Levels setting can resolve.
+     *
+     * Served from what the picker was last built with rather than recollected:
+     * collecting fights builds a player DTO per monster, and this is asked once
+     * per checkbox click.
+     * @returns {string[]} Monster hrids, in labyrinth order
+     * @private
+     */
+    _allUpgradeTargets() {
+        if (!this._upgradeTargetHrids) {
+            const useSkipLevels = this.panel?.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+            this._upgradeTargetHrids = this._collectLabyrinthFights(useSkipLevels).map((fight) => fight.monsterHrid);
+        }
+        return this._upgradeTargetHrids;
+    }
+
+    /**
+     * How many fights the current scope comes to — what the availability rules
+     * and the summary line are both asking about.
+     * @returns {number}
+     * @private
+     */
+    _upgradeTargetCount() {
+        return labScopeTargetCount(
+            this._getUpgradeScopeMode(),
+            this._allUpgradeTargets().length,
+            this._getChosenTargets().length
+        );
+    }
+
+    /**
+     * Build the subset picker from the labyrinth's own fight list.
+     *
+     * Called on the way into the tab and whenever the scope changes, because
+     * game data — and the player's skip thresholds — are not available when the
+     * panel is built. Ticks are preserved across rebuilds; a fight that has
+     * stopped resolving simply drops out.
+     * @param {string[]} [preselect] - Monsters to tick, defaulting to whatever
+     *   is ticked now
+     * @private
+     */
+    _populateUpgradeTargets(preselect = null) {
+        const grid = this.panel?.querySelector('#mwi-labsim-target-list');
+        if (!grid) return;
+
+        const previouslyChosen = new Set(preselect || this._getChosenTargets());
+        const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+        const fights = this._collectLabyrinthFights(useSkipLevels);
+        this._upgradeTargetHrids = fights.map((fight) => fight.monsterHrid);
+
+        if (!fights.length) {
+            grid.innerHTML =
+                '<span style="color:#666; font-size:11px;">No labyrinth fights resolve to a room level yet — ' +
+                'set combat skip levels in the game, or enter the labyrinth.</span>';
+            return;
+        }
+
+        grid.innerHTML =
+            '<span style="color:#666; font-size:11px; flex-basis:100%;">Rooms to weigh — leave out the ones you ' +
+            'already clear comfortably:</span>' +
+            '<span style="display:inline-flex; gap:6px; flex-basis:100%; margin-bottom:2px;">' +
+            `<button data-lab-target-all="1" style="${CHIP_BUTTON_STYLE}">All</button>` +
+            `<button data-lab-target-none="1" style="${CHIP_BUTTON_STYLE}">None</button>` +
+            '</span>' +
+            fights
+                .map(
+                    (fight) => `
+                <label style="display:inline-flex; align-items:center; gap:4px; color:#aaa; font-size:11px; cursor:pointer;"
+                    title="${fight.loadoutName} · room level ${fight.roomLevel}">
+                    <input type="checkbox" data-lab-target="${fight.monsterHrid}" style="margin:0; cursor:pointer;"${
+                        previouslyChosen.has(fight.monsterHrid) ? ' checked' : ''
+                    }>
+                    ${fight.monsterName} <span style="color:#666;">L${fight.roomLevel}</span>
+                </label>`
+                )
+                .join('');
+
+        grid.querySelectorAll('[data-lab-target]').forEach((box) => {
+            box.addEventListener('change', () => {
+                this._onUpgradeSelectionChanged();
+                void this._saveUpgradeSelection();
+            });
+        });
+        const setAll = (checked) => {
+            grid.querySelectorAll('[data-lab-target]').forEach((box) => {
+                box.checked = checked;
+            });
+            this._onUpgradeSelectionChanged();
+            void this._saveUpgradeSelection();
+        };
+        grid.querySelector('[data-lab-target-all]')?.addEventListener('click', () => setAll(true));
+        grid.querySelector('[data-lab-target-none]')?.addEventListener('click', () => setAll(false));
+    }
+
+    /**
+     * Show only the controls the current selection actually uses, and grey out
+     * the ones this target scope cannot answer.
+     *
+     * A checkbox that would be quietly ignored is worse than one that is
+     * visibly unavailable and says why, so an unavailable dimension is
+     * disabled with the reason on its tooltip rather than dropped at run time.
+     * @private
+     */
+    _onUpgradeSelectionChanged() {
+        if (!this.panel) return;
+
+        const scopeMode = this._getUpgradeScopeMode();
+        const targetCount = this._upgradeTargetCount();
+        const availability = labDimensionAvailability(scopeMode, targetCount);
+
+        this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
+            const key = box.getAttribute('data-lab-upgrade-dimension');
+            const state = availability[key] || { enabled: true, reason: '' };
+            box.disabled = !state.enabled;
+            const label = this.panel.querySelector(`[data-lab-mode-label="${key}"]`);
+            if (label && state.reason) label.title = state.reason;
+        });
+
+        const dimensions = new Set(this._getUpgradeDimensions());
+        const isLevelMode = dimensions.has('ability_level');
+        const isCombatLevelMode = dimensions.has('combat_level');
+
+        this.panel.querySelectorAll('[data-lab-mode-chip]').forEach((chip) => {
+            const key = chip.getAttribute('data-lab-mode-chip');
+            const on = dimensions.has(key);
+            const usable = availability[key]?.enabled !== false;
+            chip.style.borderColor = on ? ACCENT_BTN_BORDER : '#2a2a4a';
+            chip.style.background = on ? ACCENT_BG : 'transparent';
+            chip.style.opacity = usable ? '1' : '0.45';
+            const label = chip.querySelector('label');
+            if (label) label.style.color = on ? '#e0e0e0' : '#888';
+        });
+        this.panel.querySelectorAll('[data-lab-mode-options]').forEach((group) => {
+            group.style.display = dimensions.has(group.getAttribute('data-lab-mode-options')) ? 'inline-flex' : 'none';
+        });
+
+        // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
+        // since one number drives both — same arrangement as the combat sim
+        const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
+        if (levelGroup) levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+
+        const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
+        const levelInput = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
+        const levelTypeState = labAbilityLevelTypeAvailability(scopeMode, targetCount);
+        if (levelType) {
+            levelType.style.display = isLevelMode ? '' : 'none';
+            levelType.disabled = !levelTypeState.enabled;
+            levelType.title = levelTypeState.reason;
+            if (!levelTypeState.enabled) levelType.value = 'increment';
+        }
+        if (levelInput) {
+            levelInput.title =
+                isLevelMode && isCombatLevelMode
+                    ? 'Levels added to each ability and each combat skill'
+                    : isCombatLevelMode
+                      ? 'Levels added to each combat skill'
+                      : 'Number of levels to add to each ability';
+            if (isCombatLevelMode && !parseInt(levelInput.value, 10)) levelInput.value = '5';
+        }
+
+        if (!isLevelMode) this.panel.querySelector('#mwi-labsim-ability-targets').style.display = 'none';
+        if (!isCombatLevelMode) this.panel.querySelector('#mwi-labsim-combat-targets').style.display = 'none';
+
+        // Scope row: the subset picker and the skip-level rule only mean
+        // something once the analysis is walking the labyrinth's own fight list
+        const targetList = this.panel.querySelector('#mwi-labsim-target-list');
+        const useSkipLabel = this.panel.querySelector('#mwi-labsim-allfights-useskip-label');
+        if (targetList) targetList.style.display = scopeMode === 'selected' ? 'flex' : 'none';
+        if (useSkipLabel) useSkipLabel.style.display = scopeMode === 'current' ? 'none' : 'flex';
+
+        const summary = this.panel.querySelector('#mwi-labsim-scope-summary');
+        if (summary) {
+            summary.textContent =
+                scopeMode === 'current'
+                    ? 'One fight, from the Configure tab — the only scope that also ranks labyrinth token buffs.'
+                    : targetCount === 0
+                      ? 'No fights resolve to a room level yet.'
+                      : `${targetCount} fight${targetCount === 1 ? '' : 's'}, each with its assigned loadout.`;
+        }
+    }
+
+    /**
+     * The analysis the Upgrade tab's controls currently describe.
+     *
+     * The whole point of splitting the old Mode dropdown in two is that the
+     * combination is worked out rather than enumerated, so this is the one
+     * place that reads the controls and the only thing Analyze consults.
+     * @returns {Object} From `planLabUpgradeRun`
+     * @private
+     */
+    _planFromControls() {
+        return planLabUpgradeRun({
+            dimensions: this._getUpgradeDimensions(),
+            scopeMode: this._getUpgradeScopeMode(),
+            chosenMonsters: this._getChosenTargets(),
+            allMonsters: this._allUpgradeTargets(),
+            configureMonsterHrid: this.panel?.querySelector('#mwi-labsim-monster')?.value || '',
+        });
+    }
+
+    /**
+     * Persist the checked sets and the target scope so the next Analyze starts
+     * where the last one left off.
+     * @private
+     */
+    async _saveUpgradeSelection() {
+        try {
+            await storage.set(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings');
+            await storage.set(
+                UPGRADE_SCOPE_KEY,
+                { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
+                'settings'
+            );
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save upgrade selection:', error);
+        }
+    }
+
+    /**
+     * Restore the remembered selection, migrating anyone still carrying the
+     * retired single-mode value.
+     * @private
+     */
+    async _restoreUpgradeSelection() {
+        let selection;
+        try {
+            const savedDimensions = await storage.get(UPGRADE_DIMENSIONS_KEY, 'settings', null);
+            const savedScope = await storage.get(UPGRADE_SCOPE_KEY, 'settings', null);
+            const legacyMode =
+                savedDimensions === null && savedScope === null
+                    ? await storage.get(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
+                    : null;
+            selection = sanitizeLabUpgradeSelection(savedDimensions ?? legacyMode, savedScope);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore upgrade selection:', error);
+            selection = sanitizeLabUpgradeSelection(null, null);
+        }
+
+        if (!this.panel) return;
+        const wanted = new Set(selection.dimensions);
+        this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
+            box.checked = wanted.has(box.getAttribute('data-lab-upgrade-dimension'));
+        });
+        const scopeSelect = this.panel.querySelector('#mwi-labsim-upgrade-scope');
+        if (scopeSelect) scopeSelect.value = selection.scopeMode;
+        this._populateUpgradeTargets(selection.monsters);
+        this._onUpgradeSelectionChanged();
     }
 
     /** @private */
@@ -1046,9 +1409,12 @@ class LabSimUI {
             upgradeContent.style.display = 'flex';
             tabUpgrade.style.cssText = activeStyle;
             this._populateUpgradePlayerSelector();
-            // Redrawn on the way in rather than only when the panel opens: an
-            // aura bought mid-session should not need a reload to be noticed
+            // Both redrawn on the way in rather than only when the panel opens:
+            // an aura bought mid-session should not need a reload to be
+            // noticed, and neither should a skip level that has moved on
             this._paintCritAura();
+            this._populateUpgradeTargets();
+            this._onUpgradeSelectionChanged();
         } else if (tab === 'skilling') {
             skillingContent.style.display = 'flex';
             tabSkilling.style.cssText = activeStyle;
@@ -1222,6 +1588,13 @@ class LabSimUI {
                 );
 
                 this._displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime, playerDTOs[0].hrid);
+                await this._recordSingleTargetRun(simResult, {
+                    monsterHrid,
+                    roomLevel,
+                    hours,
+                    crates,
+                    playerHrid: playerDTOs[0].hrid,
+                });
             }
         } catch (error) {
             if (error.message !== 'Cancelled') {
@@ -1276,9 +1649,74 @@ class LabSimUI {
                 </div>
                 <div style="color:#555; font-size:10px; margin-top:6px;">Completed in ${totalElapsed}</div>
             </div>
+            <div id="mwi-labsim-comparison"></div>
         `;
 
+        this._renderComparisonSection();
         this._setStatus(`Simulation complete \u2014 ${winRate}% win rate at level ${roomLevel}.`);
+    }
+
+    /**
+     * Keep a finished single-target run so the next one has something to be
+     * read against.
+     *
+     * Only fixed-level fights are recorded. A Find Max run answers a different
+     * question with a different headline number, and putting the two in one
+     * table would invite a comparison that does not mean anything.
+     *
+     * @param {Object} simResult - From `runLabyrinthSimulation`
+     * @param {Object} context - `{ monsterHrid, roomLevel, hours, crates, playerHrid }`
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _recordSingleTargetRun(simResult, { monsterHrid, roomLevel, hours, crates, playerHrid }) {
+        try {
+            await this._comparison.load();
+            await this._comparison.add(
+                makeLabRunEntry({
+                    monsterHrid,
+                    monsterName: getLabyrinthMonsters().find((m) => m.hrid === monsterHrid)?.name,
+                    roomLevel,
+                    hours,
+                    taskFight: Boolean(this.panel?.querySelector('#mwi-labsim-taskfight')?.checked),
+                    crates,
+                    gearLabel: this._editor?.generateSimLabel?.() || '',
+                    attempts: simResult.labyAttemptCount || 0,
+                    encounters: simResult.encounters || 0,
+                    deaths: simResult.deaths?.[playerHrid || 'player1'] || 0,
+                    simHours: (simResult.simulatedTime || 0) / (3600 * 1e9) || hours,
+                })
+            );
+            this._renderComparisonSection();
+        } catch (error) {
+            console.error('[LabSimUI] Failed to record run for comparison:', error);
+        }
+    }
+
+    /**
+     * Draw the comparison table under the latest single-target result, and
+     * attach its controls.
+     * @private
+     */
+    _renderComparisonSection() {
+        const host = this.panel?.querySelector('#mwi-labsim-comparison');
+        if (!host) return;
+
+        host.innerHTML = renderLabComparisonPanel(this._comparison.runs, this._comparison.baselineId);
+        wireLabComparisonPanel(host, {
+            onBaseline: async (id) => {
+                await this._comparison.setBaseline(id);
+                this._renderComparisonSection();
+            },
+            onDelete: async (id) => {
+                await this._comparison.remove(id);
+                this._renderComparisonSection();
+            },
+            onClear: async () => {
+                await this._comparison.clear();
+                this._renderComparisonSection();
+            },
+        });
     }
 
     /**
@@ -1386,12 +1824,18 @@ class LabSimUI {
             10000,
             Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-hours')?.value) || 10)
         );
-        const isAllFights = ALL_FIGHT_MODES.has(this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value);
 
-        if (!monsterHrid && !isAllFights) {
-            this._setStatus('Select a monster in the Configure tab first.');
+        // The checked candidate sets and the chosen fights, resolved into the
+        // one analysis they describe
+        const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
+        const allFights = this._collectLabyrinthFights(useSkipLevels);
+        this._upgradeTargetHrids = allFights.map((fight) => fight.monsterHrid);
+        const plan = this._planFromControls();
+        if (plan.kind === 'none') {
+            this._setStatus(plan.error);
             return;
         }
+        const isAllFights = plan.kind === 'allFights';
 
         const crates = this.getSelectedCrates();
 
@@ -1430,36 +1874,44 @@ class LabSimUI {
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
-        const upgradeMode = this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value || 'equipment';
+        const selectedDimensions = new Set(isAllFights ? plan.modes : [plan.upgradeMode, ...plan.extraModes]);
+        // `combined` is the single-fight analysis's name for equipment plus
+        // ability levels, so the two it stands for are what the options below
+        // should be read for
+        if (selectedDimensions.delete('combined')) {
+            selectedDimensions.add('equipment');
+            selectedDimensions.add('ability_level');
+        }
         const abilityLevelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.value || 'increment';
-        const abilityTargetLevel = Math.min(
+        let abilityTargetLevel = Math.min(
             200,
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
         );
-        const isCombatLevelMode = upgradeMode === 'combat_level' || upgradeMode === 'combat_level_all';
+        const isCombatLevelMode = selectedDimensions.has('combat_level');
+        // Combat levels are ranked as "+N on each skill", and N is this box —
+        // an empty box would generate no candidates at all
+        if (isCombatLevelMode && !abilityTargetLevel) abilityTargetLevel = 5;
         const combatLevelTargets = isCombatLevelMode ? this._getLabCombatLevelTargets() : null;
-        const abilityTargets =
-            upgradeMode === 'ability_level' || upgradeMode === 'combined'
-                ? this._getAbilityTargets('#mwi-labsim-ability-targets')
-                : null;
+        const abilityTargets = selectedDimensions.has('ability_level')
+            ? this._getAbilityTargets('#mwi-labsim-ability-targets')
+            : null;
+
+        if (plan.dropped.length) {
+            this._setStatus(
+                `Skipped ${plan.dropped.join(', ')} — not available for this target scope. See the checkbox tooltip.`
+            );
+        }
 
         if (isAllFights) {
             try {
-                const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
-                const fights = this._collectLabyrinthFights(useSkipLevels);
+                const chosen = new Set(plan.monsterHrids);
+                const fights = allFights.filter((fight) => chosen.has(fight.monsterHrid));
                 if (!fights.length) {
                     this._setStatus(
                         'No labyrinth fights found — set combat skip levels in the game (or enter the labyrinth) so fights have room levels.'
                     );
                     return;
                 }
-                // "Everything" is the same walk over every fight, with the
-                // equipment and ability candidates in as well — and ranked by
-                // what each buys per coin rather than by raw gain
-                const modes =
-                    upgradeMode === 'everything_all'
-                        ? ['equipment', 'ability_level', 'combat_level']
-                        : ['combat_level'];
                 const analysisResult = await runLabyrinthAllFightsAnalysis(
                     {
                         fights,
@@ -1470,9 +1922,8 @@ class LabSimUI {
                         abilityTargetLevel,
                         combatLevelTargets,
                         abilityTargets,
-                        modes,
-                        extraCandidates:
-                            upgradeMode === 'everything_all' ? this._critAuraCandidates(fights[0]?.dto) : [],
+                        modes: plan.modes,
+                        extraCandidates: this._critAuraCandidates(fights[0]?.dto),
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
@@ -1513,12 +1964,24 @@ class LabSimUI {
                     hours,
                     communityBuffs,
                     labyrinthCombatBuffs,
-                    upgradeMode,
+                    upgradeMode: plan.upgradeMode,
                     abilityLevelType,
                     abilityTargetLevel,
                     combatLevelTargets,
                     abilityTargets,
-                    extraCandidates: this._critAuraCandidates(playerDTOs[playerIndex]),
+                    // The single-fight analysis takes one mode, and ranks
+                    // anything else it is handed beside whatever that mode
+                    // generated — which is how a multi-set selection lands in
+                    // one table, against one baseline, at one shared seed
+                    extraCandidates: [
+                        ...this._extraDimensionCandidates(plan.extraModes, playerDTOs[playerIndex], gameData, {
+                            abilityTargetLevel,
+                            abilityLevelType,
+                            combatLevelTargets,
+                            abilityTargets,
+                        }),
+                        ...this._critAuraCandidates(playerDTOs[playerIndex]),
+                    ],
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -1548,10 +2011,49 @@ class LabSimUI {
     }
 
     /**
+     * The candidates for every checked set the single-fight analysis is not
+     * generating itself.
+     *
+     * `runLabyrinthUpgradeAnalysis` takes one mode and generates from it, then
+     * ranks any `extraCandidates` beside the result. Generating the rest here
+     * with the same exported generator keeps a multi-set selection to a single
+     * analysis — one baseline sim, one shared random seed, one ranked table —
+     * rather than one run per checked box with a separate baseline each.
+     *
+     * @param {string[]} modes - Sets the analysis's own mode does not cover
+     * @param {Object} playerDTO - The loadout being analyzed
+     * @param {Object} gameData - From `buildGameDataPayload`
+     * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets }`
+     * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
+     * @private
+     */
+    _extraDimensionCandidates(modes, playerDTO, gameData, options = {}) {
+        if (!modes?.length || !playerDTO || !gameData) return [];
+        const { abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets } = options;
+        try {
+            return modes.flatMap((mode) =>
+                generateCandidates(
+                    playerDTO,
+                    gameData,
+                    mode,
+                    abilityTargetLevel,
+                    abilityLevelType,
+                    false,
+                    combatLevelTargets,
+                    abilityTargets
+                )
+            );
+        } catch (error) {
+            console.error('[LabSimUI] Failed to generate candidates for', modes, error);
+            return [];
+        }
+    }
+
+    /**
      * Prefill the per-skill target inputs from the selected player's current
-     * levels plus the +Levels boost. In the single-monster Combat Levels mode
-     * skills the weapon style can't train are hidden; the All Fights mode
-     * keeps every skill visible since assigned loadouts can differ in style.
+     * levels plus the +Levels boost. For a single fight, skills the weapon
+     * style can't train are hidden; a multi-fight scope keeps every skill
+     * visible, since assigned loadouts can differ in style.
      * @private
      */
     _prefillLabCombatTargets() {
@@ -1559,7 +2061,7 @@ class LabSimUI {
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const boost = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value) || 5;
-        const isAllFights = ALL_FIGHT_MODES.has(this.panel.querySelector('#mwi-labsim-upgrade-mode')?.value);
+        const isAllFights = this._upgradeTargetCount() > 1;
 
         const gameData = buildGameDataPayload();
         const excluded = !isAllFights && dto && gameData ? getStyleExcludedSkills(dto, gameData) : new Set();
@@ -3313,6 +3815,10 @@ class LabSimUI {
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
         this._labyResults = null;
+        this._upgradeTargetHrids = null;
+        // A fresh store rather than a cleared one: the runs live in storage, and
+        // the next panel should read them back rather than start empty
+        this._comparison = new LabComparisonStore();
     }
 
     /**
