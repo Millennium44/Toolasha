@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Guild shrines in your score and your net worth
+
+- **The profile score panel gains "+ Guild Shrine" lines** under both Combat Score and Skiller Score — each buff sorted into its bucket by the game's own combat flag, tokens in the tooltip, same coin-cost-per-million convention as House and Ability. Only shown when shrine data has actually reached the client; other players' profiles never show a fake zero.
+- **Net worth gains a Guild Shrines row** under Fixed Assets: the cumulative credit cost of every shrine buff level you've bought, priced at your networth pricing mode, with per-buff breakdown rows and the same exclusion toggles Houses and Abilities have. Tokens are counted and shown, never priced into gold.
+
 ### Goal Planner
 
 - **New Goal Planner panel**: state a goal — a gold amount, an item at an enhancement level, a skill level, or a house room — and get the ordered steps to it with gold and time on each: earn (best of your gathering/production rates), buy vs craft (whichever current prices favor), the enhancement run costed through the real Markov chain with your own stats, training steps inserted before crafts that need levels, and a funding step whenever the plan spends more than you hold. Steps strike through as they're satisfied; plans reprice on refresh; goals are per character.
