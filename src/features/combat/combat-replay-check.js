@@ -92,6 +92,32 @@
  * not over time-in-combat. Measuring only the swinging would make the observed
  * rate look higher than predicted for no reason but the definition.
  *
+ * **Every rate on both sides divides by that same clock**, and it is worth being
+ * explicit because the decomposition is where a mismatch would hide. Observed:
+ * the sum of `new_battle`-to-`new_battle` spans, respawns included, over the
+ * fights that completed. Predicted: `simulatedTime`, which is the simulator's
+ * whole elapsed clock — respawn intervals, player death and walk-back included.
+ * Damage per second, swings per second and experience per second are all that
+ * one denominator on each side. See {@link OBSERVED_CLOCK} and
+ * {@link PREDICTED_CLOCK}, which the row tooltips are written from so the two
+ * cannot drift apart in words while agreeing in code.
+ *
+ * ## What is actually simulated, which is not the recording
+ *
+ * The zone and the tier, for {@link SIM_HOURS} hours, with the recorded loadout
+ * laid over the current character. **Not the waves that were recorded.** The
+ * engine draws its own encounters from the zone's spawn table — the same weights,
+ * spawn count and strength cap the game uses, plus a boss every tenth encounter —
+ * so it is the *planet*, sampled independently, and not a replay of the rooms
+ * that were actually fought.
+ *
+ * That is the right comparison for a rate and the wrong one for a total: two
+ * samples of the same zone can draw different wave mixes, and only the observed
+ * side's spread is measured, so a zone with very unlike waves in it carries more
+ * uncertainty than the band admits. It also means the fight count is not part of
+ * the simulation at all — recording twice as long narrows the observed band and
+ * changes nothing about what is predicted.
+ *
  * ## Beyond sampling noise
  *
  * Six fights is a small sample and a small sample disagrees with everything. So
@@ -156,13 +182,17 @@ import combatRecorder, {
     onRecordingStopped,
     onSessionStart,
     setLoadoutProvider,
+    setNoiseProvider,
+    setSegmentSummarizer,
 } from './combat-recorder.js';
 import {
+    primeRecordTarget,
     recordControlState,
     recordTarget,
     resetRecordTargetCache,
     setRecordTarget,
     toggleRecording,
+    UNIT_LABELS,
 } from './combat-record-control.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import { newTakenState, attributeIncoming, foldTaken } from '../../utils/damage-taken.js';
@@ -190,6 +220,20 @@ export const SIM_NOISE_FLOOR_PCT = 2;
 
 /** Long enough that the prediction is steady, short enough to wait for */
 export const SIM_HOURS = 12;
+
+/**
+ * The denominator every observed rate is over.
+ *
+ * Written once and quoted in the tooltips, because the one way a decomposition
+ * can be wrong without any of its rows being wrong is for the two sides to be
+ * dividing by different things.
+ */
+export const OBSERVED_CLOCK =
+    'wall time from each battle to the next, respawn gaps included, over the fights that completed';
+
+/** The denominator every predicted rate is over */
+export const PREDICTED_CLOCK =
+    "the simulator's whole elapsed clock, respawn gaps and time spent dead included — the same clock";
 
 /**
  * Below this margin the sample is large enough to argue with.
@@ -465,6 +509,43 @@ function addInto(into, from) {
  * @param {Array<Object>} ticks - A recording's ticks, in order
  * @returns {Array<Object>} One entry per completed fight
  */
+/**
+ * Give the attribution a baseline for every monster the wave opened with.
+ *
+ * This is the difference between counting the first hit on a monster and not
+ * counting it. `mMap` is a delta, so a monster is in a tick because something
+ * about it moved — and the first thing that moves about a fresh spawn is being
+ * hit. The attribution refuses to score a monster's first sighting, correctly,
+ * because there is no previous reading to diff against and treating one as a
+ * full-health hit would invent an enormous blow at the start of every fight. But
+ * `new_battle` *is* that previous reading: it names the wave and says how much
+ * health each of them has before anybody swings.
+ *
+ * Without this, one swing per monster per fight is silently invisible — the
+ * opener, every time — which on a real recording is 15-25% of every swing made
+ * and the damage that went with it. It reads as a simulator predicting a swing
+ * rate the character never achieves, at a kill rate that nevertheless matches
+ * exactly, which is arithmetically impossible and was the tell.
+ *
+ * @param {Object} attribution - From `newAttributionState`, mutated
+ * @param {Object} monsters - `new_battle`'s monsters, by index
+ */
+function seedWave(attribution, monsters) {
+    for (const [index, monster] of Object.entries(monsters || {})) {
+        const details = monster?.combatDetails || {};
+        // Current before max: a wave can open with something already hurt, and
+        // the count of swings is right either way but the damage is not
+        const health = Number(
+            details.currentHitpoints ?? monster?.currentHitpoints ?? details.maxHitpoints ?? monster?.maxHitpoints
+        );
+        if (!Number.isFinite(health)) continue;
+
+        attribution.monstersHP[index] = health;
+        attribution.dmgCounter[index] = Number(details.dmgCounter ?? monster?.dmgCounter) || 0;
+        attribution.critCounter[index] = Number(details.critCounter ?? monster?.critCounter) || 0;
+    }
+}
+
 export function replayFights(ticks) {
     const attribution = newAttributionState();
     const taken = newTakenState();
@@ -504,6 +585,10 @@ export function replayFights(ticks) {
             attribution.dmgCounter = {};
             attribution.critCounter = {};
             taken.monsters = {};
+
+            // Cleared and then seeded, so the wave's own opening state is what
+            // the first tick is diffed against rather than nothing at all
+            seedWave(attribution, tick.payload?.monsters);
 
             // The player is the one thing that *is* continuous across a battle
             // boundary, so `taken.playersHP` and `playersDmg` are deliberately
@@ -1598,6 +1683,77 @@ class ReplayCheck {
     }
 
     /**
+     * The band the sample would be at if the recording stopped now.
+     *
+     * What a `noise` record target is measured against. The fights in the
+     * segment being recorded are not observations yet — they become ones when
+     * the segment is banked — so the aggregate has to be taken over what is kept
+     * plus what is in flight, or a target would only ever be checked every four
+     * thousand ticks.
+     *
+     * @param {Object} file - From `combatRecorder.recordingFile()`
+     * @returns {number|null} Percent, or null when there are too few fights
+     */
+    liveMarginPct(file) {
+        const live = this.observationFrom(file);
+        const observed = aggregateObservations(live ? [...this.observations, live] : this.observations);
+        return noiseMargin(observed?.samples?.dps);
+    }
+
+    /**
+     * Everything needed to re-run this check somewhere else.
+     *
+     * The panel can say a run was 15% under and it cannot hand that over. This
+     * can: the observations with their per-fight numbers and loadout snapshots,
+     * the aggregate they fold into, the comparison as it stands, and the
+     * recording's own segments — payloads where they are still held, per-fight
+     * summaries where rotation has taken them, and a flag per segment saying
+     * which. What is *not* in the file is listed in the file, because a reader
+     * cannot tell an absent field from a field that was never captured.
+     *
+     * @returns {Object}
+     */
+    exportFile() {
+        const observed = this.observed();
+        const session = combatRecorder.sessionFile?.() ?? null;
+
+        return {
+            format: 'toolasha-sim-accuracy',
+            version: 1,
+            exportedAt: Date.now(),
+            simHours: SIM_HOURS,
+            simNoiseFloorPct: SIM_NOISE_FLOOR_PCT,
+            zone: {
+                hrid: observed?.zoneHrid ?? null,
+                name: observed?.zoneHrid ? zoneName(observed.zoneHrid) : null,
+                difficultyTier: observed?.difficultyTier ?? 0,
+            },
+            // The clocks, in the file, so an offline re-derivation divides by
+            // what this divided by rather than by whatever looks reasonable
+            clocks: { observed: OBSERVED_CLOCK, predicted: PREDICTED_CLOCK },
+            observations: this.observations,
+            aggregate: observed,
+            comparison: this.comparison,
+            history: pruneHistory(this.history),
+            recording: session,
+            includes: [
+                'per-fight summaries for every observation kept (seconds, damage, hits, misses, kills, xp)',
+                'the loadout snapshot each observation was recorded under',
+                'the last comparison and the history of past checks',
+                session?.ticksComplete
+                    ? 'the raw payloads of every segment of the recording still in memory'
+                    : 'the raw payloads of the most recent segments; older segments carry their summary only',
+            ],
+            excludes: [
+                'payloads from before this session — a reload ends a recording, and only its summary survives',
+                'anything the simulator was run with beyond the loadout snapshot: game data and community buffs ' +
+                    'are read live and are not captured here',
+                'whether food and drinks were actually up during the recording, which the combat feed never says',
+            ],
+        };
+    }
+
+    /**
      * Keep this check beside the ones before it.
      *
      * A single check says how far off the simulator is today; a short series says
@@ -1665,6 +1821,16 @@ class ReplayCheck {
                     difficultyTier: observed.difficultyTier || 0,
                     hours: SIM_HOURS,
                     communityBuffs: getCommunityBuffs(),
+                    // Explicit, and explicitly off. `taskDamage` is the one
+                    // combat stat that only applies while the monster in front
+                    // of you is your active task, and the feed does not say
+                    // whether it was — so a replay simulated with it on would
+                    // predict damage the recorded run may never have been
+                    // entitled to, and blame the difference on the engine.
+                    // Relying on the runner's default would leave that decision
+                    // somewhere else, where changing it would silently change
+                    // what this measures.
+                    isTaskFight: false,
                 },
                 (percent) => {
                     this.progress = percent;
@@ -1728,6 +1894,12 @@ const replayCheck = new ReplayCheck();
 // recording can start from the auto-record setting before any panel is drawn,
 // and a segment recorded without a snapshot is one that can never gain one.
 setLoadoutProvider(() => captureLoadoutSnapshot());
+
+// The same arrangement for the other two things the recorder cannot do itself:
+// reduce a segment to per-fight numbers for the file it hands over, and say how
+// wide the sample's band is for a recording asked to reach one
+setSegmentSummarizer((file) => replayCheck.observationFrom(file));
+setNoiseProvider((file) => replayCheck.liveMarginPct(file));
 
 // Features are initialized after settings load, which makes this the first
 // moment the switch below can be read — and so the moment to go looking for a
@@ -1810,6 +1982,7 @@ function drawProvenance(body, observed) {
     if (observed.truncated) {
         card.appendChild(panelLine('Truncated', 'a fight outran the tick limit and was dropped', ROW_COLORS.dim));
     }
+    drawSaveButton(card);
 }
 
 /**
@@ -1848,8 +2021,17 @@ function drawSuggestion(card, observed) {
     Object.assign(row.style, { display: 'flex', justifyContent: 'flex-end', marginTop: '2px' });
 
     const ask = document.createElement('button');
-    ask.textContent = `Record ${suggestion.needed} more`;
-    ask.title = 'Sets the record target. The next recording stops itself after that many fights.';
+    // The band and not the count. The count is a projection off this sample's
+    // spread, which is the one thing about it least likely to survive another
+    // hour of recording; the band is the thing actually wanted, and the recorder
+    // can now measure it as it goes and stop when it is reached. So the button
+    // asks for what was wanted rather than for an estimate of it, and says the
+    // estimate as the answer to "how long is that going to take".
+    ask.textContent = `Record to ±${NOISE_QUIET_PCT}%`;
+    ask.title =
+        `Sets the record target to a band. The recording stops itself once the sample's margin is under ` +
+        `±${NOISE_QUIET_PCT}%, measured at the end of a fight from the spread of the fights so far — about ` +
+        `${suggestion.needed} more at this zone's current spread, but it is the band that decides, not the count.`;
     Object.assign(ask.style, {
         background: 'none',
         border: `1px solid ${ACCENT}`,
@@ -1860,12 +2042,69 @@ function drawSuggestion(card, observed) {
         fontSize: '11px',
     });
     ask.addEventListener('click', async () => {
-        await setRecordTarget({ value: suggestion.needed, unit: 'fights' });
+        await setRecordTarget({ value: NOISE_QUIET_PCT, unit: 'noise' });
         replayCheckPanel.render();
     });
 
     row.appendChild(ask);
     card.appendChild(row);
+}
+
+/**
+ * Hand the recording over, which is what somebody comparing notes needs.
+ *
+ * Beside the recording card rather than in the header, because it is about this
+ * recording rather than about the panel. Available whether or not one is
+ * running: the interesting file is usually the one that just stopped.
+ *
+ * @param {HTMLElement} card - Where it goes
+ */
+function drawSaveButton(card) {
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', justifyContent: 'flex-end', marginTop: '3px' });
+
+    const save = document.createElement('button');
+    save.textContent = 'Save recording';
+    save.title =
+        'Writes one JSON file: these observations with their per-fight numbers and loadout snapshots, the last ' +
+        'comparison, and the recording itself — raw payloads for the segments still held, per-fight summaries ' +
+        'for the ones rotation has taken. The file lists what it does and does not contain.';
+    Object.assign(save.style, {
+        background: 'none',
+        border: `1px solid ${ROW_COLORS.dim}`,
+        borderRadius: '4px',
+        color: ROW_COLORS.dim,
+        padding: '2px 8px',
+        cursor: 'pointer',
+        fontSize: '11px',
+    });
+    save.addEventListener('click', () => {
+        downloadExport();
+        replayCheckPanel.render();
+    });
+
+    row.appendChild(save);
+    card.appendChild(row);
+}
+
+/**
+ * Write the export out.
+ *
+ * @returns {boolean} Whether a file was written
+ */
+export function downloadExport() {
+    try {
+        const blob = new Blob([JSON.stringify(replayCheck.exportFile())], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `toolasha-sim-accuracy-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        return true;
+    } catch (error) {
+        console.error('[ReplayCheck] Writing the export failed:', error);
+        return false;
+    }
 }
 
 /**
@@ -1893,7 +2132,11 @@ function drawDecomposition(body, comparison) {
                 verdictColor(metric.verdict),
                 'Damage per second is these three multiplied together, so a gap in it is a gap in at least one ' +
                     'of them. A swing is an auto-attack or an ability on both sides — bleeds, thorns and ' +
-                    'retaliation are counted by neither.'
+                    'retaliation are counted by neither. ' +
+                    (metric.key === 'swingsPerSecond'
+                        ? `Both rates are per second of ${OBSERVED_CLOCK} on the observed side and ` +
+                          `${PREDICTED_CLOCK} on the predicted one.`
+                        : 'Neither is a rate over time, so no clock enters this row.')
             )
         );
     }
@@ -1902,6 +2145,15 @@ function drawDecomposition(body, comparison) {
             'A swing that moved the hit counter without moving health is read as a miss, which is the same ' +
                 'reading the Damage panel has always used. Crits are not compared: the simulator records what ' +
                 'each swing did, not whether the roll crit.'
+        )
+    );
+    body.appendChild(
+        panelNote(
+            'One swing per monster per fight used to be invisible here: the tick feed only mentions a monster ' +
+                'once something about it moves, and for a fresh spawn that is the first hit landing on it, which ' +
+                'left nothing to measure it against. The wave is now seeded from the battle message, so the ' +
+                'opener counts. A recording checked before this read roughly 15% short on swings and on damage, ' +
+                'at a kill rate that matched — which is the shape that gave it away.'
         )
     );
 }
@@ -2033,8 +2285,10 @@ function drawCaveats(body, observed) {
         }
         body.appendChild(
             panelNote(
-                'The drink and food slots were captured too, but nothing on the combat feed says whether they were ' +
-                    'actually up — an empty inventory records as a full loadout.'
+                'The drink and food slots were captured too, and the simulation drinks and eats them: haste, ' +
+                    'wisdom and the rest are all in the prediction. Nothing on the combat feed says whether they ' +
+                    'were actually up during the recording, so an empty inventory records as a full loadout and ' +
+                    'simulates as one. This is the one input the check asserts and cannot verify.'
             )
         );
     } else {
@@ -2055,7 +2309,17 @@ function drawCaveats(body, observed) {
     body.appendChild(
         panelNote(
             'A fight is measured from one battle to the next, which includes the respawn gap after it — the same ' +
-                'clock the simulator runs on.'
+                'clock the simulator runs on. Every rate on both sides is over that clock: observed, ' +
+                `${OBSERVED_CLOCK}; predicted, ${PREDICTED_CLOCK}.`
+        )
+    );
+    body.appendChild(
+        panelNote(
+            `What is simulated is the zone and its tier for ${SIM_HOURS} hours — not the waves that were ` +
+                "recorded. The engine draws its own encounters from this zone's spawn table, with a boss every " +
+                'tenth one, so it is the planet sampled again rather than a replay of the rooms you fought. Rates ' +
+                'are comparable that way; a run that happened to draw an unusual mix of waves is not, and only ' +
+                'the observed side has a measured spread to say so.'
         )
     );
     // This used to read "experience and drops are not on the feed at all", which
@@ -2128,6 +2392,7 @@ function recordButton() {
  * @returns {HTMLElement}
  */
 function targetControl() {
+    primeRecordTarget();
     const target = recordTarget();
     const unit = target?.unit ?? lastTargetUnit;
     lastTargetUnit = unit;
@@ -2143,7 +2408,9 @@ function targetControl() {
     box.title =
         'Stop after this many. Leave it empty to record until you press stop, which is what it has always ' +
         'done. A target is reached at the end of a fight, never in the middle of one, so a recording ' +
-        'overshoots by the fight it was in rather than losing it.';
+        'overshoots by the fight it was in rather than losing it. In ±% the number is a band rather than a ' +
+        'count: recording continues until the margin on the sample is under it, and a band inside the ' +
+        `simulator's own ±${SIM_NOISE_FLOOR_PCT}% allowance is never reached, so it records until stopped.`;
     Object.assign(box.style, {
         width: '46px',
         background: 'rgba(255, 255, 255, 0.06)',
@@ -2161,8 +2428,11 @@ function targetControl() {
     });
 
     const toggle = document.createElement('button');
-    toggle.textContent = unit === 'minutes' ? 'min' : 'fights';
-    toggle.title = 'Count the target in fights or in minutes.';
+    toggle.textContent = UNIT_LABELS[unit] ?? unit;
+    toggle.title =
+        'What the number means: fights, minutes, or the noise band to record down to. ' +
+        `Switching to ±% with an empty box sets ±${NOISE_QUIET_PCT}%, which is where differences start being ` +
+        'findings rather than sampling.';
     Object.assign(toggle.style, {
         background: 'none',
         border: `1px solid ${ROW_COLORS.dim}`,
@@ -2173,10 +2443,15 @@ function targetControl() {
         fontSize: '11px',
     });
     toggle.addEventListener('click', async () => {
-        lastTargetUnit = lastTargetUnit === 'fights' ? 'minutes' : 'fights';
+        const order = Object.keys(UNIT_LABELS);
+        lastTargetUnit = order[(order.indexOf(lastTargetUnit) + 1) % order.length];
+
         // Only when there is a number to re-interpret. Switching the unit on an
         // empty box is choosing what the next number will mean, not setting one
+        // — except in ±%, where there is exactly one number anybody wants and
+        // making them type it is a step for nothing
         if (Number(box.value) > 0) await setRecordTarget({ value: Number(box.value), unit: lastTargetUnit });
+        else if (lastTargetUnit === 'noise') await setRecordTarget({ value: NOISE_QUIET_PCT, unit: 'noise' });
         replayCheckPanel.render();
     });
 

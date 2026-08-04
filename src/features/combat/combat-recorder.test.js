@@ -50,6 +50,9 @@ beforeEach(() => {
     // The target outlives a recording on purpose — it is a preference, not a
     // property of one sitting — so a test that set one would leak into the next
     recorder.setRecordTarget(null);
+    // Both injected, both module state, both would otherwise leak
+    recorder.setNoiseProvider(null);
+    recorder.setSegmentSummarizer(null);
 });
 
 afterEach(() => recorder.stopRecording());
@@ -337,6 +340,57 @@ describe('recording a set amount', () => {
         expect(recorder.setRecordTarget({ value: '25', unit: 'minutes' })).toEqual({ value: 25, unit: 'minutes' });
     });
 
+    test('a band records until the sample is that tight, and stops at a boundary', () => {
+        // The unit nobody can convert in advance: how many fights it takes to
+        // get the margin under five percent depends on how much this zone's
+        // fights vary, which is measured as it goes rather than guessed
+        const bands = [12.4, 8.1, 6.3, 4.9];
+        let asked = 0;
+        recorder.setNoiseProvider(() => bands[Math.min(asked++, bands.length - 1)]);
+        recorder.setRecordTarget({ value: 5, unit: 'noise' });
+        recorder.startRecording();
+
+        // Five battles is four closed fights, and the fourth is where the band
+        // it was asked for is first met
+        for (let i = 0; i < 5; i += 1) fight(2);
+
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.recordingStatus().targetMet).toBe(true);
+        expect(recorder.recordingStatus().fights).toBe(4);
+        expect(recorder.recordingStatus().marginPct).toBe(4.9);
+        recorder.setNoiseProvider(null);
+    });
+
+    test('a band is only ever read at a fight boundary, never mid-fight', () => {
+        const asks = [];
+        recorder.setNoiseProvider(() => {
+            asks.push(recorder.recordingStatus().fights);
+            return 20;
+        });
+        recorder.setRecordTarget({ value: 5, unit: 'noise' });
+        recorder.startRecording();
+        fight(30);
+        fight(30);
+
+        // Thirty ticks either side and one measurement, taken on the battle
+        // that closed the first fight — measuring mid-fight would re-derive the
+        // whole segment several times a second for a number that cannot change
+        expect(asks).toEqual([1]);
+        expect(recorder.isRecording()).toBe(true);
+        recorder.setNoiseProvider(null);
+    });
+
+    test('a band nothing can measure records until stopped, like no target at all', () => {
+        recorder.setNoiseProvider(() => null);
+        recorder.setRecordTarget({ value: 5, unit: 'noise' });
+        recorder.startRecording();
+        for (let i = 0; i < 6; i += 1) fight(2);
+
+        expect(recorder.isRecording()).toBe(true);
+        expect(recorder.recordingStatus().marginPct).toBe(null);
+        recorder.setNoiseProvider(null);
+    });
+
     test('raising the target mid-recording lets it carry on', () => {
         recorder.setRecordTarget({ value: 2, unit: 'fights' });
         recorder.startRecording();
@@ -512,6 +566,103 @@ describe('handing the finished recording on', () => {
         recorder.stopRecording();
 
         expect(seen).toHaveLength(0);
+    });
+});
+
+describe('handing the whole session over', () => {
+    /** A fight: one `new_battle` and `ticks` updates after it */
+    const fight = (ticks = 1) => {
+        send('new_battle', { players: { 0: {} }, monsters: { 0: { name: 'Fly' } } });
+        for (let i = 0; i < ticks; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
+    };
+
+    /** Enough fights to bank `count` segments and leave one running */
+    const segments = (count) => {
+        for (let i = 0; i < 41 * count; i += 1) fight(100);
+    };
+
+    test('one segment is one segment, and it carries its payloads', () => {
+        recorder.startRecording();
+        fight(3);
+
+        const file = recorder.sessionFile();
+        expect(file.format).toBe('toolasha-combat-session');
+        expect(file.segments).toHaveLength(1);
+        expect(file.segments[0].ticksIncluded).toBe(true);
+        expect(file.segments[0].ticks).toHaveLength(4);
+        expect(file.ticksComplete).toBe(true);
+    });
+
+    test('a rotated recording hands over every segment, not just the last', () => {
+        // What this is here to stop: a two-hour recording arriving as its final
+        // ten minutes, because rotation had freed everything before it
+        recorder.startRecording();
+        segments(2);
+
+        const file = recorder.sessionFile();
+        expect(file.segments.length).toBeGreaterThan(2);
+        expect(file.segments[0].segment).toBe(0);
+        expect(file.fights).toBe(recorder.recordingStatus().fights);
+        // Every fight of the session is somewhere in the file
+        const counted = file.segments.reduce((total, entry) => total + entry.fights, 0);
+        expect(counted).toBe(file.fights);
+    });
+
+    test('segments past the retention budget keep their summary and say they lost their payloads', () => {
+        recorder.setSegmentSummarizer((banked) => ({ fights: banked.ticks.length }));
+        recorder.startRecording();
+        segments(7);
+
+        const file = recorder.sessionFile();
+        const dropped = file.segments.filter((entry) => !entry.ticksIncluded);
+        expect(dropped.length).toBeGreaterThan(0);
+        expect(file.ticksComplete).toBe(false);
+        // The point of keeping the summary: a segment that lost its payloads is
+        // still a segment somebody can count fights in, and the file says which
+        for (const entry of dropped) {
+            expect(entry.ticks).toBe(null);
+            expect(entry.tickCount).toBeGreaterThan(0);
+            expect(entry.summary).not.toBe(null);
+        }
+    });
+
+    test('the download is the session, and it says nothing was there to write when nothing was', () => {
+        const clicked = [];
+        const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+            clicked.push(this.download);
+        });
+
+        // A session that caught nothing writes nothing. Started and not stopped,
+        // because a stopped session keeps its segments so it can still be handed
+        // over — it is the start that clears them
+        recorder.startRecording();
+        expect(recorder.downloadRecording()).toBe(false);
+
+        fight(3);
+        expect(recorder.downloadRecording()).toBe(true);
+        expect(clicked).toHaveLength(1);
+
+        click.mockRestore();
+    });
+
+    test('a session stopped just after a rotation still writes its earlier segments', () => {
+        const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        recorder.startRecording();
+        segments(1);
+        recorder.stopRecording();
+
+        // The live buffer may be all but empty; the banked segments are the run
+        expect(recorder.downloadRecording()).toBe(true);
+        expect(recorder.sessionFile().segments.length).toBeGreaterThan(1);
+        click.mockRestore();
+    });
+
+    test('starting again is a new session, not an appendix to the last one', () => {
+        recorder.startRecording();
+        segments(1);
+        recorder.startRecording();
+
+        expect(recorder.sessionFile().segments).toHaveLength(1);
     });
 });
 

@@ -104,6 +104,7 @@ import replayCheck, {
     pruneHistory,
     dropRates,
     MIN_SAMPLE_FIGHTS,
+    SIM_HOURS,
     SIM_NOISE_FLOOR_PCT,
     NOISE_QUIET_PCT,
 } from './combat-replay-check.js';
@@ -216,6 +217,104 @@ describe('deriving what happened from a recording', () => {
     test('damage taken is derived too, from the same ticks', () => {
         const taken = fights.reduce((total, fight) => total + (fight.taken['0']?.damage || 0), 0);
         expect(taken).toBeGreaterThan(0);
+    });
+});
+
+describe('the opening swing of every fight, which used to be invisible', () => {
+    /**
+     * A wave of one monster, hit `hits` times and killed.
+     *
+     * The shape that matters is that the monster is **not** in the tick stream
+     * until the first hit lands on it — `mMap` is a delta, so a fresh spawn has
+     * nothing to report until something happens to it, and the first thing that
+     * happens is being hit.
+     *
+     * @param {Object} options - `{maxHP, hit, hits}`
+     * @returns {Array<Object>} Ticks, ending on the battle that closes the fight
+     */
+    function wave({ maxHP = 100, openingHP = maxHP, hit = 20, hits = 5 } = {}) {
+        const ticks = [
+            {
+                at: 0,
+                type: 'new_battle',
+                payload: {
+                    players: { 0: { name: 'Tester', isPreparingAutoAttack: true } },
+                    monsters: {
+                        0: { name: 'Fly', combatDetails: { currentHitpoints: openingHP, maxHitpoints: maxHP } },
+                    },
+                },
+            },
+        ];
+
+        let health = openingHP;
+        for (let i = 1; i <= hits; i += 1) {
+            health = Math.max(0, health - hit);
+            ticks.push({
+                at: i * 1000,
+                type: 'battle_updated',
+                payload: {
+                    pMap: { 0: { atkCounter: i, isAutoAtk: true } },
+                    mMap: { 0: { cHP: health, mHP: maxHP, dmgCounter: i, critCounter: 0 } },
+                },
+            });
+        }
+
+        ticks.push({ at: (hits + 1) * 1000, type: 'new_battle', payload: ticks[0].payload });
+        return ticks;
+    }
+
+    test('the first hit on a fresh spawn counts, and its damage with it', () => {
+        // The monster is only in the feed because it was hit. Without a
+        // baseline from `new_battle` there is nothing to diff that first tick
+        // against, so the swing and its damage went missing — once per monster
+        // per fight, which is the opener every time
+        const [fight] = replayFights(wave({ maxHP: 100, hit: 20, hits: 5 }));
+
+        expect(fight.players['0'].hits).toBe(5);
+        expect(fight.players['0'].damage).toBe(100);
+    });
+
+    test('a wave the battle message did not price is left alone rather than guessed at', () => {
+        const ticks = wave();
+        ticks[0].payload.monsters[0].combatDetails = {};
+        ticks[ticks.length - 1].payload = ticks[0].payload;
+
+        // Back to the old reading, which is the honest one when nothing says
+        // what the monster started on: four of the five hits
+        const [fight] = replayFights(ticks);
+        expect(fight.players['0'].hits).toBe(4);
+    });
+
+    test('a wave that opens already hurt is priced from what it opened on', () => {
+        // Current health before max, so an opener against something already
+        // damaged is worth what it actually took off rather than the whole bar
+        const [fight] = replayFights(wave({ maxHP: 100, openingHP: 60, hit: 20, hits: 3 }));
+
+        expect(fight.players['0'].hits).toBe(3);
+        expect(fight.players['0'].damage).toBe(60);
+    });
+
+    test('on a real recording it is 15-25% of every swing, and of the damage', () => {
+        const fights = replayFights(recording.ticks);
+        // The number the whole thing turned on. A sample that reads a fifth
+        // short on swings while killing on schedule is not a slow character; it
+        // is an accounting error, and this was it.
+        const swung = fights.reduce(
+            (total, fight) => total + (fight.players['0']?.hits || 0) + (fight.players['0']?.misses || 0),
+            0
+        );
+        expect(swung).toBe(48);
+
+        // Every monster of every wave can contribute at most one recovered
+        // swing — its opener — so the ceiling is the number of spawns, and the
+        // floor is one per fight, since something has to open every fight
+        const spawns = recording.ticks
+            .filter((tick) => tick.type === 'new_battle')
+            .slice(0, -1)
+            .reduce((total, tick) => total + Object.keys(tick.payload.monsters).length, 0);
+        const recovered = swung - 42;
+        expect(recovered).toBeGreaterThanOrEqual(fights.length);
+        expect(recovered).toBeLessThanOrEqual(spawns);
     });
 });
 
@@ -663,6 +762,39 @@ describe('what the check simulates', () => {
         expect(observed.mixedLoadouts).toBe(true);
     });
 
+    test('the zone and its tier, which is the planet and not the rooms recorded', () => {
+        // Worth pinning because it is what the panel now says out loud: the
+        // engine draws its own encounters from this zone's spawn table, so the
+        // comparison is rate against rate over two samples of the same zone and
+        // not a replay of the waves that were fought
+        game.simResult = simResult;
+        replayCheck.observations = [
+            evenObservation({ fights: 6, zoneHrid: '/actions/combat/jungle', difficultyTier: 2 }),
+        ];
+
+        return replayCheck.check().then(() => {
+            expect(game.lastRun.zoneHrid).toBe('/actions/combat/jungle');
+            expect(game.lastRun.difficultyTier).toBe(2);
+            // Fights recorded are not an input to the simulation at all
+            expect(game.lastRun.hours).toBe(SIM_HOURS);
+            expect(game.lastRun).not.toHaveProperty('fights');
+        });
+    });
+
+    test('with task damage off, because the feed never said the monster was a task', () => {
+        // `taskDamage` only applies while what you are fighting is your active
+        // combat task. Nothing on the feed says whether it was, so a replay
+        // simulated with it on predicts damage the run may never have been
+        // entitled to and blames the gap on the engine. Pinned rather than left
+        // to the runner's default, which is somewhere else to change it.
+        game.simResult = simResult;
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+
+        return replayCheck.check().then(() => {
+            expect(game.lastRun.isTaskFight).toBe(false);
+        });
+    });
+
     test('two segments of one recording are one loadout, whenever they were taken', () => {
         const first = captureLoadoutSnapshot(loadout());
         const second = captureLoadoutSnapshot(loadout());
@@ -1023,6 +1155,104 @@ describe('the Record button on the panel', () => {
         expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
         expect(labelled('Forget')).toBeTruthy();
     });
+
+    test('a simulation running elsewhere leaves the recording label alone', async () => {
+        // What this is here to stop: the Record button reverting while a
+        // simulation runs, on a recording that never stopped. Reading the
+        // button's state is a read of the recorder and nothing else — no
+        // storage write, no target restored underneath a running recording.
+        const fake = install(true, 240);
+        fake.fights = 37;
+        fake.recordingStatus = () => ({ ticks: 240, seconds: 600, full: false, fights: fake.fights, target: null });
+        fake.setRecordTarget = vi.fn();
+        store.data.set('combatRecordControl_target_char1', { value: 5, unit: 'fights' });
+
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheckPanel.show({ remember: false });
+        expect(labelled('Recording 37 fights…')).toBeTruthy();
+
+        // A simulation, held open while the panel redraws underneath it
+        let finish;
+        const held = new Promise((resolve) => {
+            finish = resolve;
+        });
+        const running = (async () => {
+            await held;
+            return { simulatedTime: 3600 * 1e9, encounters: 360, deaths: {}, totalDamageDealt: {}, warnings: [] };
+        })();
+
+        for (let i = 0; i < 5; i += 1) {
+            replayCheckPanel.render();
+            await settle();
+        }
+
+        expect(labelled('Recording 37 fights…')).toBeTruthy();
+        expect(labelled('Record (')).toBeFalsy();
+        expect(fake.stopRecording).not.toHaveBeenCalled();
+        // The stale five-fight target on disk is not applied to a run already
+        // past thirty-seven fights, which would stop it at the next boundary
+        expect(fake.setRecordTarget).not.toHaveBeenCalled();
+
+        finish();
+        await running;
+        replayCheckPanel.render();
+        expect(labelled('Recording 37 fights…')).toBeTruthy();
+    });
+
+    test('Save recording writes the observations, the check and the recording as one file', () => {
+        const written = [];
+        const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+            written.push(this.download);
+        });
+        install();
+
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheck.comparison = compareRun(
+            aggregateObservations(replayCheck.observations),
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 360,
+                deaths: {},
+                totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+                warnings: [],
+            })
+        );
+        replayCheckPanel.show({ remember: false });
+
+        labelled('Save recording').click();
+        expect(written).toHaveLength(1);
+        expect(written[0]).toMatch(/^toolasha-sim-accuracy-/);
+
+        const file = replayCheck.exportFile();
+        expect(file.format).toBe('toolasha-sim-accuracy');
+        expect(file.version).toBe(1);
+        expect(file.simHours).toBe(SIM_HOURS);
+        expect(file.zone).toEqual({ hrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 });
+        // The clocks travel with the file, so an offline re-derivation divides
+        // by what this divided by rather than by whatever looks reasonable
+        expect(file.clocks.observed).toContain('respawn');
+        expect(file.clocks.predicted).toContain('respawn');
+        expect(file.observations).toHaveLength(1);
+        expect(file.observations[0].fights).toHaveLength(6);
+        expect(file.aggregate.fights).toBe(6);
+        expect(file.comparison.metrics.length).toBeGreaterThan(0);
+        expect(Array.isArray(file.history)).toBe(true);
+        // And what is missing is said in the file, since a reader cannot tell
+        // an absent field from one that was never captured
+        expect(file.includes.length).toBeGreaterThan(0);
+        expect(file.excludes.join(' ')).toContain('drinks');
+
+        click.mockRestore();
+    });
+
+    test('and it exports before any check has been run, which is when it is wanted', () => {
+        install();
+        replayCheck.observations = [evenObservation({ fights: 4, loadout: captureLoadoutSnapshot(loadout()) })];
+
+        const file = replayCheck.exportFile();
+        expect(file.comparison).toBe(null);
+        expect(file.observations[0].loadout.equipment.main_hand.hrid).toBe('/items/sword');
+    });
 });
 
 /**
@@ -1320,6 +1550,65 @@ describe('taking the damage figure apart', () => {
         expect(observed.hitRate).toBeCloseTo(0.8, 10);
         expect(observed.damagePerHit).toBeCloseTo(250, 10);
         expect(observed.swingsPerSecond * observed.hitRate * observed.damagePerHit).toBeCloseTo(observed.dps, 6);
+    });
+
+    test('both sides of the decomposition divide by the same clock', () => {
+        // The one way a decomposition can be wrong without any of its rows
+        // being wrong: observed swings over wall time against predicted swings
+        // over time-in-combat manufactures a deficit of exactly the respawn
+        // share, and every other row still agrees. So both denominators are
+        // pinned to what they claim to be.
+        const simResult = withAttacks({ player1: { '/monsters/fly': { autoAttack: { 25: 40, miss: 10 } } } });
+        const predicted = predictFromSim(simResult);
+
+        // Predicted: `simulatedTime`, the simulator's whole elapsed clock,
+        // respawns and time spent dead included
+        expect(predicted.seconds).toBe(simResult.simulatedTime / 1e9);
+        expect(predicted.swingsPerSecond).toBeCloseTo(50 / (simResult.simulatedTime / 1e9), 12);
+        expect(predicted.dps).toBeCloseTo(predicted.damageDealt / predicted.seconds, 12);
+
+        // Observed: battle to battle, respawn gaps included, over the fights
+        // that completed — the same span `secondsPerFight` is drawn from
+        const observed = aggregateObservations([evenObservation({ seconds: 10, fights: 6 })]);
+        expect(observed.seconds).toBe(60);
+        expect(observed.swingsPerSecond).toBeCloseTo(30 / observed.seconds, 12);
+        expect(observed.dps).toBeCloseTo(observed.damageDealt / observed.seconds, 12);
+        expect(observed.secondsPerFight * observed.fights).toBeCloseTo(observed.seconds, 12);
+
+        // And therefore: a run whose swings and seconds both match is not
+        // flagged on swings, whatever the respawn share happens to be
+        const matched = aggregateObservations([
+            {
+                ...evenObservation({ fights: 0 }),
+                fights: Array.from({ length: 6 }, () => ({
+                    seconds: predicted.seconds / 6,
+                    damageDealt: predicted.damageDealt / 6,
+                    damageTaken: 10,
+                    regen: 0,
+                    hits: 40 / 6,
+                    misses: 10 / 6,
+                    deaths: 0,
+                    kills: 1,
+                    monsters: ['Fly'],
+                })),
+            },
+        ]);
+        const swings = compareRun(matched, predicted).decomposition.find((m) => m.key === 'swingsPerSecond');
+        expect(swings.deviationPct).toBeCloseTo(0, 10);
+    });
+
+    test('the derived fight length is the same span the swing rate divides by', () => {
+        // Straight off a recording rather than a hand-built observation: what
+        // `replayFights` calls a fight's seconds is `new_battle` to
+        // `new_battle`, respawn included, and the swing count is over exactly
+        // that window and no other
+        const fights = replayFights(recording.ticks);
+        const spanned = fights.reduce((total, fight) => total + fight.seconds, 0);
+        const observed = aggregateObservations([observeRecording(recording)]);
+
+        expect(observed.seconds).toBeCloseTo(spanned, 10);
+        expect(observed.swingsPerSecond).toBeCloseTo(observed.swings / spanned, 12);
+        expect(observed.dps).toBeCloseTo(observed.damageDealt / spanned, 12);
     });
 
     test('each factor gets its own band, measured from the fights', () => {
@@ -1837,7 +2126,7 @@ describe('the panel, on everything it now says', () => {
         replayCheckPanel.show({ remember: false });
 
         const ask = [...replayCheckPanel.panel.querySelectorAll('button')].find((button) =>
-            button.textContent.startsWith('Record ')
+            button.textContent.startsWith('Record to ±')
         );
         expect(ask).toBeTruthy();
         expect(text()).toContain('more fights');
@@ -1845,8 +2134,11 @@ describe('the panel, on everything it now says', () => {
         ask.click();
         await settle();
 
-        expect(recorder.target.unit).toBe('fights');
-        expect(recorder.target.value).toBeGreaterThan(0);
+        // The band and not the projected count: the count is an estimate off
+        // this sample's spread, the band is the thing actually wanted, and the
+        // recorder can now measure it as it goes
+        expect(recorder.target.unit).toBe('noise');
+        expect(recorder.target.value).toBe(NOISE_QUIET_PCT);
     });
 
     test('a sample already tight enough is not told to record more', () => {

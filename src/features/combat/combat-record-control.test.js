@@ -27,6 +27,7 @@ import {
     recordControlState,
     recordTarget,
     loadRecordTarget,
+    primeRecordTarget,
     setRecordTarget,
     resetRecordTargetCache,
     toggleRecording,
@@ -41,6 +42,7 @@ function fakeRecorder() {
         seconds: 0,
         target: null,
         targetMet: false,
+        marginPct: null,
         downloads: 0,
         isRecording: () => fake.recording,
         recordingStatus: () => ({
@@ -50,10 +52,11 @@ function fakeRecorder() {
             full: false,
             target: fake.target,
             targetMet: fake.targetMet,
+            marginPct: fake.marginPct,
         }),
         // The real normalizer, near enough: a positive number and a known unit
         normalizeTarget: (raw) =>
-            Number(raw?.value) > 0 && ['fights', 'minutes'].includes(raw?.unit)
+            Number(raw?.value) > 0 && ['fights', 'minutes', 'noise'].includes(raw?.unit)
                 ? { value: Number(raw.value), unit: raw.unit }
                 : null,
         setRecordTarget: vi.fn((next) => {
@@ -246,6 +249,42 @@ describe('recording for a target', () => {
         shared.target = { value: 100, unit: 'fights' };
         expect(recordControlState().target).toEqual({ value: 100, unit: 'fights' });
     });
+
+    test('a band shows where the sample stands rather than a count of anything', () => {
+        // The unit nobody can convert in advance. "41 of 100 fights" is a
+        // proxy; the number actually being waited on is the margin.
+        shared.recording = true;
+        shared.fights = 41;
+        shared.marginPct = 6.24;
+        shared.target = { value: 5, unit: 'noise' };
+
+        expect(recordControlState().label).toBe('Recording 41 fights — ±6.2% of ±5%…');
+    });
+
+    test('and says nothing it has not measured yet', () => {
+        shared.recording = true;
+        shared.fights = 1;
+        shared.marginPct = null;
+        shared.target = { value: 5, unit: 'noise' };
+
+        // Under three fights the spread says nothing, so there is no band to
+        // report — and inventing a zero would read as already there
+        expect(recordControlState().label).toBe('Recording 1 fight — measuring of ±5%…');
+    });
+
+    test('reaching a band says which band it reached', () => {
+        shared.fights = 62;
+        shared.targetMet = true;
+        shared.marginPct = 4.9;
+        shared.target = { value: 5, unit: 'noise' };
+
+        expect(recordControlState().label).toBe('Done — 62 fights, ±4.9%');
+    });
+
+    test('an idle button with a band says what pressing it will do', () => {
+        shared.target = { value: 5, unit: 'noise' };
+        expect(recordControlState().title).toContain("the sample's margin is under ±5%");
+    });
 });
 
 describe('remembering the target', () => {
@@ -282,13 +321,27 @@ describe('remembering the target', () => {
     test('the read happens once, however many times the panels redraw', async () => {
         store.data.set('combatRecordControl_target', { value: 12, unit: 'fights' });
 
-        recordControlState();
+        primeRecordTarget();
+        primeRecordTarget();
+        await settle();
+        primeRecordTarget();
+        await settle();
+
+        expect(shared.setRecordTarget).toHaveBeenCalledTimes(1);
+    });
+
+    test('reading the button state never writes, however many times a panel redraws', async () => {
+        store.data.set('combatRecordControl_target', { value: 12, unit: 'fights' });
+
         recordControlState();
         await settle();
         recordControlState();
         await settle();
 
-        expect(shared.setRecordTarget).toHaveBeenCalledTimes(1);
+        // What the button says is the recorder's business. A read that also
+        // wrote is how a target restored from disk landed on a recording already
+        // in progress and stopped it — see the note on recordControlState
+        expect(shared.setRecordTarget).not.toHaveBeenCalled();
     });
 
     test('a target set by hand is not overwritten by a load landing after it', async () => {

@@ -38,7 +38,7 @@ import {
     resetDamageTracker,
 } from '../../features/combat/damage-tracker.js';
 import { takenBreakdown } from '../../features/combat/damage-taken-tracker.js';
-import { recordControlState, toggleRecording } from '../../features/combat/combat-record-control.js';
+import { primeRecordTarget, recordControlState, toggleRecording } from '../../features/combat/combat-record-control.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -756,13 +756,18 @@ export const dpsPanel = new CombatPanel({
         // are summaries of a fight that has already happened. A recording can be
         // replayed offline until it is understood, and then kept as a fixture.
         // Same button as the one on Sim Accuracy, driving the same recorder —
-        // see combat-record-control.js for why the decision is not made here
+        // see combat-record-control.js for why the decision is not made here.
+        // The restore is a separate call from the state read on purpose: what
+        // the button says is the recorder's business and nothing else's, and a
+        // read that also wrote could change a running recording's target.
+        primeRecordTarget();
         const state = recordControlState();
         if (!state) return;
 
         const button = toggleButton(state.label, state.recording, () => {
             // Handed over as a file: a recording started from here exists to be
-            // replayed somewhere else
+            // replayed somewhere else, and it is the whole session — every
+            // banked segment — rather than whatever the last rotation left
             toggleRecording({ download: true });
             dpsPanel.refresh();
         });

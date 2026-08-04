@@ -743,3 +743,69 @@ describe('what the panels add over their tiles', () => {
         expect(profitPanel.panel.textContent).toContain('Patient over lazy');
     });
 });
+
+describe('the Record button in the DPs header', () => {
+    /** The shared recorder, as the panel finds it */
+    function install(recording = false) {
+        const fake = {
+            recording,
+            downloads: 0,
+            isRecording: () => fake.recording,
+            recordingStatus: () => ({ ticks: 240, seconds: 600, full: false, fights: 37, target: null }),
+            normalizeTarget: () => null,
+            startRecording: vi.fn(() => {
+                fake.recording = true;
+            }),
+            stopRecording: vi.fn(() => {
+                fake.recording = false;
+            }),
+            // What the real one now writes: every segment of the session, not
+            // whatever the last rotation happened to leave in the buffer
+            downloadRecording: vi.fn(() => {
+                fake.downloads += 1;
+                return true;
+            }),
+            setRecordTarget: vi.fn(),
+        };
+        globalThis.window.Toolasha = { Combat: { combatRecorder: fake } };
+        return fake;
+    }
+
+    /** The header button carrying this label */
+    const labelled = (text) =>
+        [...dpsPanel.panel.querySelectorAll('button')].find((button) => button.textContent.startsWith(text));
+
+    afterEach(() => {
+        delete globalThis.window.Toolasha;
+    });
+
+    test('stopping from here writes the recording out', () => {
+        const recorder = install(true);
+        dpsPanel.show();
+
+        labelled('Recording').click();
+
+        expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
+        // The whole session. Rotation used to leave this handing over the last
+        // segment only, on a recording that had banked a dozen.
+        expect(recorder.downloadRecording).toHaveBeenCalledTimes(1);
+    });
+
+    test('a simulation running elsewhere does not change what the button says', async () => {
+        const recorder = install(true);
+        dpsPanel.show();
+        expect(labelled('Recording 37 fights…')).toBeTruthy();
+
+        for (let i = 0; i < 5; i += 1) {
+            dpsPanel.refresh();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        expect(labelled('Recording 37 fights…')).toBeTruthy();
+        expect(labelled('Record (')).toBeFalsy();
+        expect(recorder.stopRecording).not.toHaveBeenCalled();
+        // And nothing wrote to the recorder on the way past: a target restored
+        // from disk underneath a running recording is how one stops itself
+        expect(recorder.setRecordTarget).not.toHaveBeenCalled();
+    });
+});
