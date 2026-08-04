@@ -90,6 +90,17 @@ vi.mock('./sim-editor.js', () => ({
     },
 }));
 
+// The upgrade-row handoff buttons come from the combat sim panel, which brings
+// two module-scope inventory panels with it. This file is about where the lab
+// panel opens, so it borrows the vocabulary and none of the furniture
+vi.mock('./combat-sim-ui.js', () => ({
+    default: {
+        upgradeRowPurchase: () => null,
+        upgradeRowActionsHtml: () => '',
+        wireUpgradeRowActions: () => {},
+    },
+}));
+
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null } }));
 

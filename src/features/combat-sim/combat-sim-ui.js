@@ -7,6 +7,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { watchTarget } from '../inventory/equipment-savings-row.js';
+import { watchItem } from '../inventory/watchlist.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
@@ -164,6 +166,267 @@ export function upgradeRowKey(result) {
     const c = result?.candidate || {};
     const parts = [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''];
     return parts.join('|').replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+/** Where a finished all-zones run is kept, for anything that ranks zones later */
+export const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
+
+/**
+ * The store it goes in.
+ *
+ * `combatExport` rather than a new store: it already holds what the combat sim
+ * produces for other features to read, and adding an object store means a
+ * database version bump every consumer pays for.
+ */
+export const ALL_ZONES_SNAPSHOT_STORE = 'combatExport';
+
+/** Candidate types paid for in ability books rather than at the equipment market */
+const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
+
+/**
+ * A short, stable digest of a long string.
+ *
+ * djb2, because the fingerprint is only ever compared with another fingerprint —
+ * nothing is looked up by it, so collision resistance beyond "different gear
+ * reads differently" buys nothing, and a 1.5 KB equipment list stored verbatim
+ * on every run does not.
+ *
+ * @param {string} text - What to digest
+ * @returns {string} Base-36 digest
+ */
+function digest(text) {
+    let hash = 5381;
+    for (let i = 0; i < text.length; i++) {
+        hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(36);
+}
+
+/**
+ * A signature for the gear a run was simulated in.
+ *
+ * Every player's equipped items and their enhancement levels, sorted so that the
+ * same loadout always digests the same way whatever order the slots arrive in.
+ * Party membership counts: a three-player result is not a claim about a solo
+ * one, so losing a member has to read as "this no longer describes you".
+ *
+ * Equipment only. Levels and abilities move constantly and would flag every
+ * saved run as stale within an hour, which is the same as having no flag.
+ *
+ * @param {Array<Object>} playerDTOs - Player DTOs the run was given
+ * @returns {string|null} Digest, or null when there is nothing to sign
+ */
+export function gearFingerprint(playerDTOs) {
+    const players = Array.isArray(playerDTOs) ? playerDTOs.filter(Boolean) : [];
+    if (!players.length) return null;
+
+    const parts = players
+        .map((dto) => {
+            const slots = Object.entries(dto.equipment || {})
+                .filter(([, item]) => item?.hrid)
+                .map(([slot, item]) => `${slot}=${item.hrid}+${item.enhancementLevel || 0}`)
+                .sort();
+            return `${dto.hrid || 'player'}[${slots.join(',')}]`;
+        })
+        .sort();
+
+    return digest(parts.join(';'));
+}
+
+/**
+ * The gear currently worn, signed the same way a run signs itself.
+ * @returns {Promise<string|null>} Digest, or null when character data is unavailable
+ */
+export async function currentGearFingerprint() {
+    try {
+        const { players } = await buildAllPlayerDTOs();
+        return gearFingerprint(players);
+    } catch (error) {
+        console.error('[CombatSimUI] Reading the current gear fingerprint failed:', error);
+        return null;
+    }
+}
+
+/**
+ * Reduce a finished all-zones run to what outlives the panel.
+ *
+ * Profit/hr and XP/hr per zone/tier and nothing else: the full SimResults are
+ * megabytes of per-monster detail that only the table that just drew them can
+ * read, and a ranked list needs two numbers and a name.
+ *
+ * @param {Array<Object>} zoneResults - `{zone, simResult, revenue}` per zone/tier
+ * @param {Object} [options] - Run context
+ * @param {number} [options.hours] - Hours simulated, as a fallback for the rate divisor
+ * @param {string} [options.playerHrid] - Which player's XP is being reported
+ * @param {string|null} [options.fingerprint] - Gear signature of the run
+ * @param {number} [options.savedAt] - When it finished
+ * @returns {Object} `{version, savedAt, hours, fingerprint, zones}`
+ */
+export function buildAllZonesSnapshot(zoneResults, options = {}) {
+    const { hours = 0, playerHrid = 'player1', fingerprint = null, savedAt = Date.now() } = options;
+
+    const zones = (Array.isArray(zoneResults) ? zoneResults : [])
+        .filter((result) => result?.simResult && result.zone)
+        .map((result) => {
+            // The simulator's own clock where it reported one, since early exit
+            // and cancellation both cut a run short of the hours asked for
+            const simHours = (result.simResult.simulatedTime || 0) / (3600 * 1e9) || hours || 1;
+            const xp = result.simResult.experienceGained?.[playerHrid] || {};
+            const totalXp = Object.values(xp).reduce((sum, value) => sum + (value || 0), 0);
+
+            return {
+                zoneHrid: result.zone.zoneHrid || result.zone.hrid || '',
+                zoneName: result.zone.name || '',
+                difficultyTier: result.zone.difficultyTier ?? 0,
+                profitPerHour: Number.isFinite(result.revenue?.netPerHour) ? result.revenue.netPerHour : null,
+                xpPerHour: totalXp / simHours,
+            };
+        })
+        .filter((zone) => zone.zoneHrid);
+
+    return { version: 1, savedAt, hours, fingerprint, zones };
+}
+
+/**
+ * Write a snapshot out, immediately.
+ *
+ * Immediate rather than debounced: a run people wait ten minutes for is exactly
+ * the thing a reload three seconds later must not lose.
+ *
+ * @param {Object} snapshot - From `buildAllZonesSnapshot`
+ * @returns {Promise<boolean>} Whether it was stored
+ */
+export async function saveAllZonesSnapshot(snapshot) {
+    try {
+        return await storage.setJSON(ALL_ZONES_SNAPSHOT_KEY, snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
+    } catch (error) {
+        console.error('[CombatSimUI] Saving the all-zones snapshot failed:', error);
+        return false;
+    }
+}
+
+/**
+ * The last all-zones run, if there is one.
+ * @returns {Promise<Object|null>} Snapshot, or null when nothing usable is stored
+ */
+export async function loadAllZonesSnapshot() {
+    try {
+        const saved = await storage.getJSON(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null);
+        return saved && Array.isArray(saved.zones) ? saved : null;
+    } catch (error) {
+        console.error('[CombatSimUI] Reading the all-zones snapshot failed:', error);
+        return null;
+    }
+}
+
+/**
+ * What an upgrade row would have you buy, if anything.
+ *
+ * Three kinds of row are not a purchase and get nothing: combat levels are paid
+ * for in experience, house rooms in materials at your own house, and anything
+ * whose candidate names no item at all.
+ *
+ * Ability rows are a purchase — the books are ordinary marketplace goods — so
+ * they can be watched. They cannot be *saved for*, because the savings list is
+ * slot-by-slot gear and a stack of books fills no slot.
+ *
+ * @param {Object} result - A row from the upgrade analysis, or a budget pick
+ * @returns {Object|null} `{itemHrid, enhancementLevel, name, savable}`, or null
+ */
+export function upgradeRowPurchase(result) {
+    const candidate = result?.candidate;
+    if (!candidate) return null;
+
+    const type = candidate.type || 'equipment';
+    if (type === 'combat_level' || type === 'house') return null;
+
+    const isBook = ABILITY_CANDIDATE_TYPES.has(type);
+    // The book for an ability shares its slug: /abilities/fireball → /items/fireball
+    const itemHrid = isBook
+        ? String(candidate.upgradeHrid || '').replace('/abilities/', '/items/')
+        : candidate.upgradeHrid;
+    if (!itemHrid || !String(itemHrid).startsWith('/items/')) return null;
+
+    const enhancementLevel = isBook ? 0 : Number(candidate.upgradeLevel) || 0;
+    const baseName = dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+
+    return {
+        itemHrid,
+        enhancementLevel,
+        name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
+        savable: !isBook,
+    };
+}
+
+/** Shared styling for the small per-row handoff buttons */
+const ROW_ACTION_STYLE =
+    'background:none; border:1px solid #333; border-radius:3px; color:#8ab4f8; font-size:9px; ' +
+    'padding:0 4px; margin-left:4px; cursor:pointer; font-family:inherit; vertical-align:middle;';
+
+/**
+ * The "Save for this" and "Watch" buttons for one upgrade row.
+ *
+ * Returned as markup rather than elements because both tables that want them are
+ * built as HTML strings; `wireUpgradeRowActions` gives them their behaviour once
+ * the string is in the document.
+ *
+ * @param {Object} result - A row from the upgrade analysis, or a budget pick
+ * @returns {string} HTML, empty for rows that buy nothing
+ */
+export function upgradeRowActionsHtml(result) {
+    const buy = upgradeRowPurchase(result);
+    if (!buy) return '';
+
+    const attrs = `data-buy-hrid="${buy.itemHrid}" data-buy-level="${buy.enhancementLevel}"`;
+    const save = buy.savable
+        ? `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
+            style="${ROW_ACTION_STYLE}">Save for this</button>`
+        : '';
+
+    return `${save}<button type="button" ${attrs} data-buy-action="watch" title="Add to the watchlist"
+        style="${ROW_ACTION_STYLE}">Watch</button>`;
+}
+
+/**
+ * Make the per-row handoff buttons work, wherever they were drawn.
+ *
+ * The click is stopped from propagating: both tables put these inside a row
+ * whose own click opens the detail panel, and saving for a sword should not also
+ * unfold the breakdown of it.
+ *
+ * @param {HTMLElement} container - Anything containing rendered rows
+ * @param {string} [logPrefix] - Module name for error logs
+ */
+export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
+    container?.querySelectorAll('[data-buy-action]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            event.preventDefault();
+
+            const itemHrid = button.getAttribute('data-buy-hrid');
+            const enhancementLevel = Number(button.getAttribute('data-buy-level')) || 0;
+            const label = button.textContent;
+
+            try {
+                if (button.getAttribute('data-buy-action') === 'save') {
+                    watchTarget(itemHrid, enhancementLevel);
+                    button.textContent = 'Saving ✓';
+                } else {
+                    watchItem(itemHrid);
+                    button.textContent = 'Watching ✓';
+                }
+            } catch (error) {
+                console.error(`[${logPrefix}] Handing the row off failed:`, error);
+                button.textContent = 'Failed';
+            }
+
+            // The table is rebuilt by every sort and re-render, so a button that
+            // has since been replaced simply never sees this fire
+            setTimeout(() => {
+                button.textContent = label;
+            }, 1600);
+        });
+    });
 }
 
 /**
@@ -2178,6 +2441,17 @@ class CombatSimUI {
             this._allZonesSortCol = 'profit';
             this._allZonesSortAsc = false;
             this._displayAllZonesResults(zoneResults, hours, gameData);
+
+            // Outlives the panel: the ranked action list reads this to put combat
+            // zones next to skilling actions long after the results pane is gone
+            await saveAllZonesSnapshot(
+                buildAllZonesSnapshot(zoneResults, {
+                    hours,
+                    playerHrid,
+                    fingerprint: gearFingerprint(playerDTOs),
+                })
+            );
+
             this._switchTab('results');
             this._setStatus(
                 `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each`
@@ -4445,8 +4719,10 @@ class CombatSimUI {
                 key: 'upgrade',
                 label: 'Upgrade',
                 fixed: true,
+                // Sorted and exported by the description alone: the handoff
+                // buttons are chrome on the cell, not part of what the row says
                 value: (r) => r.candidate.description.toLowerCase(),
-                render: (r) => r.candidate.description,
+                render: (r) => `${r.candidate.description}${upgradeRowActionsHtml(r)}`,
             },
             {
                 key: 'cost',
@@ -4938,6 +5214,7 @@ class CombatSimUI {
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         this._wireUpgradeColumnMenu(container);
         this._wireUpgradeBudget(container);
+        wireUpgradeRowActions(container);
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
         // point of a spreadsheet is the columns you did not think to look at
@@ -5121,4 +5398,26 @@ class CombatSimUI {
 }
 
 const combatSimUI = new CombatSimUI();
+
+/**
+ * The cross-bundle handles, hung off the instance as well as exported.
+ *
+ * This module is one of the ones rollup replaces with a global: an import of it
+ * from another bundle compiles to a property read off `Toolasha.Sim.combatSimUI`,
+ * which is this object. A named import from another bundle would therefore read
+ * `undefined` in the production bundles while working perfectly in the dev
+ * standalone, which bundles everything and has no externals at all — so the
+ * things other bundles need are reached through the default export.
+ *
+ * Same-bundle callers and tests use the named exports; both are the same
+ * functions.
+ */
+Object.assign(combatSimUI, {
+    loadAllZonesSnapshot,
+    currentGearFingerprint,
+    upgradeRowPurchase,
+    upgradeRowActionsHtml,
+    wireUpgradeRowActions,
+});
+
 export default combatSimUI;

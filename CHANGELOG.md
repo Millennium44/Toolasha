@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Ctrl+K, named layouts, and the features finally talk to each other
+
+- **A command palette.** Ctrl+K (Cmd+K) opens a fuzzy-searchable launcher for every panel, every overlay row, every setting (deep-linked into the settings search), and every saved layout. Keyboard-first, never fires while you're typing in chat, and can be switched off (`Command palette` setting).
+- **Named overlay layouts.** Save the current overlay arrangement under a name, switch between layouts from the gear popover or the palette, delete with confirmation. Switching is undoable.
+- **Combat zones join the ranked action list.** All-zones sim results persist (with a gear fingerprint) and appear as rows in the Pinned page's Profit/hr / XP/hr table — marked with when they were simulated and flagged "gear changed since" when your gear no longer matches. "What should I be doing right now" finally has one answer covering skilling and combat.
+- **"Save for this" and "Watch" on advisor results.** Equipment rows in the upgrade advisor add straight to the savings-ETA targets or the watchlist; ability rows can be watched; the lab budget plan gains "Open all in marketplace" (one tab per planned purchase).
+
 ### Notifications, provenance, and selectors that survive game updates
 
 - **Opt-in notifications** (all off by default): consumables running low, a market listing filling, another character's queue going idle, plus the existing empty-queue alert — one service behind them all. Hidden tab → browser notification and a ❗ title flash; visible tab → toast; 10-minute cooldown per event so nothing nags. The browser-permission prompt now appears when you enable a notification, never at page load.

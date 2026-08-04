@@ -26,8 +26,22 @@ import {
     planWithinBudget,
     runLabyrinthCombinationCheck,
 } from './upgrade-advisor.js';
+// The upgrade-row vocabulary — what a row would have you buy, and the handoff
+// buttons for it — belongs to the combat sim panel; a labyrinth pick is the same
+// candidate shape, so it gets the same two buttons rather than a second pair.
+//
+// Through the default export rather than as named imports: this file is reached
+// by a bundle that does not own the combat sim panel, and a cross-bundle named
+// import compiles to a property read off a global that carries only the default.
+import combatSimUI from './combat-sim-ui.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
+import {
+    createMaterialTab,
+    removeMaterialTabs,
+    visibleTabsContainer,
+    navigateToMarketplace,
+} from '../../utils/marketplace-tabs.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
@@ -68,6 +82,93 @@ function formatElapsed(seconds) {
     const m = Math.floor(seconds / 60);
     const s = (seconds % 60).toFixed(0);
     return `${m}m ${s}s`;
+}
+
+/**
+ * The purchases a budget plan comes to, deduplicated.
+ *
+ * Two picks can name the same item at the same enhancement — a plan covering
+ * several loadouts often does — and a shopping list with the same tab twice is
+ * a shopping list nobody trusts.
+ *
+ * @param {Array<Object>} picks - Picks from `planWithinBudget`
+ * @returns {Array<Object>} From `upgradeRowPurchase`, in plan order
+ */
+function planPurchases(picks) {
+    const seen = new Set();
+    const items = [];
+
+    for (const pick of picks || []) {
+        const buy = combatSimUI.upgradeRowPurchase(pick);
+        if (!buy) continue;
+
+        const key = `${buy.itemHrid}+${buy.enhancementLevel}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push(buy);
+    }
+
+    return items;
+}
+
+/**
+ * Wait for the marketplace's own tab bar to exist.
+ *
+ * Polled rather than observed: `handleGoToMarketplace` renders asynchronously
+ * and the bar we want is whichever one is on screen, which only
+ * `visibleTabsContainer` can decide — and it can only decide it once.
+ *
+ * @param {number} [attempts] - How many 100 ms tries before giving up
+ * @returns {Promise<HTMLElement|null>} The visible tab bar, or null
+ */
+async function waitForMarketplaceTabs(attempts = 30) {
+    for (let i = 0; i < attempts; i++) {
+        const container = visibleTabsContainer();
+        if (container) return container;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return null;
+}
+
+/**
+ * Put the whole budget plan on the marketplace as tabs.
+ *
+ * The same machinery the missing-materials list uses: open the market on the
+ * first item so the tab bar exists, then clone one tab per purchase, each of
+ * which jumps to its own item. A plan is a shopping trip, and a shopping trip
+ * with eight items should not be eight round trips through this panel.
+ *
+ * @param {Array<Object>} picks - Picks from `planWithinBudget`
+ * @returns {Promise<number>} How many tabs were added
+ */
+async function openPlanInMarketplace(picks) {
+    const items = planPurchases(picks);
+    if (!items.length) return 0;
+
+    navigateToMarketplace(items[0].itemHrid, items[0].enhancementLevel);
+
+    const container = await waitForMarketplaceTabs();
+    const reference = container
+        ? Array.from(container.children).find((tab) => tab.textContent?.includes('My Listings'))
+        : null;
+    if (!reference) return 0;
+
+    // Ours are the only custom tabs the market should be carrying
+    removeMaterialTabs();
+    container.style.flexWrap = 'wrap';
+
+    for (const item of items) {
+        const tab = createMaterialTab(
+            // One of each is what a plan buys, so "missing 1" is literally the
+            // count this list is asking you to acquire
+            { itemHrid: item.itemHrid, itemName: item.name, missing: 1, required: 1, isTradeable: true },
+            reference,
+            () => navigateToMarketplace(item.itemHrid, item.enhancementLevel)
+        );
+        container.appendChild(tab);
+    }
+
+    return items.length;
 }
 
 class LabSimUI {
@@ -1594,7 +1695,8 @@ class LabSimUI {
                         const rooms = pick.rooms ?? 0;
                         return `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
                                 <span style="color:#e0e0e0;">${pick.candidate.description}
-                                    <span style="color:#666;">· ${rooms} room${rooms === 1 ? '' : 's'}</span></span>
+                                    <span style="color:#666;">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
+                                    ${combatSimUI.upgradeRowActionsHtml(pick)}</span>
                                 <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
                                     <span style="color:#4caf50;">−${(pick.marginalAttemptsSaved ?? -pick.attemptsDelta).toFixed(1)} attempts</span></span>
                             </div>`;
@@ -1609,6 +1711,12 @@ class LabSimUI {
                         <span style="color:#666;"> if gains in different slots add up</span>
                         <button id="mwi-labsim-verify-combo" style="${btnStyle} margin-left:8px;"
                             title="Runs the whole run again with every pick installed at once — each loadout wearing all of the picks that apply to it, and the better one where two picks share a slot. Upgrades that fix the same failing room overlap, and the total above counts that room twice.">Verify together</button>
+                        ${
+                            planPurchases(plan.picks).length
+                                ? `<button id="mwi-labsim-budget-market" style="${btnStyle} margin-left:4px;"
+                            title="Opens the marketplace with one tab per purchase in this plan, so the whole list is one trip.">Open all in marketplace</button>`
+                                : ''
+                        }
                     </div>` +
                     (noise
                         ? `<div style="color:#666; font-size:10px; margin-top:2px;">${noise} skipped as within the simulation's own error</div>`
@@ -1646,6 +1754,32 @@ class LabSimUI {
         container.querySelector('#mwi-labsim-budget-plan')?.addEventListener('click', plan);
         input?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') plan();
+        });
+
+        // "Save for this" and "Watch" on each pick
+        combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+
+        container.querySelector('#mwi-labsim-budget-market')?.addEventListener('click', async (event) => {
+            const button = event.currentTarget;
+            const label = button.textContent;
+            const picks = planWithinBudget(results, this._allFightsBudget ?? 0, {
+                baselineFights: baseline?.fights || [],
+            }).picks;
+
+            button.disabled = true;
+            button.textContent = 'Opening…';
+            try {
+                const opened = await openPlanInMarketplace(picks);
+                button.textContent = opened ? `${opened} tab${opened === 1 ? '' : 's'} ✓` : 'Marketplace unavailable';
+            } catch (error) {
+                console.error('[LabSimUI] Opening the plan in the marketplace failed:', error);
+                button.textContent = 'Failed';
+            } finally {
+                button.disabled = false;
+                setTimeout(() => {
+                    button.textContent = label;
+                }, 1600);
+            }
         });
 
         container.querySelector('#mwi-labsim-verify-combo')?.addEventListener('click', async (event) => {
