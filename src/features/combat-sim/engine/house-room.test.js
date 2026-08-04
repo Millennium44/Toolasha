@@ -50,7 +50,7 @@ describe('house room buffs entering combat', () => {
         expect(room.buffs[0].typeHrid).toBe('/buff_types/attack_speed');
     });
 
-    test('a skilling-scoped action buff is not', () => {
+    test('a skilling-scoped action buff applies too — the live game does this', () => {
         // The same wisdom type string a combat room would use — scope is the
         // only thing separating "combat XP bonus" from "milking XP bonus"
         installRooms({
@@ -61,7 +61,7 @@ describe('house room buffs entering combat', () => {
 
         const room = new HouseRoom('/house_rooms/library', 8);
 
-        expect(room.buffs).toHaveLength(0);
+        expect(room.buffs).toHaveLength(1);
     });
 
     test('global buffs pass regardless, because they are unscoped by design', () => {
@@ -89,6 +89,10 @@ describe('house room buffs entering combat', () => {
 
         const room = new HouseRoom('/house_rooms/mixed', 5);
 
-        expect(room.buffs.map((buff) => buff.typeHrid)).toEqual(['/buff_types/rare_find', '/buff_types/experience']);
+        expect(room.buffs.map((buff) => buff.typeHrid)).toEqual([
+            '/buff_types/wisdom',
+            '/buff_types/rare_find',
+            '/buff_types/experience',
+        ]);
     });
 });
