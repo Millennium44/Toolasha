@@ -278,12 +278,52 @@ export const SETTING_PRESETS = [
 ];
 
 /**
+ * The modes offered alongside the presets — and why they are a separate list.
+ *
+ * A preset is a sentence in the past tense: it flips a few hundred switches once
+ * and is then over, which is why `Restore` can undo it. Iron Cow is a sentence
+ * in the present tense: it stays on, keeps its own snapshot of every market
+ * setting, and force-disables them for as long as it is on. The two compose —
+ * you can be an Iron Cow *and* want the Combat bundle — so they sit in the same
+ * row of the settings panel, but a mode is drawn as a pressed-in chip rather
+ * than a button, because "on" is a thing it can be and a preset never is.
+ *
+ * Their ids live in `PRESET_EXCLUDED_IDS` for exactly that reason: a one-shot
+ * sweep must not flip a mode on its way past.
+ *
+ * @type {Array<{id: string, kind: string, settingId: string, label: string, icon: string,
+ *   description: string, activeNote: string}>}
+ */
+export const MODE_PRESETS = [
+    {
+        id: 'ironCow',
+        kind: 'mode',
+        settingId: 'ironCow_enabled',
+        label: 'Iron Cow Mode',
+        icon: '🐄',
+        description:
+            'Disable all market & profit features for a no-marketplace playthrough. Unlike a preset this stays ' +
+            'on until you turn it off, and the settings it owns stay locked while it is.',
+        activeNote: 'ACTIVE — market features locked.',
+    },
+];
+
+/**
  * Find a preset by id.
  * @param {string} presetId
  * @returns {Object|null}
  */
 export function getPreset(presetId) {
     return SETTING_PRESETS.find((preset) => preset.id === presetId) || null;
+}
+
+/**
+ * Find a mode by id.
+ * @param {string} modeId
+ * @returns {Object|null}
+ */
+export function getModePreset(modeId) {
+    return MODE_PRESETS.find((mode) => mode.id === modeId) || null;
 }
 
 /**

@@ -29,6 +29,7 @@ import {
     initCustomPriceOverrides,
 } from './custom-price-overrides.js';
 import {
+    MODE_PRESETS,
     SETTING_PRESETS,
     applyPreset,
     presetTargetIds,
@@ -38,6 +39,13 @@ import {
     writeCheckboxValues,
 } from './setting-presets.js';
 import { isSettingChanged, refreshRequiredIds } from './settings-inspection.js';
+import {
+    characterLabel,
+    describeIronCowCopy,
+    getCharacterGameModes,
+    recordCurrentCharacterGameMode,
+    selectIronCowTargets,
+} from './character-modes.js';
 import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -94,9 +102,15 @@ class SettingsUI {
         const savedCollapsed = await storage.get(COLLAPSED_GROUPS_KEY, 'settings', []);
         this.collapsedGroups = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
 
+        // The one moment the game says which mode this character plays. Nothing
+        // else on the account can be asked, so it is written down when heard —
+        // "Copy Settings to IC Characters" has no other way to know
+        recordCurrentCharacterGameMode();
+
         // Set up handler for character switching (ONLY if not already registered)
         if (!this.characterSwitchHandler) {
             this.characterSwitchHandler = () => {
+                recordCurrentCharacterGameMode();
                 this.handleCharacterSwitch();
             };
             dataManager.on('character_initialized', this.characterSwitchHandler);
@@ -376,14 +390,14 @@ class SettingsUI {
         // Add search box at the top
         this.addSearchBox(card);
 
-        // Add Iron Cow mode toggle banner
-        this.addIronCowToggle(card);
+        // Presets lead the page: somebody opening this panel for the first time
+        // wants "make it do the thing I play", not the first of four hundred
+        // switches. Iron Cow rides along as a mode chip in the same row
+        this.addPresetButtons(card);
 
         // Generate settings from config
         this.generateSettings(card);
 
-        // Add preset bundles, then the utility buttons they sit alongside
-        this.addPresetButtons(card);
         this.addUtilityButtons(card);
 
         // Add refresh notice
@@ -998,6 +1012,8 @@ class SettingsUI {
         const query = (this.searchQuery || '').toLowerCase().trim();
         const changedOnly = this.changedOnly;
 
+        this._markMatchingModeChips(query);
+
         if (!query && !changedOnly) {
             document.querySelectorAll('.toolasha-setting').forEach((setting) => {
                 setting.style.display = 'flex';
@@ -1034,13 +1050,32 @@ class SettingsUI {
     }
 
     /**
+     * Ring the mode chips a search names.
+     *
+     * A mode's schema entry is hidden — the chip is its control — so a search
+     * for "iron cow" would otherwise hide every row and point at nothing.
+     *
+     * @param {string} query - The lower-cased search text, empty to clear
+     */
+    _markMatchingModeChips(query) {
+        for (const mode of MODE_PRESETS) {
+            const chip = document.querySelector(`.toolasha-mode-chip[data-mode-id="${mode.id}"]`);
+            if (!chip) continue;
+            const matched = Boolean(query) && `${mode.label} ${mode.description}`.toLowerCase().includes(query);
+            chip.dataset.searchMatch = String(matched);
+            chip.style.outline = matched ? '2px solid #6b9fff' : '';
+            chip.style.outlineOffset = matched ? '2px' : '';
+        }
+    }
+
+    /**
      * Add the preset bundles — a whole configuration in one button.
      * @param {HTMLElement} container - Container element
      */
     addPresetButtons(container) {
         const wrapper = document.createElement('div');
         wrapper.className = 'toolasha-preset-buttons';
-        wrapper.style.cssText = 'margin-top: 16px;';
+        wrapper.style.cssText = 'margin: 0 0 16px 0;';
 
         const heading = document.createElement('div');
         heading.textContent = 'Presets';
@@ -1050,7 +1085,8 @@ class SettingsUI {
         const note = document.createElement('div');
         note.textContent =
             'A preset turns feature switches on and off in one go. Numbers, dropdowns and colours are left alone, ' +
-            'and Restore undoes the last one.';
+            'and Restore undoes the last one. A mode — the pressed-in chip — is not a one-off: it stays on ' +
+            'alongside whichever preset you pick.';
         note.style.cssText = 'font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4;';
         wrapper.appendChild(note);
 
@@ -1060,15 +1096,105 @@ class SettingsUI {
         for (const preset of SETTING_PRESETS) {
             const button = document.createElement('button');
             button.textContent = preset.label;
-            button.className = 'toolasha-utility-button';
+            button.className = 'toolasha-utility-button toolasha-preset-chip';
             button.title = preset.description;
             button.dataset.presetId = preset.id;
+            // A one-shot is an action, never a state: it has no pressed look and
+            // says so, so the one chip that *is* a state reads as different
+            button.dataset.presetKind = 'oneShot';
             button.addEventListener('click', () => this.handleApplyPreset(preset));
             row.appendChild(button);
         }
 
+        for (const mode of MODE_PRESETS) {
+            row.appendChild(this.createModeChip(mode));
+        }
+
         wrapper.appendChild(row);
         container.appendChild(wrapper);
+    }
+
+    /**
+     * A chip for a persistent mode — pressed in while the mode is on.
+     *
+     * Carries `data-setting-id` so the settings search and the command palette
+     * can find and jump to it exactly as they find an ordinary setting row: the
+     * mode's schema entry is hidden, so this chip *is* its control.
+     *
+     * @param {Object} mode - Entry from MODE_PRESETS
+     * @returns {HTMLButtonElement} The chip
+     */
+    createModeChip(mode) {
+        const chip = document.createElement('button');
+        chip.className = 'toolasha-utility-button toolasha-mode-chip';
+        chip.dataset.modeId = mode.id;
+        chip.dataset.presetKind = 'mode';
+        chip.dataset.settingId = mode.settingId;
+        chip.setAttribute('role', 'switch');
+        chip.title = mode.description;
+        chip.textContent = `${mode.icon} ${mode.label}`;
+
+        chip.addEventListener('click', () => this.handleToggleMode(mode, chip));
+        this._paintModeChip(chip, ironCowMode.isEnabled(), mode);
+        return chip;
+    }
+
+    /**
+     * Show whether a mode is currently on.
+     * @param {HTMLElement} chip - The mode's chip
+     * @param {boolean} enabled - Whether the mode is on
+     * @param {Object} mode - Entry from MODE_PRESETS
+     */
+    _paintModeChip(chip, enabled, mode) {
+        chip.setAttribute('aria-pressed', String(enabled));
+        chip.dataset.active = String(enabled);
+        chip.title = enabled ? `${mode.description} ${mode.activeNote}` : mode.description;
+        chip.style.cssText = enabled
+            ? 'background: linear-gradient(135deg, #7c5c20, #d4900a); border: 1px solid #ffc65c; ' +
+              'box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45); color: #fff9e8; font-weight: 700;'
+            : 'background: linear-gradient(135deg, #2a2a2a, #3a3a3a); border: 1px dashed #7c5c20; color: #c0c0c0;';
+    }
+
+    /**
+     * Turn a mode on or off. Modes stack with presets, so nothing else is
+     * touched — the force-disable machinery the mode owns does its own work.
+     *
+     * @param {Object} mode - Entry from MODE_PRESETS
+     * @param {HTMLElement} chip - Its chip, repainted afterwards
+     */
+    async handleToggleMode(mode, chip) {
+        if (chip.dataset.busy === 'true') return;
+        chip.dataset.busy = 'true';
+
+        try {
+            const enabling = !ironCowMode.isEnabled();
+            config.setSetting(mode.settingId, enabling);
+            if (enabling) {
+                await ironCowMode.enable();
+            } else {
+                await ironCowMode.disable();
+            }
+            this._paintModeChip(chip, enabling, mode);
+            this._syncIronCowSettingInputs();
+            this.applyDisabledByState();
+        } catch (error) {
+            console.error('[SettingsUI] Toggling a mode failed:', error);
+        } finally {
+            delete chip.dataset.busy;
+        }
+    }
+
+    /**
+     * Repaint every mode chip from the mode's own state.
+     *
+     * Run after any bulk write: a preset must never move a mode, and the chip
+     * saying so is how somebody can see that it did not.
+     */
+    _refreshModeChips() {
+        for (const mode of MODE_PRESETS) {
+            const chip = document.querySelector(`.toolasha-mode-chip[data-mode-id="${mode.id}"]`);
+            if (chip) this._paintModeChip(chip, ironCowMode.isEnabled(), mode);
+        }
     }
 
     /**
@@ -1094,6 +1220,9 @@ class SettingsUI {
         }
 
         this._syncAllCheckboxInputs();
+        // A preset is a one-shot and a mode is not: whichever modes were on
+        // before are still on, and the chips have to keep saying so
+        this._refreshModeChips();
         this.applyDisabledByState();
         this.applySettingsFilter();
         if (this.restoreButton) this.restoreButton.style.display = '';
@@ -1281,6 +1410,14 @@ class SettingsUI {
         syncBtn.className = 'toolasha-utility-button toolasha-sync-button';
         syncBtn.addEventListener('click', () => this.handleSync());
 
+        // The same copy, aimed only at the characters with no marketplace —
+        // whose settings are a different configuration on purpose
+        const syncIronCowBtn = document.createElement('button');
+        syncIronCowBtn.textContent = 'Copy Settings to IC Characters';
+        syncIronCowBtn.className = 'toolasha-utility-button toolasha-sync-button toolasha-sync-ironcow-button';
+        syncIronCowBtn.title = 'Copy these settings to the characters Toolasha has seen running an iron cow game mode';
+        syncIronCowBtn.addEventListener('click', () => this.handleSyncIronCow());
+
         // Fetch Latest Prices button
         const fetchPricesBtn = document.createElement('button');
         fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
@@ -1342,6 +1479,7 @@ class SettingsUI {
         })();
 
         buttonsDiv.appendChild(syncBtn);
+        buttonsDiv.appendChild(syncIronCowBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
         buttonsDiv.appendChild(allOffBtn);
         buttonsDiv.appendChild(restoreBtn);
@@ -1681,31 +1819,102 @@ class SettingsUI {
     }
 
     /**
+     * The characters this one could copy settings to.
+     * @returns {Promise<Array<{id: string, name: string}>>}
+     */
+    async _otherKnownCharacters() {
+        const knownCharacters = await this.config.getKnownCharacters();
+        const currentId = this._currentCharacterId();
+        return knownCharacters.filter((c) => c.id !== currentId);
+    }
+
+    /**
+     * @returns {string} The character being played, as a string id
+     */
+    _currentCharacterId() {
+        return String(dataManager.getCurrentCharacterId() || '');
+    }
+
+    /**
      * Handle sync settings to all characters
      */
     async handleSync() {
-        const knownCharacters = await this.config.getKnownCharacters();
-        const currentId = String(dataManager.getCurrentCharacterId() || '');
-        const others = knownCharacters.filter((c) => c.id !== currentId);
+        const others = await this._otherKnownCharacters();
 
         if (others.length === 0) {
             alert('You only have one character. Settings are already saved for this character.');
             return;
         }
 
+        this._openCopySettingsDialog({
+            title: 'Copy Settings To',
+            characters: others,
+            describe: (count) => `Settings copied to ${count} character${count !== 1 ? 's' : ''}!`,
+        });
+    }
+
+    /**
+     * Copy this character's settings to the iron cows only.
+     *
+     * Same mechanics as the all-characters copy — same dialog, same per-character
+     * checkboxes, the same whole-settings-map write — narrowed to the ids whose
+     * *recorded* game mode says iron cow. A character whose mode was never
+     * recorded is skipped and named rather than guessed at, and copying onto an
+     * iron cow composes with Iron Cow Mode exactly as a manual edit does: the
+     * values land, and that character's own force-disable pass owns them from
+     * the next time its mode is applied.
+     */
+    async handleSyncIronCow() {
+        const others = await this._otherKnownCharacters();
+        const modes = await getCharacterGameModes();
+        const { targets, unknown } = selectIronCowTargets(others, modes, this._currentCharacterId());
+
+        if (targets.length === 0) {
+            const names = unknown.map(characterLabel).join(', ');
+            alert(
+                unknown.length
+                    ? 'No character is known to be an iron cow yet.\n\n' +
+                          `Toolasha records a character's game mode when you play it, and has not seen ${names}. ` +
+                          'Log in on each one once and try again.'
+                    : 'No iron cow characters on this account.'
+            );
+            return;
+        }
+
+        this._openCopySettingsDialog({
+            title: 'Copy Settings To Iron Cows',
+            characters: targets,
+            note: unknown.length
+                ? `Skipped, game mode not recorded yet: ${unknown.map(characterLabel).join(', ')}`
+                : '',
+            describe: (count) => describeIronCowCopy(count, unknown),
+        });
+    }
+
+    /**
+     * The pick-your-characters dialog both copy buttons share.
+     *
+     * @param {Object} options - What to draw
+     * @param {string} options.title - Dialog heading
+     * @param {Array<{id: string, name: string}>} options.characters - Offered as checkboxes, all pre-ticked
+     * @param {string} [options.note] - A line under the list, for what was left out
+     * @param {Function} options.describe - Given the copied count, the message to show
+     */
+    _openCopySettingsDialog({ title: titleText, characters, note = '', describe }) {
         // Build a small modal with checkboxes for each character
         const overlay = document.createElement('div');
         overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:${PANEL_Z_CAP + 1};display:flex;align-items:center;justify-content:center;`;
 
         const dialog = document.createElement('div');
+        dialog.className = 'toolasha-copy-settings-dialog';
         dialog.style.cssText = `background:#1a1a2e;border:1px solid rgba(74,158,255,0.5);border-radius:10px;padding:20px;min-width:280px;font-family:'Segoe UI',sans-serif;color:#e0e0e0;`;
 
         const title = document.createElement('div');
         title.style.cssText = `font-size:14px;font-weight:700;color:#4a9eff;margin-bottom:12px;`;
-        title.textContent = 'Copy Settings To';
+        title.textContent = titleText;
         dialog.appendChild(title);
 
-        const checkboxes = others.map((char) => {
+        const checkboxes = characters.map((char) => {
             const row = document.createElement('label');
             row.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;`;
             const cb = document.createElement('input');
@@ -1713,12 +1922,20 @@ class SettingsUI {
             cb.checked = true;
             cb.value = char.id;
             const nameSpan = document.createElement('span');
-            nameSpan.textContent = char.name !== char.id ? char.name : `Character ${char.id}`;
+            nameSpan.textContent = characterLabel(char);
             row.appendChild(cb);
             row.appendChild(nameSpan);
             dialog.appendChild(row);
             return cb;
         });
+
+        if (note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = 'toolasha-copy-settings-note';
+            noteEl.style.cssText = 'font-size:11px;color:#aaa;margin-top:8px;line-height:1.4;max-width:320px;';
+            noteEl.textContent = note;
+            dialog.appendChild(noteEl);
+        }
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display:flex;gap:8px;margin-top:16px;justify-content:flex-end;`;
@@ -1752,11 +1969,13 @@ class SettingsUI {
             close();
             const result = await this.config.syncSettingsToAllCharacters(selected);
             if (result.success) {
-                alert(`Settings copied to ${result.count} character${result.count !== 1 ? 's' : ''}!`);
+                alert(describe(result.count));
             } else {
                 alert(`Failed to copy settings: ${result.error || 'Unknown error'}`);
             }
         });
+
+        return overlay;
     }
 
     /**
@@ -1903,6 +2122,7 @@ class SettingsUI {
         }
 
         this._syncAllCheckboxInputs();
+        this._refreshModeChips();
         this.applyDisabledByState();
         this.applySettingsFilter();
         if (restoreBtn) restoreBtn.style.display = '';
@@ -1924,6 +2144,8 @@ class SettingsUI {
         await clearBulkSnapshot();
 
         this._syncAllCheckboxInputs();
+        // Restore undoes the last bulk write, which never included a mode
+        this._refreshModeChips();
         this.applyDisabledByState();
         this.applySettingsFilter();
         if (restoreBtn) restoreBtn.style.display = 'none';
@@ -3081,100 +3303,6 @@ class SettingsUI {
         itemEl.appendChild(deleteBtn);
 
         return itemEl;
-    }
-
-    /**
-     * Add Iron Cow mode toggle banner above settings groups.
-     * @param {HTMLElement} container - The card/panel container
-     */
-    addIronCowToggle(container) {
-        const enabled = ironCowMode.isEnabled();
-
-        const wrapper = document.createElement('div');
-        wrapper.id = 'toolasha-iron-cow-toggle';
-        wrapper.style.cssText = `
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            margin: 0 0 12px 0;
-            padding: 10px 14px;
-            border-radius: 6px;
-            border: 1px solid ${enabled ? '#7c5c20' : '#3a3a3a'};
-            background: ${enabled ? '#2a1e0a' : '#1e1e1e'};
-            cursor: default;
-        `;
-
-        const emoji = document.createElement('span');
-        emoji.textContent = '🐄';
-        emoji.style.cssText = 'font-size: 22px; line-height: 1; flex-shrink: 0; margin-top: 2px;';
-
-        const textBlock = document.createElement('div');
-        textBlock.style.cssText = 'flex: 1; min-width: 0;';
-
-        const title = document.createElement('div');
-        title.style.cssText = `font-weight: 700; font-size: 14px; color: ${enabled ? '#d4900a' : '#c0c0c0'};`;
-        title.textContent = 'Iron Cow Mode';
-
-        const desc = document.createElement('div');
-        desc.style.cssText = 'font-size: 12px; color: #888; margin-top: 2px;';
-        desc.innerHTML = enabled
-            ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
-            : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
-
-        textBlock.appendChild(title);
-        textBlock.appendChild(desc);
-
-        // Toggle switch
-        const label = document.createElement('label');
-        label.style.cssText =
-            'display: flex; align-items: center; gap: 0; cursor: pointer; flex-shrink: 0; margin-top: 2px;';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = enabled;
-        checkbox.style.cssText = 'width: 36px; height: 20px; cursor: pointer;';
-
-        checkbox.addEventListener('change', async (e) => {
-            e.stopPropagation();
-            const enabling = e.target.checked;
-            config.setSetting('ironCow_enabled', enabling);
-            if (enabling) {
-                await ironCowMode.enable();
-            } else {
-                await ironCowMode.disable();
-            }
-            this._refreshIronCowToggleAppearance(wrapper, enabling);
-            this._syncIronCowSettingInputs();
-            this.applyDisabledByState();
-        });
-
-        label.appendChild(checkbox);
-
-        wrapper.appendChild(emoji);
-        wrapper.appendChild(textBlock);
-        wrapper.appendChild(label);
-
-        container.appendChild(wrapper);
-    }
-
-    /**
-     * Update the Iron Cow toggle banner appearance without re-creating it.
-     * @param {HTMLElement} wrapper - The banner wrapper element
-     * @param {boolean} enabled - Whether Iron Cow is now active
-     */
-    _refreshIronCowToggleAppearance(wrapper, enabled) {
-        wrapper.style.border = `1px solid ${enabled ? '#7c5c20' : '#3a3a3a'}`;
-        wrapper.style.background = enabled ? '#2a1e0a' : '#1e1e1e';
-
-        const title = wrapper.querySelector('div > div:first-child');
-        if (title) title.style.color = enabled ? '#d4900a' : '#c0c0c0';
-
-        const desc = wrapper.querySelector('div > div:last-child');
-        if (desc) {
-            desc.innerHTML = enabled
-                ? 'Disable all market &amp; profit features. <span style="color:#d4900a;font-weight:600;">ACTIVE — market features locked.</span>'
-                : 'Disable all market &amp; profit features for a no-marketplace playthrough.';
-        }
     }
 
     /**

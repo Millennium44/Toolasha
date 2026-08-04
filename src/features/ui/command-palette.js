@@ -257,18 +257,25 @@ function settingEntries() {
 }
 
 /**
- * Open the game's settings, switch to the Toolasha tab, and optionally search.
+ * Open the game's settings, switch to the Toolasha tab, and land on a setting.
  *
  * There is no programmatic way in — the panel is the game's, drawn from its own
- * navigation — so this clicks the same link a player would and then waits for
- * the tab this script injects to appear. Filling the search box is the cheap
- * half of deep-linking: it puts the setting on screen on its own without the
- * palette having to know anything about how the panel is laid out.
+ * navigation and mounted by React when that link is followed — so this clicks
+ * the same link a player would and then waits for the tab this script injects
+ * to appear, which is the moment the Toolasha panel exists in the DOM at all.
+ *
+ * Filling the search box narrows several hundred rows to one, but a filtered
+ * list is not the same as an answer: the row may sit inside a group the player
+ * collapsed months ago, or below the fold. So the three steps compose — filter,
+ * then expand whatever the row is inside, then scroll it to the middle and
+ * flash it — and they run in that order because each one changes what the next
+ * has to look at.
  *
  * @param {string} [search] - Text to put in the settings search box
+ * @param {string} [settingId] - Which row to expand to, scroll to and flash
  * @returns {Promise<void>}
  */
-async function openSettings(search = '') {
+async function openSettings(search = '', settingId = '') {
     try {
         const links = document.querySelectorAll('[class*="NavigationBar_minorNavigationLink"]');
         const settingsLink = [...links].find((link) => (link.textContent || '').trim().toLowerCase() === 'settings');
@@ -277,16 +284,101 @@ async function openSettings(search = '') {
         const tab = await waitFor('#toolasha-settings-tab');
         tab?.click();
 
-        if (!search) return;
-        const box = await waitFor('.toolasha-search-input');
-        if (!box) return;
+        if (!search && !settingId) return;
 
-        box.value = search;
-        box.dispatchEvent(new Event('input', { bubbles: true }));
-        box.focus();
+        if (search) {
+            const box = await waitFor('.toolasha-search-input');
+            if (box) {
+                box.value = search;
+                // The panel filters from its own input listener, so the list is
+                // already narrowed by the time this returns
+                box.dispatchEvent(new Event('input', { bubbles: true }));
+                box.focus();
+            }
+        }
+
+        if (settingId) await revealSetting(settingId);
     } catch (error) {
         console.error('[CommandPalette] Opening settings failed:', error);
     }
+}
+
+/** How long the flash stays up before fading — long enough to find, short enough not to nag */
+const FLASH_MS = 1400;
+const FLASH_FADE_MS = 260;
+
+/**
+ * Put one setting in front of the eye: expanded, on screen, and briefly lit.
+ *
+ * Matched on `data-setting-id` rather than the label, because that attribute is
+ * what both an ordinary setting row and the mode chips in the presets block
+ * carry — a setting that is drawn as a chip rather than a row is still findable
+ * by the same call.
+ *
+ * @param {string} settingId - The schema id of the setting to reveal
+ * @returns {Promise<HTMLElement|null>} The element revealed, or null
+ */
+export async function revealSetting(settingId) {
+    if (!settingId) return null;
+    const element = await waitFor(`[data-setting-id="${settingId}"]`);
+    if (!element) return null;
+
+    expandFor(element);
+    element.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    flash(element);
+    return element;
+}
+
+/**
+ * Open whatever is holding an element shut, for this visit only.
+ *
+ * The panel persists its collapsed groups when the *header* is clicked; nothing
+ * is clicked here, so a group opened to show one setting is collapsed again the
+ * next time the panel is drawn. That is deliberate — arriving from the palette
+ * should not silently rearrange a layout somebody chose.
+ *
+ * @param {HTMLElement} element - The row or chip being revealed
+ */
+function expandFor(element) {
+    const group = element.closest?.('.toolasha-settings-group');
+    if (!group) return;
+
+    group.classList.remove('collapsed');
+    // A search that did not match this row would have hidden it; the palette
+    // asked for this one by name, so it wins over the filter
+    if (group.style.display === 'none') group.style.display = 'block';
+    if (element.style.display === 'none') element.style.display = 'flex';
+}
+
+/**
+ * A brief highlight, then back to exactly the styles that were there.
+ *
+ * Inline rather than a class: the flash belongs to the palette, and the
+ * settings panel's stylesheet has no business knowing that something might
+ * arrive from a hotkey.
+ *
+ * @param {HTMLElement} element - What to light up
+ */
+function flash(element) {
+    const before = {
+        transition: element.style.transition,
+        boxShadow: element.style.boxShadow,
+        background: element.style.backgroundColor,
+    };
+
+    element.dataset.toolashaFlash = 'on';
+    element.style.transition = `box-shadow ${FLASH_FADE_MS}ms ease, background-color ${FLASH_FADE_MS}ms ease`;
+    element.style.boxShadow = `0 0 0 2px ${COLORS.accent}, 0 0 18px rgba(158, 196, 255, 0.45)`;
+    element.style.backgroundColor = 'rgba(158, 196, 255, 0.18)';
+
+    setTimeout(() => {
+        element.style.boxShadow = before.boxShadow;
+        element.style.backgroundColor = before.background;
+        setTimeout(() => {
+            element.style.transition = before.transition;
+            delete element.dataset.toolashaFlash;
+        }, FLASH_FADE_MS);
+    }, FLASH_MS);
 }
 
 /**
@@ -414,7 +506,13 @@ class CommandPalette {
 
         for (const setting of settingEntries()) {
             commands.push(
-                this._command('Setting', setting.label, setting.group, () => openSettings(setting.label), setting.group)
+                this._command(
+                    'Setting',
+                    setting.label,
+                    setting.group,
+                    () => openSettings(setting.label, setting.id),
+                    setting.group
+                )
             );
         }
 

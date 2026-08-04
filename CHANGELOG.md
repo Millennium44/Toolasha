@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Settings you can actually get to
+
+- **Picking a setting in Ctrl+K now opens settings itself**, expands the group it lives in (temporarily), scrolls to the row, and flashes it — composing with the search pre-fill.
+- **Presets lead the settings page**, and **Iron Cow Mode is now a chip among them** — a pressed-state toggle that stacks with the one-shot presets ("select it and others"); the old dedicated card is gone, mechanics unchanged.
+- **"Copy Settings to IC Characters"** beside the all-characters copy: game modes are recorded at each login, the copy targets known iron cows only, and characters whose mode is not yet known are skipped and named rather than guessed.
+
 ### The recorder answers back
 
 - **Record for a target**: set N fights or M minutes on the Sim Accuracy panel; recording stops at the fight boundary after the target (never mid-fight), the label counts progress, the last target persists per character.
