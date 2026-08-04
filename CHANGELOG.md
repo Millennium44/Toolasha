@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Missing-material tabs retire themselves
+
+- **Pinned marketplace tabs now watch your inventory**: partial acquisitions update the "Missing: N" badge, and when the needed count (at the exact enhancement level) is reached the tab flashes "✓ Acquired" and removes itself. Manual dismiss, "✕ All", and marketplace close all unsubscribe cleanly.
+
 ### Guild Shrines series in the networth chart
 
 - **The networth history chart gains a Guild Shrines line** with its own legend chip, tooltip row, and summary stats. Snapshots recorded before the field existed draw a gap, never a fake zero. (The snapshot recorder picks the field up in the storage-migration change alongside this one.)
