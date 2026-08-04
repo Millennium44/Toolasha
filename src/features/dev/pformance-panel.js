@@ -7,6 +7,8 @@
 import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { formatReport, reportData, gapsBetween, initTimeline, initSummary } from '../../utils/performance-report.js';
+import { downloadFile } from '../../utils/csv-export.js';
 
 function getPerformanceMonitor() {
     return window.Toolasha?.Core?.performanceMonitor;
@@ -34,6 +36,7 @@ class PFormancePanel {
         this.isCollapsed = false;
         this.featureSectionCollapsed = false;
         this.domSectionCollapsed = false;
+        this.startupCollapsed = false;
     }
 
     initialize() {
@@ -120,9 +123,18 @@ class PFormancePanel {
             this.contentEl.style.display = this.isCollapsed ? 'none' : '';
         });
 
+        const copyBtn = this._headerButton('⧉', () => this._exportReport('clipboard'));
+        copyBtn.title = 'Copy the startup trace — paste it to somebody who can read it';
+
+        const saveBtn = this._headerButton('⭳', () => this._exportReport('file'));
+        saveBtn.title = 'Save the startup trace as a file (text and JSON)';
+
         const closeBtn = this._headerButton('✕', () => this._removePanel());
         closeBtn.title = 'Close';
 
+        this.copyButton = copyBtn;
+        buttons.appendChild(copyBtn);
+        buttons.appendChild(saveBtn);
         buttons.appendChild(collapseBtn);
         buttons.appendChild(closeBtn);
 
@@ -220,8 +232,15 @@ class PFormancePanel {
         const domEntries = [];
 
         for (const [name, snap] of snapshots) {
-            if (name.startsWith('init:')) {
-                initEntries.push({ name: name.slice(5), totalMs: snap.duration });
+            if (name.startsWith('init:') || name.startsWith('bg:')) {
+                const background = name.startsWith('bg:');
+                initEntries.push({
+                    name: (background ? '⤵ ' : '') + name.slice(background ? 3 : 5),
+                    totalMs: snap.duration,
+                    startedAt: snap.startedAt ?? 0,
+                    background,
+                    parts: pm.getSpans(name),
+                });
             }
         }
 
@@ -235,6 +254,7 @@ class PFormancePanel {
         domEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
 
         this.contentEl.innerHTML = '';
+        this.contentEl.appendChild(this._createStartupSection(pm, snapshots));
         this.contentEl.appendChild(
             this._createSection('Feature Init', initEntries, this.featureSectionCollapsed, (v) => {
                 this.featureSectionCollapsed = v;
@@ -245,6 +265,140 @@ class PFormancePanel {
                 this.domSectionCollapsed = v;
             })
         );
+    }
+
+    /**
+     * The startup itself: where the time went before anything was drawn.
+     *
+     * A list of feature durations cannot show waiting, and waiting is usually
+     * most of a slow start — for IndexedDB to open, for the game's own data to
+     * arrive. The marks are what make those stretches visible.
+     * @private
+     */
+    _createStartupSection(pm, snapshots) {
+        const marks = pm.getMarks();
+        const timeline = initTimeline(snapshots);
+        const summary = initSummary(timeline);
+        const rows = [];
+
+        for (const mark of marks) {
+            rows.push({ name: mark.name, at: mark.at, kind: 'mark' });
+        }
+        for (const gap of gapsBetween(marks).slice(0, 3)) {
+            if (gap.ms < 100) continue;
+            rows.push({ name: `${gap.from} → ${gap.to}`, at: gap.ms, kind: 'gap' });
+        }
+
+        const section = document.createElement('div');
+        section.style.marginBottom = '8px';
+
+        const header = document.createElement('div');
+        Object.assign(header.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            padding: '4px 6px',
+            background: COLORS.headerBg,
+            borderRadius: '4px',
+            marginBottom: this.startupCollapsed ? '0' : '4px',
+            userSelect: 'none',
+        });
+        const label = document.createElement('span');
+        label.textContent = `${this.startupCollapsed ? '▶' : '▼'} Startup`;
+        Object.assign(label.style, { fontWeight: 'bold', fontSize: '12px', color: COLORS.accent });
+        const total = document.createElement('span');
+        total.textContent = `${(summary.span / 1000).toFixed(1)}s`;
+        Object.assign(total.style, { fontSize: '11px', color: COLORS.textDim });
+        header.appendChild(label);
+        header.appendChild(total);
+        header.addEventListener('click', () => {
+            this.startupCollapsed = !this.startupCollapsed;
+            this._updateContent();
+        });
+        section.appendChild(header);
+        if (this.startupCollapsed) return section;
+
+        const blurb = document.createElement('div');
+        blurb.textContent =
+            `${(summary.blocking / 1000).toFixed(1)}s of features held the page up, ` +
+            `${(summary.background / 1000).toFixed(1)}s ran after it drew`;
+        Object.assign(blurb.style, { padding: '2px 6px', fontSize: '11px', color: COLORS.textDim });
+        section.appendChild(blurb);
+
+        const table = document.createElement('table');
+        Object.assign(table.style, { width: '100%', borderCollapse: 'collapse', fontSize: '11px' });
+        const tbody = document.createElement('tbody');
+        for (const row of rows) {
+            const tr = document.createElement('tr');
+            if (row.kind === 'gap') tr.style.color = COLORS.warning;
+            tr.appendChild(this._cell(row.kind === 'gap' ? `waited  ${row.name}` : row.name, 'left'));
+            tr.appendChild(this._cell(`${(row.at / 1000).toFixed(2)}s`, 'right'));
+            tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        section.appendChild(table);
+        return section;
+    }
+
+    /**
+     * Hand the whole trace over, as text a person can read.
+     *
+     * The panel is a live view; a trace is evidence. Copying beats a screenshot
+     * because the two things that locate a slow start — when each feature began,
+     * and what the page was waiting for between them — are numbers, not pictures.
+     * @param {'clipboard'|'file'} destination - Where it goes
+     * @private
+     */
+    async _exportReport(destination) {
+        const pm = getPerformanceMonitor();
+        if (!pm) return;
+
+        const payload = {
+            marks: pm.getMarks(),
+            snapshots: pm.getSnapshots(),
+            spans: pm.spans,
+            stats: pm.getAllStats(),
+            environment: {
+                script: window.Toolasha?.version || 'unknown',
+                cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',
+                agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+                takenAt: new Date().toISOString(),
+            },
+        };
+        const text = formatReport(payload);
+
+        if (destination === 'file') {
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+            downloadFile(`toolasha-startup-${stamp}.txt`, text);
+            downloadFile(
+                `toolasha-startup-${stamp}.json`,
+                JSON.stringify(reportData(payload), null, 2),
+                'application/json'
+            );
+            this._flash('saved');
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(text);
+            this._flash('copied');
+        } catch (error) {
+            // A clipboard that refuses is not a reason to lose the trace
+            console.error('[PFormance] Copying the trace failed:', error);
+            console.log(text);
+            this._flash('in console');
+        }
+    }
+
+    /** @private */
+    _flash(message) {
+        if (!this.copyButton) return;
+        const original = this.copyButton.textContent;
+        this.copyButton.textContent = message;
+        clearTimeout(this._flashTimer);
+        this._flashTimer = setTimeout(() => {
+            if (this.copyButton) this.copyButton.textContent = original;
+        }, 1400);
     }
 
     _createSection(title, entries, collapsed, setCollapsed) {
@@ -305,7 +459,8 @@ class PFormancePanel {
 
         const thead = document.createElement('thead');
         const headRow = document.createElement('tr');
-        const columns = title === 'Feature Init' ? ['Name', 'Time (ms)'] : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
+        const columns =
+            title === 'Feature Init' ? ['Name', 'Started', 'Time (ms)'] : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
 
         for (const col of columns) {
             const th = document.createElement('th');
@@ -328,7 +483,9 @@ class PFormancePanel {
 
             if (title === 'Feature Init') {
                 row.appendChild(this._cell(entry.name, 'left'));
+                row.appendChild(this._cell((entry.startedAt / 1000).toFixed(1) + 's', 'right'));
                 row.appendChild(this._cell(entry.totalMs.toFixed(1), 'right'));
+                if (entry.background) row.style.color = COLORS.textDim;
             } else {
                 const callsPerSec = (entry.calls / ((getPerformanceMonitor()?.windowMs || 5000) / 1000)).toFixed(1);
                 row.appendChild(this._cell(entry.name, 'left'));
@@ -338,6 +495,16 @@ class PFormancePanel {
             }
 
             tbody.appendChild(row);
+
+            // What the six seconds were spent on, where anybody has said
+            for (const part of entry.parts || []) {
+                const partRow = document.createElement('tr');
+                partRow.style.color = COLORS.textDim;
+                partRow.appendChild(this._cell(`   └ ${part.part}`, 'left'));
+                partRow.appendChild(this._cell('', 'right'));
+                partRow.appendChild(this._cell(part.duration.toFixed(1), 'right'));
+                tbody.appendChild(partRow);
+            }
         }
         table.appendChild(tbody);
         section.appendChild(table);

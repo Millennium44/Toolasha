@@ -20,7 +20,7 @@ const Combat = window.Toolasha.Combat;
 const UI = window.Toolasha.UI;
 
 // Destructure core modules
-const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry } = Core;
+const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor } = Core;
 
 const { setupScrollTooltipDismissal } = Utils.dom;
 
@@ -966,6 +966,8 @@ if (isCombatSimulatorPage()) {
     // Start capturing client data from localStorage (for Combat Sim export)
     webSocketHook.captureClientDataFromLocalStorage();
 
+    performanceMonitor.mark('script:start');
+
     // Register all features from libraries
     registerFeatures();
 
@@ -978,9 +980,11 @@ if (isCombatSimulatorPage()) {
         try {
             // Initialize storage (opens IndexedDB)
             await storage.initialize();
+            performanceMonitor.mark('storage:open');
 
             // Initialize config (loads settings from storage)
             await config.initialize();
+            performanceMonitor.mark('config:loaded');
 
             // Add beforeunload handler to flush all pending writes
             window.addEventListener('beforeunload', () => {
@@ -1001,6 +1005,7 @@ if (isCombatSimulatorPage()) {
     featureRegistry.setupCharacterSwitchHandler();
 
     dataManager.on('character_initialized', (_data) => {
+        performanceMonitor.mark('character:data');
         // Skip full initialization during character switches
         // The character_switched handler in feature-registry already handles reinitialization
         if (_data._isCharacterSwitch) {
@@ -1017,6 +1022,7 @@ if (isCombatSimulatorPage()) {
                 // Reload config settings with character-specific data
                 await config.loadSettings();
                 config.applyColorSettings();
+                performanceMonitor.mark('settings:character');
 
                 // Initialize scroll simulator storage (character-specific)
                 await Combat.scrollSimulator.initialize().catch((error) => {
@@ -1029,6 +1035,7 @@ if (isCombatSimulatorPage()) {
                 });
 
                 await featureRegistry.initializeFeatures();
+                performanceMonitor.mark('startup:complete');
 
                 // Health check after initialization
                 setTimeout(async () => {

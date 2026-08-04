@@ -14,6 +14,8 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
+import { runInBackground } from '../../utils/background-work.js';
 
 const STORE_NAME = 'guildHistory';
 /** The guild leaderboard's own refresh cadence, as the panel states */
@@ -296,9 +298,19 @@ class GuildXPTracker {
             webSocketHook.off('guild_trial_signup_updated', this._boundOnTrialSignupUpdated);
         });
 
-        // If character data already loaded, initialize immediately
+        // If character data already loaded, load the history — but not here.
+        //
+        // This reads a guild's whole XP history out of IndexedDB, adds a
+        // reading to every member's series and writes the lot back. Nobody is
+        // looking at any of it yet, and every feature after this one in the
+        // registry was waiting for it: on a large guild it was six seconds of
+        // the page not starting.
+        //
+        // `ready` is what keeps that safe. A guild_updated arriving before the
+        // load finishes would otherwise append to an empty history and then be
+        // overwritten by the load, so the handlers wait on it.
         if (dataManager.characterData) {
-            await this._onCharacterInit(dataManager.characterData);
+            this.ready = runInBackground('guildXPTracker', () => this._onCharacterInit(dataManager.characterData));
         }
 
         this.initialized = true;
@@ -350,6 +362,7 @@ class GuildXPTracker {
         }
 
         // Load persisted histories
+        const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
         this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME, {});
         // Histories recorded before repeats were rejected end in two identical
         // readings, which reads as a rate of zero. Heal them on the way in.
@@ -359,6 +372,7 @@ class GuildXPTracker {
         if (this.ownGuildID) {
             this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME, {});
         }
+        endLoad();
 
         const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
 
@@ -377,17 +391,31 @@ class GuildXPTracker {
         }
 
         // Persist
+        const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'save history');
         await storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
         if (this.ownGuildID) {
             await storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
         }
+        endSave();
+    }
+
+    /**
+     * Wait for the history load, where it matters.
+     *
+     * An update that lands mid-load would otherwise write into an empty history
+     * and be overwritten the moment the real one arrives.
+     * @returns {Promise<void>}
+     */
+    async whenReady() {
+        if (this.ready) await this.ready;
     }
 
     /**
      * Handle guild_updated — record guild-level XP.
      * @param {Object} data - guild_updated message
      */
-    _onGuildUpdated(data) {
+    async _onGuildUpdated(data) {
+        await this.whenReady();
         const guild = data.guild;
         if (!guild) return;
 
@@ -411,6 +439,7 @@ class GuildXPTracker {
      * @param {Object} data - guild_characters_updated message
      */
     async _onMembersUpdated(data) {
+        await this.whenReady();
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
         this.rawSharableMap = sharableMap;
@@ -479,7 +508,8 @@ class GuildXPTracker {
      * Handle leaderboard_updated (category: guild) — record XP for all guilds on the guild leaderboard.
      * @param {Object} data - leaderboard_updated message
      */
-    _onLeaderboardUpdated(data) {
+    async _onLeaderboardUpdated(data) {
+        await this.whenReady();
         if (data.leaderboardCategory !== 'guild') return;
 
         const rows = data.leaderboard?.rows;

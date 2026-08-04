@@ -6,6 +6,32 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Two features were holding the whole start up for thirteen seconds
+
+Features are initialised one after another and each one is awaited, so anything a feature does inside `initialize()` is time every feature behind it spends waiting. That is right for wiring up listeners. It is wrong for what these two were doing:
+
+- **Guild XP tracker (6.5s)** — read a guild's entire XP history out of IndexedDB, added a reading to every member's series and wrote the lot back.
+- **Networth (6.3s)** — priced every item in the inventory and loaded the history chart's snapshots.
+
+Neither result was on screen yet, and the hundred-odd features after them in the registry were queued behind both. They now register their listeners and hand the heavy part to a background pass that runs once the page has drawn. The guild tracker's update handlers wait on that pass before touching the history, so an update arriving mid-load cannot be overwritten by it.
+
+### PFormance can now say _when_, not just _how long_
+
+A list of durations cannot show the two things that actually locate a slow start: when each feature began, and what the page was waiting for in between. Half of a slow start is usually waiting — for IndexedDB, for the game's own data — and waiting is in nobody's duration.
+
+- **A Startup section**, listing the marks on the way up (`script:start`, `storage:open`, `config:loaded`, `character:data`, `features:start`, `startup:complete`) with the moment each was reached, and calling out the longest stretches where nothing was being timed at all.
+- **Feature rows now carry a Started column**, so a six-second feature can be read as "and everything after it waited" rather than just "six seconds".
+- **Background work shows separately**, dimmed and marked `⤵`, because time spent after the page is usable is not time anybody waited.
+- **Slow features break into parts.** The two above are instrumented, so their rows now show _which call_ was the six seconds — `load history`, `save history`, `first calculation`, `history`.
+
+### Export the trace
+
+Two new buttons on the panel header: **⧉** copies the whole trace as text — environment, timeline, the gaps, the slowest features with their parts, and the busiest handlers — and **⭳** saves it as a text file plus a JSON one. Text because the point is that a person reads it, in a chat window, without tooling; JSON alongside for anyone who would rather sort it.
+
+### An option to take the thread setting literally
+
+Max threads is normally clamped to your core count, and an analysis runs at most six simulations at once — each holds its own copy of the game data, and the tab running the game needs a core too. **Combat Simulator: Ignore the thread caps** turns both clamps off for anyone who wants the number they typed.
+
 ### Fan out a single run, queue a batch — measured, not assumed
 
 The previous entry guessed that a long combat simulation, which already splits its hours across every worker, left no room to run candidates concurrently. That guess was wrong, and a benchmark with real workers and a game-data-sized payload says so plainly. On four workers, eight candidates:

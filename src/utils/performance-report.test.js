@@ -1,0 +1,155 @@
+/**
+ * A startup trace somebody can read, or send.
+ *
+ * The arithmetic is the part worth testing: which stretch of a slow start was
+ * work and which was waiting, and whether the report says so plainly enough to
+ * be pasted into a chat window and understood by someone who was not there.
+ */
+
+import { describe, test, expect } from 'vitest';
+import { gapsBetween, initTimeline, initSummary, formatReport, reportData } from './performance-report.js';
+
+const MARKS = [
+    { name: 'script:start', at: 0 },
+    { name: 'storage:open', at: 40 },
+    { name: 'character:data', at: 8200 },
+    { name: 'features:start', at: 8300 },
+    { name: 'features:done', at: 21000 },
+];
+
+const SNAPSHOTS = new Map([
+    ['init:guildXPTracker', { duration: 6525, startedAt: 8400 }],
+    ['init:networth', { duration: 6253, startedAt: 14925 }],
+    ['init:xpTracker', { duration: 66, startedAt: 21178 }],
+    ['bg:networth', { duration: 4000, startedAt: 21200 }],
+    ['dom:MarketFilter', { duration: 12, startedAt: 30000 }],
+]);
+
+describe('where the waiting went', () => {
+    test('the gaps between marks, longest first', () => {
+        // Durations only ever add up to the work; the answer to a slow start is
+        // often the stretch where nothing was being timed at all — here, eight
+        // seconds waiting for the game's own data to arrive
+        const gaps = gapsBetween(MARKS);
+
+        expect(gaps[0]).toMatchObject({ from: 'features:start', to: 'features:done', ms: 12700 });
+        expect(gaps[1]).toMatchObject({ from: 'storage:open', to: 'character:data', ms: 8160 });
+    });
+
+    test('marks out of order still describe the same timeline', () => {
+        const shuffled = [MARKS[3], MARKS[0], MARKS[4], MARKS[1], MARKS[2]];
+
+        expect(gapsBetween(shuffled).map((gap) => gap.ms)).toEqual(gapsBetween(MARKS).map((gap) => gap.ms));
+    });
+
+    test('one mark is no gaps rather than a NaN', () => {
+        expect(gapsBetween([{ name: 'only', at: 5 }])).toEqual([]);
+        expect(gapsBetween([])).toEqual([]);
+    });
+});
+
+describe('the feature timeline', () => {
+    test('is ordered by when things started, not by how long they took', () => {
+        // The question is what everything else was queued behind, and that is
+        // answered by order
+        const names = initTimeline(SNAPSHOTS).map((row) => row.name);
+
+        expect(names).toEqual(['init:guildXPTracker', 'init:networth', 'init:xpTracker', 'bg:networth']);
+    });
+
+    test('and leaves out what is not part of starting up', () => {
+        expect(initTimeline(SNAPSHOTS).some((row) => row.name.startsWith('dom:'))).toBe(false);
+    });
+
+    test('each row knows when it ended', () => {
+        const [first] = initTimeline(SNAPSHOTS);
+
+        expect(first.endedAt).toBe(8400 + 6525);
+    });
+
+    test('background work is marked as such', () => {
+        const background = initTimeline(SNAPSHOTS).filter((row) => row.background);
+
+        expect(background.map((row) => row.name)).toEqual(['bg:networth']);
+    });
+});
+
+describe('what the summary adds up', () => {
+    test('blocking and background are counted apart', () => {
+        // Time spent after the page is usable is not time the player waited
+        const summary = initSummary(initTimeline(SNAPSHOTS));
+
+        expect(summary.blocking).toBe(6525 + 6253 + 66);
+        expect(summary.background).toBe(4000);
+    });
+
+    test('the span runs to the last thing that finished', () => {
+        expect(initSummary(initTimeline(SNAPSHOTS)).span).toBe(21200 + 4000);
+    });
+
+    test('and the slowest are named', () => {
+        expect(initSummary(initTimeline(SNAPSHOTS)).slowest[0].name).toBe('init:guildXPTracker');
+    });
+});
+
+describe('the report itself', () => {
+    const spans = new Map([
+        [
+            'init:networth',
+            [
+                { part: 'recalculate', duration: 5800, startedAt: 15000 },
+                { part: 'exclusions', duration: 200, startedAt: 14930 },
+            ],
+        ],
+    ]);
+    const build = () =>
+        formatReport({
+            marks: MARKS,
+            snapshots: SNAPSHOTS,
+            spans,
+            stats: new Map([['dom:MarketFilter', { calls: 40, totalMs: 480, avgMs: 12, cpuPercent: 9.6 }]]),
+            environment: { cores: 8, script: '2.88.0' },
+        });
+
+    test('carries the environment, because the machine is half the answer', () => {
+        expect(build()).toContain('cores: 8');
+    });
+
+    test('names the slowest feature and when it started', () => {
+        const report = build();
+
+        expect(report).toContain('init:guildXPTracker');
+        expect(report).toContain('started 8400ms');
+    });
+
+    test('breaks a slow feature into the parts that were timed inside it', () => {
+        // "networth took six seconds" is a question; "recalculate took 5.8 of
+        // them" is the answer
+        expect(build()).toContain('recalculate');
+    });
+
+    test('and shows the gap nothing was being timed in', () => {
+        expect(build()).toContain('storage:open → character:data');
+    });
+
+    test('an empty monitor still produces a report rather than throwing', () => {
+        expect(() => formatReport()).not.toThrow();
+        expect(formatReport()).toContain('Toolasha startup trace');
+    });
+});
+
+describe('the machine-readable copy', () => {
+    test('is JSON-safe and carries the same timeline', () => {
+        const data = reportData({ marks: MARKS, snapshots: SNAPSHOTS, environment: { cores: 4 } });
+
+        expect(() => JSON.stringify(data)).not.toThrow();
+        expect(data.features[0].name).toBe('init:guildXPTracker');
+        expect(data.environment.cores).toBe(4);
+    });
+
+    test('and turns the maps into objects, which JSON can hold', () => {
+        const data = reportData({ spans: new Map([['init:x', [{ part: 'a', duration: 1 }]]]) });
+
+        expect(JSON.parse(JSON.stringify(data)).spans['init:x'][0].part).toBe('a');
+    });
+});
