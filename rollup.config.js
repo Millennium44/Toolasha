@@ -170,6 +170,41 @@ const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());
 const buildExternal = (globalsMap) => (id) => globalsMap.has(normalizeModuleId(id));
 
 // Custom plugin to import CSS as raw strings
+/**
+ * Embed the current fork-changelog section as a virtual module.
+ *
+ * The what's-new popup wants to show what changed, and CHANGELOG.md is where
+ * that is already written — maintaining a second copy in code would drift by
+ * the second release. The first "## Unreleased" section is what a dev build's
+ * user is actually receiving, so that is the slice that ships, capped so a
+ * long-lived branch cannot balloon the bundle.
+ */
+function changelogPlugin() {
+    const id = 'virtual:fork-changelog';
+    return {
+        name: 'fork-changelog',
+        resolveId(source) {
+            return source === id ? `\0${id}` : null;
+        },
+        load(moduleId) {
+            if (moduleId !== `\0${id}`) return null;
+            let section = '';
+            try {
+                const changelog = readFileSync('CHANGELOG.md', 'utf-8');
+                const start = changelog.search(/^## Unreleased/m);
+                if (start !== -1) {
+                    const rest = changelog.slice(start);
+                    const end = rest.slice(3).search(/^## /m);
+                    section = end === -1 ? rest : rest.slice(0, end + 3);
+                }
+            } catch {
+                section = '';
+            }
+            return `export default ${JSON.stringify(section.slice(0, 20000))};`;
+        },
+    };
+}
+
 function cssRawPlugin() {
     const suffix = '?raw';
     return {
@@ -275,6 +310,7 @@ const devConfig = {
     },
     plugins: [
         cssRawPlugin(),
+        changelogPlugin(),
         workerBundlePlugin(),
         resolve({
             browser: true,
@@ -415,6 +451,7 @@ const prodConfig = [
             },
             plugins: [
                 cssRawPlugin(),
+                changelogPlugin(),
                 workerBundlePlugin(),
                 resolve({
                     browser: true,

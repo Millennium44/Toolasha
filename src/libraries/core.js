@@ -13,7 +13,7 @@ import domObserver from '../core/dom-observer.js';
 import dataManager from '../core/data-manager.js';
 import featureRegistry from '../core/feature-registry.js';
 import settingsStorage from '../core/settings-storage.js';
-import { settingsGroups } from '../core/settings-schema.js';
+import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/settings-schema.js';
 import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../core/profile-manager.js';
 import tooltipObserver from '../core/tooltip-observer.js';
 import performanceMonitor from '../utils/performance-monitor.js';
@@ -38,6 +38,8 @@ toolashaRoot.Core = {
     featureRegistry,
     settingsStorage,
     settingsGroups,
+    getAllSettingIds,
+    getSettingDefinition,
     tooltipObserver,
     profileManager: {
         setCurrentProfile,

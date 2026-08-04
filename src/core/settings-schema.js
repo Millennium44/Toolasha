@@ -23,6 +23,24 @@ export const settingsGroups = {
         title: 'General Settings',
         icon: '⚙️',
         settings: {
+            whatsNew_showPopup: {
+                id: 'whatsNew_showPopup',
+                label: "Show what's new after an update",
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Once per new version, shows what changed and lists any new settings with live switches — ' +
+                    'so an update never quietly rearranges things.',
+            },
+            whatsNew_newDefaultsOff: {
+                id: 'whatsNew_newDefaultsOff',
+                label: 'New settings start turned off',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
+                    'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
+            },
             chatCommands: {
                 id: 'chatCommands',
                 label: 'Enable chat commands (/item, /wiki, /market)',
