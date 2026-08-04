@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Mid-run restock honesty, and the tooltip that would not die
+
+- **The lab planner stops suggesting purchases that cannot help**: mid-run, the shortfall line reads "4 shrouds needed · 0 left this run — restock applies to your NEXT run", priced against inventory and the tier you actually use. Turns out tiers matter: a Basic shroud caps at room level 50 and fails 2%/level above it, so the old cheapest-tier hint could suggest an item that would outright fail on your floor. Beacons and torches differ by tier too (reveal radius, preserve chance) — preferences follow what you hold.
+- **The room-forecast hover panel can no longer outlive the labyrinth**: a watchdog kills it the moment its anchor leaves the DOM, grid rebuilds and scrolling hide it immediately — no more refresh to dismiss a stuck tooltip.
+
 ### Five new tiles and layouts that follow what you're doing
 
 - **New overlay tiles** (all off by default): Queue Time Left (when do I go idle, ∞-aware), Enhancement Session (live attempts/spend), Next Goal Step, Task Tokens (board tokens + coin value — labeled as what the board pays, since no completion history exists to make a true rate), and Guild Trials pace (with honest data-age: "T7 · eta · 2h ago", going "stale" past the hour).

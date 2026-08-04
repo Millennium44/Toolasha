@@ -6,6 +6,8 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
+
 /** Gear the mocked loadoutSnapshot reports; mutated in place (see setGear) so
  *  every holder of the mocked default export sees updates */
 const gear = vi.hoisted(() => ({ snapshots: {} }));
@@ -1088,14 +1090,26 @@ describe('planning against the supplies actually held', () => {
         expect(labyrinthClearRate.getSupplyCounts()).toMatchObject({ torch: 43, shroud: 2, beacon: 3, known: true });
     });
 
-    test('a path needing more shrouds than are held says so instead of just counting', async () => {
+    // Path calculation only ever runs against a grid on screen — which is a
+    // run going, by the same test the supply reader uses (`roomData` present).
+    // So every one of these already exercises the mid-run case the bug report
+    // was about: a plan drawn while a run is active, whose "buy more" used to
+    // suggest a purchase the run itself could never benefit from.
+    test('a path needing more shrouds than are held says so without pricing a buy-now purchase', async () => {
         const status = buildGrid(4);
 
         await labyrinthClearRate.runPathCalculation();
 
         // Every unrevealed room on the route costs a shroud under the default
-        // ? mode, which is exactly how a two-shroud bag meets a five-shroud plan
-        expect(status.textContent).toMatch(/\d+ shrouds needed · 2 owned/);
+        // ? mode, which is exactly how a two-shroud bag meets a five-shroud plan.
+        // "left this run" replaces "owned" here — the pile in view is the run's,
+        // and mid-run nothing can be bought to grow it before the run ends.
+        expect(status.textContent).toMatch(/\d+ shrouds needed · 2 left this run/);
+        expect(status.textContent).toContain('restock applies to your NEXT run');
+        // Market is unloaded in this fixture, so there is no price to quote for
+        // the next run either — the point of this test is the absent buy-now
+        // price, not the presence of a next-run one
+        expect(status.textContent).not.toContain('at ask');
         expect(status.style.color).toBe('#ff8a80');
     });
 
@@ -1106,6 +1120,8 @@ describe('planning against the supplies actually held', () => {
         await labyrinthClearRate.runPathCalculation();
 
         expect(status.textContent).not.toContain('owned');
+        expect(status.textContent).not.toContain('left this run');
+        expect(status.textContent).not.toContain('restock');
         expect(status.style.color).toBe('');
     });
 
@@ -1117,25 +1133,72 @@ describe('planning against the supplies actually held', () => {
         expect(status.textContent).toContain('assumed for unrevealed rooms');
     });
 
-    test('a buy hint is added only when the market has a price', async () => {
+    test('mid-run, a priced shortfall prices the NEXT run — and the tier actually held, not the cheapest one', async () => {
         const status = buildGrid(4);
-        await labyrinthClearRate.runPathCalculation();
-        expect(status.textContent).not.toContain('at ask');
-
         market.loaded = true;
-        market.prices = { '/items/basic_shroud': { ask: 1000 } };
+        // Both tiers are priced; expert is what the bag holds (see beforeEach),
+        // so the hint must reach for that price and not the cheaper basic one
+        market.prices = { '/items/basic_shroud': { ask: 1000 }, '/items/expert_shroud': { ask: 5000 } };
+
         await labyrinthClearRate.runPathCalculation();
-        expect(status.textContent).toContain('basic shroud');
+
+        expect(status.textContent).toContain('restock applies to your NEXT run');
+        expect(status.textContent).toContain('for next run:');
+        expect(status.textContent).toContain('expert shroud');
         expect(status.textContent).toContain('at ask');
+        expect(status.textContent).not.toContain('basic shroud');
+        // The price sits after the "NEXT run" marker, not attached to the run's
+        // own shortfall as a buy-now figure the way it used to
+        expect(status.textContent.indexOf('restock applies')).toBeLessThan(status.textContent.indexOf('at ask'));
     });
 
-    test('four beacons set against three owned plans three and shows both numbers', () => {
+    test('mid-run with no price for the held tier, no cheaper tier is substituted', async () => {
+        const status = buildGrid(4);
+        market.loaded = true;
+        // Only the tier the bag does NOT hold has a price
+        market.prices = { '/items/basic_shroud': { ask: 1000 } };
+
+        await labyrinthClearRate.runPathCalculation();
+
+        expect(status.textContent).toContain('restock applies to your NEXT run');
+        expect(status.textContent).not.toContain('at ask');
+        expect(status.textContent).not.toContain('basic shroud');
+    });
+
+    test('mid-run, what the bag already holds counts toward the NEXT run and can clear the shortfall entirely', async () => {
+        const status = buildGrid(4);
+        // The run's own stock reads as zero (a payload that names the kind but
+        // carries none of it), while the bag — what the next run draws from —
+        // holds plenty. No price should be quoted when the bag alone covers it.
+        labyrinthClearRate._labyrinth = {
+            roomData: [[{ roomType: '/labyrinth_room_types/combat' }]],
+            supplyItemCountMap: { '/items/expert_shroud': 0 },
+        };
+        bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/expert_shroud', 999)];
+        market.loaded = true;
+        market.prices = { '/items/expert_shroud': { ask: 5000 } };
+
+        await labyrinthClearRate.runPathCalculation();
+
+        expect(status.textContent).toMatch(/\d+ shrouds needed · 0 left this run/);
+        expect(status.textContent).toContain('restock applies to your NEXT run');
+        expect(status.textContent).not.toContain('for next run');
+        expect(status.textContent).not.toContain('at ask');
+
+        labyrinthClearRate._labyrinth = null;
+    });
+
+    // Beacon planning runs against the same on-screen grid as the path
+    // calculator, so it is mid-run for the same reason: "owned" becomes
+    // "left this run", and the wording is the same fix as the shroud line's.
+    test('four beacons set against three left this run plans three and shows both numbers', () => {
         const status = buildGrid(6);
         const input = beaconInput(4);
 
         labyrinthClearRate.runBeaconCalculation();
 
-        expect(status.textContent).toContain('(4 set / 3 owned)');
+        expect(status.textContent).toContain('(4 set / 3 left this run)');
+        expect(status.textContent).not.toContain('owned');
         // The field keeps the request — it is the user's setting, not a reading
         // of the bag, and clamping it would lose it as beacons are spent
         expect(input.value).toBe('4');
@@ -1149,7 +1212,7 @@ describe('planning against the supplies actually held', () => {
 
         labyrinthClearRate.runBeaconCalculation();
 
-        expect(status.textContent).toBe('No beacons owned — 4 set / 0 owned');
+        expect(status.textContent).toBe('No beacons left this run — 4 set / 0 left this run');
         expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(0);
     });
 
@@ -1162,6 +1225,115 @@ describe('planning against the supplies actually held', () => {
 
         expect(status.textContent).not.toContain('owned');
         expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(4);
+    });
+});
+
+/**
+ * The restock helpers shared by the path and beacon planners: which tier a
+ * hint prices, and whether it prices the run in view or the next one.
+ *
+ * Exercised directly against fabricated `supplies` fixtures rather than
+ * through a running plan, so the out-of-run case gets real coverage too —
+ * `runPathCalculation`/`runBeaconCalculation` can only ever run against a grid
+ * on screen, which is a run going, so there is no way to drive them out of a
+ * run to check that the buy-now hint still appears there. These methods are
+ * exactly what those planners call, so testing them with `runActive: false`
+ * is testing the out-of-run path for real, not standing in for it.
+ */
+describe('the shared restock helpers', () => {
+    const suppliesFixture = (overrides) => ({
+        torch: 0,
+        shroud: 0,
+        beacon: 0,
+        byTier: { torch: {}, shroud: {}, beacon: {} },
+        known: true,
+        hrids: SUPPLY_HRIDS,
+        inventory: { shroud: 0, beacon: 0, known: true, byTier: { shroud: {}, beacon: {} } },
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        market.loaded = true;
+        market.prices = { '/items/basic_shroud': { ask: 1000 }, '/items/expert_shroud': { ask: 5000 } };
+    });
+
+    afterEach(() => {
+        market.loaded = false;
+        market.prices = {};
+    });
+
+    test('out of a run, a shortfall is still priced as a buy-now hint', () => {
+        const supplies = suppliesFixture({ shroud: 2 });
+        const note = labyrinthClearRate.shortfallRestockNote(supplies, 'shroud', 3);
+        expect(note).toContain('3×');
+        expect(note).toContain('at ask');
+    });
+
+    test('the held tier is priced, not the cheapest one', () => {
+        const supplies = suppliesFixture({
+            shroud: 2,
+            byTier: { torch: {}, shroud: { '/items/expert_shroud': 2 }, beacon: {} },
+        });
+        const note = labyrinthClearRate.shortfallRestockNote(supplies, 'shroud', 3);
+        expect(note).toContain('expert shroud');
+        expect(note).not.toContain('basic shroud');
+    });
+
+    test('with nothing held, the run’s own stock names the tier', () => {
+        // The pile in view — the run's stock, mid-run — holds an expert
+        // shroud even though the bag underneath it happens to hold none
+        const supplies = suppliesFixture({
+            shroud: 1,
+            byTier: { torch: {}, shroud: { '/items/expert_shroud': 1 }, beacon: {} },
+            inventory: { shroud: 0, beacon: 0, known: true, byTier: { shroud: {}, beacon: {} } },
+        });
+        expect(labyrinthClearRate.preferredSupplyTier(supplies, 'shroud')).toBe('/items/expert_shroud');
+    });
+
+    test('with the run empty, the bag still names a preferred tier', () => {
+        const supplies = suppliesFixture({
+            shroud: 0,
+            inventory: {
+                shroud: 4,
+                beacon: 0,
+                known: true,
+                byTier: { shroud: { '/items/expert_shroud': 4 }, beacon: {} },
+            },
+        });
+        expect(labyrinthClearRate.preferredSupplyTier(supplies, 'shroud')).toBe('/items/expert_shroud');
+    });
+
+    test('nothing indicating a preference falls back to cheapest-per-use', () => {
+        const supplies = suppliesFixture({ shroud: 0 });
+        expect(labyrinthClearRate.preferredSupplyTier(supplies, 'shroud')).toBeNull();
+        const note = labyrinthClearRate.shortfallRestockNote(supplies, 'shroud', 3);
+        expect(note).toContain('basic shroud');
+    });
+
+    test('mid-run, the next-run note counts the bag toward what is still needed', () => {
+        const supplies = suppliesFixture({
+            shroud: 0,
+            byTier: { torch: {}, shroud: {}, beacon: {} },
+            inventory: {
+                shroud: 1,
+                beacon: 0,
+                known: true,
+                byTier: { shroud: { '/items/expert_shroud': 1 }, beacon: {} },
+            },
+        });
+        // 4 needed, 1 already in the bag toward the next run: 3 short, priced
+        // against the tier the bag holds
+        const note = labyrinthClearRate.nextRunRestockNote(supplies, 'shroud', 4, 'shroud');
+        expect(note).toContain('3×');
+        expect(note).toContain('expert shroud');
+    });
+
+    test('mid-run, a bag that already covers the need prices nothing', () => {
+        const supplies = suppliesFixture({
+            shroud: 0,
+            inventory: { shroud: 10, beacon: 0, known: true, byTier: { shroud: {}, beacon: {} } },
+        });
+        expect(labyrinthClearRate.nextRunRestockNote(supplies, 'shroud', 4, 'shroud')).toBe('');
     });
 });
 
@@ -1485,5 +1657,164 @@ describe('the live clear chance on the attempt bar', () => {
         runTicks([[0.38, 0.68]]);
 
         expect(liveText()).toContain('Clear 63%');
+    });
+});
+
+/**
+ * The hover preview — "Shadow Archer / Clear Chance 49.5% ±5.1 / …" — that
+ * used to survive leaving the labyrinth grid. It hid itself on `mouseleave`
+ * only, and a badge that gets torn out of the DOM (React re-rendering the
+ * panel, this script's own overlay teardown running, the run itself ending)
+ * never fires that event on its way out — nothing does, for a node no longer
+ * in the document. It floated over whatever replaced the grid until the page
+ * was refreshed.
+ *
+ * Combat rows, skilling rows and the grid's own corner badges all bind
+ * through the one `bindPreview`/`showPreview` pair (`decorateBadge` for the
+ * first two, `appendTileBadge` for the third), so the fix — and the tests
+ * below — cover all three from one mechanism rather than one apiece.
+ */
+describe('the hover preview does not outlive its anchor', () => {
+    const PREVIEW_ID = 'mwi-labyrinth-preview';
+    const skillResult = () => ({
+        type: 'skilling',
+        skillHrid: '/skills/milking',
+        roomLevel: 10,
+        clearChance: 0.9,
+        expectedSeconds: 5,
+    });
+    const combatResult = () => ({
+        type: 'combat',
+        monsterHrid: '/monsters/imp',
+        roomLevel: 20,
+        clearChance: 0.5,
+        expectedSeconds: 12,
+    });
+    const isShown = () => document.getElementById(PREVIEW_ID)?.style.display === 'block';
+    const hover = (el) => el.dispatchEvent(new MouseEvent('mouseenter', { clientX: 10, clientY: 10 }));
+
+    // What this describe block is about is whether the preview outlives its
+    // anchor, not whether its content renders correctly — that belongs to
+    // renderPreviewContent's own coverage. Stubbing it keeps these fixtures
+    // to the handful of fields bindPreview/showPreview actually touch instead
+    // of every field the full skilling/combat card formats.
+    let renderSpy;
+    beforeEach(() => {
+        renderSpy = vi.spyOn(labyrinthClearRate, 'renderPreviewContent').mockImplementation((el) => {
+            el.textContent = 'preview';
+        });
+    });
+
+    afterEach(() => {
+        renderSpy.mockRestore();
+        labyrinthClearRate.hidePreview();
+        document.getElementById(PREVIEW_ID)?.remove();
+        document.body.innerHTML = '';
+    });
+
+    test('a normal hover shows on mouseenter and hides on mouseleave, as before', () => {
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+
+        hover(badge);
+        expect(isShown()).toBe(true);
+
+        badge.dispatchEvent(new MouseEvent('mouseleave'));
+        expect(isShown()).toBe(false);
+    });
+
+    test('a skip-threshold row badge (skilling or combat) orphans cleanly once the watchdog checks', () => {
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        hover(badge);
+        expect(isShown()).toBe(true);
+
+        // The panel switched away — the badge is gone, but nothing fired
+        // mouseleave to tell the preview that
+        badge.remove();
+        expect(isShown()).toBe(true);
+
+        labyrinthClearRate._previewWatchdogTick();
+        expect(isShown()).toBe(false);
+        expect(document.getElementById(PREVIEW_ID).style.display).toBe('none');
+    });
+
+    test('the grid tile corner badge — bound from a separate call site — orphans the same way', () => {
+        // appendTileBadge binds the preview to the tile cell itself, not a
+        // child badge span, which is the second of the two bindPreview sites
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        labyrinthClearRate.bindPreview(cell, combatResult());
+        hover(cell);
+        expect(isShown()).toBe(true);
+
+        cell.remove();
+        labyrinthClearRate._previewWatchdogTick();
+        expect(isShown()).toBe(false);
+    });
+
+    test('a watchdog tick finding the anchor still connected leaves a live preview alone', () => {
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        hover(badge);
+
+        labyrinthClearRate._previewWatchdogTick();
+        expect(isShown()).toBe(true);
+    });
+
+    test('a watchdog tick with no preview showing does nothing (no anchor, no crash)', () => {
+        expect(() => labyrinthClearRate._previewWatchdogTick()).not.toThrow();
+        expect(isShown()).toBe(false);
+    });
+
+    test('injectOverlays hides an orphan-prone preview immediately, ahead of the watchdog', () => {
+        // injectOverlays is what actually tears the skip-threshold badges
+        // down on every grid rebuild; hiding there means the common case is
+        // instant and the watchdog is only ever the fallback
+        document.body.innerHTML = '<table><tr><td class="LabyrinthPanel_skipThreshold"></td></tr></table>';
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        hover(badge);
+        expect(isShown()).toBe(true);
+
+        labyrinthClearRate.injectOverlays();
+        expect(isShown()).toBe(false);
+    });
+
+    test('onLabyrinthUpdated hides a stale preview even when the message carries no roomData', () => {
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        hover(badge);
+        expect(isShown()).toBe(true);
+
+        // A run ending is exactly the kind of update that carries no grid —
+        // injectOverlays is never reached, so this has to be the one that hides it
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: null });
+        expect(isShown()).toBe(false);
+
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate.roomData = null;
+    });
+
+    test('scrolling hides an open preview', () => {
+        labyrinthClearRate._previewScrollHandler = () => labyrinthClearRate.hidePreview();
+        window.addEventListener('scroll', labyrinthClearRate._previewScrollHandler, { capture: true, passive: true });
+
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        hover(badge);
+        expect(isShown()).toBe(true);
+
+        window.dispatchEvent(new Event('scroll'));
+        expect(isShown()).toBe(false);
+
+        window.removeEventListener('scroll', labyrinthClearRate._previewScrollHandler, { capture: true });
+        labyrinthClearRate._previewScrollHandler = null;
     });
 });

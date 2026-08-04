@@ -28,7 +28,9 @@ import {
     bestOwnedTier,
     clampToOwned,
     describeSupplyNeed,
+    remainingWord,
     estimateRestockCost,
+    restockCandidates,
 } from './labyrinth-supplies.js';
 
 const inInventory = (itemHrid, count) => ({
@@ -309,6 +311,36 @@ describe('saying what is missing', () => {
     test('an unreadable inventory reports the need without a verdict on it', () => {
         expect(describeSupplyNeed(13, 0, 'shroud', false)).toEqual({ text: '13 shrouds', short: 0, over: false });
     });
+
+    /**
+     * The reported bug's other half: "0 owned" read as an invitation to buy
+     * more when the pile in view is the run's own stock, which no purchase
+     * can grow before the run ends. Same shortfall, different word for what
+     * is held — `runActive` is the only thing that changes.
+     */
+    describe('mid-run, "owned" is not the word', () => {
+        test('a run short of shrouds reads as needed-versus-left-this-run', () => {
+            expect(describeSupplyNeed(4, 0, 'shroud', true, true)).toEqual({
+                text: '4 shrouds needed · 0 left this run',
+                short: 4,
+                over: true,
+            });
+        });
+
+        test('out of a run the word is unchanged, and is the default when unspecified', () => {
+            expect(describeSupplyNeed(13, 2, 'shroud', true, false).text).toBe('13 shrouds needed · 2 owned');
+            expect(describeSupplyNeed(13, 2, 'shroud')).toEqual({
+                text: '13 shrouds needed · 2 owned',
+                short: 11,
+                over: true,
+            });
+        });
+
+        test('remainingWord names the same word on its own', () => {
+            expect(remainingWord(true)).toBe('left this run');
+            expect(remainingWord(false)).toBe('owned');
+        });
+    });
 });
 
 describe('what the missing ones would cost', () => {
@@ -331,5 +363,39 @@ describe('what the missing ones would cost', () => {
     test('says nothing when nothing is missing, or when the market is not loaded', () => {
         expect(estimateRestockCost(0, SUPPLY_HRIDS.shroud, market({ '/items/basic_shroud': { ask: 5 } }))).toBeNull();
         expect(estimateRestockCost(3, SUPPLY_HRIDS.shroud, { isLoaded: () => false })).toBeNull();
+    });
+});
+
+/**
+ * Which tier a restock hint should even be allowed to quote — the fix for the
+ * other half of the report: "buying basic doesn't help, I use expert."
+ */
+describe('picking which tier a restock hint prices', () => {
+    test('a preferred tier is priced on its own — nothing cheaper is substituted', () => {
+        expect(restockCandidates(SUPPLY_HRIDS.shroud, '/items/expert_shroud')).toEqual(['/items/expert_shroud']);
+    });
+
+    test('a preferred tier absent from the candidate list is not invented', () => {
+        expect(restockCandidates(SUPPLY_HRIDS.shroud, '/items/mythical_shroud')).toEqual(SUPPLY_HRIDS.shroud);
+    });
+
+    test('no preference falls back to the full worst-first list, cheapest-per-use', () => {
+        expect(restockCandidates(SUPPLY_HRIDS.shroud, null)).toEqual(SUPPLY_HRIDS.shroud);
+        expect(restockCandidates(SUPPLY_HRIDS.shroud)).toEqual(SUPPLY_HRIDS.shroud);
+    });
+
+    test('a preference changes which tier estimateRestockCost quotes', () => {
+        const market = (prices) => ({ isLoaded: () => true, getPrice: (hrid) => prices[hrid] || null });
+        const prices = { '/items/basic_shroud': { ask: 1000 }, '/items/expert_shroud': { ask: 5000 } };
+
+        const cheapest = estimateRestockCost(4, restockCandidates(SUPPLY_HRIDS.shroud, null), market(prices));
+        expect(cheapest).toMatchObject({ itemHrid: '/items/basic_shroud' });
+
+        const preferred = estimateRestockCost(
+            4,
+            restockCandidates(SUPPLY_HRIDS.shroud, '/items/expert_shroud'),
+            market(prices)
+        );
+        expect(preferred).toMatchObject({ itemHrid: '/items/expert_shroud', total: 20000 });
     });
 });

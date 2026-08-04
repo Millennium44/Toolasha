@@ -62,6 +62,8 @@ import {
     clampToOwned,
     describeSupplyNeed,
     estimateRestockCost,
+    restockCandidates,
+    remainingWord,
 } from './labyrinth-supplies.js';
 import { outcomeMethods } from './labyrinth-outcomes.js';
 import { simCacheMethods, DEFAULT_SIM_PRECISION_PCT } from './labyrinth-sim-cache.js';
@@ -78,6 +80,8 @@ const BADGE_CLASS = 'mwi-labyrinth-clear';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
+/** How often the orphan check runs — slow on purpose, see `_previewWatchdogTick` */
+const PREVIEW_WATCHDOG_MS = 500;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
 const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
@@ -130,6 +134,9 @@ class LabyrinthClearRate {
         this._replay = null;
         this._replayRunning = false;
         this.battleHandler = null;
+        this._previewAnchor = null;
+        this._previewWatchdog = null;
+        this._previewScrollHandler = null;
     }
 
     initialize() {
@@ -240,6 +247,19 @@ class LabyrinthClearRate {
         this._editClickHandler = (e) => this.onSkipEditClick(e);
         document.addEventListener('click', this._editClickHandler, true);
 
+        // The preview follows the cursor via mousemove, which scrolling does
+        // not fire — without this a scroll leaves it pinned over content it
+        // no longer points at. Capture phase so it fires even when the
+        // labyrinth panel's own inner area is what scrolled, not the window.
+        this._previewScrollHandler = () => this.hidePreview();
+        window.addEventListener('scroll', this._previewScrollHandler, { capture: true, passive: true });
+
+        // Catches what the two direct hidePreview() calls above cannot: the
+        // grid disappearing with no further labyrinth_updated message to
+        // react to at all, e.g. navigating from the grid to the Labyrinth
+        // info tab mid-run. See `_previewWatchdogTick`.
+        this._previewWatchdog = setInterval(() => this._previewWatchdogTick(), PREVIEW_WATCHDOG_MS);
+
         this.isInitialized = true;
     }
 
@@ -322,6 +342,14 @@ class LabyrinthClearRate {
         this._fight = null;
         this.hidePreview();
         document.getElementById(PREVIEW_ID)?.remove();
+        if (this._previewWatchdog) {
+            clearInterval(this._previewWatchdog);
+            this._previewWatchdog = null;
+        }
+        if (this._previewScrollHandler) {
+            window.removeEventListener('scroll', this._previewScrollHandler, { capture: true });
+            this._previewScrollHandler = null;
+        }
         document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
         document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
@@ -447,6 +475,11 @@ class LabyrinthClearRate {
     }
 
     onLabyrinthUpdated(data) {
+        // Whatever badge a preview is anchored to belongs to the grid this
+        // message is about to rebuild (or has just left behind, if the run
+        // ended) — same reasoning as `injectOverlays`, for the update that
+        // carries no roomData and so never reaches it
+        this.hidePreview();
         // Kept whole, not just the grid: the run's supply stock rides this
         // message, and the readout has to be able to look for it
         this._labyrinth = data.labyrinth ?? null;
@@ -2412,8 +2445,9 @@ class LabyrinthClearRate {
      * against the count you had two floors ago is exactly the plan that told
      * the user to spend thirteen shrouds they did not have.
      *
-     * @returns {Object} readSupplyCounts shape, plus `label`, `source`, `stale`
-     *   and the hrids it was read with
+     * @returns {Object} readSupplyCounts shape, plus `label`, `source`, `stale`,
+     *   `runActive`, the hrids it was read with, and the raw `inventory`
+     *   reading a plan for the *next* run has to be checked against
      */
     getSupplyCounts() {
         try {
@@ -2426,13 +2460,42 @@ class LabyrinthClearRate {
 
             const run = runActive ? readRunSupplyCounts(labyrinth, hrids) : null;
             const dom = runActive && !run?.known ? readSupplyRowCounts(document, hrids) : null;
+            // Kept alongside the chosen reading, not just folded into it: a
+            // mid-run plan is checked against the run's own stock, but a plan
+            // for the *next* run — and the restock hint that names one — has to
+            // be checked against the bag regardless of which pile is in view
             const inventory = readSupplyCounts(dataManager.getInventory(), hrids);
 
-            return { ...chooseSupplyCounts({ runActive, run, dom, inventory }), hrids };
+            return { ...chooseSupplyCounts({ runActive, run, dom, inventory }), hrids, inventory, runActive };
         } catch (error) {
             console.error('[LabyrinthClearRate] Reading labyrinth supplies failed:', error);
-            return { ...readSupplyCounts(null), label: 'held', hrids: resolveSupplyHrids(null) };
+            const inventory = readSupplyCounts(null);
+            return { ...inventory, label: 'held', hrids: resolveSupplyHrids(null), inventory, runActive: false };
         }
+    }
+
+    /**
+     * Which tier a restock hint should quote: whichever tier is actually in
+     * use, so the hint names something the user would recognise as theirs
+     * rather than whatever happens to be cheapest.
+     *
+     * Tried against the pile in view first — this run's own stock, mid-run,
+     * which is the closest thing to "what tier am I using right now" this
+     * script can read — then against the bag, which still says something
+     * when the run's stock of a kind has hit zero and can no longer name a
+     * tier. Null when neither held anything of the kind, which sends the
+     * caller back to cheapest-per-use.
+     *
+     * @param {Object} supplies - getSupplyCounts() result
+     * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+     * @returns {string|null} Item hrid
+     */
+    preferredSupplyTier(supplies, kind) {
+        return (
+            bestOwnedTier(supplies, kind, supplies.hrids) ||
+            bestOwnedTier(supplies.inventory, kind, supplies.hrids) ||
+            null
+        );
     }
 
     /**
@@ -2525,16 +2588,50 @@ class LabyrinthClearRate {
     }
 
     /**
-     * A one-line "and this is what it would cost you" note, or ''.
+     * "and this is what it would cost you" — the price tag alone, no leading
+     * separator, so callers can place it in or out of a sentence as needed.
      * @param {number} short - How many are missing
-     * @param {string[]} hrids - Candidate item hrids, worst tier first
+     * @param {string[]} hrids - Candidate item hrids, as `restockCandidates` ordered them
      * @returns {string}
      */
     restockNote(short, hrids) {
         const cost = estimateRestockCost(short, hrids, marketAPI);
         if (!cost) return '';
         const name = String(cost.itemHrid).replace('/items/', '').replace(/_/g, ' ');
-        return ` · ${short}× ${name} ≈ ${formatKMB(cost.total)} at ask`;
+        return `${short}× ${name} ≈ ${formatKMB(cost.total)} at ask`;
+    }
+
+    /**
+     * The out-of-run restock note: a shortfall against the pile in view,
+     * priced against whichever tier is actually in use.
+     * @param {Object} supplies - getSupplyCounts() result
+     * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+     * @param {number} short - How many are missing
+     * @returns {string} '' or e.g. '4× expert shroud ≈ 196.0K at ask'
+     */
+    shortfallRestockNote(supplies, kind, short) {
+        const hrids = restockCandidates(supplies.hrids?.[kind], this.preferredSupplyTier(supplies, kind));
+        return this.restockNote(short, hrids);
+    }
+
+    /**
+     * What the *next* run would still need to buy, once the bag is counted
+     * toward it — the bag is exactly what a new run draws its starting stock
+     * from, which is why this checks the shortfall against `supplies.inventory`
+     * rather than the pile a mid-run plan uses.
+     *
+     * @param {Object} supplies - getSupplyCounts() result
+     * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+     * @param {number} needed - What the current plan calls for
+     * @param {string} noun - Singular noun, e.g. 'shroud'
+     * @returns {string} '' or e.g. '4× expert shroud ≈ 196.0K at ask'
+     */
+    nextRunRestockNote(supplies, kind, needed, noun) {
+        const invCount = supplies.inventory?.[kind] ?? 0;
+        const invKnown = supplies.inventory?.known ?? false;
+        const nextRun = describeSupplyNeed(needed, invCount, noun, invKnown);
+        if (!nextRun.over) return '';
+        return this.shortfallRestockNote(supplies, kind, nextRun.short);
     }
 
     async runPathCalculation() {
@@ -2692,18 +2789,40 @@ class LabyrinthClearRate {
             // torch bill; shrouds are only the rooms it plans to skip.
             const supplies = this.getSupplyCounts();
             const torches = describeSupplyNeed(path.torches, supplies.torch, 'room', supplies.known);
-            const shrouds = describeSupplyNeed(path.shrouds, supplies.shroud, 'shroud', supplies.known);
+            const shrouds = describeSupplyNeed(
+                path.shrouds,
+                supplies.shroud,
+                'shroud',
+                supplies.known,
+                supplies.runActive
+            );
             const assumed = path.shrouds - confirmedShrouds;
             const splitNote =
                 shrouds.over && assumed > 0
                     ? ` (${confirmedShrouds} confirmed, ${assumed} assumed for unrevealed rooms — the ? mode)`
                     : '';
-            const buyNote = shrouds.over ? this.restockNote(shrouds.short, supplies.hrids.shroud) : '';
+            // Mid-run, buying does not help the run you are in — the game only
+            // hands a run its supplies at the moment it starts — so the number
+            // that is short gets no price beside it, only a pointer at the run
+            // it *would* help, and a next-run price counting what the bag
+            // already has toward it. Out of a run, the bag can still be topped
+            // up right now, so the price stands as it always has.
+            let shroudNote = '';
+            if (shrouds.over) {
+                if (supplies.runActive) {
+                    const nextRunBuy = this.nextRunRestockNote(supplies, 'shroud', path.shrouds, 'shroud');
+                    shroudNote =
+                        ' — restock applies to your NEXT run' + (nextRunBuy ? ` · for next run: ${nextRunBuy}` : '');
+                } else {
+                    const buyNote = this.shortfallRestockNote(supplies, 'shroud', shrouds.short);
+                    shroudNote = buyNote ? ` · ${buyNote}` : '';
+                }
+            }
             const torchNote = torches.over ? ` · only ${supplies.torch} torches for ${path.torches} entries` : '';
 
             this.setTileStatus(
-                `Path: ${plural(path.torches, 'room')} · ${shrouds.text} · ${plural(path.chests.size, 'chest')}` +
-                    `${unknownText}${splitNote}${torchNote}${buyNote}`,
+                `Path: ${plural(path.torches, 'room')} · ${shrouds.text}${shroudNote} · ${plural(path.chests.size, 'chest')}` +
+                    `${unknownText}${splitNote}${torchNote}`,
                 shrouds.over || torches.over
             );
         } catch (error) {
@@ -2784,7 +2903,8 @@ class LabyrinthClearRate {
 
         this.clearBeaconOverlays();
         if (budget?.clamped && count === 0) {
-            this.setTileStatus(`No beacons owned — ${requested} set / 0 owned`, true);
+            const word = remainingWord(supplies.runActive);
+            this.setTileStatus(`No beacons ${word} — ${requested} set / 0 ${word}`, true);
             return;
         }
         const plan = computeBeaconPlan(revealed, cols, count);
@@ -2830,7 +2950,9 @@ class LabyrinthClearRate {
         const minNote = count === 0 ? ' (min)' : '';
         // A clamped run drew fewer beacons than were asked for, and says so
         // where the count is stated rather than in a footnote
-        const ownedNote = budget?.clamped ? ` (${budget.requested} set / ${budget.owned} owned)` : '';
+        const ownedNote = budget?.clamped
+            ? ` (${budget.requested} set / ${budget.owned} ${remainingWord(supplies.runActive)})`
+            : '';
         const parts = [
             `Beacons: ${plan.beacons.length}${minNote}${ownedNote}`,
             `reveals ${plan.revealedNew} new rooms`,
@@ -2844,11 +2966,26 @@ class LabyrinthClearRate {
         // The minimum-chain mode is not clamped on the way in, so the shortfall
         // only shows up here — an answer of "you need 5" is still the answer
         // when 3 are held, it just is not one you can act on yet
-        const needed = describeSupplyNeed(plan.beacons.length, supplies.beacon, 'beacon', supplies.known);
+        const needed = describeSupplyNeed(
+            plan.beacons.length,
+            supplies.beacon,
+            'beacon',
+            supplies.known,
+            supplies.runActive
+        );
         if (needed.over) {
-            parts.push(`${supplies.beacon} owned`);
-            const buyNote = this.restockNote(needed.short, supplies.hrids.beacon);
-            if (buyNote) parts.push(buyNote.replace(/^ · /, ''));
+            parts.push(`${supplies.beacon} ${remainingWord(supplies.runActive)}`);
+            // Same rule as the shroud shortfall in the path summary: mid-run, a
+            // price beside the run's own shortfall would be a price for
+            // something buying more cannot fix right now
+            if (supplies.runActive) {
+                parts.push('restock applies to your NEXT run');
+                const nextRunBuy = this.nextRunRestockNote(supplies, 'beacon', plan.beacons.length, 'beacon');
+                if (nextRunBuy) parts.push(`for next run: ${nextRunBuy}`);
+            } else {
+                const buyNote = this.shortfallRestockNote(supplies, 'beacon', needed.short);
+                if (buyNote) parts.push(buyNote);
+            }
         }
         this.setTileStatus(parts.join(' · '), needed.over || !!budget?.clamped);
     }
@@ -3037,6 +3174,11 @@ class LabyrinthClearRate {
      */
     injectOverlays() {
         const cells = document.querySelectorAll('[class*="LabyrinthPanel_skipThreshold"]');
+        // Whatever badge the preview is anchored to is about to be torn down
+        // (or already has been, if this call is the one finding zero cells
+        // left) — hide it before it can start showing over whatever replaced
+        // the table, rather than leaving that to the watchdog's next tick
+        this.hidePreview();
         if (!cells.length) return;
 
         document.querySelectorAll(`.${BADGE_CLASS}`).forEach((el) => el.remove());
@@ -3185,7 +3327,7 @@ class LabyrinthClearRate {
         const show = (e) => {
             const res = badge.__mwiPreviewResult;
             if (!res) return;
-            this.showPreview(res, e.clientX, e.clientY);
+            this.showPreview(res, e.clientX, e.clientY, badge);
         };
         badge.addEventListener('mouseenter', show);
         badge.addEventListener('mousemove', show);
@@ -3205,7 +3347,7 @@ class LabyrinthClearRate {
             if (!res) return;
             e.preventDefault();
             e.stopPropagation();
-            this.showPreview(res, e.clientX, e.clientY);
+            this.showPreview(res, e.clientX, e.clientY, badge);
             this._armPreviewDismiss(badge);
         });
     }
@@ -3278,14 +3420,22 @@ class LabyrinthClearRate {
 
     /**
      * Show the rich preview for a skilling/enhancing result near the cursor
+     *
+     * @param {Object} result - What to render
+     * @param {number} x - Cursor X
+     * @param {number} y - Cursor Y
+     * @param {HTMLElement} [anchor] - The badge or tile the preview is for,
+     *   remembered so the watchdog can tell an orphaned preview from a live
+     *   one — see `_previewWatchdogTick`
      */
-    showPreview(result, x, y) {
+    showPreview(result, x, y, anchor = null) {
         const el = this.ensurePreviewEl();
         if (this._previewFor !== result) {
             this.renderPreviewContent(el, result);
             this._appendTouchAction(el, result);
             this._previewFor = result;
         }
+        this._previewAnchor = anchor || null;
         // Interactive only on touch, where it holds the open-in-sim action; a
         // hover tooltip that catches the pointer would fire mouseleave on the
         // badge under it and dismiss itself
@@ -3312,10 +3462,30 @@ class LabyrinthClearRate {
         const el = document.getElementById(PREVIEW_ID);
         if (el) el.style.display = 'none';
         this._previewFor = null;
+        this._previewAnchor = null;
         if (this._previewDismiss) {
             document.removeEventListener('pointerdown', this._previewDismiss, true);
             this._previewDismiss = null;
         }
+    }
+
+    /**
+     * The orphan this whole mechanism exists to catch: a preview shown for a
+     * badge that React then yanked out from under it — leaving the tab, a
+     * floor changing, the panel switching — none of which fire `mouseleave`
+     * on a node that is simply gone. `mouseleave` only ever fires for a
+     * pointer that is still moving over a document the node is still part of;
+     * a removed node gets no event at all, hover or otherwise.
+     *
+     * Cheap on purpose: this only ever does work while a preview is visible,
+     * and the check itself is a single `isConnected` read — no querying, no
+     * MutationObserver watching the whole subtree for a departure it could
+     * instead just ask about on a slow, bounded interval.
+     */
+    _previewWatchdogTick() {
+        const el = document.getElementById(PREVIEW_ID);
+        if (!el || el.style.display === 'none') return;
+        if (this._previewAnchor && !this._previewAnchor.isConnected) this.hidePreview();
     }
 
     /**
