@@ -31,6 +31,7 @@ import networkAlert from '../features/market/network-alert.js';
 import profitCalculator from '../features/market/profit-calculator.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import marketplaceShortcuts from '../features/market/marketplace-shortcuts.js';
+import sellQueue from '../features/market/sell-queue.js';
 import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 
 // Networth/Economy features
@@ -101,6 +102,7 @@ toolashaRoot.Market = {
     equipmentSavings,
     equipmentSavingsPanel,
     marketplaceShortcuts,
+    sellQueue,
     milkywayMarketLink,
 };
 
