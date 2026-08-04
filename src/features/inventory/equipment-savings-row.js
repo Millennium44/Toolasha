@@ -201,6 +201,36 @@ export function isCrafting(itemHrid) {
     return Boolean(state.targets[itemHrid]?.craft);
 }
 
+/**
+ * Whether this target is being saved for along the ladder rather than the
+ * direct run.
+ *
+ * The two paths cost different amounts and take different lengths of time, so
+ * which one you have decided on is what the bar should be filling against —
+ * saving towards a figure you have already ruled out is the same as having no
+ * figure. Stored on the target, since one piece can be worth the risk and
+ * another not.
+ *
+ * @param {string} itemHrid - The target
+ * @returns {boolean}
+ */
+export function isLaddering(itemHrid) {
+    return state.targets[itemHrid]?.mode === 'ladder';
+}
+
+/**
+ * Cost this target along the ladder instead of the direct run, or back again.
+ * @param {string} itemHrid - The target
+ */
+export function toggleLaddering(itemHrid) {
+    const target = state.targets[itemHrid];
+    if (!target) return;
+
+    if (target.mode === 'ladder') delete target.mode;
+    else target.mode = 'ladder';
+    persist();
+}
+
 /** @param {string} itemHrid - Craft it rather than buy it, or stop */
 export function toggleCrafting(itemHrid) {
     const target = state.targets[itemHrid];
@@ -630,9 +660,19 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         // that way, so costing it that way would report a number no player
         // would ever pay. The run to price is the cheapest of the protect-from
         // choices, which is the same search the enhancement display makes.
+        //
+        // From +2 whatever the run starts at, not from the start level. A
+        // protect-from below where you begin is not a wasted setting: the first
+        // failure drops you *below* the start, and from there the protection is
+        // what stops the next one sending you to +0. Bounding the search at the
+        // start level forbade the cheap strategies to exactly the runs that
+        // start high — so a +5 → +7 run could only protect from +5 while a
+        // +4 → +7 run was allowed to protect from +4, and the card reported
+        // that starting lower was cheaper. It is the same 2-to-target search
+        // the enhancement tooltip and the standalone library make.
         const strategies = [0];
         if (protection.price > 0) {
-            for (let from = Math.max(2, startLevel); from <= targetLevel; from++) strategies.push(from);
+            for (let from = 2; from <= targetLevel; from++) strategies.push(from);
         }
 
         let best = null;
@@ -837,15 +877,27 @@ function costOf(itemHrid, enhancementLevel) {
                 // Enhancing the piece you are wearing has nothing to trade in:
                 // it is the same piece, and it goes on your back either way
                 const tradeIn = worn?.itemHrid === itemHrid || noSell ? 0 : wornBid;
+                const direct = Math.max(0, run + baseAsk - tradeIn);
+                // The safe way round the same run, priced beside it
+                const ladder = ladderOption(itemHrid, enhancementLevel);
+                // The mode stays stored even when the ladder is not currently
+                // there to climb — sell the spare and the card falls back to
+                // the direct run rather than to no figure, and buying another
+                // spare puts it back the way you left it
+                const laddering = Boolean(ladder) && isLaddering(itemHrid);
+
                 return {
-                    cost: Math.max(0, run + baseAsk - tradeIn),
+                    cost: laddering ? ladder.cost : direct,
+                    mode: laddering ? 'ladder' : 'direct',
+                    // Whichever one is not the basis is still worth a line, so
+                    // the card always carries both
+                    direct,
                     ask: 0,
                     crafted: false,
                     enhancing: true,
                     fromLevel: held ?? 0,
                     ownsBase: held !== null,
-                    // The safe way round the same run, priced beside it
-                    ladder: ladderOption(itemHrid, enhancementLevel),
+                    ladder,
                     recipe: null,
                 };
             }
@@ -950,6 +1002,8 @@ export function watchedTargets() {
             fromLevel,
             ownsBase: holdsBase,
             ladder,
+            direct,
+            mode,
         } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
@@ -966,6 +1020,9 @@ export function watchedTargets() {
             ownsBase: Boolean(holdsBase),
             fromLevel: fromLevel || 0,
             ladder: ladder || null,
+            direct: direct ?? null,
+            // Which of the two paths every figure below is counted along
+            mode: mode || 'direct',
             recipe,
             noSell: targetNoSell(itemHrid),
             ownNoSell: target.noSell !== undefined,
@@ -1300,6 +1357,14 @@ function headline(target) {
     const cost = document.createElement('span');
     cost.textContent = target.cost === null ? 'no price' : formatKMB(target.cost);
     cost.style.color = target.cost === null ? ROW_COLORS.bad : ROW_COLORS.neutral;
+    // Which run the headline is quoting, because the two figures differ by a
+    // lot and a number with no path attached is the wrong one half the time
+    cost.title =
+        target.mode === 'ladder'
+            ? `Along the ladder, from your +${target.ladder?.fromLevel ?? 0} copy.`
+            : target.enhancing
+              ? `The direct run, from your +${target.fromLevel} copy.`
+              : '';
 
     const eta = document.createElement('span');
     eta.textContent = target.affordable ? 'Affordable' : target.seconds === null ? '--' : shortDuration(target.seconds);
@@ -1309,7 +1374,16 @@ function headline(target) {
         fontSize: '11px',
     });
 
-    line.append(icon, name, cost, eta);
+    line.append(icon, name);
+    if (target.mode === 'ladder') {
+        const tag = document.createElement('span');
+        tag.textContent = 'ladder';
+        Object.assign(tag.style, { color: ROW_COLORS.accent, fontSize: '10px', flex: '0 0 auto' });
+        tag.title = 'This one is being costed along the ladder rather than the direct run.';
+        line.appendChild(tag);
+    }
+    line.append(cost, eta);
+
     card.append(line, progressBar(target.fraction));
     return card;
 }
@@ -1520,16 +1594,28 @@ function targetCard(target) {
         });
         perTarget.appendChild(craft);
     }
+
+    // Only where there are two paths to choose between. A target with no second
+    // copy and nowhere to get one has one run and no decision to offer.
+    if (target.enhancing && target.ladder) perTarget.appendChild(ladderButton(target));
     card.appendChild(perTarget);
 
     if (target.enhancing) {
-        card.appendChild(
-            priceLine(
-                `Enhance +${target.fromLevel} \u2192 +${target.enhancementLevel}`,
-                target.cost === null ? 'cannot model' : formatWithSeparator(Math.round(target.cost)),
-                target.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold
-            )
-        );
+        // The chosen path leads in gold and the other follows in blue, so the
+        // two rows swap places rather than the card losing one of them: the
+        // comparison is the whole point, and only which one the bar is filling
+        // against changes
+        if (target.mode === 'ladder' && target.ladder) {
+            card.appendChild(ladderLine(target.ladder, target.enhancementLevel, true));
+        } else {
+            card.appendChild(
+                priceLine(
+                    `Enhance +${target.fromLevel} \u2192 +${target.enhancementLevel}`,
+                    target.cost === null ? 'cannot model' : formatWithSeparator(Math.round(target.cost)),
+                    target.cost === null ? ROW_COLORS.bad : ROW_COLORS.gold
+                )
+            );
+        }
         card.appendChild(
             priceLine(
                 target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
@@ -1537,7 +1623,8 @@ function targetCard(target) {
                 'rgba(232, 236, 245, 0.55)'
             )
         );
-        if (target.ladder) card.appendChild(ladderLine(target.ladder, target.enhancementLevel));
+        if (target.mode === 'ladder' && target.ladder) card.appendChild(directLine(target));
+        else if (target.ladder) card.appendChild(ladderLine(target.ladder, target.enhancementLevel));
     } else if (target.crafted) {
         card.appendChild(recipeLines(target));
         if (target.recipe?.actionHrid) card.appendChild(missingMatsButton(target.recipe.actionHrid));
@@ -1735,10 +1822,14 @@ function priceLine(label, value, color, title = '') {
  * @param {number} targetLevel - Where the ladder is climbing to
  * @returns {HTMLElement}
  */
-function ladderLine(ladder, targetLevel) {
-    const label = ladder.spare
-        ? `Ladder: enhance your +${ladder.fromLevel} copy instead`
-        : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'} instead`;
+function ladderLine(ladder, targetLevel, chosen = false) {
+    const label = chosen
+        ? ladder.spare
+            ? `Ladder: enhance your +${ladder.fromLevel} copy`
+            : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'}`
+        : ladder.spare
+          ? `Ladder: enhance your +${ladder.fromLevel} copy instead`
+          : `Ladder: enhance a fresh +0 ${ladder.crafted ? 'you make' : 'you buy'} instead`;
 
     const why =
         `Takes a second copy to +${targetLevel} and leaves the one you are wearing alone, so a failed ` +
@@ -1749,7 +1840,73 @@ function ladderLine(ladder, targetLevel) {
           `${formatWithSeparator(Math.round(ladder.base))} for a +0 ` +
           `${ladder.crafted ? 'at the crafting bench' : 'at the market or shop'}, plus the run.`;
 
-    return priceLine(label, formatWithSeparator(Math.round(ladder.cost)), ROW_COLORS.accent, why + how);
+    return priceLine(
+        label,
+        formatWithSeparator(Math.round(ladder.cost)),
+        chosen ? ROW_COLORS.gold : ROW_COLORS.accent,
+        why + how + (chosen ? '\nThe bar and the countdown are filling against this one.' : '')
+    );
+}
+
+/**
+ * The direct run, said as the alternative when the ladder is the one chosen.
+ *
+ * The mirror of `ladderLine`: whichever path the card is not counting along is
+ * still worth its figure, because the point of the pair is the comparison. The
+ * direct run is dearer in risk rather than in coins — it is your equipped piece
+ * on the table — which is the thing the tooltip has to say, since the number
+ * alone makes it look like the obvious choice.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function directLine(target) {
+    const label = target.ownsBase
+        ? `Direct: enhance your +${target.fromLevel} copy instead`
+        : 'Direct: buy a +0 and enhance that instead';
+
+    const why =
+        `Takes the best copy you own to +${target.enhancementLevel}. Cheaper, because it starts higher — and ` +
+        'a failed attempt comes out of the piece you are wearing.';
+
+    return priceLine(label, formatWithSeparator(Math.round(target.direct ?? 0)), ROW_COLORS.accent, why);
+}
+
+/**
+ * The switch between costing the direct run and costing the ladder.
+ *
+ * A per-target button beside the sell and craft switches, because it is the
+ * same kind of decision they are: it changes what every figure on the card
+ * means, and it differs piece by piece. Named for the state it is in rather
+ * than for what pressing it does, as its neighbours are.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function ladderButton(target) {
+    const on = target.mode === 'ladder';
+
+    const button = document.createElement('button');
+    button.textContent = on ? 'Ladder' : 'Direct';
+    button.dataset.targetLadder = target.itemHrid;
+    Object.assign(button.style, {
+        background: on ? 'rgba(100, 149, 237, 0.22)' : 'rgba(255, 255, 255, 0.06)',
+        border: `1px solid ${on ? '#6495ed' : 'rgba(255, 255, 255, 0.12)'}`,
+        borderRadius: '3px',
+        color: on ? '#6495ed' : 'rgba(232, 236, 245, 0.55)',
+        cursor: 'pointer',
+        fontSize: '10px',
+        padding: '1px 7px',
+    });
+    button.title =
+        'Which run the cost, the bar and the countdown are counted along.\n' +
+        'Direct takes the best copy you own, risking the one you are wearing.\n' +
+        'Ladder takes a second copy up instead and leaves your kit alone.';
+    button.addEventListener('click', () => {
+        toggleLaddering(target.itemHrid);
+        equipmentSavingsPanel.render();
+    });
+    return button;
 }
 
 /**

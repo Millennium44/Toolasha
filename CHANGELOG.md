@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The watch card stops overcharging, and laddering becomes a mode
+
+- **Real pricing bug fixed**: the equipment-watch cost search refused protection strategies below your start level, so a +5→+7 run was quoted at 214M when the genuinely cheapest protected run (protect from +2) costs 84M — a ~2.5× overquote that also made laddering from a lower copy look cheaper than it is. Every path now searches the full strategy set; starting higher is never dearer.
+- **A Direct / Ladder button on each watch target**: pick which run the headline cost, progress bar, and ETA track (per target, persisted); the other path stays visible as the secondary line, and a vanished spare falls back to direct while remembering your choice.
+
 ### Iron Bell Farming
 
 - **"Iron Cow Farm" is now "Iron Bell Farming"** everywhere you can see it (panel, settings, command palette); stored data and settings survive the rename untouched.
