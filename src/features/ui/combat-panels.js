@@ -38,6 +38,7 @@ import {
     resetDamageTracker,
 } from '../../features/combat/damage-tracker.js';
 import { takenBreakdown } from '../../features/combat/damage-taken-tracker.js';
+import { recordControlState, toggleRecording } from '../../features/combat/combat-record-control.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -754,26 +755,19 @@ export const dpsPanel = new CombatPanel({
         // Two panels disagreeing cannot be settled from two screenshots — both
         // are summaries of a fight that has already happened. A recording can be
         // replayed offline until it is understood, and then kept as a fixture.
-        const recorder = window.Toolasha?.Combat?.combatRecorder;
-        if (!recorder) return;
+        // Same button as the one on Sim Accuracy, driving the same recorder —
+        // see combat-record-control.js for why the decision is not made here
+        const state = recordControlState();
+        if (!state) return;
 
-        const status = recorder.recordingStatus();
-        if (recorder.isRecording()) {
-            bar.appendChild(
-                toggleButton(`Recording ${status.ticks}…`, true, () => {
-                    recorder.stopRecording();
-                    recorder.downloadRecording();
-                    dpsPanel.refresh();
-                })
-            );
-        } else {
-            bar.appendChild(
-                toggleButton(status.ticks ? `Record (${status.ticks} kept)` : 'Record', false, () => {
-                    recorder.startRecording();
-                    dpsPanel.refresh();
-                })
-            );
-        }
+        const button = toggleButton(state.label, state.recording, () => {
+            // Handed over as a file: a recording started from here exists to be
+            // replayed somewhere else
+            toggleRecording({ download: true });
+            dpsPanel.refresh();
+        });
+        button.title = state.title;
+        bar.appendChild(button);
     },
     draw: (body) => {
         const breakdown = damageBreakdown();

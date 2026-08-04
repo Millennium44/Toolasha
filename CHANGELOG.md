@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Companion privacy, a Record button where it belongs, and mooket hygiene
+
+- **Toolasha no longer names the companion script anywhere** — registry examples, marker strings, hold-provider docs, and old changelog entries now use neutral wording; the public registries the companion calls are unchanged.
+- **The Sim Accuracy panel gains its own Record button**, driving the same recorder as the Damage panel (labels reflect a recording started anywhere; stopping here feeds the accuracy check instead of downloading).
+- **Mooket never receives test-server data**: the one outbound path (the order-book WebSocket) is suppressed on test.milkywayidle.com with a one-time console note; fetching/display unaffected.
+
 ### Build Score opens something now
 
 - **New Build Score breakdown panel**: the tile double-clicks (and an own-profile "breakdown" link on the score popup) into the full tree — Combat and Skiller scores with Equipment / Abilities / House / Guild Shrine sections sorted largest-first, each unfolding to its per-item, per-ability, per-room, per-buff lines, a top-5 contributors list, and the header finally saying what the number means: what the kit would cost to buy, in millions.
@@ -192,7 +198,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **Alchemy verified against the official rules**: most math confirmed correct; fixed the under-level penalty missing from coinify/decompose and the coinify fee inconsistency; all fee formulas share one helper.
 - **Sim accuracy panel**: replay your recorded fights against the simulator's prediction, deviations flagged only beyond statistical noise.
 - **Welcome Back gains a value row** (net gold, coins/hr, XP/hr at your pricing mode); account/sync failures surface as actionable toasts; gist errors classify by status code; and a data-shape canary catches game updates that restructure client data.
-- Enhancement cost variance (validated against Monte Carlo) now feeds the flip finder's new enhance-to-sell rows.
+- Enhancement cost variance (validated against Monte Carlo) now feeds a companion script's enhance-to-sell rows.
 
 ### Upstream ports (verdict-gated) and honest task damage
 
@@ -205,7 +211,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - **Upgrade advisor fixes**: real noise estimates on combat rows (the budget planner's significance guard finally works), profitable swaps rank as "pays for itself" instead of dividing by zero, every row shows its cost basis, unpriced items get their own box, drinks/teas and community buffs and trinkets are now rankable, and combat-level time accounts for the levels raising your rate.
 - **Task system fixes**: auto-reroll badges on a real rule (board-median rating vs amortized reroll cost), bulk reroll can't destroy above-median tasks and matches protection's cap semantics exactly, retired tasks feed a payoff history instead of being deleted, statistics show net-of-reroll spend, partial tasks advertise remaining value, token EV reads the actual task shop.
 - **Enhancing: your rates, not pro rates.** The shipped manual defaults (level 140, +13 Celestial enhancer, ultra tea, full +10 gear) no longer stand in for you — every field seeds from your detected stats unless you edited it, unearned achievement bonuses are gone, and a "manual params" tag shows wherever overrides apply. Plus: resumed sessions count attempts correctly, earrings get their 5× multiplier, the Chance Cape's success bonus counts in manual mode, mirror breakdowns follow the real optimal path, one shared price rule across tooltip/XPH/tracker, prediction and measurement share one time base, and the worker copies share the one Markov implementation (fixing a level-19 crash and negative failure probabilities).
-- **Craft-to-sell**: a Toolasha adapter serves your true per-character craft costs to the flip finder's new craft rows.
+- **Craft-to-sell**: a Toolasha adapter serves your true per-character craft costs to a companion script's craft rows.
 - **Alchemy fixes**: equipment rare/essence find counted (was silently always zero), tea speed bonus applied (six TODO stubs unified).
 - **~1,200 new tests** across previously untested modules — gathering/production/alchemy profit math with hand-computed fixtures, networth valuation, listing-age interpolation, dungeon statistics, chat parsing, worker pool, websocket dedup, and more. Suite now 4,044 tests.
 
@@ -2270,7 +2276,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 - Another script can add a column of toggles to the Market History table:
 
     ```js
-    Toolasha.Market.listingMarkers.register('flip-finder', {
+    Toolasha.Market.listingMarkers.register('my-script', {
         stateFor: (listing) => ({ glyph: '★', active: isFlip(listing), title: 'Count this as a flip' }),
         onToggle: (listing) => toggleFlip(listing),
     });
@@ -2286,7 +2292,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 - Another script can now claim inventory the sell queue must skip:
 
     ```js
-    const release = Toolasha.Market.bulkSellAssistant.addHoldProvider('flip-finder', () => [
+    const release = Toolasha.Market.bulkSellAssistant.addHoldProvider('my-script', () => [
         '/items/cheese',
         '/items/cheese_sword+3',
     ]);

@@ -21,7 +21,7 @@
  * A DOM because the module registers an overlay row and builds a panel at import.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_key, fallback) => fallback, Z_FLOATING_PANEL: 100 },
@@ -30,7 +30,12 @@ vi.mock('../../core/storage.js', () => ({
     default: { get: async (_key, _store, fallback) => fallback, set: async () => {} },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ actionDetailMap: { '/actions/combat/fly': { name: 'Fly' } } }) },
+    default: {
+        getInitClientData: () => ({ actionDetailMap: { '/actions/combat/fly': { name: 'Fly' } } }),
+        // The panel's draw reaches storage through the character key
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
@@ -53,6 +58,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 import {
+    replayCheckPanel,
     replayFights,
     busiestPlayer,
     observeRecording,
@@ -442,5 +448,90 @@ describe('the line the tile carries', () => {
     test('nothing compared yet is not an accuracy claim', () => {
         expect(summaryLine(null)).toBe('No sim check yet');
         expect(summaryLine({ metrics: [] })).toBe('No sim check yet');
+    });
+});
+
+describe('the Record button on the panel', () => {
+    /** The shared recorder, as the panel finds it */
+    function install(recording = false, ticks = 0) {
+        const fake = {
+            recording,
+            isRecording: () => fake.recording,
+            recordingStatus: () => ({ ticks, seconds: 0, full: false }),
+            startRecording: vi.fn(() => {
+                fake.recording = true;
+            }),
+            stopRecording: vi.fn(() => {
+                fake.recording = false;
+            }),
+            downloadRecording: vi.fn(),
+        };
+        window.Toolasha = { Combat: { combatRecorder: fake } };
+        return fake;
+    }
+
+    /** Every button in the open panel, by its label */
+    function buttons() {
+        return [...(replayCheckPanel.panel?.querySelectorAll('button') || [])];
+    }
+
+    function labelled(text) {
+        return buttons().find((button) => button.textContent.startsWith(text));
+    }
+
+    afterEach(() => {
+        replayCheckPanel.hide({ remember: false });
+        delete window.Toolasha;
+    });
+
+    test('the panel offers a Record button instead of pointing at another panel', () => {
+        // Being told to press Record somewhere else was the one thing this
+        // panel could do nothing about, and the recording is what it runs on
+        install();
+        replayCheckPanel.show({ remember: false });
+
+        expect(labelled('Record')).toBeTruthy();
+        expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
+        expect(replayCheckPanel.panel.textContent).not.toContain('Damage panel');
+    });
+
+    test('pressing it starts the shared recorder', () => {
+        const recorder = install();
+        replayCheckPanel.show({ remember: false });
+
+        labelled('Record').click();
+
+        expect(recorder.startRecording).toHaveBeenCalledTimes(1);
+        // Redrawn from the recorder's state, not from a remembered flag
+        expect(labelled('Recording')).toBeTruthy();
+    });
+
+    test('a recording started anywhere else already reads as running here', () => {
+        install(true, 240);
+        replayCheckPanel.show({ remember: false });
+
+        expect(labelled('Recording 240…')).toBeTruthy();
+        expect(labelled('Record (')).toBeFalsy();
+    });
+
+    test('pressing it while running stops the recording and writes no file', () => {
+        // The file is for handing over; a recording made here is read by the
+        // ingest that follows it
+        const recorder = install(true, 240);
+        replayCheckPanel.show({ remember: false });
+
+        labelled('Recording').click();
+
+        expect(recorder.stopRecording).toHaveBeenCalledTimes(1);
+        expect(recorder.downloadRecording).not.toHaveBeenCalled();
+        expect(labelled('Record')).toBeTruthy();
+    });
+
+    test('no recorder means the other controls still draw', () => {
+        window.Toolasha = { Combat: {} };
+        replayCheckPanel.show({ remember: false });
+
+        expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
+        expect(labelled('Forget')).toBeTruthy();
     });
 });

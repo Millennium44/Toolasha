@@ -117,7 +117,7 @@ class BulkSellAssistant {
         this.panelPosition = null;
         /**
          * Other scripts' claims on inventory: name -> () => iterable of hold
-         * keys. Kept deliberately ignorant of why anything is held — a flip
+         * keys. Kept deliberately ignorant of why anything is held — stock
          * waiting to be relisted, a crafting reserve, a gift — so nothing about
          * the reason has to live in here.
          */
@@ -187,7 +187,7 @@ class BulkSellAssistant {
      * them away again when the claim ends.
      *
      *     const release = Toolasha.Market.bulkSellAssistant.addHoldProvider(
-     *         'flip-finder',
+     *         'my-script',
      *         () => ['/items/cheese', '/items/cheese_sword+3']
      *     );
      *

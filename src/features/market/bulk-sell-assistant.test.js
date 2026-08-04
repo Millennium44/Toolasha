@@ -124,7 +124,7 @@ describe('selling what the watchlist is tracking', () => {
     test('a held item is still held, whatever the source says', async () => {
         // The holds are other scripts' claims on the inventory, and a source
         // choosing an item does not overrule one
-        bulkSell.holdProviders.set('flips', () => ['/items/cheese']);
+        bulkSell.holdProviders.set('reselling', () => ['/items/cheese']);
         bulkSell.selectedTabId = 'watchlist';
         await bulkSell._start();
 

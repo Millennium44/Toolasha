@@ -39,6 +39,8 @@ import skillingOptimizer from '../features/skilling-optimizer/skilling-optimizer
 // composes already does: the buy-vs-craft model above, and the enhancement path
 // optimiser the missing-materials button pulls in.
 import goalPlanner from '../features/planner/goal-planner-ui.js';
+// Side-effect import: registers the Next Goal Step overlay row
+import '../features/planner/goal-planner-row.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};

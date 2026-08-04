@@ -68,6 +68,7 @@ import {
 } from '../combat-sim/combat-sim-adapter.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import combatRecorder, { onRecordingComplete } from './combat-recorder.js';
+import { recordControlState, toggleRecording } from './combat-record-control.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import { newTakenState, attributeIncoming, foldTaken } from '../../utils/damage-taken.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -577,7 +578,7 @@ class ReplayCheck {
 
         const observed = this.observed();
         if (!observed) {
-            this.error = 'Nothing recorded yet — press Record in the Damage panel during a fight.';
+            this.error = 'Nothing recorded yet — press Record during a fight.';
             return null;
         }
         if (observed.partySize > 1) {
@@ -728,6 +729,39 @@ function drawCaveats(body, observed) {
     );
 }
 
+/**
+ * The Record button, in this panel's chrome.
+ *
+ * What it says and what it does are {@link recordControlState}'s, so it reads
+ * "Recording 240…" whether the recording was started here, from DPs, or by the
+ * auto-record setting — and stopping it from here is the same stop. No file is
+ * written: a recording started from this panel is read by the ingest that
+ * follows it, not handed to anybody.
+ *
+ * @returns {HTMLElement|null} null when no recorder is reachable
+ */
+function recordButton() {
+    const state = recordControlState();
+    if (!state) return null;
+
+    const button = document.createElement('button');
+    button.textContent = state.label;
+    button.title = state.title;
+    Object.assign(button.style, {
+        background: state.recording ? 'rgba(248, 113, 113, 0.18)' : 'none',
+        border: `1px solid ${state.recording ? ROW_COLORS.bad : ROW_COLORS.dim}`,
+        borderRadius: '4px',
+        color: state.recording ? ROW_COLORS.bad : ROW_COLORS.dim,
+        padding: '5px 10px',
+        cursor: 'pointer',
+    });
+    button.addEventListener('click', () => {
+        toggleRecording();
+        replayCheckPanel.render();
+    });
+    return button;
+}
+
 export const replayCheckPanel = createPanel({
     id: 'replayCheck',
     title: 'Sim Accuracy',
@@ -781,12 +815,19 @@ export const replayCheckPanel = createPanel({
         });
 
         controls.append(run, forget);
+
+        // The same button DPs carries, driving the same recorder. Being told to
+        // go and press it on another panel is the one thing this panel could
+        // never do anything about, and the recording is what it runs on.
+        const record = recordButton();
+        if (record) controls.appendChild(record);
+
         body.appendChild(controls);
 
         if (!observed) {
             body.appendChild(
                 panelNote(
-                    'Nothing recorded yet. Press Record in the Damage panel during a fight, or switch on ' +
+                    'Nothing recorded yet. Press Record during a fight — here or on the DPs panel — or switch on ' +
                         '“Auto-record combat on load”, and this fills in when the recording stops.'
                 )
             );
