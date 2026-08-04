@@ -30,7 +30,7 @@ vi.mock('./networth-history-chart.js', () => ({
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: () => null },
 }));
-vi.mock('../combat-stats/combat-stats-calculator.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
+vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('./networth-exclusion-popup.js', () => ({ default: { open: () => {} } }));
 vi.mock('./networth-exclusions.js', () => ({ removeExclusion: async () => {} }));
 

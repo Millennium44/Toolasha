@@ -6,27 +6,8 @@
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
-
-// Maps regular dungeon chest HRIDs to their required entry key HRIDs (1:1 relationship)
-const DUNGEON_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_entry_key',
-    '/items/sinister_chest': '/items/sinister_entry_key',
-    '/items/enchanted_chest': '/items/enchanted_entry_key',
-    '/items/pirate_chest': '/items/pirate_entry_key',
-};
-
-// Maps dungeon chest HRIDs (regular and refinement) to their required chest key HRIDs (1:1 relationship)
-export const DUNGEON_CHEST_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_chest_key',
-    '/items/sinister_chest': '/items/sinister_chest_key',
-    '/items/enchanted_chest': '/items/enchanted_chest_key',
-    '/items/pirate_chest': '/items/pirate_chest_key',
-    '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
-    '/items/sinister_refinement_chest': '/items/sinister_chest_key',
-    '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
-    '/items/pirate_refinement_chest': '/items/pirate_chest_key',
-};
 
 /**
  * Calculate total income from loot
@@ -93,7 +74,7 @@ export function calculateIncomeBreakdown(lootMap) {
             continue;
         }
 
-        if (DUNGEON_CHEST_KEYS[loot.itemHrid]) {
+        if (DUNGEON_CHEST_ENTRY_KEYS[loot.itemHrid]) {
             isDungeonRun = true;
         }
 
@@ -168,7 +149,7 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
     };
 
     for (const loot of Object.values(lootMap)) {
-        const keyHrid = DUNGEON_CHEST_KEYS[loot.itemHrid];
+        const keyHrid = DUNGEON_CHEST_ENTRY_KEYS[loot.itemHrid];
         if (!keyHrid) continue;
         addRow(keyHrid, loot.count);
     }

@@ -8,6 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Housekeeping
 
+- **The dungeon chest→key maps live in one place now** (`src/utils/dungeon-keys.js`): combat-stats and the combat-sim adapter each kept their own copy — with the two names swapped between them — and four more modules imported the constant through the stats calculator. Everyone now reads the same table under one pair of names. Pure extraction, no behavior change.
 - **The CI bundle ceiling moves 2.5 → 3 MiB** with the reasoning in the workflow: the ui bundle grew honestly to ~60KB under the old line; the guard exists to catch sudden duplication jumps, which still trip it.
 
 ### The books balance: first swings were invisible

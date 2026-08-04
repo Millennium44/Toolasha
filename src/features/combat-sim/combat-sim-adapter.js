@@ -12,6 +12,7 @@ import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 
 /**
@@ -1057,26 +1058,6 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
     return totalDropMap;
 }
 
-// Maps dungeon chest HRIDs to their required entry key HRIDs
-const DUNGEON_ENTRY_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_entry_key',
-    '/items/sinister_chest': '/items/sinister_entry_key',
-    '/items/enchanted_chest': '/items/enchanted_entry_key',
-    '/items/pirate_chest': '/items/pirate_entry_key',
-};
-
-// Maps dungeon chest HRIDs (regular + refinement) to their chest key HRIDs
-const DUNGEON_CHEST_KEYS = {
-    '/items/chimerical_chest': '/items/chimerical_chest_key',
-    '/items/sinister_chest': '/items/sinister_chest_key',
-    '/items/enchanted_chest': '/items/enchanted_chest_key',
-    '/items/pirate_chest': '/items/pirate_chest_key',
-    '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
-    '/items/sinister_refinement_chest': '/items/sinister_chest_key',
-    '/items/enchanted_refinement_chest': '/items/enchanted_chest_key',
-    '/items/pirate_refinement_chest': '/items/pirate_chest_key',
-};
-
 /**
  * Calculate dungeon key costs from a drop map.
  * Entry keys (1:1 with regular chests) + chest keys (1:1 with all chests).
@@ -1092,7 +1073,7 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
 
     // Entry keys: 1 per regular chest
     for (const [chestHrid, count] of dropMap.entries()) {
-        const entryKeyHrid = DUNGEON_ENTRY_KEYS[chestHrid];
+        const entryKeyHrid = DUNGEON_CHEST_ENTRY_KEYS[chestHrid];
         if (entryKeyHrid && count > 0) {
             keyCounts[entryKeyHrid] = (keyCounts[entryKeyHrid] || 0) + count;
         }
@@ -1100,7 +1081,7 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
 
     // Chest keys: 1 per chest (regular + refinement)
     for (const [chestHrid, count] of dropMap.entries()) {
-        const chestKeyHrid = DUNGEON_CHEST_KEYS[chestHrid];
+        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[chestHrid];
         if (chestKeyHrid && count > 0) {
             keyCounts[chestKeyHrid] = (keyCounts[chestKeyHrid] || 0) + count;
         }
