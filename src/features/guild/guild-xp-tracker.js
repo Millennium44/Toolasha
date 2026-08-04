@@ -238,6 +238,29 @@ export function calcStats(arr) {
 }
 
 /**
+ * Where an XP total sits on the guild level curve.
+ *
+ * The table is indexed from level 1 at zero XP, so the index of the first
+ * threshold the total has not reached *is* the current level — a guild with 33
+ * XP has crossed index 1 and is level 2, and a guild with none is level 1.
+ *
+ * @param {number} xp - Total guild XP
+ * @returns {{level: number, currentXP: number, nextLevelXP: number|null, xpToNext: number|null}}
+ */
+export function guildLevelFromXP(xp) {
+    const total = Number.isFinite(xp) ? xp : 0;
+    const nextIndex = LEVEL_EXPERIENCE_TABLE.findIndex((threshold) => total < threshold);
+
+    // Past the end of the table there is no next level to work towards
+    if (nextIndex < 0) {
+        return { level: LEVEL_EXPERIENCE_TABLE.length, currentXP: total, nextLevelXP: null, xpToNext: null };
+    }
+
+    const nextLevelXP = LEVEL_EXPERIENCE_TABLE[nextIndex];
+    return { level: nextIndex, currentXP: total, nextLevelXP, xpToNext: nextLevelXP - total };
+}
+
+/**
  * Calculate time to next guild level.
  * @param {number} currentXP - Current guild XP
  * @param {number} xpPerHour - Current XP/hr rate
@@ -702,6 +725,54 @@ class GuildXPTracker {
         const stats = this.getGuildStats(guildName);
         const rate = stats.lastDayXPH > 0 ? stats.lastDayXPH : stats.lastXPH;
         return calcTimeToLevel(currentXP, rate);
+    }
+
+    /**
+     * A member's recorded XP samples.
+     *
+     * Handed out as a copy: these arrays are appended to by the websocket
+     * handlers, and a reader that holds the live array sees it change under it
+     * mid-render.
+     *
+     * @param {string} characterID
+     * @returns {Array<{t: number, xp: number}>} Oldest first; empty when untracked
+     */
+    getMemberSeries(characterID) {
+        return [...(this.memberXPHistory[characterID] || [])];
+    }
+
+    /**
+     * Every tracked member's XP samples, for anything that has to compare them
+     * against each other — a share of the guild's XP is only meaningful beside
+     * everybody else's.
+     * @returns {Object<string, Array<{t: number, xp: number}>>} characterID → samples
+     */
+    getAllMemberSeries() {
+        const out = {};
+        for (const [charId, series] of Object.entries(this.memberXPHistory)) {
+            out[charId] = [...series];
+        }
+        return out;
+    }
+
+    /**
+     * A guild's recorded XP samples.
+     * @param {string} guildName
+     * @returns {Array<{t: number, xp: number}>} Oldest first; empty when untracked
+     */
+    getGuildSeries(guildName) {
+        return [...(this.guildXPHistory[guildName] || [])];
+    }
+
+    /**
+     * Where a guild sits on the level curve, from its latest recorded XP.
+     * @param {string} guildName
+     * @returns {{level: number, currentXP: number, nextLevelXP: number|null, xpToNext: number|null}|null}
+     */
+    getGuildLevelProgress(guildName) {
+        const currentXP = this.getCurrentGuildXP(guildName);
+        if (currentXP === null) return null;
+        return guildLevelFromXP(currentXP);
     }
 
     /**

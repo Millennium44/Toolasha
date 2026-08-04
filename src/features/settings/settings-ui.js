@@ -37,7 +37,7 @@ import {
     writeCheckboxValues,
 } from './setting-presets.js';
 import { isSettingChanged, refreshRequiredIds } from './settings-inspection.js';
-import { exportEverything, importEverything } from '../../utils/full-backup.js';
+import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 
@@ -1063,9 +1063,11 @@ class SettingsUI {
         const original = button.textContent;
         try {
             button.textContent = 'Exporting…';
-            const payload = await exportEverything();
+            // Serialized store by store: the object form of a large database
+            // plus its stringification is two copies of everything at once
+            const json = await exportEverythingJSON();
             const stamp = new Date().toISOString().slice(0, 10);
-            downloadFile(`toolasha-backup-${stamp}.json`, JSON.stringify(payload), 'application/json;charset=utf-8;');
+            downloadFile(`toolasha-backup-${stamp}.json`, json, 'application/json;charset=utf-8;');
             button.textContent = 'Saved ✓';
         } catch (error) {
             console.error('[SettingsUI] Full backup failed:', error);

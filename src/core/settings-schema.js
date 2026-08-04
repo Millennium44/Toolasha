@@ -2559,6 +2559,27 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level.',
             },
+            guildRoster: {
+                id: 'guildRoster',
+                label: 'Guild Roster: Contribution shares and gone-quiet flags',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Guild Roster overlay tile and panel showing each member’s share of the XP actually observed over 7 and 30 days, who has gone quiet against their own weekly rate, and a guild level projection. Uses the XP the Guild XP Tracker has already recorded.',
+            },
+        },
+    },
+
+    insights: {
+        title: 'Insights',
+        icon: '🔍',
+        settings: {
+            insights_calibration: {
+                id: 'insights_calibration',
+                label: 'Prediction Calibration: Check profit forecasts against finished runs',
+                type: 'checkbox',
+                default: true,
+                help: 'Records what the profit calculators predicted for an action beside what the loot log says the run actually paid, and flags skills where the forecast is persistently off. Adds a Prediction Calibration overlay tile and panel.',
+            },
         },
     },
 

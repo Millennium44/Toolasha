@@ -21,7 +21,7 @@ vi.mock('../core/storage.js', () => ({
     },
 }));
 
-const { listBackupStores, exportEverything, importEverything } = await import('./full-backup.js');
+const { listBackupStores, exportEverything, exportEverythingJSON, importEverything } = await import('./full-backup.js');
 
 /**
  * Reset the fake database to a fixed set of stores/keys.
@@ -78,6 +78,60 @@ describe('exportEverything / importEverything round-trip', () => {
             '2026-01-02': { mining: 200 },
         });
         expect(Object.fromEntries(db.get('dungeonRuns'))).toEqual({ run1: { boss: 'X' } });
+    });
+});
+
+describe('exportEverythingJSON', () => {
+    beforeEach(seedDb);
+
+    test('produces the same payload as the object export, as text', async () => {
+        const text = await exportEverythingJSON();
+        const parsed = JSON.parse(text);
+
+        expect(parsed.formatVersion).toBe(1);
+        expect(typeof parsed.exportedAt).toBe('string');
+        expect(parsed.stores).toEqual({
+            settings: { theme: 'dark' },
+            xpHistory: { '2026-01-01': { mining: 100 }, '2026-01-02': { mining: 200 } },
+            dungeonRuns: { run1: { boss: 'X' } },
+        });
+    });
+
+    test('reads one store at a time, which is the whole point of it', async () => {
+        const storage = (await import('../core/storage.js')).default;
+        storage.getAll.mockClear();
+
+        await exportEverythingJSON();
+
+        // One read per store, never a read of everything at once
+        expect(storage.getAll).toHaveBeenCalledTimes(3);
+        expect(storage.getAll.mock.calls.map(([name]) => name)).toEqual(['settings', 'xpHistory', 'dungeonRuns']);
+    });
+
+    test('an empty database is still a valid, restorable payload', async () => {
+        db = new Map();
+
+        const parsed = JSON.parse(await exportEverythingJSON());
+
+        expect(parsed.stores).toEqual({});
+        await expect(importEverything(parsed)).resolves.toEqual({ restored: {} });
+    });
+
+    test('round-trips through the text form back into the database', async () => {
+        const parsed = JSON.parse(await exportEverythingJSON());
+        db = new Map([
+            ['settings', new Map()],
+            ['xpHistory', new Map()],
+            ['dungeonRuns', new Map()],
+        ]);
+
+        const result = await importEverything(parsed);
+
+        expect(result.restored).toEqual({ settings: 1, xpHistory: 2, dungeonRuns: 1 });
+        expect(Object.fromEntries(db.get('xpHistory'))).toEqual({
+            '2026-01-01': { mining: 100 },
+            '2026-01-02': { mining: 200 },
+        });
     });
 });
 

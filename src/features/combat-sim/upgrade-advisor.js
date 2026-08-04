@@ -7,7 +7,13 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { buildGameDataPayload, calculateSimRevenue } from './combat-sim-adapter.js';
+import {
+    buildGameDataPayload,
+    calculateSimRevenue,
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
+    applyGuildBuffLevel,
+} from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates } from './lab-armor-candidates.js';
@@ -21,6 +27,7 @@ import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhanceme
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
+import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -1194,6 +1201,10 @@ export function generateCandidates(
         candidates.push(...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets));
     }
 
+    if (mode === 'guild_shrine') {
+        candidates.push(...generateGuildShrineCandidates(playerDTO, { combat: true }));
+    }
+
     candidates.forEach(clampRefinedCandidateToMinLevel);
     return candidates;
 }
@@ -1281,7 +1292,12 @@ export function candidateAssignmentKey(candidate) {
         const cleared = [...(candidate.clearedSlots || [])].sort().join(',');
         return `equip:${added}!${cleared}`;
     }
-    if (candidate.type === 'combat_level' || candidate.type === 'house' || candidate.slot?.startsWith('ability_')) {
+    if (
+        candidate.type === 'combat_level' ||
+        candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
+        candidate.slot?.startsWith('ability_')
+    ) {
         return `${candidate.type}:${candidate.slot}=${candidate.upgradeHrid || ''}@${candidate.upgradeLevel}`;
     }
     return `equip:${candidate.slot}=${candidate.upgradeHrid}@${candidate.upgradeLevel}!`;
@@ -1356,6 +1372,155 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
         });
     }
     return candidates;
+}
+
+/**
+ * Buff types the skilling clear-rate metrics can actually measure a change in.
+ * A shrine granting only rare-find has a real effect on a run and no effect on
+ * any number this analysis reports, so offering it would be offering a row that
+ * can only ever read 0.00%.
+ */
+const SKILLING_METRIC_BUFF_TYPES = new Set([
+    '/buff_types/efficiency',
+    '/buff_types/action_speed',
+    '/buff_types/wisdom',
+]);
+
+/**
+ * Display name for a shrine, from its hrid.
+ * @param {string} shrineHrid - e.g. '/guild_shrines/force'
+ * @returns {string} e.g. 'Force'
+ */
+function shrineName(shrineHrid) {
+    const slug =
+        String(shrineHrid || '')
+            .split('/')
+            .pop() || 'guild';
+    return slug
+        .split('_')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+/**
+ * Generate one-level-up candidates for the guild shrine buffs.
+ *
+ * ## What the shrine level does and does not gate
+ *
+ * Two levels are in play and they are not the same number. The character buys
+ * levels in a *buff*, and those are the levels these candidates step. The guild
+ * builds levels in the *shrine*, and that caps how far members can buy. So a
+ * candidate above the shrine's own level is still a real, correctly priced
+ * purchase — it simply cannot be made until the guild upgrades the building,
+ * which is not a cost this row can put a number on. Those rows are generated
+ * anyway and carry `needsShrineLevel` so the detail can say so, rather than being
+ * hidden as if the upgrade did not exist.
+ *
+ * A shrine level of 0 means no guild building data reached the client at all,
+ * which is not the same as "the shrine is not built" — `shrineLevelKnown` keeps
+ * those apart so nothing claims a cap that was never read.
+ *
+ * @param {Object} playerDTO - Player DTO carrying `guildShrineLevels`
+ * @param {Object} [options]
+ * @param {boolean} [options.combat=true] - Combat shrines when true, skilling when false
+ * @returns {Array<Object>} Candidates of type 'guild_shrine'
+ */
+export function generateGuildShrineCandidates(playerDTO, { combat = true } = {}) {
+    const detailMap = getGuildBuffDetailMap();
+    const levels = playerDTO?.guildShrineLevels;
+    // No level map means this DTO is somebody whose guild we know nothing about
+    // (an imported player, a party member read off a profile) — not a guildless
+    // character, so guessing zero would invent an upgrade path for them
+    if (!levels || Object.keys(detailMap).length === 0) return [];
+
+    const candidates = [];
+    for (const [buffHrid, detail] of Object.entries(detailMap)) {
+        if (Boolean(detail.isCombat) !== combat) continue;
+        if (!combat && !(detail.buffs || []).some((buff) => SKILLING_METRIC_BUFF_TYPES.has(buff?.typeHrid))) continue;
+
+        const maxLevel = guildBuffMaxLevel(detail);
+        const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
+        const upgradeLevel = currentLevel + 1;
+        if (maxLevel <= 0 || upgradeLevel > maxLevel) continue;
+
+        const levelCost = detail.levelCosts?.[String(upgradeLevel)] || {};
+        const shrineLevel = Math.max(
+            0,
+            Math.floor(Number(dataManager.getGuildBuildingLevel?.(detail.shrineHrid)) || 0)
+        );
+        const label = shrineName(detail.shrineHrid);
+
+        candidates.push({
+            type: 'guild_shrine',
+            slot: `guild_shrine|${buffHrid}`,
+            buffHrid,
+            shrineHrid: detail.shrineHrid,
+            isCombat: Boolean(detail.isCombat),
+            currentLevel,
+            upgradeLevel,
+            maxLevel,
+            buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
+            guildTokenCost: Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0)),
+            creditCosts: levelCost.creditCosts || [],
+            shrineLevel,
+            shrineLevelKnown: shrineLevel > 0,
+            needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
+            description: `${label} Shrine Lv${currentLevel} → Lv${upgradeLevel}`,
+        });
+    }
+    return candidates;
+}
+
+/**
+ * Put a shrine candidate's level onto a DTO, in place.
+ *
+ * Both the level map and the resolved combat buff array are written: the map is
+ * what the editor and the skilling metrics read, the array is what the combat
+ * engine reads, and leaving either behind would sim the old shrine level.
+ * @param {Object} dto - Player DTO (mutated)
+ * @param {Object} candidate - Candidate of type 'guild_shrine'
+ */
+function applyGuildShrineToDTO(dto, candidate) {
+    if (!dto.guildShrineLevels) dto.guildShrineLevels = {};
+    dto.guildShrineLevels[candidate.buffHrid] = candidate.upgradeLevel;
+
+    const detail = getGuildBuffDetailMap()[candidate.buffHrid];
+    if (detail?.isCombat) {
+        dto.guildCombatBuffs = applyGuildBuffLevel(dto.guildCombatBuffs, detail, candidate.upgradeLevel);
+    }
+}
+
+/**
+ * Itemised cost of a shrine level: credits at their gold value, tokens counted.
+ *
+ * Guild tokens have no market and nothing converts into them, so they are left
+ * out of the gold figure entirely and reported as a count. That makes the Cost
+ * column — and every ranking built on it — an understatement of what the level
+ * costs, which is why the token count travels with it into the row detail.
+ *
+ * @param {Object} candidate - Candidate of type 'guild_shrine'
+ * @returns {Object} Same shape as `explainUpgradeCost`, plus `guild`
+ */
+function explainGuildShrineCost(candidate) {
+    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts);
+
+    return {
+        guild: {
+            tokens: candidate.guildTokenCost || 0,
+            credits: lines,
+            shrineLevel: candidate.shrineLevel,
+            shrineLevelKnown: candidate.shrineLevelKnown,
+            needsShrineLevel: candidate.needsShrineLevel,
+            shrineName: shrineName(candidate.shrineHrid),
+        },
+        buys: [],
+        credits: [],
+        gross: total,
+        credit: 0,
+        net: total,
+        unpriced,
+        creditApplied: false,
+    };
 }
 
 /**
@@ -1455,6 +1620,12 @@ export function calculateUpgradeCost(candidate, gameData) {
 
     if (candidate.type === 'house') {
         return calculateHouseUpgradeCost(candidate, gameData);
+    }
+
+    // Gold for the credits only — the guild tokens are shown beside it, never
+    // folded into it, because nothing converts gold into tokens
+    if (candidate.type === 'guild_shrine') {
+        return explainGuildShrineCost(candidate).net;
     }
 
     // Books, at the market price of the book — and null rather than 0 when there
@@ -1624,6 +1795,7 @@ function explainAbilityCandidateCost(candidate, gameData) {
  */
 export function explainUpgradeCost(candidate, gameData) {
     if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData);
+    if (candidate.type === 'guild_shrine') return explainGuildShrineCost(candidate);
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
 
@@ -1822,6 +1994,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             // House room level (a room at level 0 isn't in the map yet)
             if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
             modifiedDTOs[playerIndex].houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+        } else if (candidate.type === 'guild_shrine') {
+            // One more level in a guild shrine buff, rebuilt at its new value
+            applyGuildShrineToDTO(modifiedDTOs[playerIndex], candidate);
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -2752,6 +2927,7 @@ export function replacedIn(candidate, dto, gameData) {
 export function conflictKey(candidate) {
     if (candidate.type === 'combat_level') return `skill:${candidate.skillKey}`;
     if (candidate.type === 'house') return `house:${candidate.slot}`;
+    if (candidate.type === 'guild_shrine') return `guild:${candidate.buffHrid}`;
     if (candidate.slot?.startsWith('ability_')) return `ability:${candidate.upgradeHrid}`;
 
     const slots = candidate.addedSlots
@@ -2778,6 +2954,7 @@ function isExclusive(candidate) {
     return (
         candidate.type === 'combat_level' ||
         candidate.type === 'house' ||
+        candidate.type === 'guild_shrine' ||
         Boolean(candidate.slot?.startsWith('ability_'))
     );
 }
@@ -3365,6 +3542,29 @@ const SKILLING_DTO_KEYS = {
 };
 
 /**
+ * Overrides for one skill, including the guild shrine levels the editor is set to.
+ *
+ * `getSkillingMetricsFromOverrides` otherwise reads the character's live guild
+ * buffs straight off the data manager, which is right until the editor is asking
+ * "what if this shrine were a level higher" — then the live read would quietly
+ * hold every candidate at the current level. Passing the levels rather than
+ * finished buffs lets it keep the server's own numbers for every shrine that has
+ * not been touched.
+ *
+ * @param {Object} editorState - `{ equipment, houseRooms, tokenUpgrades, communityBuffLevels }`
+ * @param {Object} editorDTO - The editor's player, for its shrine levels
+ * @param {string} actionTypeHrid - e.g. '/action_types/woodcutting'
+ * @param {string[]} crateHrids - Selected crate HRIDs
+ * @param {Object} gameData - From buildGameDataPayload()
+ * @returns {Object} Overrides for getSkillingMetricsFromOverrides()
+ */
+function skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData) {
+    const overrides = { ...buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData) };
+    if (editorDTO?.guildShrineLevels) overrides.guildShrineLevels = editorDTO.guildShrineLevels;
+    return overrides;
+}
+
+/**
  * Compute per-skill clear results from editor state.
  * @param {number} roomLevel
  * @param {Object} editorDTO - Player DTO from editor
@@ -3414,7 +3614,7 @@ export function computeSkillingClearRatesFromEditor(
             communityBuffLevels: editorDTO.communityBuffLevels,
         };
 
-        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
         const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
 
         let result;
@@ -3482,7 +3682,7 @@ function computeAverageSkillingClearRateFromEditor(roomLevel, editorDTO, crateHr
             communityBuffLevels: editorDTO.communityBuffLevels,
         };
 
-        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
         const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
 
         if (metricOverride) {
@@ -3549,7 +3749,7 @@ function computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHr
             communityBuffLevels: editorDTO.communityBuffLevels,
         };
 
-        const overrides = buildOverridesForSkill(editorState, actionTypeHrid, crateHrids, gameData);
+        const overrides = skillingOverrides(editorState, editorDTO, actionTypeHrid, crateHrids, gameData);
         const metrics = labyrinthClearRate.getSkillingMetricsFromOverrides(skillId, actionTypeHrid, overrides);
         const result = labyrinthClearRate.computeSkillingClearWithParams(metrics, baseLevel, skillRoomLevel);
 
@@ -3723,9 +3923,11 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
 export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     if (!candidate || !dto) return false;
 
-    // The character's own, wherever they are worn: skills and rooms are not
-    // held in a loadout and change every fight at once
-    if (candidate.type === 'combat_level' || candidate.type === 'house') return true;
+    // The character's own, wherever they are worn: skills, rooms and shrine
+    // levels are not held in a loadout and change every fight at once
+    if (candidate.type === 'combat_level' || candidate.type === 'house' || candidate.type === 'guild_shrine') {
+        return true;
+    }
 
     if (candidate.slot?.startsWith('ability_')) {
         const abilities = dto.abilities || [];
@@ -3873,6 +4075,11 @@ export function applyCandidateToDTO(playerDTO, candidate) {
         return dto;
     }
 
+    if (candidate.type === 'guild_shrine') {
+        applyGuildShrineToDTO(dto, candidate);
+        return dto;
+    }
+
     if (candidate.type === 'cross_slot') {
         for (const slot of candidate.clearedSlots) dto.equipment[slot] = null;
         for (const [slot, item] of Object.entries(candidate.addedSlots)) dto.equipment[slot] = item;
@@ -3946,12 +4153,16 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
     const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill);
+    const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => ({
+        ...candidate,
+        cost: calculateUpgradeCost(candidate, gameData),
+    }));
     const clearRateOpts = { skillEquipmentMap, targetSkill };
 
     // Yield so Stop clicks and progress paints can land between the heavy sync chunks
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const total = buffCandidates.length + equipCandidates.length + 1;
+    const total = buffCandidates.length + equipCandidates.length + guildCandidates.length + 1;
     let current = 0;
 
     onProgress?.({ current: 0, total, description: 'Computing baseline...' });
@@ -3968,9 +4179,12 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
     onProgress?.({ current, total, description: `Baseline: ${(baselineClearRate * 100).toFixed(1)}%` });
 
-    // Only paid for when something is ranked on it — the Experience token is the
-    // one candidate that is, and it is often already maxed and absent
-    const hasXpCandidate = buffCandidates.some((c) => c.category === 'experience');
+    // Only paid for when something is ranked on it — the Experience token and the
+    // Scholar shrine are the candidates that are, and both are often absent
+    const scholarBuff = '/buff_types/wisdom';
+    const hasXpCandidate =
+        buffCandidates.some((c) => c.category === 'experience') ||
+        guildCandidates.some((c) => c.buffTypes?.includes(scholarBuff));
     const baselineXpPerRoom = hasXpCandidate
         ? computeAverageSkillingXpPerRoomFromEditor(roomLevel, editorDTO, crateHrids, gameData, clearRateOpts)
         : 0;
@@ -4033,6 +4247,51 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         });
         current++;
         onProgress?.({ current, total, description: buffCandidate.description });
+    }
+
+    // Guild shrines are paid for in credits *and* tokens, which is neither of the
+    // two cost types the tables above use, so they keep their own — and a shrine
+    // can move clear rate and XP at once, so both are measured for every one
+    for (const candidate of guildCandidates) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (abortSignal?.()) break;
+
+        onProgress?.({ current, total, description: `Evaluating: ${candidate.description}` });
+
+        const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
+        applyGuildShrineToDTO(modifiedDTO, candidate);
+
+        const modifiedClearRate = computeAverageSkillingClearRateFromEditor(
+            roomLevel,
+            modifiedDTO,
+            crateHrids,
+            gameData,
+            clearRateOpts
+        );
+        const clearRateDelta = modifiedClearRate - baselineClearRate;
+
+        const movesXp = candidate.buffTypes?.includes(scholarBuff);
+        const modifiedXpPerRoom = movesXp
+            ? computeAverageSkillingXpPerRoomFromEditor(roomLevel, modifiedDTO, crateHrids, gameData, clearRateOpts)
+            : baselineXpPerRoom;
+        const xpPerRoomDelta = modifiedXpPerRoom - baselineXpPerRoom;
+
+        results.push({
+            candidate,
+            costType: 'guild',
+            cost: candidate.cost,
+            tokenCost: candidate.guildTokenCost,
+            costDetail: explainUpgradeCost(candidate, gameData),
+            clearRate: modifiedClearRate,
+            clearRateDelta,
+            goldPerClearRate:
+                clearRateDelta > 0 && candidate.cost != null ? candidate.cost / (clearRateDelta * 100) : Infinity,
+            xpPerRoom: modifiedXpPerRoom,
+            xpPerRoomDelta,
+            metricType: movesXp && clearRateDelta <= 1e-12 ? 'xpPerRoom' : 'clearRate',
+        });
+        current++;
+        onProgress?.({ current, total, description: candidate.description });
     }
 
     for (const candidate of equipCandidates) {
@@ -4107,8 +4366,10 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         onProgress?.({ current, total, description: evalCandidate.description });
     }
 
+    // Tokens first, then shrines, then gold; within each group by best delta
+    const costOrder = { token: 0, guild: 1, gold: 2 };
     results.sort((a, b) => {
-        if (a.costType !== b.costType) return a.costType === 'token' ? -1 : 1;
+        if (a.costType !== b.costType) return (costOrder[a.costType] ?? 3) - (costOrder[b.costType] ?? 3);
         return (b.clearRateDelta ?? 0) - (a.clearRateDelta ?? 0);
     });
 
@@ -4125,6 +4386,7 @@ export default {
     runLabyrinthUpgradeAnalysis,
     generateLabyrinthBuffCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
+    generateGuildShrineCandidates,
     getEquipmentTierProgression,
     computeSkillingClearRatesFromEditor,
     generateSkillingEquipmentCandidates,

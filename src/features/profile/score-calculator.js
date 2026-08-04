@@ -15,6 +15,7 @@ import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /**
  * Token-based item data for untradeable back slot items (capes/cloaks/quivers)
@@ -98,7 +99,7 @@ function categorizeEquipmentItem(slot, equipmentDetail) {
 /**
  * Calculate combat score from profile data
  * @param {Object} profileData - Profile data from game
- * @returns {Promise<Object>} {total, house, ability, equipment, breakdown}
+ * @returns {Promise<Object>} {total, house, ability, equipment, guildShrine, breakdown}
  */
 export async function calculateCombatScore(profileData) {
     try {
@@ -107,6 +108,9 @@ export async function calculateCombatScore(profileData) {
 
         // 2. Calculate Ability Score
         const abilityResult = calculateAbilityScore(profileData);
+
+        // 2b. Guild shrine levels, when the payload carries them
+        const guildShrineResult = calculateGuildShrineScore(profileData);
 
         // 3. Calculate Combat Equipment Score (async - runs first)
         const combatEquipmentResult = await calculateEquipmentScore(profileData, 'combat');
@@ -123,12 +127,18 @@ export async function calculateCombatScore(profileData) {
             house: houseResult.score,
             ability: abilityResult.score,
             equipment: combatEquipmentResult.score,
+            // Its own line, deliberately outside `total`: shrine levels are only
+            // ever known for your own character, so folding them in would make
+            // your score incomparable with everybody else's
+            guildShrine: guildShrineResult.score,
+            guildShrineTokens: guildShrineResult.tokens,
             equipmentHidden: profileData.profile?.hideWearableItems || false,
             hasEquipmentData: combatEquipmentResult.hasEquipmentData,
             breakdown: {
                 houses: houseResult.breakdown,
                 abilities: abilityResult.breakdown,
                 equipment: combatEquipmentResult.breakdown,
+                guildShrines: guildShrineResult.breakdown,
             },
             // Skiller score (skilling equipment only)
             skillerTotal: skillerTotalScore,
@@ -144,9 +154,11 @@ export async function calculateCombatScore(profileData) {
             house: 0,
             ability: 0,
             equipment: 0,
+            guildShrine: 0,
+            guildShrineTokens: 0,
             equipmentHidden: false,
             hasEquipmentData: false,
-            breakdown: { houses: [], abilities: [], equipment: [] },
+            breakdown: { houses: [], abilities: [], equipment: [], guildShrines: [] },
             skillerTotal: 0,
             skillerEquipment: 0,
             skillerBreakdown: { equipment: [] },
@@ -281,6 +293,71 @@ function calculateAbilityScore(profileData) {
     breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
 
     return { score, breakdown };
+}
+
+/**
+ * Value of the guild shrine levels a character has bought.
+ *
+ * A shrine level is paid for in guild credits and guild tokens. The credits have
+ * a gold value — the cheapest tradeable items that convert into them, the same
+ * rate the guild exchange table quotes — so the levels bought so far can be
+ * valued the way houses and abilities are. The tokens cannot: nothing converts
+ * into them, so they are returned as a count and left out of the score rather
+ * than given an invented price.
+ *
+ * Only scored when the payload carries the levels. A shared profile does not, and
+ * reading the current character's shrines while showing somebody else's card
+ * would put your guild's investment on their score.
+ *
+ * @param {Object} profileData - Profile data
+ * @returns {{score: number, tokens: number, breakdown: Array<Object>}}
+ */
+function calculateGuildShrineScore(profileData) {
+    const buffMap = profileData?.profile?.characterGuildBuffMap;
+    const gameData = dataManager.getInitClientData();
+    const detailMap = gameData?.guildBuffDetailMap;
+    if (!buffMap || !detailMap) return { score: 0, tokens: 0, breakdown: [] };
+
+    // Built once and shared: every level of every shrine prices the same credits
+    const goldPerCredit = buildGoldPerCredit('ask');
+
+    let totalCost = 0;
+    let totalTokens = 0;
+    const breakdown = [];
+
+    for (const [buffHrid, entry] of Object.entries(buffMap)) {
+        const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+        const detail = detailMap[buffHrid];
+        if (!detail || level <= 0) continue;
+
+        let cost = 0;
+        let tokens = 0;
+        for (let step = 1; step <= level; step++) {
+            const levelCost = detail.levelCosts?.[String(step)];
+            if (!levelCost) continue;
+            tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+            // An unpriced credit contributes nothing rather than blocking the
+            // whole score: this is a running total of what was invested, and one
+            // credit type without a conversion should not blank the other four
+            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit });
+            for (const line of lines) cost += line.gold || 0;
+        }
+
+        totalCost += cost;
+        totalTokens += tokens;
+
+        const name = (detail.shrineHrid || buffHrid)
+            .split('/')
+            .pop()
+            .split('_')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+        breakdown.push({ name: `${name} ${level}`, value: (cost / 1_000_000).toFixed(1) });
+    }
+
+    breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+
+    return { score: totalCost / 1_000_000, tokens: totalTokens, breakdown };
 }
 
 /**

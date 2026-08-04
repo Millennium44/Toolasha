@@ -448,6 +448,7 @@ class LabSimUI {
                 <option value="ability_level">Ability Levels</option>
                 <option value="ability_swap">Ability Swaps</option>
                 <option value="combined">Equipment + Abilities</option>
+                <option value="guild_shrine">Guild Shrines</option>
                 <option value="combat_level">Combat Levels</option>
                 <option value="combat_level_all">Combat Levels — All Fights</option>
                 <option value="everything_all">Everything — All Fights, per gold</option>
@@ -2235,7 +2236,9 @@ class LabSimUI {
                     upgrade: r.candidate?.description || '',
                     paidIn: r.costType === 'token' ? 'tokens' : 'gold',
                     cost: r.costType === 'gold' ? (r.cost ?? null) : null,
-                    tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : null,
+                    // Shrine rows are paid in gold *and* guild tokens; the token
+                    // half rides on the candidate rather than the result row
+                    tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : (r.candidate?.guildTokenCost ?? null),
                     rate,
                     rateDelta: delta,
                     perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,
@@ -2301,6 +2304,41 @@ class LabSimUI {
 
         if (!detail) {
             parts.push(line('No cost breakdown available for this candidate.', '#666'));
+            return parts.join('');
+        }
+
+        // A shrine level is bought with guild credits and guild tokens. Credits
+        // have a gold value (the cheapest items that convert into them); tokens
+        // have none, since nothing converts into them — so the Cost column and
+        // every ranking on it cover the credits only, and say so here
+        if (detail.guild) {
+            const guild = detail.guild;
+            parts.push(
+                line(
+                    `Costs ${formatWithSeparator(guild.tokens)} guild token${guild.tokens === 1 ? '' : 's'} + ` +
+                        `credits worth ${detail.net == null ? 'no price' : money(detail.net)}. ` +
+                        'Ranked on the gold half only — tokens cannot be bought.'
+                )
+            );
+            for (const credit of guild.credits) {
+                const each =
+                    credit.goldEach === null ? '<span style="color:#ff9800;">no rate</span>' : money(credit.gold);
+                parts.push(line(`${formatWithSeparator(credit.count)} × ${credit.name} — ${each}`, '#888'));
+            }
+            if (guild.needsShrineLevel) {
+                parts.push(
+                    line(
+                        `Your guild's ${guild.shrineName} shrine is level ${guild.shrineLevel}; buying level ` +
+                            `${guild.needsShrineLevel} needs the shrine there first — a guild-wide upgrade this ` +
+                            'cost does not include.',
+                        '#ff9800'
+                    )
+                );
+            } else if (!guild.shrineLevelKnown) {
+                parts.push(
+                    line('No guild shrine levels reached the client, so any cap on this level is unknown.', '#888')
+                );
+            }
             return parts.join('');
         }
 
@@ -2729,6 +2767,7 @@ class LabSimUI {
         const baseline = analysisResult.baseline;
         const tokenResults = results.filter((r) => r.costType === 'token');
         const goldResults = results.filter((r) => r.costType === 'gold');
+        const guildResults = results.filter((r) => r.costType === 'guild');
         const thStyle =
             'text-align:right; padding:4px; color:#888; border-bottom:1px solid #333; cursor:pointer; user-select:none;';
         const thLeftStyle =
@@ -2787,7 +2826,44 @@ class LabSimUI {
             };
         });
 
-        const sortState = { token: { key: 'tokensPerPct', dir: 'asc' }, gold: { key: 'goldPerPct', dir: 'asc' } };
+        // A shrine level is bought with guild credits and guild tokens at once \u2014
+        // neither the token table nor the gold table can price it, so it gets its
+        // own with both halves side by side
+        const guildRows = guildResults.map((r) => {
+            const clearRate = (r.clearRate || 0) * 100;
+            const deltaVal = (r.clearRateDelta || 0) * 100;
+            const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
+            const cost = r.cost || 0;
+            const goldPerPct = deltaVal > 0 && cost ? Math.round(cost / deltaVal) : Infinity;
+            const xpDelta = r.xpPerRoomDelta || 0;
+
+            return {
+                desc: r.candidate?.description || '',
+                cost,
+                costStr: r.cost == null ? '\u2014' : formatWithSeparator(cost),
+                tokenCost: r.tokenCost || 0,
+                tokenCostStr: formatWithSeparator(r.tokenCost || 0),
+                clearRate,
+                clearRateStr: clearRate.toFixed(1) + '%',
+                deltaVal,
+                deltaStr: (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
+                deltaColor,
+                goldPerPct,
+                goldPerPctStr: deltaVal > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                xpDelta,
+                xpDeltaStr: Math.abs(xpDelta) > 1e-9 ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
+                xpDeltaColor: xpDelta > 0 ? '#4caf50' : '#888',
+                shrineNote: r.candidate?.needsShrineLevel
+                    ? `Needs your guild's shrine at level ${r.candidate.needsShrineLevel} first`
+                    : '',
+            };
+        });
+
+        const sortState = {
+            token: { key: 'tokensPerPct', dir: 'asc' },
+            gold: { key: 'goldPerPct', dir: 'asc' },
+            guild: { key: 'goldPerPct', dir: 'asc' },
+        };
 
         const sortRows = (rows, key, dir) => {
             rows.sort((a, b) => {
@@ -2835,6 +2911,50 @@ class LabSimUI {
             return html;
         };
 
+        const renderGuildTable = () => {
+            const s = sortState.guild;
+            const th = (label, key, align) => {
+                const style = align === 'left' ? thLeftStyle : thStyle;
+                const ind = s.key === key ? arrow(s.dir) : '';
+                return `<th data-sort-key="${key}" data-table="guild" style="${style}">${label}${ind}</th>`;
+            };
+
+            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Guild Shrines</div>`;
+            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html += `<thead><tr>
+                ${th('Upgrade', 'desc', 'left')}
+                ${th('Credits', 'cost', 'right')}
+                ${th('Tokens', 'tokenCost', 'right')}
+                ${th('Clear Rate', 'clearRate', 'right')}
+                ${th('Delta', 'deltaVal', 'right')}
+                ${th('Gold/1%', 'goldPerPct', 'right')}
+                ${th('XP/Room', 'xpDelta', 'right')}
+            </tr></thead><tbody>`;
+
+            for (const row of guildRows) {
+                const note = row.shrineNote ? ` title="${row.shrineNote}"` : '';
+                html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
+                    <td style="padding:3px 4px; color:#e0e0e0;">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
+                    <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
+                    <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
+                    <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+                Credits are valued at the cheapest items that convert into them. Guild tokens are counted, not
+                priced — nothing converts into them — so Gold/1% covers the credits only.${
+                    guildRows.some((row) => row.shrineNote)
+                        ? ' <span style="color:#ff9800;">*</span> needs a guild shrine upgrade first.'
+                        : ''
+                }
+            </div>`;
+            return html;
+        };
+
         const renderGoldTable = () => {
             const s = sortState.gold;
             const th = (label, key, align) => {
@@ -2843,7 +2963,7 @@ class LabSimUI {
                 return `<th data-sort-key="${key}" data-table="gold" style="${style}">${label}${ind}</th>`;
             };
 
-            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Equipment Upgrades</div>`;
+            let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`;
             html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
                 ${th('Upgrade', 'desc', 'left')}
@@ -2869,12 +2989,14 @@ class LabSimUI {
         const renderAll = () => {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
+            sortRows(guildRows, sortState.guild.key, sortState.guild.dir);
             const baselineXp = baseline?.xpPerRoom || 0;
             let html = `<div style="color:#888; font-size:11px; margin-bottom:8px;">
                 Baseline Avg Clear: <span style="color:#e0e0e0; font-weight:600;">${((baseline?.clearRate || 0) * 100).toFixed(1)}%</span>
                 ${baselineXp > 0 ? ` · Avg XP/Room: <span style="color:#e0e0e0; font-weight:600;">${baselineXp.toFixed(1)}</span>` : ''}
             </div>`;
             if (tokenRows.length > 0) html += renderTokenTable();
+            if (guildRows.length > 0) html += renderGuildTable();
             if (goldRows.length > 0) html += renderGoldTable();
             container.innerHTML = html;
         };
@@ -2902,9 +3024,9 @@ class LabSimUI {
                     // Gear bought for one skill says which; an enhancement of
                     // something worn everywhere has no one skill to name
                     skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
-                    paidIn: r.costType === 'token' ? 'tokens' : 'gold',
-                    cost: r.costType === 'gold' ? (r.cost ?? null) : null,
-                    tokenCost: r.costType === 'token' ? (r.tokenCost ?? null) : null,
+                    paidIn: r.costType === 'token' ? 'tokens' : r.costType === 'guild' ? 'credits + tokens' : 'gold',
+                    cost: r.costType === 'token' ? null : (r.cost ?? null),
+                    tokenCost: r.costType === 'gold' ? null : (r.tokenCost ?? null),
                     clearRate: r.clearRate ?? null,
                     clearRateDelta: r.clearRateDelta ?? null,
                     perPercent: gain > 0 && paid ? Math.round(paid / gain) : null,

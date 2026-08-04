@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Guild shrines, forecast calibration, roster intelligence, and storage that survives months
+
+- **Guild shrines everywhere they matter.** The combat and lab sim advisors can now rank "+1 shrine level" purchases (credits priced to gold, token counts shown but never priced — stated on each row), the sim editor gets an editable Guild Shrines section, skilling shrines join the skilling advisor (clear-rate and XP metrics), and the build score shows the gold value invested in shrines as its own line. All driven by the game's own guildBuffDetailMap at runtime — no hardcoded tables.
+- **Forecast calibration**: the script now grades its own profit predictions against what your runs actually produced, per skill, with a persistent-gap flag — the only way to catch silent balance changes. Ctrl+K → Calibration.
+- **Guild roster view**: contribution shares (7d/30d), gone-quiet flags measured against each member's own pace, and a guild-level projection, from data already recorded. Ctrl+K → Guild roster.
+- **Storage hardening**: quota monitoring with a one-time alert instead of silent data loss, debounced writes replacing per-message full-history rewrites, per-snapshot networth detail keys, year-plus-downsampling retention, and a streaming backup export that cannot OOM on big histories.
+
 ### The simulator models more, and breaks less
 
 - **taskDamage now raises damage** in sims (deliberate divergence from reference sims — the stat is real; it already applied to thorns).

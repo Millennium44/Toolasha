@@ -13,6 +13,7 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatReport, reportData } from '../../utils/performance-report.js';
 import { showToast } from '../../utils/toast.js';
@@ -36,6 +37,96 @@ const COLORS = {
  */
 function getPerformanceMonitor() {
     return window.Toolasha?.Core?.performanceMonitor || null;
+}
+
+/** Store key counts from the last `refreshStorageFacts()`, or null before one */
+let lastBudgetRows = null;
+
+/**
+ * Bytes as something a person can compare at a glance.
+ * @param {number|null|undefined} bytes - Byte count
+ * @returns {string} Human-readable size, or 'unknown'
+ */
+function formatBytes(bytes) {
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes)) return 'unknown';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * Take fresh storage numbers, for a report that is about to be read.
+ *
+ * Separate from building the report because both are async and the report is
+ * not: `navigator.storage.estimate()` and a key count per store are I/O, and a
+ * panel that opens a frame later with the numbers filled in beats one that
+ * waits for them before drawing anything.
+ * @returns {Promise<void>}
+ */
+export async function refreshStorageFacts() {
+    try {
+        await storage.estimate();
+        lastBudgetRows = await storage.budgetReport();
+    } catch (error) {
+        console.error('[HealthStatus] Reading storage facts failed:', error);
+    }
+}
+
+/**
+ * What the database is using, whether that has already cost anything, and which
+ * stores have outgrown the size they were meant to stay.
+ *
+ * The quota line is the one that matters: a write refused for space is the one
+ * failure mode where a feature keeps running and keeps appearing to work while
+ * recording nothing, so it has to be stated even when nothing looks wrong.
+ * @returns {Array<string>} Report lines
+ */
+function storageLines() {
+    const diag = typeof storage.diagnostics === 'function' ? storage.diagnostics() : {};
+    const estimate = diag.estimate;
+    const lines = [];
+
+    lines.push('Storage');
+    lines.push('-'.repeat(60));
+    lines.push(`database: ${diag.dbName || 'unknown'} v${diag.dbVersion ?? '?'} (available: ${!!diag.available})`);
+
+    if (estimate) {
+        const percent = typeof estimate.percent === 'number' ? ` (${estimate.percent.toFixed(1)}%)` : '';
+        lines.push(`usage: ${formatBytes(estimate.usage)} of ${formatBytes(estimate.quota)}${percent}`);
+    } else {
+        lines.push('usage: not reported by this browser');
+    }
+
+    if (diag.quotaExceeded) {
+        const target = diag.lastQuotaTarget ? `${diag.lastQuotaTarget.storeName}:${diag.lastQuotaTarget.key}` : '?';
+        lines.push(`QUOTA EXCEEDED — ${diag.quotaFailures} failed write(s), most recently ${target}.`);
+        lines.push('History recording has stood down. Delete some stored history, or free space, and reload.');
+    } else if (diag.quotaFailures) {
+        lines.push(`quota: recovered after ${diag.quotaFailures} failed write(s) earlier this session`);
+    } else {
+        lines.push('quota: no failed writes this session');
+    }
+
+    lines.push(`pending writes: ${diag.pendingWrites ?? 0} (timers: ${diag.activeTimers ?? 0})`);
+
+    if (lastBudgetRows?.length) {
+        const over = lastBudgetRows.filter((row) => row.over);
+        if (over.length) {
+            lines.push(`stores over their soft budget (${over.length}):`);
+            for (const row of over) lines.push(`- ${row.storeName}: ${row.keys} keys (budget ${row.budget})`);
+        } else {
+            lines.push('stores over their soft budget: none');
+        }
+        const biggest = lastBudgetRows.slice(0, 5).map((row) => `${row.storeName}=${row.keys}`);
+        lines.push(`largest stores by key count: ${biggest.join(', ')}`);
+    }
+
+    return lines;
 }
 
 /**
@@ -70,6 +161,9 @@ export function buildDiagnosticReport(failures = []) {
             lines.push(`- ${failure.name || failure.key} [${failure.key}]: ${failure.reason || 'unknown reason'}`);
         }
     }
+    lines.push('');
+
+    lines.push(...storageLines());
     lines.push('');
 
     if (monitor) {
@@ -107,6 +201,10 @@ export function diagnosticData(failures = []) {
         agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
         takenAt: new Date().toISOString(),
         failures,
+        storage: {
+            ...(typeof storage.diagnostics === 'function' ? storage.diagnostics() : {}),
+            budgets: lastBudgetRows,
+        },
         startup: monitor
             ? reportData({
                   marks: monitor.getMarks(),
@@ -122,6 +220,7 @@ class HealthStatusPanel {
     constructor() {
         this.panel = null;
         this.failures = [];
+        this.storageBlock = null;
     }
 
     /**
@@ -132,6 +231,58 @@ class HealthStatusPanel {
         this.failures = failures;
         this._removePanel();
         this._createPanel();
+        this._refreshStorage();
+    }
+
+    /**
+     * Fill in the storage numbers once they arrive, without holding up the panel.
+     * @private
+     */
+    async _refreshStorage() {
+        await refreshStorageFacts();
+        if (this.storageBlock?.isConnected) this._renderStorageBlock();
+    }
+
+    /**
+     * Draw the storage summary into its block, from whatever facts are known.
+     * @private
+     */
+    _renderStorageBlock() {
+        const block = this.storageBlock;
+        if (!block) return;
+        block.textContent = '';
+
+        const diag = typeof storage.diagnostics === 'function' ? storage.diagnostics() : {};
+        const estimate = diag.estimate;
+
+        const usage = document.createElement('div');
+        if (estimate) {
+            const percent = typeof estimate.percent === 'number' ? ` (${estimate.percent.toFixed(1)}%)` : '';
+            usage.textContent = `Storage: ${formatBytes(estimate.usage)} of ${formatBytes(estimate.quota)}${percent}`;
+        } else {
+            usage.textContent = 'Storage: usage not reported by this browser';
+        }
+        usage.style.color = COLORS.textDim;
+        usage.style.fontSize = '12px';
+        block.appendChild(usage);
+
+        if (diag.quotaExceeded) {
+            const warning = document.createElement('div');
+            warning.className = 'toolasha-health-quota';
+            warning.textContent =
+                'Storage is full — history recording has stopped. Clear some stored history, ' +
+                'or free disk space, then reload.';
+            Object.assign(warning.style, { color: COLORS.accent, fontSize: '12px', marginTop: '4px' });
+            block.appendChild(warning);
+        }
+
+        const over = (lastBudgetRows || []).filter((row) => row.over);
+        if (over.length) {
+            const line = document.createElement('div');
+            line.textContent = `Over soft budget: ${over.map((row) => `${row.storeName} (${row.keys})`).join(', ')}`;
+            Object.assign(line.style, { color: COLORS.textDim, fontSize: '12px', marginTop: '4px' });
+            block.appendChild(line);
+        }
     }
 
     /** Close the panel, if it is up. */
@@ -220,6 +371,7 @@ class HealthStatusPanel {
             ok.textContent = 'Everything reported healthy.';
             ok.style.color = COLORS.textDim;
             body.appendChild(ok);
+            body.appendChild(this._createStorageBlock());
             return body;
         }
 
@@ -249,8 +401,28 @@ class HealthStatusPanel {
             'If it keeps happening, send the report below.';
         Object.assign(advice.style, { color: COLORS.textDim, fontSize: '12px', marginTop: '8px' });
         body.appendChild(advice);
+        body.appendChild(this._createStorageBlock());
 
         return body;
+    }
+
+    /**
+     * The block the storage numbers land in, drawn from cached facts first so it
+     * is never empty while the fresh ones are being fetched.
+     * @returns {HTMLElement} The block
+     * @private
+     */
+    _createStorageBlock() {
+        const block = document.createElement('div');
+        block.className = 'toolasha-health-storage';
+        Object.assign(block.style, {
+            marginTop: '8px',
+            paddingTop: '8px',
+            borderTop: `1px solid ${COLORS.borderDim}`,
+        });
+        this.storageBlock = block;
+        this._renderStorageBlock();
+        return block;
     }
 
     /** @private */
@@ -289,6 +461,9 @@ class HealthStatusPanel {
      * @private
      */
     async _copyReport(button) {
+        // The numbers in the report are the point of copying it, so this one
+        // place does wait for them
+        await refreshStorageFacts();
         const text = buildDiagnosticReport(this.failures);
         const original = button.textContent;
         try {
@@ -312,6 +487,7 @@ class HealthStatusPanel {
         unregisterFloatingPanel(existing);
         existing.remove();
         this.panel = null;
+        this.storageBlock = null;
     }
 }
 
@@ -324,6 +500,40 @@ const healthStatusPanel = new HealthStatusPanel();
 export function showHealthStatus(failures = []) {
     healthStatusPanel.show(failures);
 }
+
+/**
+ * The failure entry a full disk is described as, so it reaches the player
+ * through the same panel as everything else that did not work.
+ * @param {{storeName: string, key: string}} detail - What the failed write was
+ * @returns {{key: string, name: string, reason: string}} A failure record
+ */
+function quotaFailure(detail) {
+    return {
+        key: 'storage',
+        name: 'Storage (IndexedDB)',
+        reason:
+            `Out of space writing ${detail?.storeName || 'storage'}:${detail?.key || '?'} — ` +
+            'history recording has stopped to avoid losing data silently.',
+    };
+}
+
+/**
+ * Say once, when storage first refuses a write, that recording has stopped.
+ *
+ * A quota failure is otherwise completely silent to the player: the feature
+ * still draws, still updates on screen, and simply never persists — the loss is
+ * only discovered on the next reload, when the history is short. One toast, and
+ * the same panel as every other failure, is the whole remedy.
+ */
+storage.onQuotaExceeded?.((detail) => {
+    showToast('Toolasha ran out of storage — history recording has stopped', {
+        kind: 'error',
+        // Stays up: a loss of recording that fades in six seconds is a loss
+        // nobody saw, which is the state this exists to end
+        duration: 0,
+        action: { label: 'What this means', onClick: () => healthStatusPanel.show([quotaFailure(detail)]) },
+    });
+});
 
 /**
  * The whole surfacing step: one toast that leads to the list.

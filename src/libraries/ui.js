@@ -86,6 +86,10 @@ import xphCalculator from '../features/enhancement/xph-calculator.js';
 import guildXPTracker from '../features/guild/guild-xp-tracker.js';
 import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
+import guildRosterView from '../features/guild/guild-roster-view.js';
+
+// Insights
+import predictionCalibration from '../features/insights/index.js';
 
 // Leaderboard
 import leaderboardXPTracker from '../features/leaderboard/leaderboard-xp-tracker.js';
@@ -171,6 +175,8 @@ toolashaRoot.UI = {
     guildXPTracker,
     guildXPDisplay,
     guildCreditValue,
+    guildRosterView,
+    predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,
     emptyQueueNotification,
