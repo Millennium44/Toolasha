@@ -3100,7 +3100,10 @@ class CombatSimUI {
      * @private
      */
     _setupDrag(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so touch drags work; touch-action keeps the browser
+        // from turning the drag into a scroll
+        header.style.touchAction = 'none';
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.id === 'mwi-csim-close') return;
             this.isDragging = true;
             header.style.cursor = 'grabbing';
@@ -3117,11 +3120,13 @@ class CombatSimUI {
             const onUp = () => {
                 this.isDragging = false;
                 header.style.cursor = 'grab';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 
@@ -3129,7 +3134,8 @@ class CombatSimUI {
      * @private
      */
     _setupResize(handle, mode = 'se') {
-        handle.addEventListener('mousedown', (e) => {
+        handle.style.touchAction = 'none';
+        handle.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             e.stopPropagation();
             const rect = this.panel.getBoundingClientRect();
@@ -3163,13 +3169,15 @@ class CombatSimUI {
                 }
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
                 document.body.style.userSelect = priorSelect;
                 this._persistPanelSize();
             };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 

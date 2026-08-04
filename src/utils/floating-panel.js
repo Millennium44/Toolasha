@@ -10,6 +10,7 @@
  */
 
 import { bringPanelToFront } from './panel-z-index.js';
+import { hasCoarsePointer } from './mobile.js';
 
 /**
  * Let a panel be dragged by one of its parts.
@@ -31,7 +32,14 @@ export function makeDraggable(panel, handle, onDrop) {
     let dragging = false;
     let moved = false;
 
-    const onMouseMove = (event) => {
+    // Pointer events rather than mouse events, so a finger works the same as a
+    // cursor — mousedown never fires on a touchscreen and every panel was
+    // simply immovable there. touch-action:none is the half that is easy to
+    // forget: without it the browser claims the gesture for scrolling and the
+    // pointermove stream ends after a few pixels.
+    handle.style.touchAction = 'none';
+
+    const onPointerMove = (event) => {
         if (!dragging) return;
         moved = true;
         // Anchored left/top from here on: a panel positioned from the right edge
@@ -42,11 +50,12 @@ export function makeDraggable(panel, handle, onDrop) {
         panel.style.bottom = 'auto';
     };
 
-    const onMouseUp = () => {
+    const onPointerUp = () => {
         if (!dragging) return;
         dragging = false;
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerUp);
 
         // A press that never moved is a click, not a drag. Saving one is
         // harmless for a panel that only remembers where it is, and wrong for
@@ -57,7 +66,7 @@ export function makeDraggable(panel, handle, onDrop) {
         onDrop?.({ left: panel.style.left, top: panel.style.top });
     };
 
-    const onMouseDown = (event) => {
+    const onPointerDown = (event) => {
         // Only the primary button, and never a click that was meant for a
         // control sitting in the handle
         if (event.button !== 0 || event.target.closest('button, input, select')) return;
@@ -68,16 +77,19 @@ export function makeDraggable(panel, handle, onDrop) {
         const rect = panel.getBoundingClientRect();
         offsetX = event.clientX - rect.left;
         offsetY = event.clientY - rect.top;
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        // A touch interrupted by the system (notification, palm rejection)
+        // cancels rather than lifts; without this the panel stays glued
+        document.addEventListener('pointercancel', onPointerUp);
         event.preventDefault();
     };
 
-    handle.addEventListener('mousedown', onMouseDown);
+    handle.addEventListener('pointerdown', onPointerDown);
 
     return () => {
-        handle.removeEventListener('mousedown', onMouseDown);
-        onMouseUp();
+        handle.removeEventListener('pointerdown', onPointerDown);
+        onPointerUp();
     };
 }
 
@@ -121,22 +133,31 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
     let startHeight = 0;
     let resizing = false;
 
-    const onMouseMove = (event) => {
+    // Same pointer-events story as the drag handle; and a 14px grip is a
+    // mouse-sized target, so a coarse pointer gets a bigger one
+    grip.style.touchAction = 'none';
+    if (hasCoarsePointer()) {
+        grip.style.width = '26px';
+        grip.style.height = '26px';
+    }
+
+    const onPointerMove = (event) => {
         if (!resizing) return;
         panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
         panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
     };
 
-    const onMouseUp = () => {
+    const onPointerUp = () => {
         if (!resizing) return;
         resizing = false;
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.removeEventListener('pointercancel', onPointerUp);
         const rect = panel.getBoundingClientRect();
         onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
     };
 
-    const onMouseDown = (event) => {
+    const onPointerDown = (event) => {
         if (event.button !== 0) return;
         resizing = true;
         const rect = panel.getBoundingClientRect();
@@ -144,18 +165,19 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         startY = event.clientY;
         startWidth = rect.width;
         startHeight = rect.height;
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+        document.addEventListener('pointercancel', onPointerUp);
         event.preventDefault();
         event.stopPropagation();
     };
 
-    grip.addEventListener('mousedown', onMouseDown);
+    grip.addEventListener('pointerdown', onPointerDown);
     panel.appendChild(grip);
 
     return () => {
-        grip.removeEventListener('mousedown', onMouseDown);
-        onMouseUp();
+        grip.removeEventListener('pointerdown', onPointerDown);
+        onPointerUp();
         grip.remove();
     };
 }

@@ -95,9 +95,9 @@ class LabSimUI {
             background: rgba(10, 10, 20, 0.97);
             border: 2px solid ${ACCENT_BORDER};
             border-radius: 10px;
-            width: 900px;
-            height: 700px;
-            min-width: 400px;
+            width: min(900px, 96vw);
+            height: min(700px, 84vh);
+            min-width: min(400px, 92vw);
             min-height: 300px;
             max-width: 90vw;
             max-height: 90vh;
@@ -2904,7 +2904,10 @@ class LabSimUI {
 
     /** @private */
     _setupDrag(handle) {
-        handle.addEventListener('mousedown', (e) => {
+        // Pointer events so touch drags work; touch-action keeps the browser
+        // from turning the drag into a scroll
+        handle.style.touchAction = 'none';
+        handle.addEventListener('pointerdown', (e) => {
             if (e.target.tagName === 'BUTTON') return;
             this.isDragging = true;
             handle.style.cursor = 'grabbing';
@@ -2921,18 +2924,21 @@ class LabSimUI {
             const onUp = () => {
                 this.isDragging = false;
                 handle.style.cursor = 'grab';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 
     /** @private */
     _setupResize(handle, corner = 'right') {
-        handle.addEventListener('mousedown', (e) => {
+        handle.style.touchAction = 'none';
+        handle.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             e.stopPropagation();
             const startX = e.clientX;
@@ -2958,11 +2964,13 @@ class LabSimUI {
                 this.panel.style.height = `${newHeight}px`;
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 }

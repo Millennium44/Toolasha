@@ -41,6 +41,20 @@ export const settingsGroups = {
                     'When an update introduces a new on-by-default switch, keep it off until you turn it on ' +
                     'yourself. Numbers and dropdowns keep their defaults — only behaviour switches are held back.',
             },
+            mobileMode: {
+                id: 'mobileMode',
+                label: 'Mobile mode',
+                type: 'select',
+                default: 'auto',
+                options: [
+                    { value: 'auto', label: 'Auto-detect' },
+                    { value: 'on', label: 'On' },
+                    { value: 'off', label: 'Off' },
+                ],
+                help:
+                    'Adjusts for touch screens: bigger resize grips, panels sized to the viewport. Auto-detect keys ' +
+                    'on whether the primary pointer is a finger, which a touchscreen laptop can override here.',
+            },
             chatCommands: {
                 id: 'chatCommands',
                 label: 'Enable chat commands (/item, /wiki, /market)',
