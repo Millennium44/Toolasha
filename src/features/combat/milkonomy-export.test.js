@@ -277,12 +277,24 @@ describe('picking the best gear for a skill', () => {
         expect(config.charm).toEqual({ type: 'charm' });
     });
 
-    test('the back slot keeps its raw hrid, having no entry in the slot-name table', async () => {
-        // PINS CURRENT BEHAVIOUR: every other slot is renamed to Milkonomy's
-        // short form ('legs', 'charm'), but '/equipment_types/back' is missing
-        // from the mapping, so it goes out as the hrid it came in as.
+    test('the back slot is named like its siblings, not left as a raw hrid', async () => {
+        // Every slot goes out in Milkonomy's short form ('legs', 'charm'), back
+        // included — a hole in the mapping table would have sent the hrid instead.
+        expect((await constructMilkonomyExport()).actionConfigMap.brewing.back).toEqual({ type: 'back' });
+    });
+
+    test('a filled back slot is named the same way', async () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/brewers_cape': equipmentDetail('/equipment_types/back', { brewingEfficiency: 0.05 }),
+            },
+        };
+        game.inventory = [{ itemHrid: '/items/brewers_cape', enhancementLevel: 5 }];
+
         expect((await constructMilkonomyExport()).actionConfigMap.brewing.back).toEqual({
-            type: '/equipment_types/back',
+            type: 'back',
+            hrid: '/items/brewers_cape',
+            enhanceLevel: 5,
         });
     });
 });
