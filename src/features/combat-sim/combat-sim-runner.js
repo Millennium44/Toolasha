@@ -198,6 +198,10 @@ function mergeSimResults(results) {
         // Encounters
         merged.encounters += r.encounters;
 
+        // A maximum merges as a maximum — summing or keeping chunk 0's value
+        // would misreport the peak for any multi-worker run
+        merged.maxEnrageStack = Math.max(merged.maxEnrageStack || 0, r.maxEnrageStack || 0);
+
         // Deaths (per unit hrid)
         for (const [hrid, count] of Object.entries(r.deaths)) {
             merged.deaths[hrid] = (merged.deaths[hrid] || 0) + count;
@@ -366,8 +370,9 @@ function mergeSimResults(results) {
 export async function runSimulation(params, onProgress, { preempt = true, workers = 0 } = {}) {
     const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
 
-    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
-    const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
+    // Guild buffs are not folded in here: the worker reads each player DTO's
+    // own guildCombatBuffs, so party members keep their own guild's bonuses
+    const extraBuffs = buildExtraBuffs(communityBuffs);
     const ONE_HOUR_NS = 3600 * 1e9;
 
     // A new run started from the UI replaces whatever was running — that is what
@@ -486,8 +491,9 @@ export async function runLabyrinthSimulation(params, onProgress) {
         seed,
     } = params;
 
-    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
-    const extraBuffs = [...buildExtraBuffs(communityBuffs, guildCombatBuffs), ...(labyrinthCombatBuffs || [])];
+    // Guild buffs are not folded in here: the worker reads each player DTO's
+    // own guildCombatBuffs, so party members keep their own guild's bonuses
+    const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const ONE_HOUR_NS = 3600 * 1e9;
 
     // Unlike runSimulation, labyrinth sims do NOT preempt other runs: each has

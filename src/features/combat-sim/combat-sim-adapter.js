@@ -109,6 +109,7 @@ export function buildPlayerDTO() {
             efficiency: Math.max(0, Math.floor(Number(info.labyrinthSkillingEfficiencyLevel) || 0)),
             success: Math.max(0, Math.floor(Number(info.labyrinthSkillingSuccessLevel) || 0)),
             doubleProgress: Math.max(0, Math.floor(Number(info.labyrinthSkillingDoubleProgressLevel) || 0)),
+            experience: Math.max(0, Math.floor(Number(info.labyrinthExperienceLevel) || 0)),
         };
     }
 

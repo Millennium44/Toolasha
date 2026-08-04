@@ -1406,6 +1406,7 @@ export class SimEditor {
             { key: 'efficiency', label: 'Efficiency' },
             { key: 'success', label: 'Success Rate' },
             { key: 'doubleProgress', label: 'Double Progress' },
+            { key: 'experience', label: 'Experience' },
         ];
         const tokens = dto.tokenUpgrades || {};
         const activeCount = upgrades.filter((u) => (tokens[u.key] || 0) > 0).length;
@@ -1807,7 +1808,13 @@ export class SimEditor {
             }
         }
 
-        const tokenLabels = { speed: 'Speed', efficiency: 'Efficiency', success: 'Success', doubleProgress: 'DblProg' };
+        const tokenLabels = {
+            speed: 'Speed',
+            efficiency: 'Efficiency',
+            success: 'Success',
+            doubleProgress: 'DblProg',
+            experience: 'Exp',
+        };
         for (const [key, label] of Object.entries(tokenLabels)) {
             const origVal = original.tokenUpgrades?.[key] || 0;
             const editVal = edited.tokenUpgrades?.[key] || 0;

@@ -936,6 +936,7 @@ class LabSimUI {
             await this._renderSkillLoadoutTable();
         } catch (error) {
             console.error('[LabSimUI] Failed to show skilling tab:', error);
+            this._setStatus('Failed to load skilling tab: ' + error.message);
         }
     }
 
@@ -1719,8 +1720,12 @@ class LabSimUI {
         const fmtPerMillion = (v) => (v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toPrecision(2));
         const fmtAttemptsDelta = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
         const expectedTries = (winRate) => 1 / Math.max(winRate, 0.001);
+        // Sticky needs an opaque background or rows scroll through the header.
+        // The offset is the results pane's own padding, so the header parks flush
+        // with the top of the scroll area rather than floating below it.
         const thStyle =
-            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; white-space:nowrap;';
+            'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
+            'white-space:nowrap; position:sticky; top:-10px; z-index:2; background:#12121f;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
         const bestDelta = Math.min(...results.map((r) => r.attemptsDelta));
 
@@ -2447,6 +2452,7 @@ class LabSimUI {
             <th style="${thStyle}">Eff. Lvl</th>
             <th style="${thStyle}">Success</th>
             <th style="${thStyle}">Clear</th>
+            <th style="${thStyle}">XP/Room</th>
             <th style="${thStyle}">Actions</th>
         </tr></thead><tbody>`;
 
@@ -2460,6 +2466,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:#888;">—</td>
                     <td style="${tdStyle} color:#888;">—</td>
                     <td style="${tdStyle} color:#888;">—</td>
+                    <td style="${tdStyle} color:#888;">—</td>
                 </tr>`;
                 continue;
             }
@@ -2467,6 +2474,7 @@ class LabSimUI {
             const successPct = ((r.successChance || 0) * 100).toFixed(1);
             const clearPct = ((r.clearChance || 0) * 100).toFixed(1);
             const rowRoomLevel = r.roomLevel ?? roomLevel;
+            const xpPerRoom = r.xpPerRoom > 0 ? formatKMB(r.xpPerRoom) : '—';
 
             html += `<tr style="border-bottom:1px solid #1a1a1a;">
                 <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
@@ -2475,6 +2483,7 @@ class LabSimUI {
                 <td style="${tdStyle} color:#ccc;">${r.effectiveLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${successPct}%</td>
                 <td style="${tdStyle} color:${clearColor}; font-weight:600;">${clearPct}%</td>
+                <td style="${tdStyle} color:#ccc;">${xpPerRoom}</td>
                 <td style="${tdStyle} color:#888;">${r.attempts || 0}</td>
             </tr>`;
         }

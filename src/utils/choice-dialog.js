@@ -13,7 +13,7 @@
  * reads as a decision rather than as a continuation.
  */
 
-import config from '../core/config.js';
+import { PANEL_Z_CAP } from './panel-z-index.js';
 
 const COLORS = {
     background: 'rgba(12, 15, 26, 0.98)',
@@ -43,7 +43,10 @@ export function askChoice({ title, message = '', choices = [] }) {
             position: 'fixed',
             inset: '0',
             background: 'rgba(0, 0, 0, 0.55)',
-            zIndex: String(config.Z_FLOATING_PANEL + 10),
+            // Always above every floating panel, including one raised by
+            // bringPanelToFront to PANEL_Z_CAP — this dialog is often opened
+            // from that very panel and must never render behind it
+            zIndex: String(PANEL_Z_CAP + 1),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
