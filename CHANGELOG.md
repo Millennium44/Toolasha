@@ -29,6 +29,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Per-character storage helper
 
 - **New `characterKey` helper** (`src/utils/character-key.js`): one shared way to scope stored state per character, with one-time migration of legacy global values — adopted by the main character (never an iron cow; identified by longest networth history) or discarded where inheriting another character's data would be wrong. Groundwork for de-leaking all cross-character state.
+- Market-cow detection reads the same `gameMode` field MCS uses, and now recognizes `legacy_ironcow` too — no ironcow variant ever inherits the market character's data.
 
 ### Official formulas, ladder costs, and the sim graded against reality
 

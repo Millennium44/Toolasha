@@ -80,6 +80,14 @@ describe('readScoped', () => {
         expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
     });
 
+    it('never adopts onto a legacy iron cow either', async () => {
+        mockDataManager.currentCharacterId = 'legacy456';
+        mockDataManager.currentGameMode = 'legacy_ironcow';
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
+    });
+
     it('never adopts onto an iron cow and leaves the legacy value in place', async () => {
         mockDataManager.currentCharacterId = 'iron456';
         mockDataManager.currentGameMode = 'ironcow';
