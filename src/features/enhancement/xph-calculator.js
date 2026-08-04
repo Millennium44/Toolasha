@@ -300,7 +300,12 @@ class XPHCalculator {
     }
 
     _setupDrag(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.id === 'mwi-xph-close') return;
             this.isDragging = true;
             header.style.cursor = 'grabbing';
@@ -317,11 +322,13 @@ class XPHCalculator {
             const onUp = () => {
                 this.isDragging = false;
                 header.style.cursor = 'grab';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 

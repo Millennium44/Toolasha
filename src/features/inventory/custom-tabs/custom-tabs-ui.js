@@ -171,6 +171,10 @@ const PANEL_CSS = `
     flex-shrink: 0;
 }
 .toolasha-ct-section-header:hover .toolasha-ct-section-actions { display: flex; }
+/* No hover on a touchscreen — actions hidden behind it would not exist there */
+@media (pointer: coarse) {
+    .toolasha-ct-section-actions { display: flex; }
+}
 .toolasha-ct-node-btn {
     background: none;
     border: none;
@@ -236,7 +240,7 @@ const PANEL_CSS = `
     border: 1px solid #444;
     border-radius: 8px;
     padding: 16px;
-    width: 380px;
+    width: min(380px, 92vw);
     max-height: 80vh;
     display: flex;
     flex-direction: column;

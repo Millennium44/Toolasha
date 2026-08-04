@@ -95,6 +95,7 @@ class EnhancementUI {
 
         // Update UI every second during active sessions
         this.updateInterval = setInterval(() => {
+            if (document.hidden) return;
             const session = this.getCurrentSession();
             if (session && session.state === SessionState.TRACKING) {
                 this.updateUI();
@@ -333,7 +334,8 @@ class EnhancementUI {
             borderRadius: STYLE.borderRadius.medium,
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             overflow: 'hidden',
-            width: '350px',
+            // Clamped so the first open on a phone is not wider than the screen
+            width: 'min(350px, 92vw)',
             minHeight: 'auto',
             background: 'rgba(25, 0, 35, 0.92)',
             backdropFilter: 'blur(12px)',
@@ -551,7 +553,12 @@ class EnhancementUI {
         let offsetX = 0;
         let offsetY = 0;
 
-        const onMouseMove = (event) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        const onPointerMove = (event) => {
             if (this.isDragging) {
                 const newLeft = event.clientX - offsetX;
                 const newTop = event.clientY - offsetY;
@@ -563,15 +570,16 @@ class EnhancementUI {
             }
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             this.isDragging = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
             this.dragMoveHandler = null;
             this.dragUpHandler = null;
         };
 
-        const onMouseDown = (event) => {
+        const onPointerDown = (event) => {
             bringPanelToFront(this.floatingUI);
             this.isDragging = true;
 
@@ -580,21 +588,22 @@ class EnhancementUI {
             offsetX = event.clientX - rect.left;
             offsetY = event.clientY - rect.top;
 
-            this.dragMoveHandler = onMouseMove;
-            this.dragUpHandler = onMouseUp;
+            this.dragMoveHandler = onPointerMove;
+            this.dragUpHandler = onPointerUp;
 
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
         };
 
         if (this.dragHandle && this.dragMouseDownHandler) {
-            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+            this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
         }
 
         this.dragHandle = header;
-        this.dragMouseDownHandler = onMouseDown;
+        this.dragMouseDownHandler = onPointerDown;
 
-        header.addEventListener('mousedown', onMouseDown);
+        header.addEventListener('pointerdown', onPointerDown);
     }
 
     /**
@@ -1171,17 +1180,18 @@ class EnhancementUI {
         }
 
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
 
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
 
         if (this.dragHandle && this.dragMouseDownHandler) {
-            this.dragHandle.removeEventListener('mousedown', this.dragMouseDownHandler);
+            this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
         }
 
         this.dragHandle = null;

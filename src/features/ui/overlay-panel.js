@@ -318,8 +318,9 @@ class OverlayPanel {
             // sit *below* the game's own interactive UI rather than over the
             // tabs and buttons it happens to overlap
             zIndex: String(config.Z_HUD),
-            width: `${DEFAULT_PANEL.width}px`,
-            height: `${DEFAULT_PANEL.height}px`,
+            // Clamped so the first open on a phone is not wider than the screen
+            width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
+            height: `min(${DEFAULT_PANEL.height}px, 80vh)`,
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.55)',
         });
 
@@ -506,8 +507,9 @@ class OverlayPanel {
         const onUp = () => {
             if (!resizing) return;
             resizing = false;
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
             this.settings.dockHeightPx = Math.round(this.panel.getBoundingClientRect().height);
             this._save();
             this._renderBody();
@@ -518,16 +520,21 @@ class OverlayPanel {
             resizing = true;
             startY = event.clientY;
             startHeight = this.panel.getBoundingClientRect().height;
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
             event.preventDefault();
         };
 
-        bar.addEventListener('mousedown', onDown);
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        bar.style.touchAction = 'none';
+        bar.addEventListener('pointerdown', onDown);
         this.panel.insertBefore(bar, this.panel.firstChild);
 
         return () => {
-            bar.removeEventListener('mousedown', onDown);
+            bar.removeEventListener('pointerdown', onDown);
             onUp();
             bar.remove();
         };
@@ -1285,6 +1292,9 @@ class OverlayPanel {
                 height: `${row.height}px`,
                 fontSize: `${row.zoom}%`,
                 cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
+                // While unlocked a finger drag must not become a scroll; locked
+                // again, the panel's own scrolling comes back
+                touchAction: this.isEditable ? 'none' : '',
                 // Editing shows the tile's own outline; otherwise a rule under
                 // each one, which is what gives a column of tiles the ruled look
                 // rather than a floating jumble
@@ -1429,7 +1439,7 @@ class OverlayPanel {
         let originY = 0;
         let dragging = false;
 
-        const onMouseMove = (event) => {
+        const onPointerMove = (event) => {
             if (!dragging) return;
             const step = this.settings.snapToGrid ? GRID : 1;
             const wanted = {
@@ -1447,12 +1457,13 @@ class OverlayPanel {
             tile.style.top = `${held.y}px`;
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (!dragging) return;
             dragging = false;
             this.interacting = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
 
             this.settings.positions = {
                 ...this.settings.positions,
@@ -1462,7 +1473,10 @@ class OverlayPanel {
             this._renderBody();
         };
 
-        tile.addEventListener('mousedown', (event) => {
+        // Pointer events so a finger can arrange tiles too; touch-action stays
+        // default while locked so the panel still scrolls — the drag only ever
+        // starts while the layout is unlocked
+        tile.addEventListener('pointerdown', (event) => {
             // Locked is the normal state, where a tile is something you read and
             // click rather than something you move
             if (!this.isEditable || event.button !== 0) return;
@@ -1474,8 +1488,9 @@ class OverlayPanel {
             startY = event.clientY;
             originX = parseFloat(tile.style.left) || 0;
             originY = parseFloat(tile.style.top) || 0;
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
             event.preventDefault();
         });
     }
@@ -1492,19 +1507,20 @@ class OverlayPanel {
         let startHeight = 0;
         let resizing = false;
 
-        const onMouseMove = (event) => {
+        const onPointerMove = (event) => {
             if (!resizing) return;
             const step = this.settings.snapToGrid ? GRID : 1;
             tile.style.width = `${Math.max(MIN_TILE.width, snap(startWidth + event.clientX - startX, step))}px`;
             tile.style.height = `${Math.max(MIN_TILE.height, snap(startHeight + event.clientY - startY, step))}px`;
         };
 
-        const onMouseUp = () => {
+        const onPointerUp = () => {
             if (!resizing) return;
             resizing = false;
             this.interacting = false;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
 
             this.settings.sizes = {
                 ...this.settings.sizes,
@@ -1514,7 +1530,10 @@ class OverlayPanel {
             this._renderBody();
         };
 
-        grip.addEventListener('mousedown', (event) => {
+        // Pointer events so a finger works too; the grip only shows while the
+        // layout is unlocked, so it can opt out of scrolling outright
+        grip.style.touchAction = 'none';
+        grip.addEventListener('pointerdown', (event) => {
             if (event.button !== 0) return;
             resizing = true;
             this.interacting = true;
@@ -1522,8 +1541,9 @@ class OverlayPanel {
             startY = event.clientY;
             startWidth = tile.offsetWidth;
             startHeight = tile.offsetHeight;
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
             event.preventDefault();
             event.stopPropagation();
         });

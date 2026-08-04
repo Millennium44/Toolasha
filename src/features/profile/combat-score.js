@@ -17,6 +17,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
+import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 
 /**
  * Escape a string for safe interpolation into innerHTML.
@@ -895,24 +896,28 @@ class CombatScore {
             });
         }
 
-        // Drag to move
+        // Drag to move — pointer events so a finger works too; mousedown never
+        // fires on a touchscreen
         const header = panel.querySelector('#mwi-abilities-header');
         if (header) {
+            header.style.touchAction = 'none';
             const dragOffset = { x: 0, y: 0 };
             const onMove = (e) => {
                 panel.style.left = e.clientX - dragOffset.x + 'px';
                 panel.style.top = e.clientY - dragOffset.y + 'px';
             };
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
             };
-            header.addEventListener('mousedown', (e) => {
+            header.addEventListener('pointerdown', (e) => {
                 if (e.target.id === 'mwi-abilities-close-btn') return;
                 dragOffset.x = e.clientX - panel.offsetLeft;
                 dragOffset.y = e.clientY - panel.offsetTop;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp);
+                document.addEventListener('pointercancel', onUp);
             });
         }
     }
@@ -1405,6 +1410,10 @@ class CombatScore {
             this.currentAbilitiesPanel.remove();
             this.currentAbilitiesPanel = null;
         }
+
+        // The pool recreates itself on the next batch; idle workers should not
+        // outlive the feature that spawned them
+        terminateWorkerPool();
 
         this.isActive = false;
         this.isInitialized = false;

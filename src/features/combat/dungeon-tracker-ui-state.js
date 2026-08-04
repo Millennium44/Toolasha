@@ -81,13 +81,20 @@ class DungeonTrackerUIState {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
+        // Never wider than the screen: 480px of min-width on a 390px phone
+        // pushed half the tracker permanently off the right edge
+        const minWidth = this.isCollapsed ? 'min(250px, calc(100vw - 20px))' : 'min(480px, calc(100vw - 20px))';
+
         if (this.position) {
-            // Custom position (user dragged it)
+            // Custom position (user dragged it) — clamped back on screen, since
+            // it may have been saved in a wider window than this one
+            const x = Math.max(0, Math.min(this.position.x, window.innerWidth - 60));
+            const y = Math.max(0, Math.min(this.position.y, window.innerHeight - 40));
             container.style.cssText = `
                 ${baseStyle}
-                top: ${this.position.y}px;
-                left: ${this.position.x}px;
-                min-width: ${this.isCollapsed ? '250px' : '480px'};
+                top: ${y}px;
+                left: ${x}px;
+                min-width: ${minWidth};
             `;
         } else if (this.isCollapsed) {
             // Collapsed: top-left (near action time display)
@@ -95,7 +102,7 @@ class DungeonTrackerUIState {
                 ${baseStyle}
                 top: 10px;
                 left: 10px;
-                min-width: 250px;
+                min-width: ${minWidth};
             `;
         } else {
             // Expanded: top-center
@@ -104,7 +111,7 @@ class DungeonTrackerUIState {
                 top: 10px;
                 left: 50%;
                 transform: translateX(-50%);
-                min-width: 480px;
+                min-width: ${minWidth};
             `;
         }
     }

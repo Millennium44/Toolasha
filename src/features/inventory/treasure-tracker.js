@@ -835,8 +835,9 @@ class TreasureTracker {
             top: '80px',
             right: '80px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: `${DEFAULT_PANEL.width}px`,
-            height: `${DEFAULT_PANEL.height}px`,
+            // Clamped so the first open on a phone is not wider than the screen
+            width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
+            height: `min(${DEFAULT_PANEL.height}px, 80vh)`,
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
             borderRadius: '8px',

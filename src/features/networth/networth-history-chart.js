@@ -1073,7 +1073,7 @@ class NetworthHistoryChart {
             border-radius: 6px;
             padding: 10px 14px;
             max-height: 300px;
-            width: 360px;
+            width: min(360px, 92vw);
             overflow-y: auto;
             font-size: 12px;
             color: #ccc;
@@ -1081,10 +1081,12 @@ class NetworthHistoryChart {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         `;
 
-        // Position below the toggle element
+        // Position below the toggle element, pulled back from the right edge
+        // when the anchor sits closer to it than the popout is wide
         const rect = toggle.getBoundingClientRect();
+        const width = Math.min(360, window.innerWidth * 0.92);
         container.style.top = `${rect.bottom + 4}px`;
-        container.style.left = `${rect.left}px`;
+        container.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
 
         this.render24hBreakdown(container);
         document.body.appendChild(container);

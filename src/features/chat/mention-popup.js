@@ -79,8 +79,8 @@ class MentionPopup {
             left: 50%;
             transform: translate(-50%, -50%);
             z-index: ${config.Z_FLOATING_PANEL};
-            min-width: 420px;
-            max-width: 600px;
+            min-width: min(420px, 92vw);
+            max-width: min(600px, 92vw);
             background: rgba(0, 0, 0, 0.92);
             border: 2px solid ${config.COLOR_ACCENT};
             border-radius: 8px;
@@ -243,7 +243,12 @@ class MentionPopup {
      * @param {HTMLElement} header
      */
     _setupDragging(header) {
-        header.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        header.style.touchAction = 'none';
+
+        header.addEventListener('pointerdown', (e) => {
             if (e.target.tagName === 'BUTTON') return;
             bringPanelToFront(this.container);
             this.isDragging = true;
@@ -282,8 +287,9 @@ class MentionPopup {
             header.style.cursor = 'grab';
         };
 
-        document.addEventListener('mousemove', this.dragMoveHandler);
-        document.addEventListener('mouseup', this.dragUpHandler);
+        document.addEventListener('pointermove', this.dragMoveHandler);
+        document.addEventListener('pointerup', this.dragUpHandler);
+        document.addEventListener('pointercancel', this.dragUpHandler);
     }
 
     /**
@@ -291,11 +297,12 @@ class MentionPopup {
      */
     _teardown() {
         if (this.dragMoveHandler) {
-            document.removeEventListener('mousemove', this.dragMoveHandler);
+            document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
         }
         if (this.dragUpHandler) {
-            document.removeEventListener('mouseup', this.dragUpHandler);
+            document.removeEventListener('pointerup', this.dragUpHandler);
+            document.removeEventListener('pointercancel', this.dragUpHandler);
             this.dragUpHandler = null;
         }
         if (this.clickOutsideHandler) {

@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ maxThreads: 0 }));
+const settings = vi.hoisted(() => ({ maxThreads: 0, mobile: false }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -25,10 +25,15 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+vi.mock('../../utils/mobile.js', () => ({
+    isMobileMode: () => settings.mobile,
+}));
+
 const { plannedWorkerCount } = await import('./combat-sim-runner.js');
 
 beforeEach(() => {
     settings.maxThreads = 0;
+    settings.mobile = false;
     vi.stubGlobal('navigator', { hardwareConcurrency: 8 });
 });
 
@@ -62,5 +67,13 @@ describe('how wide one simulation spreads itself', () => {
         vi.stubGlobal('navigator', { hardwareConcurrency: 3 });
 
         expect(plannedWorkerCount(10_000)).toBe(3);
+    });
+
+    test('mobile mode narrows the budget to two', () => {
+        // A phone reporting 8 cores does not have 8 cores of thermal headroom,
+        // and each worker holds its own clone of the game data
+        settings.mobile = true;
+
+        expect(plannedWorkerCount(10_000)).toBe(2);
     });
 });

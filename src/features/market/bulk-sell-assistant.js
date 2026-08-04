@@ -406,7 +406,11 @@ class BulkSellAssistant {
         }
 
         chip.style.cursor = 'move';
-        chip.addEventListener('mousedown', (e) => {
+        // Pointer events so a finger works too; mousedown never fires on a
+        // touchscreen, and touch-action:none stops the browser claiming the
+        // gesture for scrolling
+        chip.style.touchAction = 'none';
+        chip.addEventListener('pointerdown', (e) => {
             if (e.button !== 0) return;
             if (e.target.closest('button, select, input')) return;
             e.preventDefault();
@@ -417,15 +421,17 @@ class BulkSellAssistant {
 
             const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
             const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
                 const final = chip.getBoundingClientRect();
                 this.panelPosition = { left: final.left, top: final.top };
                 storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
             };
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 

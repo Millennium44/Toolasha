@@ -7,11 +7,10 @@
  * multi-zone throughput.
  */
 
-import { buildExtraBuffs } from './combat-sim-runner.js';
+import { buildExtraBuffs, getMaxWorkers } from './combat-sim-runner.js';
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import MULTI_WORKER_SCRIPT from './multi-worker-entry.js?worker';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
-import config from '../../core/config.js';
 
 let multiWorker = null;
 let activeReject = null;
@@ -41,9 +40,11 @@ export async function runAllZonesSimulation(params, onProgress) {
     const ONE_HOUR_NS = 3600 * 1e9;
     const simulationTimeLimit = hours * ONE_HOUR_NS;
 
-    const availableCores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-    const maxThreadsSetting = config.getSetting('combatSim_maxThreads') || 0;
-    const maxWorkers = maxThreadsSetting > 0 ? Math.min(maxThreadsSetting, availableCores) : availableCores;
+    // The same budget every other sim path uses. This module counted raw
+    // hardwareConcurrency instead, so a 16-core desktop spawned 16 workers and
+    // a phone reporting 8 cores spawned 8 — each holding its own clone of the
+    // whole game data, where everything else stops at four.
+    const maxWorkers = getMaxWorkers();
 
     return new Promise((resolve, reject) => {
         // Store reject so cancelAllZonesSimulation can unblock the promise

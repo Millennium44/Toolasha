@@ -10,6 +10,7 @@
 // The ?worker suffix is handled by rollup's workerBundlePlugin at build time
 import WORKER_SCRIPT from './combat-sim-worker-entry.js?worker';
 import config from '../../core/config.js';
+import { isMobileMode } from '../../utils/mobile.js';
 import { deriveSeed } from './engine/rng.js';
 
 let workerBlobURL = null;
@@ -30,8 +31,17 @@ export function getMaxWorkers() {
     // memory and more contention for no more throughput. Someone who wants the
     // number taken literally can say so.
     if (config.getSetting('combatSim_uncapThreads') && setting > 0) return setting;
-    return setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
+    const cap = setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
+    // A phone reporting eight logical cores is not offering eight cores' worth
+    // of simulation: every worker holds its own clone of the game data, the
+    // thermal budget is a fraction of a desktop's, and the game itself is
+    // running in the same tab. Two is the honest ceiling there — overridable
+    // like everything else via the explicit thread setting + uncap.
+    return isMobileMode() ? Math.min(cap, MOBILE_MAX_WORKERS) : cap;
 }
+
+/** Worker ceiling under mobile mode — memory and thermals, not core count */
+const MOBILE_MAX_WORKERS = 2;
 
 /**
  * How many workers one `runSimulation` will split itself across.

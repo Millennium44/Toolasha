@@ -174,7 +174,7 @@ class DungeonTrackerUI {
                 </div>
             </div>
 
-            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px;">
+            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 80px); overflow-y: auto;">
                 <!-- Progress bar -->
                 <div>
                     <div style="background: #333; border-radius: 4px; height: 20px; position: relative; overflow: hidden;">
@@ -580,6 +580,10 @@ class DungeonTrackerUI {
             selfKeysElement.textContent = selfKeyCount.toString();
         }
 
+        // A collapsed list is invisible; rebuilding its rows every tick is DOM
+        // work nobody sees. The next tick after expanding rebuilds it fresh.
+        if (!this.state.isKeysExpanded) return;
+
         // Update expanded keys list
         const keysList = this.container.querySelector('#mwi-dt-keys-list');
         if (!keysList) return;
@@ -685,6 +689,7 @@ class DungeonTrackerUI {
 
         // Update every second (light tick only — history/stats refresh on tracker events)
         this.updateInterval = setInterval(() => {
+            if (document.hidden) return;
             const currentRun = dungeonTracker.getCurrentRun();
             if (currentRun) {
                 this.update(currentRun, false);

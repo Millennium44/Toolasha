@@ -311,8 +311,11 @@ class DungeonTrackerUIInteractions {
         if (!this.state.position) {
             this.state.updatePosition(this.container);
         } else {
-            // Just update width for custom positions
-            this.container.style.minWidth = this.state.isCollapsed ? '250px' : '480px';
+            // Just update width for custom positions — same screen-width clamp
+            // as updatePosition, or collapsing on a phone re-widens the panel
+            this.container.style.minWidth = this.state.isCollapsed
+                ? 'min(250px, calc(100vw - 20px))'
+                : 'min(480px, calc(100vw - 20px))';
         }
 
         this.state.save();
