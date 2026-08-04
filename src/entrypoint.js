@@ -1230,8 +1230,10 @@ function registerFeatures() {
             async: false,
         },
         {
+            // Registry key stays ironCowFarm (persisted enable/disable state);
+            // the display name is "Iron Bell Farming".
             key: 'ironCowFarm',
-            name: 'Iron Cow Farm',
+            name: 'Iron Bell Farming',
             category: 'General',
             module: UI.ironCowFarmPanel,
             async: true,

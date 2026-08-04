@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Iron Bell Farming
+
+- **"Iron Cow Farm" is now "Iron Bell Farming"** everywhere you can see it (panel, settings, command palette); stored data and settings survive the rename untouched.
+- **New "Iron Bell next step" overlay tile** (off by default): one line showing the current plan stage ("Foraging 62/80") or "Loop ready — N bells/week", opening the panel on double-click.
+
 ### The overlay earns its screen space
 
 - **Empty tiles stop shouting**: a tile with nothing to say renders as a dim 20px name strip (value/watch tiles) or hides until its first data (measurement tiles like DPS and drop luck), instead of a full-size "Nothing tracked yet" wall. A gear-menu dropdown (By tile / Compact / Hide / Full) overrides globally, and unlocking the layout always shows everything so you can still place tiles.

@@ -26,6 +26,19 @@ beforeEach(() => {
     disk.values = {};
 });
 
+describe('the storage keys, deliberately unchanged by the display-name rename', () => {
+    // The panel's display name is "Iron Bell Farming", but these two keys are
+    // still the literal strings they always were — renaming them would orphan
+    // an existing user's stage ticks and last costed loop.
+    test('the stage ticks are still keyed by ironCowFarmOverrides', () => {
+        expect(OVERRIDES_KEY).toBe('ironCowFarmOverrides');
+    });
+
+    test('the last costed loop is still keyed by ironCowFarmSnapshot', () => {
+        expect(SNAPSHOT_KEY).toBe('ironCowFarmSnapshot');
+    });
+});
+
 describe('the stage ticks', () => {
     test('start empty', async () => {
         await expect(loadOverrides()).resolves.toEqual({});

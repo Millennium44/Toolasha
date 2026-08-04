@@ -1,5 +1,5 @@
 /**
- * What the Iron Cow money loop is made of, resolved from game data.
+ * What the Iron Bell Farming money loop is made of, resolved from game data.
  *
  * The loop is named in items and actions — Star Fruit, the foraging action that
  * drops it, the essence it decomposes into — and hard-coding those hrids is how

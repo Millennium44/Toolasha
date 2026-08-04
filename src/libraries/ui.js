@@ -46,6 +46,8 @@ import taskSorter from '../features/tasks/task-sorter.js';
 import taskIcons from '../features/tasks/task-icons.js';
 import taskInventoryHighlighter from '../features/tasks/task-inventory-highlighter.js';
 import taskStatistics from '../features/tasks/task-statistics.js';
+// Side-effect import: registers the Task Tokens overlay row
+import '../features/tasks/task-tokens-row.js';
 import taskClaimCollector from '../features/tasks/task-claim-collector.js';
 import taskBulkReroll from '../features/tasks/task-bulk-reroll.js';
 import taskRerollProtection from '../features/tasks/task-reroll-protection.js';
@@ -82,6 +84,8 @@ import alchemyActionProtection from '../features/alchemy/alchemy-action-protecti
 
 // Enhancement
 import enhancementFeature from '../features/enhancement/enhancement-feature.js';
+// Side-effect import: registers the Enhancement Session overlay row
+import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 
 // Guild
@@ -90,6 +94,8 @@ import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
 import guildRosterView from '../features/guild/guild-roster-view.js';
 import guildTrials from '../features/guild/guild-trials.js';
+// Side-effect import: registers the Guild Trials overlay row
+import '../features/guild/guild-trials-row.js';
 
 // Insights
 import predictionCalibration from '../features/insights/index.js';
@@ -104,6 +110,8 @@ import notificationService from '../features/notifications/notification-service.
 
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
+// Side-effect import: registers the Queue Time Left overlay row
+import '../features/queue-monitor/queue-time-row.js';
 
 // Account
 import accountView from '../features/account/index.js';
@@ -118,7 +126,7 @@ import * as schemaCanary from '../core/schema-canary.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
-// Iron Cow Farm. It composes the gathering and alchemy profit calculators,
+// Iron Bell Farming. It composes the gathering and alchemy profit calculators,
 // both of which the market bundle already owns and hands out as globals, so
 // living here costs this bundle nothing but the panel itself.
 import ironCowFarmPanel from '../features/ironcow/ironcow-panel.js';

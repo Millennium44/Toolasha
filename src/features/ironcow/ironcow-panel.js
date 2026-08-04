@@ -1,5 +1,5 @@
 /**
- * Iron Cow Farm panel
+ * Iron Bell Farming panel
  *
  * The plan an iron cow follows to farm gold for cowbells, and what that plan is
  * currently worth per hour, per day and per week of bells.
@@ -36,8 +36,18 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import { calculateStarfruitLoop, cowbellPricing, loopWarnings, offlineWindow } from './starfruit-loop.js';
 import { loadOverrides, loadSnapshot, saveSnapshot, setOverride } from './ironcow-store.js';
+import ironCowRuntime from './ironcow-runtime.js';
+// Side effect only: registers the "Iron Bell next step" overlay tile. Imported
+// here — rather than where the rest of the overlay's rows are wired in, a
+// bundle this feature does not otherwise touch — so the tile exists wherever
+// this panel does. The tile reads `ironcow-runtime.js`, not this module, so
+// this import does not become a cycle.
+import './ironcow-overlay-row.js';
 
 const PANEL_ID = 'toolasha-ironcow-farm-panel';
+// Display name changed to "Iron Bell Farming" — this key is kept as-is
+// (ironCowFarmPanel) so it keeps reading the geometry an existing user already
+// saved under it. Renaming it would orphan that saved position and size.
 const GEOMETRY_KEY = 'ironCowFarmPanel';
 const DEFAULT_PANEL = { width: 520, height: 620 };
 
@@ -162,11 +172,37 @@ class IronCowFarmPanel {
         this.panel = null;
         this.bodyEl = null;
         this.statusEl = null;
-        this.loop = null;
+        this._loop = null;
         this.pricedAt = null;
-        this.overrides = {};
+        this._overrides = {};
         this.busy = false;
         this.loaded = null;
+        // The overlay tile opens the same panel this toggles, and reads the
+        // loop and the overrides through the same runtime object this keeps
+        // current below.
+        ironCowRuntime.toggle = () => this.toggle();
+    }
+
+    /** @returns {Object|null} The last costed loop */
+    get loop() {
+        return this._loop;
+    }
+
+    /** @param {Object|null} value - The last costed loop */
+    set loop(value) {
+        this._loop = value;
+        ironCowRuntime.loop = value;
+    }
+
+    /** @returns {Object} This character's manual stage ticks */
+    get overrides() {
+        return this._overrides;
+    }
+
+    /** @param {Object} value - This character's manual stage ticks */
+    set overrides(value) {
+        this._overrides = value;
+        ironCowRuntime.overrides = value;
     }
 
     /**
@@ -339,7 +375,7 @@ class IronCowFarmPanel {
             flex: '0 0 auto',
         });
 
-        const title = span('Iron Cow Farm', { fontWeight: 'bold', color: COLORS.accent });
+        const title = span('Iron Bell Farming', { fontWeight: 'bold', color: COLORS.accent });
         this.statusEl = span('', { color: COLORS.textDim, fontSize: '11px' });
 
         const spacer = document.createElement('div');
