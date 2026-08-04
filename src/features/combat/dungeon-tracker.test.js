@@ -136,8 +136,12 @@ function beTracking({
     waveTimes = [],
     keyCountsMap = {},
     anchoredAt = null,
+    restored = false,
 } = {}) {
     tracker.isTracking = true;
+    // A run picked back up from storage never saw its own start message; one started
+    // here has it still to come, and the two read an unanchored key count differently.
+    tracker.restoredMidRun = restored;
     tracker.currentBattleId = battleId;
     tracker.waveStartTime = new Date(startTime);
     tracker.waveTimes = waveTimes;
@@ -166,6 +170,7 @@ function resetTracker() {
     tracker.keyCountMessages = [];
     tracker.pendingNextRunFirstKeyCount = null;
     tracker.battleStartedTimestamp = null;
+    tracker.restoredMidRun = false;
     tracker.characterId = null;
     tracker.recentChatMessages = [];
     tracker._lastCompletionTime = 0;
@@ -511,6 +516,20 @@ describe('reading key counts out of party chat', () => {
         expect(tracker.parseKeyCountsFromMessage('[ Alice - 3]')).toEqual({ Alice: 3 });
     });
 
+    test('a dash in the name is part of the name, not the separator', () => {
+        expect(tracker.parseKeyCountsFromMessage('Key counts: [Moo-Deng - 12], [Alice - 3]')).toEqual({
+            'Moo-Deng': 12,
+            Alice: 3,
+        });
+        expect(tracker.parseKeyCountsFromMessage('[a-b-c - 7]')).toEqual({ 'a-b-c': 7 });
+    });
+
+    test('a dashed display timestamp is still not a player', () => {
+        expect(tracker.parseKeyCountsFromMessage('[16-07 10:00:00] Key counts: [Moo-Deng - 12]')).toEqual({
+            'Moo-Deng': 12,
+        });
+    });
+
     test('a display timestamp is not mistaken for a player', () => {
         expect(tracker.parseKeyCountsFromMessage('[08/04 10:00:00 AM] Key counts: [Alice - 12]')).toEqual({
             Alice: 12,
@@ -608,14 +627,11 @@ describe('routing chat messages', () => {
         expect(tracker.getPartyMessageDuration()).toBe(0);
     });
 
-    test('a key count with no anchor yet is read as a completion, not a start', async () => {
-        // PINS CURRENT BEHAVIOUR, WHICH LOOKS WRONG FOR A FRESH RUN.
-        // The branch exists for a run restored mid-dungeon, where the start
-        // message was never seen and currentRun.startTime is the best estimate
-        // of it. But startDungeon() also leaves exactly this shape — startTime
-        // set, firstKeyCountTimestamp null — so a run-start key count that
-        // arrives live before the 100 ms scanExistingChatMessages() pass ends
-        // the run it was supposed to begin, and banks a seconds-long run.
+    test('a key count on a fresh un-progressed run is the start anchor, not a completion', async () => {
+        // The live race the tracker has to survive: a run started here, no wave
+        // finished yet, and the run's own "Key counts" message arriving before
+        // the 100 ms chat scan gets to it. Reading that as the completion would
+        // end the run it was supposed to begin and bank a two-second run.
         const start = Date.parse('2026-08-04T10:00:00.000Z');
         beTracking({ startTime: start, wavesCompleted: 0, currentWave: 0 });
         const completions = [];
@@ -626,11 +642,31 @@ describe('routing chat messages', () => {
         tracker.onChatMessage(keyCountsData('2026-08-04T10:00:02.000Z', 'Key counts: [Alice - 12]'));
         await flush();
 
+        const anchor = Date.parse('2026-08-04T10:00:02.000Z');
+        expect(completions).toHaveLength(0);
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.firstKeyCountTimestamp).toBe(anchor);
+        expect(tracker.lastKeyCountTimestamp).toBe(anchor);
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Alice: 12 });
+        expect(game.savedRuns).toHaveLength(0);
+    });
+
+    test('the real completion still ends that run, measured from the anchor', async () => {
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        beTracking({ startTime: start, wavesCompleted: 0, currentWave: 0, maxWaves: 10 });
+        const completions = [];
+        tracker.onUpdate((run, completed) => {
+            if (completed) completions.push(completed);
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:00:02.000Z', 'Key counts: [Alice - 12]'));
+        await flush();
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:34.000Z', 'Key counts: [Alice - 11]'));
+        await flush();
+
         expect(completions).toHaveLength(1);
         expect(completions[0].validated).toBe(true);
-        expect(completions[0].partyMessageDuration).toBe(2000);
-        expect(completions[0].wavesCompleted).toBe(0);
-        expect(tracker.isTracking).toBe(false);
+        expect(completions[0].partyMessageDuration).toBe(272_000); // 10:00:02 → 10:04:34
     });
 
     test('a party failure ends the run', async () => {
@@ -783,10 +819,74 @@ describe('finishing a run', () => {
         expect(tracker.pendingNextRunFirstKeyCount).toBeNull();
     });
 
+    test('a run part way through its waves treats an unanchored key count as the completion', async () => {
+        // Not restored, but four waves deep: the start message must have been
+        // missed, because the run has plainly been going for a while.
+        beTracking({ startTime: Date.parse('2026-08-04T10:00:00.000Z'), maxWaves: 10, wavesCompleted: 4 });
+        tracker.firstKeyCountTimestamp = null;
+        tracker.lastKeyCountTimestamp = null;
+
+        const completions = [];
+        tracker.onUpdate((run, completed) => {
+            if (completed) completions.push(completed);
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11]'));
+        await flush();
+
+        expect(completions).toHaveLength(1);
+        expect(completions[0].partyMessageDuration).toBe(272_000);
+    });
+
+    test('a websocket completion does not hand its start anchor to the next run', async () => {
+        // The run ended on action_completed, so lastKeyCountTimestamp is still
+        // this run's START. Carrying it forward would make the next run measure
+        // both runs as one.
+        const firstStart = Date.parse('2026-08-04T10:00:00.000Z');
+        beTracking({
+            currentWave: 10,
+            wavesCompleted: 9,
+            maxWaves: 10,
+            keyCountsMap: { Alice: 12 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+        const completions = [];
+        tracker.onUpdate((run, completed) => {
+            if (completed) completions.push(completed);
+        });
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 0, isDone: true } });
+        await flush();
+
+        expect(completions).toHaveLength(1);
+        expect(tracker.pendingNextRunFirstKeyCount).toBeNull();
+
+        // The next run anchors on its own key count, and is measured on its own
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        await tracker.onNewBattle({ wave: 0, battleId: 43, combatStartTime: '2026-08-04T10:05:00.000Z' });
+        await flush();
+
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:05:01.000Z', 'Key counts: [Alice - 11]'));
+        await flush();
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:09:33.000Z', 'Key counts: [Alice - 10]'));
+        await flush();
+
+        expect(completions).toHaveLength(2);
+        expect(completions[1].partyMessageDuration).toBe(272_000); // this run alone
+        expect(completions[1].partyMessageDuration).toBeLessThan(Date.now() - firstStart);
+    });
+
     test('a restored run treats its first key count as the completion', async () => {
         // Restored mid-run: the start message was never seen, so the run's own
         // startTime stands in for it and this message ends the run.
-        beTracking({ startTime: Date.parse('2026-08-04T10:00:00.000Z'), maxWaves: 10, wavesCompleted: 10 });
+        beTracking({
+            startTime: Date.parse('2026-08-04T10:00:00.000Z'),
+            maxWaves: 10,
+            wavesCompleted: 10,
+            restored: true,
+        });
         tracker.firstKeyCountTimestamp = null;
         tracker.lastKeyCountTimestamp = null;
 
@@ -1063,6 +1163,91 @@ describe('picking the run back up on page load', () => {
         await tracker.checkForActiveDungeon();
         expect(tracker.isTracking).toBe(false);
         expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
+    test('a completion seconds ago blocks the page-load pickup too', async () => {
+        // The same guard restoreInProgressRun applies: the record belongs to the
+        // run that just ended, and its clear may still be in flight.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            wavesCompleted: 4,
+            lastUpdateTime: Date.now(),
+        });
+        tracker._lastCompletionTime = Date.now() - 1000;
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(stored()).toBeUndefined();
+        expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 1 });
+    });
+
+    test('a record with no battle to tie it to is not picked up', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            dungeonHrid: DEN,
+            wavesCompleted: 4,
+            lastUpdateTime: Date.now(),
+        });
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(stored()).toBeUndefined();
+        expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 1 });
+    });
+
+    test('a picked-up run keeps the hibernation flag it was saved with', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            tier: 0,
+            startTime: 1000,
+            currentWave: 5,
+            maxWaves: 10,
+            wavesCompleted: 4,
+            waveTimes: [3000],
+            lastUpdateTime: Date.now(),
+            hibernationDetected: true,
+        });
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.hibernationDetected).toBe(true);
+        expect(tracker.currentRun.hibernationDetected).toBe(true);
+        expect(tracker.getCurrentRun().hibernationDetected).toBe(true);
+    });
+
+    test('a picked-up run reads its next key count as the completion', async () => {
+        // Restored, so its own start message was never seen — even at wave 0.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            tier: 0,
+            startTime: Date.parse('2026-08-04T10:00:00.000Z'),
+            currentWave: 1,
+            maxWaves: 10,
+            wavesCompleted: 0,
+            lastUpdateTime: Date.now(),
+        });
+
+        await tracker.checkForActiveDungeon();
+        expect(tracker.restoredMidRun).toBe(true);
+
+        const completions = [];
+        tracker.onUpdate((run, completed) => {
+            if (completed) completions.push(completed);
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11]'));
+        await flush();
+
+        expect(completions).toHaveLength(1);
+        expect(completions[0].partyMessageDuration).toBe(272_000);
     });
 
     test('a record for a different dungeon only leaves pending info', async () => {

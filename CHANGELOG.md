@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Dungeon run history stops lying
+
+- **A run-start key count can no longer end a fresh run at wave 0**: the completion fallback now requires the run to have progressed (or been restored mid-run), so the pre-scan race banks a start anchor instead of a seconds-long fake run.
+- **A websocket-detected completion no longer hands its start anchor to the next run** — two runs can't merge into one duration anymore.
+- Player names with dashes parse in key counts, the milkonomy export names the back slot like every other slot, and page-load run pickup applies the same battleId/staleness guards as live restore (keeping the hibernation flag).
+
 ### Backups say whose they are, and adoption asks first
 
 - **`Toolasha.debug.claimLegacyData(charId)`** force-completes adoption after a backup restore: it hands every bare legacy value to the chosen character, overwriting the stale scoped copies that would otherwise shadow the restored data (the market listing log merges instead, so recent entries survive). `{dryRun: true}` previews.

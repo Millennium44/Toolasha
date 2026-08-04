@@ -49,6 +49,7 @@ function mapSlotType(slotType) {
         '/equipment_types/enhancing_tool': 'enhancing_tool',
         '/equipment_types/legs': 'legs',
         '/equipment_types/body': 'body',
+        '/equipment_types/back': 'back',
         '/equipment_types/charm': 'charm',
         '/equipment_types/off_hand': 'off_hand',
         '/equipment_types/head': 'head',
