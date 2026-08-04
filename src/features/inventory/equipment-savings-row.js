@@ -46,7 +46,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
-import { loadWhenReady } from '../../utils/deferred-load.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePrice } from '../../utils/token-valuation.js';
@@ -116,14 +116,32 @@ const editing = { itemHrid: '', enhancementLevel: 0, slot: '' };
 
 // Kept asking until the database opens: it is opened after the libraries are
 // evaluated, so a read at module scope always returns the default and the list
-// looks like it forgot everything
-loadWhenReady(STORAGE_KEY, 'settings', (saved) => Object.assign(state, saved), 'the equipment savings list');
+// looks like it forgot everything. It waits for a character too: gear targets
+// belong to the character wearing the gear, so the key it reads is theirs.
+async function reload() {
+    try {
+        await storage.ready;
+        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        Object.assign(
+            state,
+            { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
+            saved || {}
+        );
+    } catch (error) {
+        console.error('[EquipmentSavings] Reading the equipment savings list failed:', error);
+    }
+}
+
+reload();
+// Module-scope state outlives the feature's own re-initialisation on a switch
+dataManager.on('character_initialized', reload);
+dataManager.on('character_switched', reload);
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
-    storage
-        .setJSON(STORAGE_KEY, { ...state }, 'settings')
-        .catch((error) => console.error('[EquipmentSavings] Saving the list failed:', error));
+    writeScoped(STORAGE_KEY, { ...state }, 'settings').catch((error) =>
+        console.error('[EquipmentSavings] Saving the list failed:', error)
+    );
 }
 
 /**

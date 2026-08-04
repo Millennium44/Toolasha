@@ -8,7 +8,6 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import storage from '../../core/storage.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
@@ -21,6 +20,7 @@ import {
     calculateTeaCostsPerHour,
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -279,7 +279,9 @@ class PhiloCalculator {
      */
     async loadSettings() {
         try {
-            const saved = await storage.getJSON('philoCalculatorSettings', 'settings', null);
+            // Read every time the calculator is opened, so the key is the one
+            // belonging to whoever is logged in now
+            const saved = await readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
             if (saved) {
                 this.useCatalyst = saved.useCatalyst !== false;
                 this.useCatalyticTea = saved.useCatalyticTea || false;
@@ -305,7 +307,7 @@ class PhiloCalculator {
      */
     async saveSettings() {
         try {
-            await storage.setJSON(
+            await writeScoped(
                 'philoCalculatorSettings',
                 {
                     useCatalyst: this.useCatalyst,

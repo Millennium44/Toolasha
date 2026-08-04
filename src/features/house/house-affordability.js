@@ -26,7 +26,7 @@ import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { loadWhenReady } from '../../utils/deferred-load.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
@@ -165,7 +165,7 @@ export async function setRoomTracked(houseRoomHrid, tracked) {
     else untracked.add(houseRoomHrid);
 
     try {
-        await storage.setJSON(UNTRACKED_KEY, [...untracked], 'settings');
+        await writeScoped(UNTRACKED_KEY, [...untracked], 'settings');
     } catch (error) {
         console.error('[Houses] Saving which rooms to count failed:', error);
     }
@@ -173,15 +173,23 @@ export async function setRoomTracked(houseRoomHrid, tracked) {
 
 /**
  * Read back which rooms were switched off.
+ *
+ * Each character has their own house, so each has their own list — the key is
+ * built when this runs rather than once at import, and it runs again on a
+ * switch.
  * @returns {Promise<Set<string>>}
  */
 export async function loadUntrackedRooms() {
     // Called at module scope, which is long before the database is open. Read
     // there unguarded it came back with the default — every room counted, and a
     // "Database not available" line in the console saying so.
-    await loadWhenReady(UNTRACKED_KEY, 'settings', (saved) => {
-        if (Array.isArray(saved)) untracked = new Set(saved);
-    });
+    try {
+        await storage.ready;
+        const saved = await readScoped(UNTRACKED_KEY, 'settings', null, { migrate: 'adopt' });
+        untracked = Array.isArray(saved) ? new Set(saved) : new Set();
+    } catch (error) {
+        console.error('[Houses] Reading which rooms to count failed:', error);
+    }
     // Whatever is on screen was drawn against the wrong set
     housesPanel._render();
     return untracked;
@@ -763,6 +771,10 @@ export const housesPanel = new HousesPanel();
 // forget: until it lands every room counts, which is what an empty set means
 // anyway, and the row redraws every second.
 loadUntrackedRooms();
+// This module has no initialize, so nothing re-reads it on a switch unless it
+// asks to be told
+dataManager.on('character_initialized', loadUntrackedRooms);
+dataManager.on('character_switched', loadUntrackedRooms);
 housesPanel.restore();
 
 registerRow({

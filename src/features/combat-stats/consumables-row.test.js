@@ -17,6 +17,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid],
         getCurrentActions: () => [],
         getInitClientData: () => ({}),
+        // The consumable target is stored per character, so the module that
+        // holds it subscribes to the switch
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));

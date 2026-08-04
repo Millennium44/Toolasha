@@ -18,9 +18,9 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import { findAlchemizeMenu, activeAlchemyAction, menuTiles, tileItemHrid } from './alchemy-item-selector.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 const STORAGE_KEY = 'alchemyItemPins';
 const STYLE_ID = 'mwi-alchemy-pins-style';
@@ -148,7 +148,9 @@ class AlchemyItemPins {
         if (!config.getSetting('alchemyItemPins')) return;
         this.isInitialized = true;
 
-        this.pins = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+        // Read here rather than at import, so a character switch — which
+        // re-initialises the feature — picks up that character's own pins
+        this.pins = (await readScoped(STORAGE_KEY, 'settings', {}, { migrate: 'adopt' })) || {};
 
         this.styleEl = document.createElement('style');
         this.styleEl.id = STYLE_ID;
@@ -290,7 +292,7 @@ class AlchemyItemPins {
 
         this.pins = togglePin(this.pins, action, itemHrid);
         this.apply();
-        storage.setJSON(STORAGE_KEY, this.pins, 'settings').catch((error) => {
+        writeScoped(STORAGE_KEY, this.pins, 'settings').catch((error) => {
             console.error('[AlchemyItemPins] Saving pins failed:', error);
         });
     }

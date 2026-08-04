@@ -37,7 +37,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
-import { loadWhenReady } from '../../utils/deferred-load.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -89,25 +89,42 @@ const COLORS = {
  */
 const state = { entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' };
 
-// Kept asking until the database opens: it is opened after the libraries are
-// evaluated, so a read at module scope always returns the default and the list
-// looks like it forgot everything
-loadWhenReady(
-    STORAGE_KEY,
-    'settings',
-    (saved) => {
-        Object.assign(state, saved);
-        // The dot has by now drawn nothing on every item
+/** What a character with no saved list starts from */
+const emptyState = () => ({ entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' });
+
+/**
+ * Read this character's list back.
+ *
+ * Waits for the database — it is opened after the libraries are evaluated, so a
+ * read at module scope always returns the default and the list looks like it
+ * forgot everything — and for a character, because the key it reads is that
+ * character's and there is no answer before login.
+ * @returns {Promise<void>}
+ */
+async function reload() {
+    try {
+        await storage.ready;
+        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        Object.assign(state, emptyState(), saved || {});
+        // The dot has by now drawn the previous character's list on every item
         inventoryBadgeManager.invalidateCache?.();
-    },
-    'the watchlist'
-);
+    } catch (error) {
+        console.error('[Watchlist] Reading the watchlist failed:', error);
+    }
+}
+
+reload();
+// The key is the character's, so the list has to be read again as a different
+// one — features are re-initialised on a switch but this state is module-scope
+// and outlives that
+dataManager.on('character_initialized', reload);
+dataManager.on('character_switched', reload);
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
-    storage
-        .setJSON(STORAGE_KEY, { ...state }, 'settings')
-        .catch((error) => console.error('[Watchlist] Saving the list failed:', error));
+    writeScoped(STORAGE_KEY, { ...state }, 'settings').catch((error) =>
+        console.error('[Watchlist] Saving the list failed:', error)
+    );
 }
 
 /**
