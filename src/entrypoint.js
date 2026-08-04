@@ -1024,6 +1024,11 @@ if (isCombatSimulatorPage()) {
                 config.applyColorSettings();
                 performanceMonitor.mark('settings:character');
 
+                // Before features initialise: the conservative-defaults policy
+                // has to turn a new switch off before anything reads it — a
+                // feature switched off after startup has already run once
+                await UI.whatsNew.applyPolicy();
+
                 // Initialize scroll simulator storage (character-specific)
                 await Combat.scrollSimulator.initialize().catch((error) => {
                     console.error('[Toolasha] Scroll simulator initialization failed:', error);
@@ -1036,6 +1041,8 @@ if (isCombatSimulatorPage()) {
 
                 await featureRegistry.initializeFeatures();
                 performanceMonitor.mark('startup:complete');
+
+                UI.whatsNew.maybeShow();
 
                 // Health check after initialization
                 setTimeout(async () => {
@@ -1076,6 +1083,10 @@ if (isCombatSimulatorPage()) {
     const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     targetWindow.Toolasha.version = '2.88.0';
+    // Which fork this build came from. Version numbers are shared with
+    // upstream, so the what's-new popup keys on the (fork, version) pair —
+    // the same number on a different fork is still an update.
+    targetWindow.Toolasha.fork = 'Millennium44/Toolasha';
 
     // Feature toggle API (for users to manage settings via console)
     targetWindow.Toolasha.features = {

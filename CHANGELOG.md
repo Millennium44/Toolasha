@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### A what's-new popup, once per update — with the new settings live in it
+
+After an update, a popup shows what changed and lists every setting that did not exist in the build you had before, **with its real control** — flip a switch there and it is flipped, no trip to the settings panel. The changelog it shows is embedded from this file at build time, so it cannot drift from what actually shipped.
+
+What counts as "new" is decided by the settings schema, not the version number: the script remembers which setting IDs you have already been shown and diffs them against the schema that just loaded. Version numbers only decide _when_ to speak — and they are compared as a **(fork, version) pair**, because this fork shares numbering with upstream and `2.88.0 → 2.88.0` across forks is different code wearing the same badge. A fork switch is announced as one ("Switched from Celasha/Toolasha 2.88.0") rather than hidden behind a matching number. Skip three versions and you see three versions' worth of new settings, since the diff is against what you were last shown, not against the previous release.
+
+The popup can be turned off — from the popup itself, which is where you are standing when you decide that, or in General Settings.
+
+### New settings can be made to start off
+
+**"New settings start turned off"** (off by default): when an update introduces a new on-by-default switch, it is forced off before any feature reads it — so the new behaviour never runs, not even once, until you enable it. Numbers and dropdowns keep their defaults, since a value is not a feature switching itself on, and the policy never applies on a fresh install, where "everything is new" would mean turning the whole script off. Paired with the popup, an update becomes: nothing changed, and here is the list of what you could turn on.
+
 ### Guild joins get a clickable name too
 
 "Player11 has joined the guild!" now gets the same clickable name as level-up announcements — clicking fills `/profile Player11` into the chat input. Leaving the guild is covered too, since it is the same sentence pointed the other way. The settings help text also stops using a real player's name as its example.
