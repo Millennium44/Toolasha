@@ -148,6 +148,36 @@ describe('sorting after Read', () => {
         expect(order(list)).toEqual(['Milking - Cow', 'Defeat - Slashy']);
     });
 
+    test('a card mid-reroll holds the sort back', () => {
+        // Sorting re-appends every card, which takes the one the player is
+        // part-way through out of the DOM and puts it back — the click they are
+        // about to make lands on a card that has been rebuilt under it
+        const list = board(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
+        const before = [...list.children];
+        const chooser = document.createElement('button');
+        chooser.textContent = 'MooPass Free Reroll';
+        list.children[0].appendChild(chooser);
+
+        readButton(list).click();
+        vi.advanceTimersByTime(500);
+
+        expect([...list.children]).toEqual(before);
+    });
+
+    test('and the sort happens once the card is back at rest', () => {
+        const list = board(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
+        const chooser = document.createElement('button');
+        chooser.textContent = 'MooPass Free Reroll';
+        list.children[0].appendChild(chooser);
+
+        readButton(list).click();
+        vi.advanceTimersByTime(500);
+        chooser.remove();
+        taskSorter.sortTasks();
+
+        expect(order(list)).toEqual(['Milking - Cow', 'Cooking - Stew', 'Defeat - Slashy']);
+    });
+
     test('cleanup stops it listening', () => {
         const list = board(['Defeat - Slashy', 'Milking - Cow']);
         taskSorter.cleanup();

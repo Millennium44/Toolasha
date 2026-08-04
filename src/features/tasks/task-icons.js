@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import taskIconFilters from './task-icon-filters.js';
+import { isCardInConfirmState } from './task-card-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
@@ -274,6 +275,11 @@ class TaskIcons {
         const taskCards = taskList.querySelectorAll(GAME.TASK_CARD);
 
         taskCards.forEach((card) => {
+            // A card showing the reroll chooser or the discard confirmation is
+            // waiting on the player's second click; pulling its icons and
+            // re-adding them rebuilds the card underneath that click
+            if (isCardInConfirmState(card)) return;
+
             // Get current task name
             const nameElement = card.querySelector(GAME.TASK_NAME);
             if (!nameElement) return;

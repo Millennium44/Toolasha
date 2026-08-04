@@ -20,6 +20,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateTaskTokenValue } from './task-profit-calculator.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
+import { isCardInConfirmState } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskAutoRerollHrids';
@@ -196,6 +197,12 @@ class TaskAutoReroll {
     }
 
     _processTaskCard(taskCard, board) {
+        // Mid-flow the card is waiting on the player's second click. Adding or
+        // pulling the badge — and with it the card's outline — while they are
+        // part-way through a reroll is the flicker they see and then blame on
+        // the click not registering.
+        if (isCardInConfirmState(taskCard)) return;
+
         const quest = this._getQuestFromCard(taskCard);
         const hrid = quest?.actionHrid || quest?.monsterHrid || '';
 

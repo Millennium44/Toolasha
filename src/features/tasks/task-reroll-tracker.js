@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { isCardInConfirmState } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -437,6 +438,13 @@ class TaskRerollTracker {
      * @param {Set<number>} [claimedIds] - Task IDs already matched to other DOM elements this pass
      */
     updateTaskDisplay(taskElement, claimedIds) {
+        // A card showing the reroll chooser or the discard confirmation is
+        // waiting on the player's second click; inserting the spend line into
+        // it now rebuilds the card under that click
+        if (isCardInConfirmState(taskElement)) {
+            return;
+        }
+
         // Always ensure placeholder element exists to reserve layout space,
         // regardless of whether this task has been rerolled yet
         let displayElement = taskElement.querySelector(TOOLASHA.REROLL_COST_DISPLAY);

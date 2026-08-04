@@ -1,0 +1,303 @@
+/**
+ * @vitest-environment happy-dom
+ *
+ * What Toolasha is allowed to do to a card that is asking the player a question.
+ *
+ * The game's task cards are two-step: Reroll opens a chooser, the trash can
+ * opens a Confirm Discard, and both sit there waiting on a second click. Two
+ * separate things used to go wrong in that gap, and both of them looked
+ * identical to the player — the button registers, and then nothing happens.
+ *
+ * One was a cancelled click: cap protection read a cost out of whatever digits
+ * a reroll button's label happened to carry, and the MooPass free reroll shows
+ * how many passes are left on it. That count was measured against the cowbell
+ * cap, so the free reroll — which costs nothing, and so can never be over any
+ * spending cap — was held back like an expensive one.
+ *
+ * The other was a rebuilt card: the injectors run off timers and mutations, and
+ * a pass landing mid-flow reads a card whose Go button and progress line have
+ * been replaced by the chooser, decides everything has changed, and tears its
+ * own rows out and puts them back.
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const settings = vi.hoisted(() => ({ values: {} }));
+const stored = vi.hoisted(() => ({ values: {} }));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => settings.values[key] ?? false,
+        getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
+        isFeatureEnabled: (key) => settings.values[key] ?? false,
+        COLOR_TEXT_SECONDARY: '#888',
+        COLOR_ACCENT: '#0f0',
+    },
+}));
+
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, _store, fallback) => stored.values[key] ?? fallback,
+        set: async () => {},
+        getJSON: async (key, _store, fallback) => stored.values[key] ?? fallback,
+        setJSON: async () => {},
+        delete: async () => {},
+    },
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => 7,
+        characterData: null,
+        getInitClientData: () => null,
+        on: () => {},
+        off: () => {},
+    },
+}));
+
+vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (key) => `${key}_7`,
+    readScoped: async (_key, _store, fallback) => fallback,
+    writeScoped: async () => true,
+}));
+
+const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
+const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
+
+const MILKING = '/actions/milking/cow';
+
+/**
+ * A task card, in whichever step the labels describe.
+ * @param {Array<string>} buttonLabels - Button text for the action row
+ * @returns {HTMLElement} The card, already on the board
+ */
+function cardOnBoard(buttonLabels) {
+    const list = document.querySelector('[class*="TasksPanel_taskList"]');
+
+    const element = document.createElement('div');
+    element.className = 'RandomTask_randomTask__1abc';
+
+    const content = document.createElement('div');
+    content.className = 'RandomTask_content__2def';
+    const name = document.createElement('div');
+    name.className = 'RandomTask_name__3ghi';
+    name.textContent = 'Milking - Cow';
+    const progress = document.createElement('div');
+    progress.textContent = 'Progress: 0 / 100';
+    content.append(name, progress);
+    element.appendChild(content);
+
+    const action = document.createElement('div');
+    action.className = 'RandomTask_action__4jkl';
+    for (const label of buttonLabels) {
+        const button = document.createElement('button');
+        button.textContent = label;
+        action.appendChild(button);
+    }
+    element.appendChild(action);
+
+    list.appendChild(element);
+    return element;
+}
+
+/** The button carrying this label */
+const buttonNamed = (card, label) => [...card.querySelectorAll('button')].find((b) => b.textContent === label);
+
+/**
+ * Stand a React fiber tree up over the board so the card's quest can be read.
+ *
+ * Protection identifies a card by walking from one of its buttons up the fiber
+ * tree to the `characterQuest` prop — there is no other route, the game puts
+ * nothing identifying in the DOM. Without a tree to walk, every card reads as
+ * unprotected and every assertion about protection passes for the wrong reason.
+ *
+ * @param {HTMLElement} card - The card to give a quest to
+ * @param {Object} quest - The quest that card is showing
+ */
+function reactTreeOver(card, quest) {
+    const root = document.createElement('div');
+    root.id = 'root';
+    document.body.appendChild(root);
+
+    const questFiber = { memoizedProps: { characterQuest: quest }, return: null };
+    let previous = null;
+    for (const button of card.querySelectorAll('button')) {
+        const fiber = { stateNode: button, return: questFiber, child: null, sibling: null };
+        if (previous) previous.sibling = fiber;
+        else questFiber.child = fiber;
+        previous = fiber;
+    }
+    root._reactRootContainer = { current: questFiber };
+}
+
+/** Click it the way the browser would, and report whether anything cancelled it */
+function click(button) {
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    button.dispatchEvent(event);
+    return event;
+}
+
+beforeEach(() => {
+    settings.values = { taskRerollProtection: true };
+    stored.values = {};
+    document.body.replaceChildren();
+    const list = document.createElement('div');
+    list.className = 'TasksPanel_taskList__xyz';
+    document.body.appendChild(list);
+});
+
+afterEach(() => {
+    taskRerollProtection.disable();
+    taskRerollTracker.cleanup();
+    vi.useRealTimers();
+});
+
+/**
+ * Cap protection turned on, guarding a card that is already on the board.
+ *
+ * The card has to exist before the feature starts: the interceptor is wired by
+ * the pass over the cards, so a board built afterwards is a board nothing is
+ * watching, and every assertion about a cancelled click would pass for the
+ * wrong reason.
+ * @param {Array<string>} buttonLabels - Button text for the action row
+ * @param {number} [coinThreshold=320000] - The cost at which a reroll counts as capped
+ * @returns {Promise<HTMLElement>} The card
+ */
+async function guardedCard(buttonLabels, coinThreshold = 320000) {
+    stored.values.taskCapProtection_7 = true;
+    stored.values.taskCapCoinThreshold_7 = coinThreshold;
+    stored.values.taskCapCowbellThreshold_7 = 1;
+    const card = cardOnBoard(buttonLabels);
+    reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 5, cowbellRerollCount: 5 });
+    await taskRerollProtection.initialize();
+    return card;
+}
+
+/**
+ * A card the player has explicitly asked to keep, showing its reroll chooser.
+ * @param {Array<string>} buttonLabels - Button text for the action row
+ * @returns {Promise<HTMLElement>} The card
+ */
+async function protectedCard(buttonLabels) {
+    stored.values.taskProtectedHrids_7 = [MILKING];
+    const card = cardOnBoard(buttonLabels);
+    reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 0, cowbellRerollCount: 0 });
+    await taskRerollProtection.initialize();
+    return card;
+}
+
+describe('the game keeps its clicks', () => {
+    test('a paid reroll at the cap is still stopped — the feature still works', async () => {
+        const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
+
+        expect(click(buttonNamed(card, 'Pay 320K')).defaultPrevented).toBe(true);
+        expect(card.querySelector('.mwi-reroll-warning')).not.toBe(null);
+    });
+
+    test('the MooPass free reroll is not cancelled by cap protection', async () => {
+        // The reported symptom, exactly: the chooser opens, the free reroll is
+        // pressed, and the click goes nowhere. The label carries the rerolls
+        // left on the pass, and that number was being read as a reroll cost and
+        // measured against the cowbell cap. A free reroll costs nothing, so
+        // a cap on what a reroll may cost has nothing to say about it
+        const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
+
+        expect(click(buttonNamed(card, 'MooPass Free Reroll (2)')).defaultPrevented).toBe(false);
+    });
+
+    test('a card the player protected still holds its free reroll back', async () => {
+        // The other half of the same rule: protecting a task is a choice about
+        // that task, and a free reroll destroys it exactly as a paid one does
+        const card = await protectedCard(['Back', 'Pay 10K', 'MooPass Free Reroll (2)']);
+
+        expect(click(buttonNamed(card, 'MooPass Free Reroll (2)')).defaultPrevented).toBe(true);
+    });
+
+    test('Back out of the chooser is never cancelled', async () => {
+        const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
+
+        expect(click(buttonNamed(card, 'Back')).defaultPrevented).toBe(false);
+    });
+
+    test('Confirm Discard is never cancelled', async () => {
+        const card = await guardedCard(['Confirm Discard']);
+
+        expect(click(buttonNamed(card, 'Confirm Discard')).defaultPrevented).toBe(false);
+    });
+
+    test('the trash can is never cancelled', async () => {
+        // Icon-only, so it carries no text to match on either way
+        const card = await guardedCard(['Go', 'Reroll', '']);
+        const trash = [...card.querySelectorAll('button')].find((b) => !b.textContent);
+
+        expect(click(trash).defaultPrevented).toBe(false);
+    });
+
+    test('a blocked reroll goes through on the confirming click', async () => {
+        vi.useFakeTimers();
+        const card = await guardedCard(['Back', 'Pay 320K']);
+
+        click(buttonNamed(card, 'Pay 320K'));
+        vi.advanceTimersByTime(3000);
+
+        expect(click(buttonNamed(card, 'Pay 320K')).defaultPrevented).toBe(false);
+    });
+
+    test('switching the feature off takes the interceptor off the document', async () => {
+        const card = await guardedCard(['Back', 'Pay 320K']);
+
+        taskRerollProtection.disable();
+
+        // A listener bound to the document, not to a card, survives everything
+        // else the feature cleans up unless it is removed by name
+        expect(click(buttonNamed(card, 'Pay 320K')).defaultPrevented).toBe(false);
+    });
+});
+
+describe('a card mid-flow is left alone', () => {
+    test('the reroll-spend line is not inserted while the chooser is open', () => {
+        const card = cardOnBoard(['Back', 'Pay 10K', 'MooPass Free Reroll (2)']);
+        const before = [...card.querySelector('[class*="RandomTask_content"]').childNodes];
+
+        taskRerollTracker.updateAllTaskDisplays();
+
+        const content = card.querySelector('[class*="RandomTask_content"]');
+        expect(content.querySelector('.mwi-reroll-cost-display')).toBe(null);
+        expect([...content.childNodes]).toEqual(before);
+    });
+
+    test('nor while the discard confirmation is up', () => {
+        const card = cardOnBoard(['Confirm Discard']);
+
+        taskRerollTracker.updateAllTaskDisplays();
+
+        expect(card.querySelector('.mwi-reroll-cost-display')).toBe(null);
+    });
+
+    test('and it goes in again once the card is back at rest', () => {
+        const card = cardOnBoard(['Go', 'Reroll', '']);
+
+        taskRerollTracker.updateAllTaskDisplays();
+
+        expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
+    });
+
+    test('the protection pass does not repaint a card mid-flow', async () => {
+        const card = cardOnBoard(['Back', 'Pay 10K']);
+        // The red border task-auto-reroll draws on a card worth rerolling
+        card.style.setProperty('outline', '2px solid rgba(239, 68, 68, 0.7)', 'important');
+        const badge = document.createElement('div');
+        badge.className = 'mwi-autoreroll-badge';
+        card.appendChild(badge);
+
+        // The pass that runs off every card mutation and every quest update
+        await taskRerollProtection.initialize();
+
+        // Two features stripping and redrawing the same card's border on every
+        // pass is what the player sees as the card flickering mid-reroll
+        expect(card.style.outline).toContain('239, 68, 68');
+        expect(card.querySelector('.mwi-autoreroll-badge')).toBe(badge);
+    });
+});
