@@ -81,6 +81,43 @@ describe('exportEverything / importEverything round-trip', () => {
     });
 });
 
+describe('chunked history records', () => {
+    /**
+     * The recorders that used to keep a history in one key now keep it in one
+     * record per month or per hour (`utils/chunked-history.js`). Backup and gist
+     * sync both enumerate with `getAll()` and write with `putAll()`, so neither
+     * knows or cares about key shapes — this is the test that says so, and that
+     * would fail if either grew a per-key assumption.
+     */
+    test('round-trip through export and import unchanged, whatever their keys look like', async () => {
+        db = new Map([
+            [
+                'networthHistory',
+                new Map([
+                    ['networthSeries_char-1_2026-07', [{ t: 1, total: 10 }]],
+                    ['networthSeries_char-1_2026-08', [{ t: 2, total: 20 }]],
+                    ['networthDetail_char-1_2', { t: 2, items: {} }],
+                ]),
+            ],
+            ['lootLogHistory', new Map([['lootLogRec_char-1_2026-08-01T10', [{ characterActionId: 7 }]]])],
+            ['alchemyHistory', new Map([['transmuteSessionsRec_char-1_2026-08-04', [{ id: 'transmute_1' }]]])],
+        ]);
+
+        const payload = await exportEverything();
+        const before = structuredClone(payload.stores);
+
+        db = new Map([
+            ['networthHistory', new Map()],
+            ['lootLogHistory', new Map()],
+            ['alchemyHistory', new Map()],
+        ]);
+        const result = await importEverything(payload);
+
+        expect(result.restored).toEqual({ networthHistory: 3, lootLogHistory: 1, alchemyHistory: 1 });
+        expect((await exportEverything()).stores).toEqual(before);
+    });
+});
+
 describe('exportEverythingJSON', () => {
     beforeEach(seedDb);
 

@@ -12,15 +12,28 @@
  * being a leak, which is a thing worth saying in a diagnostic report before the
  * quota says it for us. Only stores that grow with play are listed; anything
  * absent is unbudgeted and simply reported without a verdict.
+ *
+ * Three of these budgets were raised when their recorders stopped keeping their
+ * history in one key and started keeping it in one record per time bucket (see
+ * `utils/chunked-history.js`). The key count went up and the bytes written per
+ * event went down by two or three orders of magnitude, which is the trade the
+ * budget is here to permit rather than to flag — a store of many small records
+ * is not the leak this number looks for.
  */
 const STORE_KEY_BUDGETS = {
     settings: 500,
-    networthHistory: 200,
-    lootLogHistory: 40,
+    // Per character: ~25 item-level detail snapshots plus one series record per
+    // calendar month, capped by a year of full retention beneath the thinning
+    networthHistory: 600,
+    // Per character: one record per hour of play, and the log keeps 500 entries,
+    // so a few dozen live records at a time plus the calibration keys
+    lootLogHistory: 500,
     guildHistory: 80,
     leaderboardHistory: 80,
     xpHistory: 200,
-    alchemyHistory: 200,
+    // Three trackers (transmute, decompose, coinify), one record per day each
+    // has sessions on, per character
+    alchemyHistory: 1500,
     dungeonRuns: 600,
     unifiedRuns: 600,
     teamRuns: 600,

@@ -23,7 +23,7 @@ vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char-1' } }));
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
-const { default: networthHistory, pruneHistory } = await import('./networth-history.js');
+const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
 
 const HOUR = 3_600_000;
 
@@ -39,7 +39,10 @@ beforeEach(() => {
     for (const fn of Object.values(storageMock)) fn.mockClear?.();
     storageMock.get.mockImplementation(async (key, store, fallback) => fallback);
     storageMock.getAllKeys.mockImplementation(async () => []);
+    storageMock.putAll.mockImplementation(async () => 0);
+    storageMock.delete.mockImplementation(async () => true);
     storageMock.isQuotaExceeded.mockImplementation(() => false);
+    seriesStore.forget();
 });
 
 afterEach(() => {
@@ -130,6 +133,7 @@ describe('pruneHistory', () => {
  */
 function fakeNetworthData() {
     return {
+        totalNetworth: 1050,
         coins: 1000,
         currentAssets: {
             inventory: { value: 10, breakdown: [{ itemHrid: '/items/milk', count: 3, value: 30 }] },
@@ -201,6 +205,100 @@ describe('detail snapshots are stored one key each', () => {
 
         expect(loaded.map((s) => s.t)).toEqual([100, 200, 300]);
         expect(storageMock.putAll).not.toHaveBeenCalled();
+    });
+});
+
+describe('the compact series is stored one record per month', () => {
+    /** Every series record `set()` was asked to write */
+    const seriesWrites = () => storageMock.set.mock.calls.filter(([key]) => String(key).startsWith('networthSeries_'));
+
+    /** A snapshot in the given UTC month */
+    const monthly = (year, month, total) => ({ t: Date.UTC(year, month - 1, 15), total });
+
+    test('an hourly snapshot writes the current month, not the whole series', async () => {
+        // Three months of history, of which only the last can change
+        await seriesStore.save('char-1', [monthly(2026, 6, 1), monthly(2026, 7, 2), monthly(2026, 8, 3)]);
+        storageMock.set.mockClear();
+        networthHistory.history = [monthly(2026, 6, 1), monthly(2026, 7, 2), monthly(2026, 8, 3)];
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+
+        await networthHistory.takeSnapshot();
+
+        expect(seriesWrites().map(([key]) => key)).toEqual(['networthSeries_char-1_2026-08']);
+    });
+
+    test('the chart still gets one flat array, whatever it is stored as', async () => {
+        const stored = {
+            'networthSeries_char-1_2026-08': [monthly(2026, 8, 3)],
+            'networthSeries_char-1_2026-06': [monthly(2026, 6, 1)],
+            'networthSeries_char-1_2026-07': [monthly(2026, 7, 2)],
+        };
+        storageMock.getAllKeys.mockImplementation(async () => Object.keys(stored));
+        storageMock.get.mockImplementation(async (key, store, fallback) => stored[key] ?? fallback);
+
+        expect((await seriesStore.load('char-1')).map((p) => p.total)).toEqual([1, 2, 3]);
+    });
+
+    test('the pre-split single key is turned into records and removed', async () => {
+        const legacy = [monthly(2026, 6, 1), monthly(2026, 7, 2)];
+        storageMock.get.mockImplementation(async (key, store, fallback) =>
+            key === 'networth_char-1' ? legacy : fallback
+        );
+        storageMock.putAll.mockImplementation(async (store, entries) => Object.keys(entries).length);
+
+        const loaded = await seriesStore.load('char-1');
+
+        expect(loaded).toEqual(legacy);
+        expect(storageMock.putAll).toHaveBeenCalledWith('networthHistory', {
+            'networthSeries_char-1_2026-06': [legacy[0]],
+            'networthSeries_char-1_2026-07': [legacy[1]],
+        });
+        expect(storageMock.delete).toHaveBeenCalledWith('networth_char-1', 'networthHistory');
+    });
+
+    test('a split that will not fit leaves the single key alone and readable', async () => {
+        const legacy = [monthly(2026, 6, 1), monthly(2026, 7, 2)];
+        storageMock.get.mockImplementation(async (key, store, fallback) =>
+            key === 'networth_char-1' ? legacy : fallback
+        );
+        storageMock.putAll.mockImplementation(async () => 0);
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+
+        expect(await seriesStore.load('char-1')).toEqual(legacy);
+        expect(storageMock.delete).not.toHaveBeenCalledWith('networth_char-1', 'networthHistory');
+        expect(seriesStore.isLegacy()).toBe(true);
+    });
+
+    test('thinning past retention deletes the months it emptied', async () => {
+        const old = { t: Date.now() - 400 * 24 * 3_600_000, total: 1 };
+        await seriesStore.save('char-1', [old, { t: Date.now(), total: 2 }]);
+        storageMock.delete.mockClear();
+
+        await seriesStore.save('char-1', [{ t: Date.now(), total: 2 }]);
+
+        const oldMonth = new Date(old.t).toISOString().slice(0, 7);
+        expect(storageMock.delete).toHaveBeenCalledWith(`networthSeries_char-1_${oldMonth}`, 'networthHistory');
+    });
+});
+
+describe('the guild shrine total', () => {
+    test('is recorded when the calculator costed the shrines', async () => {
+        const data = fakeNetworthData();
+        data.fixedAssets.guildShrines = { totalCost: 1234.6, breakdown: [] };
+        networthHistory.networthFeature = { currentData: data };
+
+        await networthHistory.takeSnapshot();
+
+        expect(networthHistory.history.at(-1).guildShrines).toBe(1235);
+    });
+
+    test('is left off entirely when it did not, so the chart draws a gap not a zero', async () => {
+        // Pre-shrine calculator output: `fixedAssets` has no `guildShrines` at all
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+
+        await networthHistory.takeSnapshot();
+
+        expect(networthHistory.history.at(-1)).not.toHaveProperty('guildShrines');
     });
 });
 

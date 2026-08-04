@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### History stops rewriting itself on every event
+
+- **The append-heavy history stores split into per-period records**: networth snapshots (monthly), the loot log (hourly), and alchemy sessions (daily — previously rewritten in full on every ~2s action, unbounded). Saves now write only the chunk that changed; pruning deletes old record keys instead of rewriting the survivors. One-time migration splits existing data lazily and falls back to the old key untouched if the disk is full — nothing bricks or half-migrates.
+- The account view, sync, backup, and the market-cow adoption check all read both shapes; networth snapshots now also carry the Guild Shrines value so the new chart series gets data.
+
 ### Tokens get a price, shrines get a debug command
 
 - **Guild tokens are now priced through the guild shop's token→credit exchange** (live client data when present, else a settable rate defaulting to 1 credit/token, 0 to turn it off). Shrine upgrade rows rank on credits _plus_ tokens — token-heavy top levels sink, credit-cheap levels rise — with the valuation labeled "via credit exchange" everywhere it appears, including trial token payouts.

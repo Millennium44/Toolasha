@@ -111,6 +111,30 @@ describe('readScoped', () => {
         expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
     });
 
+    it('still picks the longest series once it is stored as monthly records', async () => {
+        // Neither character has a `networth_<id>` key any more
+        mockStorage.storeFor('networthHistory').set('networthSeries_market123_2026-07', [1, 2]);
+        mockStorage.storeFor('networthHistory').set('networthSeries_market123_2026-08', [3]);
+        mockStorage.storeFor('networthHistory').set('networthSeries_alt789_2026-08', [1]);
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+
+        mockDataManager.currentCharacterId = 'alt789';
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+
+        mockDataManager.currentCharacterId = 'market123';
+        expect(await readScoped('watchlist', 'settings', [])).toEqual(['legacy']);
+    });
+
+    it('compares a split series against an unsplit one', async () => {
+        // One character migrated, one not — the comparison has to span both
+        mockStorage.storeFor('networthHistory').set('networth_alt789', [1, 2, 3, 4]);
+        mockStorage.storeFor('networthHistory').set('networthSeries_market123_2026-08', [1]);
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
+    });
+
     it('ignores non-series networth keys when picking the adopter', async () => {
         mockStorage.storeFor('networthHistory').set('networth_market123', [1, 2]);
         mockStorage.storeFor('networthHistory').set('networth_exclusions_market123', ['x']);

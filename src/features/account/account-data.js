@@ -23,6 +23,7 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { showToast } from '../../utils/toast.js';
+import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
 
 /** Where each recorder puts its per-character keys */
 export const NETWORTH_STORE = 'networthHistory';
@@ -34,6 +35,19 @@ const NETWORTH_PREFIX = 'networth_';
 const QUEUE_PREFIX = 'queueSnapshot_';
 const LOOT_PREFIX = 'lootLog_';
 const TRADE_PREFIX = 'tradeHistory_';
+
+/**
+ * The chunked recorders, whose keys are `<prefix>_<characterId>_<chunkId>`.
+ *
+ * The networth series and the loot log are stored one record per month and per
+ * hour respectively (see `utils/chunked-history.js`), so a character that has
+ * been migrated has no `networth_<id>` key at all and would vanish from the
+ * account if only the single-key prefixes were scanned. Both shapes are read,
+ * because a character not logged into since the migration shipped still has the
+ * old one.
+ */
+const NETWORTH_RECORD_PREFIX = 'networthSeries';
+const LOOT_RECORD_PREFIX = 'lootLogRec';
 
 /** Character id → name, accumulated as you play each one */
 const NAMES_KEY = 'accountCharacterNames';
@@ -65,6 +79,34 @@ export function idsFromKeys(keys, prefix) {
         ids.push(id);
     }
     return ids;
+}
+
+/**
+ * One character's networth series, whichever shape it is stored in.
+ *
+ * The pre-migration single key wins when it is there, because its presence means
+ * the split has not happened yet and any records beside it are a half-finished
+ * migration rather than the record. Reading is one key per month rather than a
+ * whole-store `getAll()`: this store also holds twenty-five item-level detail
+ * snapshots per character, and pulling a year of inventories into memory to
+ * assemble a list of timestamps and totals is not a trade worth making.
+ *
+ * @param {Array<string>} keys - Every key in the networth store
+ * @param {string} id - Whose series
+ * @returns {Promise<Array<{t: number, total: number}>>} The series, oldest first
+ */
+async function readSeries(keys, id) {
+    const legacy = await storage.get(`${NETWORTH_PREFIX}${id}`, NETWORTH_STORE, null);
+    if (Array.isArray(legacy) && legacy.length > 0) return legacy;
+
+    const points = [];
+    for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
+        const chunk = await storage.get(key, NETWORTH_STORE, null);
+        if (Array.isArray(chunk)) points.push(...chunk);
+    }
+
+    points.sort((a, b) => (a?.t || 0) - (b?.t || 0));
+    return points;
 }
 
 /**
@@ -341,8 +383,10 @@ export async function readAccount(now = Date.now()) {
     // them switched on is still an account member
     const ids = new Set([
         ...idsFromKeys(networthKeys, NETWORTH_PREFIX),
+        ...idsFromRecordKeys(networthKeys, `${NETWORTH_RECORD_PREFIX}_`),
         ...idsFromKeys(Object.keys(queueValues), QUEUE_PREFIX),
         ...idsFromKeys(lootKeys, LOOT_PREFIX),
+        ...idsFromRecordKeys(lootKeys, `${LOOT_RECORD_PREFIX}_`),
         ...idsFromKeys(settingsKeys, TRADE_PREFIX),
     ]);
     if (currentId) ids.add(currentId);
@@ -356,7 +400,7 @@ export async function readAccount(now = Date.now()) {
 
     const seriesById = {};
     for (const id of ids) {
-        seriesById[id] = (await storage.get(`${NETWORTH_PREFIX}${id}`, NETWORTH_STORE, [])) || [];
+        seriesById[id] = await readSeries(networthKeys, id);
     }
 
     const characters = summarizeCharacters({
