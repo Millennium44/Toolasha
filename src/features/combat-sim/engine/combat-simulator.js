@@ -43,11 +43,18 @@ class CombatSimulator {
      * @param {Object} zone
      * @param {Function} [onProgress] - Optional progress callback receiving { zone, difficultyTier, progress }
      * @param {Labyrinth} [labyrinth] - Optional labyrinth encounter manager (replaces zone encounter logic)
+     * @param {boolean} [isTaskFight] - Whether this run stands in for fighting an
+     *   active combat task's monster. Only then does `taskDamage` pay, so only
+     *   then does the engine apply it (see engine/combat-utilities.js). Default
+     *   false: a zone sim, an all-zones sweep, and every upgrade-advisor ranking
+     *   are generic fights, and pricing a task badge as if they were is what
+     *   floated task gear to the top of the advisor.
      */
-    constructor(players, zone, onProgress, labyrinth) {
+    constructor(players, zone, onProgress, labyrinth, isTaskFight = false) {
         this.players = players;
         this.zone = zone;
         this.labyrinth = labyrinth || null;
+        this.isTaskFight = Boolean(isTaskFight);
         this.onProgress = onProgress;
         this.eventQueue = new EventQueue();
         this.simResult = new SimResult(zone, players.length);
@@ -560,7 +567,7 @@ class CombatSimulator {
                 source = parryTarget;
             }
 
-            const attackResult = CombatUtilities.processAttack(source, target);
+            const attackResult = CombatUtilities.processAttack(source, target, null, this.isTaskFight);
             if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                 const log = this.generateCombatLog(source, 'autoAttack', target, attackResult);
                 this.addToWipeLogs(log);
@@ -1444,7 +1451,7 @@ class CombatSimulator {
                 const tempTarget = source;
                 const tempSource = parryTarget;
 
-                const attackResult = CombatUtilities.processAttack(tempSource, tempTarget);
+                const attackResult = CombatUtilities.processAttack(tempSource, tempTarget, null, this.isTaskFight);
 
                 this.simResult.addAttack(
                     tempSource,
@@ -1523,7 +1530,7 @@ class CombatSimulator {
                     break;
                 }
 
-                const attackResult = CombatUtilities.processAttack(source, target, abilityEffect);
+                const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.isTaskFight);
 
                 if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                     const log = this.generateCombatLog(source, ability.hrid, target, attackResult);

@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Tests for the Max Produceable calculation
  *
@@ -6,17 +8,30 @@
  * taken across every input plus the upgrade slot. The character's bank and teas
  * are mocked; the division is not.
  *
- * Not covered here (pure DOM/observer glue): injectMaxProduceable, updateCount,
- * addBestActionIndicators, the font-fitting and layout-sync helpers.
+ * Also covered: the injectMaxProduceable re-entry guard, because a missing
+ * guard there is a page freeze rather than a wrong number.
+ *
+ * Not covered here (pure DOM/observer glue): updateCount, addBestActionIndicators,
+ * the font-fitting and layout-sync helpers.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     actionDetails: {},
+    actionDetailMap: {},
     inventory: [],
     itemDetailMap: {},
     drinkSlots: [],
+}));
+
+const settings = vi.hoisted(() => ({
+    values: {},
+}));
+
+const sortCalls = vi.hoisted(() => ({
+    triggerSort: 0,
+    registerPanel: 0,
 }));
 
 const buffs = vi.hoisted(() => ({
@@ -27,7 +42,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getActionDetails: (hrid) => game.actionDetails[hrid] ?? null,
         getInventory: () => game.inventory,
-        getInitClientData: () => ({ itemDetailMap: game.itemDetailMap }),
+        getInitClientData: () => ({ itemDetailMap: game.itemDetailMap, actionDetailMap: game.actionDetailMap }),
         getEquipment: () => new Map(),
         getActionDrinkSlots: () => game.drinkSlots,
     },
@@ -39,8 +54,9 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => true,
+        getSetting: (key) => settings.values[key] ?? true,
         getSettingValue: (_k, fallback) => fallback,
+        COLOR_BORDER: '#333',
         COLOR_PROFIT: '#0f0',
         COLOR_LOSS: '#f00',
         COLOR_WARNING: '#ff0',
@@ -57,7 +73,12 @@ vi.mock('./action-panel-sort.js', () => ({
         updateProfit: () => {},
         updateExpPerHour: () => {},
         isPinned: () => false,
-        triggerSort: () => {},
+        triggerSort: () => {
+            sortCalls.triggerSort += 1;
+        },
+        registerPanel: () => {
+            sortCalls.registerPanel += 1;
+        },
         unregisterPanel: () => {},
     },
 }));
@@ -89,8 +110,12 @@ function stack(itemHrid, count, itemLocationHrid = '/item_locations/inventory') 
 
 beforeEach(() => {
     buffs.artisanBonus = 0;
+    settings.values = {};
+    sortCalls.triggerSort = 0;
+    sortCalls.registerPanel = 0;
     game.drinkSlots = [];
     game.itemDetailMap = {};
+    game.actionDetailMap = { [SWORD]: { name: 'Cheesy Sword' } };
     game.actionDetails = {
         [SWORD]: {
             type: '/action_types/cheesesmithing',
@@ -197,5 +222,72 @@ describe('calculateMaxProduceable — upgrade items', () => {
 
         // swords per action = 2 × 0.5 + 1 = 2 → 20 / 2 = 10
         expect(maxProduceable.calculateMaxProduceable('/actions/cheesesmithing/upgrade')).toBe(10);
+    });
+});
+
+describe('injectMaxProduceable — re-insertion guard', () => {
+    /** A skilling panel as the game renders it: a name div the hrid lookup reads */
+    function panel(name = 'Cheesy Sword') {
+        const el = document.createElement('div');
+        el.className = 'SkillAction_skillAction__2j3sd';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'SkillAction_name__3fgh';
+        nameEl.textContent = name;
+        el.appendChild(nameEl);
+        document.body.appendChild(el);
+        return el;
+    }
+
+    const displays = (el) => el.querySelectorAll('.mwi-max-produceable');
+
+    afterEach(() => {
+        maxProduceable.actionElements.clear();
+        maxProduceable.actionNameToHridCache = null;
+        maxProduceable.resizeObserver = null;
+        document.body.innerHTML = '';
+    });
+
+    test('a fresh panel gets one display and one sort trigger', () => {
+        settings.values.actions_pinnedPage = false;
+        const el = panel();
+
+        maxProduceable.injectMaxProduceable(el);
+
+        expect(displays(el)).toHaveLength(1);
+        expect(sortCalls.triggerSort).toBe(1);
+    });
+
+    test('re-insertion with Pinned Actions off neither duplicates the display nor re-triggers the sort', () => {
+        // The freeze: sort re-inserts the panel, injection appends a second display and
+        // calls triggerSort() again, which re-inserts the panel, forever.
+        settings.values.actions_pinnedPage = false;
+        const el = panel();
+
+        maxProduceable.injectMaxProduceable(el);
+        const first = el.querySelector('.mwi-max-produceable');
+        const triggersAfterFirst = sortCalls.triggerSort;
+
+        for (let i = 0; i < 5; i++) {
+            maxProduceable.injectMaxProduceable(el);
+        }
+
+        expect(displays(el)).toHaveLength(1);
+        expect(sortCalls.triggerSort).toBe(triggersAfterFirst);
+        expect(maxProduceable.actionElements.get(el)).toMatchObject({
+            actionHrid: SWORD,
+            displayElement: first,
+            pinElement: null,
+        });
+    });
+
+    test('with Pinned Actions on the existing-pin branch still handles re-insertion', () => {
+        settings.values.actions_pinnedPage = true;
+        const el = panel();
+
+        maxProduceable.injectMaxProduceable(el);
+        maxProduceable.injectMaxProduceable(el);
+
+        expect(displays(el)).toHaveLength(1);
+        expect(el.querySelectorAll('.mwi-action-pin')).toHaveLength(1);
     });
 });

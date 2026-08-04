@@ -262,8 +262,9 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  *   from zero. That assumption is the single largest term in the cost, and it
  *   lived only in the Ability Swaps checkbox tooltip, where a row quoting 900M
  *   gave no hint that the 900M assumes you own none of it.
- * - **on task** — a trinket's gain is simulated with taskDamage applied to
- *   every hit, which is right for a task fight and generous for anything else.
+ * - **on task** — the row's ranked gain was simulated off task, where taskDamage
+ *   pays nothing, so a task trinket's headline stat is deliberately not in the
+ *   number. The chip's tooltip names what it would add on task instead.
  *
  * @param {Object} result - An upgrade result row
  * @returns {string} HTML, empty when the row needs no qualifier
@@ -921,6 +922,10 @@ class CombatSimUI {
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
                 <input type="checkbox" id="mwi-csim-earlyexit" style="${checkboxStyle}" checked>
                 Skip Worse Tiers
+            </label>
+            <label style="${labelStyle}" title="Treat every fight in this run as your combat task's monster, so taskDamage from trinkets and task badges applies. Off by default: a zone is a mix of monsters and only one of them is your task, so counting the bonus everywhere overstates the run.">
+                <input type="checkbox" id="mwi-csim-taskfight" style="${checkboxStyle}">
+                Task Fight
             </label>
         `;
 
@@ -2408,7 +2413,15 @@ class CombatSimUI {
 
         try {
             const simResult = await runSimulation(
-                { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs },
+                {
+                    gameData,
+                    playerDTOs,
+                    zoneHrid,
+                    difficultyTier,
+                    hours,
+                    communityBuffs,
+                    isTaskFight: Boolean(this.panel.querySelector('#mwi-csim-taskfight')?.checked),
+                },
                 (percent) => {
                     const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;

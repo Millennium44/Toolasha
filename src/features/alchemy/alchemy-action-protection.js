@@ -10,6 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import actionPanelSort from '../actions/action-panel-sort.js';
+import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
@@ -352,10 +353,7 @@ class AlchemyActionProtection {
         }
         const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
 
-        const sellPrice = itemDetails.sellPrice || 0;
-        const level = itemDetails.itemLevel || 1;
-        const coinCost =
-            (alchemyType === 'transmute' ? Math.max(50, Math.floor(sellPrice / 5)) : (10 + level) * 5) * bulkMultiplier;
+        const coinCost = getAlchemyCoinCost(itemDetails, alchemyType);
 
         const inventory = dataManager.getInventory();
         let itemCount = 0;

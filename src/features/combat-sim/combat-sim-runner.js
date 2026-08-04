@@ -373,11 +373,15 @@ function mergeSimResults(results) {
  * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
  *   random numbers, so comparing them measures the change instead of sampling
  *   noise. Omit for an independent random sample (the default).
+ * @param {boolean} [params.isTaskFight] - Set only when this run stands in for
+ *   fighting an active combat task's monster. It is what switches `taskDamage`
+ *   on in the engine; left off (the default) task gear measures as inert, which
+ *   is the truth for a generic zone sim.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
 export async function runSimulation(params, onProgress, { preempt = true, workers = 0 } = {}) {
-    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
+    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed, isTaskFight } = params;
 
     // Guild buffs are not folded in here: the worker reads each player DTO's
     // own guildCombatBuffs, so party members keep their own guild's bonuses
@@ -428,6 +432,7 @@ export async function runSimulation(params, onProgress, { preempt = true, worker
             difficultyTier,
             simulationTimeLimit: chunkHours * ONE_HOUR_NS,
             extraBuffs,
+            isTaskFight: Boolean(isTaskFight),
             // Each chunk needs its own stream or all four would replay the same
             // fights, but chunk N must match across compared runs — so the
             // per-chunk seed is derived from (seed, index), not randomized.
@@ -481,6 +486,9 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
  *   an independent random sample (the default).
+ * @param {boolean} [params.isTaskFight] - Whether taskDamage applies. Off by
+ *   default, and normally correct off here: a labyrinth monster is not a task
+ *   monster. Exposed so the lab panel can say otherwise.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} SimResult with labyrinth fields
  */
@@ -498,6 +506,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         communityBuffs,
         labyrinthCombatBuffs,
         seed,
+        isTaskFight,
     } = params;
 
     // Guild buffs are not folded in here: the worker reads each player DTO's
@@ -520,6 +529,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         difficultyTier: 0,
         simulationTimeLimit: hours * ONE_HOUR_NS,
         extraBuffs,
+        isTaskFight: Boolean(isTaskFight),
         labyrinth: {
             monsterHrid,
             roomLevel,

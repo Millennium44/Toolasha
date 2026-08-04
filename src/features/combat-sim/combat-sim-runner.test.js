@@ -29,7 +29,41 @@ vi.mock('../../utils/mobile.js', () => ({
     isMobileMode: () => settings.mobile,
 }));
 
-const { plannedWorkerCount } = await import('./combat-sim-runner.js');
+const { plannedWorkerCount, runSimulation, runLabyrinthSimulation } = await import('./combat-sim-runner.js');
+
+/** The bare shape mergeSimResults walks unconditionally */
+const EMPTY_SIM_RESULT = { encounters: 0, deaths: {}, experienceGained: {}, consumablesUsed: {} };
+
+/**
+ * Stand in for the browser's Worker plumbing and collect what gets posted to it.
+ * Every fake worker answers its message with an empty result, which is enough
+ * for a run of any chunk count to resolve.
+ */
+function captureWorkerMessages() {
+    const messages = [];
+    vi.stubGlobal(
+        'Blob',
+        class {
+            constructor() {}
+        }
+    );
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:sim', revokeObjectURL: () => {} });
+    vi.stubGlobal(
+        'Worker',
+        class {
+            postMessage(message) {
+                messages.push(message);
+                setTimeout(() =>
+                    this.onmessage?.({
+                        data: { type: 'result', taskId: message.taskId, simResult: { ...EMPTY_SIM_RESULT } },
+                    })
+                );
+            }
+            terminate() {}
+        }
+    );
+    return messages;
+}
 
 beforeEach(() => {
     settings.maxThreads = 0;
@@ -75,5 +109,47 @@ describe('how wide one simulation spreads itself', () => {
         settings.mobile = true;
 
         expect(plannedWorkerCount(10_000)).toBe(2);
+    });
+});
+
+describe('whether the run counts as a task fight', () => {
+    // taskDamage is a conditional stat — it pays only while the monster is your
+    // combat task — so the engine needs telling, and the only way it can be told
+    // is through the worker message. A caller that says nothing must get the
+    // off-task answer, because most callers are generic zone sims and rankings.
+    test('a caller who says nothing gets off task', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1 });
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0].isTaskFight).toBe(false);
+    });
+
+    test('and a task-card sim carries the flag through to the worker', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1, isTaskFight: true });
+
+        expect(messages[0].isTaskFight).toBe(true);
+    });
+
+    test('every chunk of a split run agrees about it', async () => {
+        // A 100-hour run is four workers; three of them believing they are off
+        // task would make the merged result a blend of two different fights
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 100, isTaskFight: true });
+
+        expect(messages).toHaveLength(4);
+        expect(messages.every((m) => m.isTaskFight === true)).toBe(true);
+    });
+
+    test('and labyrinth runs default off, since no labyrinth monster is a task', async () => {
+        const messages = captureWorkerMessages();
+
+        await runLabyrinthSimulation({ zoneHrid: '/actions/combat/fly', monsterHrid: '/monsters/x', hours: 1 });
+
+        expect(messages[0].isTaskFight).toBe(false);
     });
 });

@@ -2,8 +2,9 @@
  * The damage roll, and what happens when the engine meets a mechanic it does
  * not know.
  *
- * Both tests here are about numbers the engine used to get wrong in opposite
- * directions: taskDamage was left out of the attacker's roll entirely, and an
+ * Both groups here are about numbers the engine used to get wrong in opposite
+ * directions: taskDamage was first left out of the attacker's roll entirely and
+ * then applied to every fight regardless of whether one was on task, and an
  * unrecognized combat style took the whole simulation down rather than one
  * attack. Seeding the RNG is what makes the first measurable — two attacks with
  * the same seed draw the same numbers, so the only difference left between them
@@ -59,9 +60,9 @@ function unit(statOverrides = {}) {
 }
 
 /** One attack from a freshly reseeded stream, so draws repeat exactly. */
-function attackWith(statOverrides) {
+function attackWith(statOverrides, isTaskFight = false) {
     seedSimRng(SEED);
-    return CombatUtilities.processAttack(unit(statOverrides), unit());
+    return CombatUtilities.processAttack(unit(statOverrides), unit(), null, isTaskFight);
 }
 
 afterEach(() => {
@@ -69,9 +70,9 @@ afterEach(() => {
 });
 
 describe('taskDamage in the damage roll', () => {
-    test('a task trinket raises the damage a hit does', () => {
-        const plain = attackWith({});
-        const withTask = attackWith({ taskDamage: 0.5 });
+    test('a task trinket raises the damage a hit does — on a task fight', () => {
+        const plain = attackWith({}, true);
+        const withTask = attackWith({ taskDamage: 0.5 }, true);
 
         expect(plain.didHit).toBe(true);
         expect(withTask.didHit).toBe(true);
@@ -82,15 +83,34 @@ describe('taskDamage in the damage roll', () => {
     });
 
     test('and scales with how much of it there is', () => {
-        const small = attackWith({ taskDamage: 0.1 });
-        const large = attackWith({ taskDamage: 1 });
+        const small = attackWith({ taskDamage: 0.1 }, true);
+        const large = attackWith({ taskDamage: 1 }, true);
 
         expect(large.damageDone).toBeGreaterThan(small.damageDone);
     });
 
+    test('but off task the same trinket does nothing at all', () => {
+        // The other branch, and the reason the flag exists: the game pays
+        // taskDamage only while the monster is your task, so a generic zone sim
+        // — and every upgrade ranking built on one — must measure a task badge
+        // as inert rather than rank it on damage it would never deal
+        const plain = attackWith({});
+        const withTask = attackWith({ taskDamage: 0.5 });
+
+        expect(plain.damageDone).toBeGreaterThan(0);
+        expect(withTask.damageDone).toBe(plain.damageDone);
+    });
+
+    test('and the flag defaults off, so a caller who says nothing gets no bonus', () => {
+        seedSimRng(SEED);
+        const defaulted = CombatUtilities.processAttack(unit({ taskDamage: 0.5 }), unit());
+
+        expect(defaulted.damageDone).toBe(attackWith({}).damageDone);
+    });
+
     test('while no task bonus leaves the roll where it was', () => {
-        const explicitZero = attackWith({ taskDamage: 0 });
-        const absent = attackWith({});
+        const explicitZero = attackWith({ taskDamage: 0 }, true);
+        const absent = attackWith({}, true);
 
         expect(explicitZero.damageDone).toBe(absent.damageDone);
     });

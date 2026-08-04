@@ -312,3 +312,146 @@ describe('Storage.budgetReport', () => {
         storage.getAllKeys.mockRestore();
     });
 });
+
+/**
+ * The debounced write queue, tested at its one dangerous moment: the gap between
+ * "the timer fired" and "IndexedDB confirmed". A write that is dropped from the
+ * queue before it lands is a write that is silently lost, with no retry path.
+ */
+describe('Storage debounced write durability', () => {
+    let saves;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.db = {}; // set() only checks for truthiness before debouncing
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        saves = [];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._saveToIndexedDB.mockRestore?.();
+        storage.db = null;
+    });
+
+    /**
+     * Stand in for IndexedDB, recording each attempt and answering as told.
+     * @param {boolean|Function} outcome - Fixed result, or a function of the attempt
+     */
+    function stubSaves(outcome) {
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async (key, value, storeName) => {
+            const attempt = { key, value, storeName };
+            saves.push(attempt);
+            return typeof outcome === 'function' ? outcome(attempt) : outcome;
+        });
+    }
+
+    /** Let the debounce timer fire and its async body settle */
+    const runDebounce = () => vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+    test('a write that fails stays queued instead of being dropped', async () => {
+        stubSaves(false);
+        storage.set('loot', [1, 2, 3], 'settings');
+
+        await runDebounce();
+
+        expect(saves).toHaveLength(1);
+        expect(storage.pendingWrites.get('settings:loot')).toMatchObject({
+            value: [1, 2, 3],
+            storeName: 'settings',
+        });
+    });
+
+    test('a write that succeeds leaves nothing queued behind it', async () => {
+        stubSaves(true);
+        const done = storage.set('loot', [1], 'settings');
+
+        await runDebounce();
+
+        expect(await done).toBe(true);
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
+    test('a failed write tells its caller so, rather than leaving it awaiting forever', async () => {
+        // Two dozen callers `await storage.set(...)`; a promise held open until some later
+        // flush would hang them for the session.
+        stubSaves(false);
+
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.has('settings:loot')).toBe(true);
+    });
+
+    test('flushAll retries the value a failed write left queued', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1, 2, 3], 'settings');
+        await runDebounce();
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.size).toBe(1);
+
+        // The database comes back; the queued value is what gets written
+        storage._saveToIndexedDB.mockImplementation(async (key, value, storeName) => {
+            saves.push({ key, value, storeName });
+            return true;
+        });
+        await storage.flushAll();
+
+        expect(saves[1]).toEqual({ key: 'loot', value: [1, 2, 3], storeName: 'settings' });
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
+    test('flushAll leaves a still-failing write queued rather than clearing it', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+
+        await storage.flushAll();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.has('settings:loot')).toBe(true);
+    });
+
+    test('the newest write to a key wins and the superseded timer writes nothing', async () => {
+        stubSaves(true);
+        const first = storage.set('loot', 'old', 'settings');
+        vi.advanceTimersByTime(1000); // not yet fired
+        const second = storage.set('loot', 'new', 'settings');
+
+        await runDebounce();
+
+        expect(saves).toEqual([{ key: 'loot', value: 'new', storeName: 'settings' }]);
+        expect(await first).toBe(true);
+        expect(await second).toBe(true);
+    });
+
+    test('a write to a different store is queued separately', async () => {
+        stubSaves(false);
+        storage.set('loot', [1], 'settings');
+        storage.set('loot', [2], 'networthHistory');
+
+        await runDebounce();
+
+        expect(storage.pendingWrites.size).toBe(2);
+        expect(storage.pendingWrites.get('networthHistory:loot')).toMatchObject({ value: [2] });
+    });
+
+    test('cleanupPendingWrites drops the queue and its generation counters', async () => {
+        stubSaves(false);
+        const done = storage.set('loot', [1], 'settings');
+        await runDebounce();
+        expect(storage._writeGeneration.size).toBe(1);
+
+        storage.cleanupPendingWrites();
+
+        expect(await done).toBe(false);
+        expect(storage.pendingWrites.size).toBe(0);
+        expect(storage._writeGeneration.size).toBe(0);
+    });
+});
