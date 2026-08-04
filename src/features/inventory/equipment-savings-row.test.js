@@ -24,6 +24,10 @@ const game = vi.hoisted(() => ({
     // tests that are not about the fallback see the same "nothing measured"
     // behaviour they did before it existed
     networthSeries: () => [],
+    // Everything the module has written back, so a test about a setting
+    // surviving a reload can look at what would actually be reloaded rather
+    // than at the module's own memory of it
+    writes: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -58,7 +62,10 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: async () => null,
         setJSON: async () => {},
         get: async (_k, _s, fallback = null) => fallback,
-        set: async () => true,
+        set: async (key, value) => {
+            game.writes.push({ key, value });
+            return true;
+        },
         delete: async () => true,
         getAllKeys: async () => [],
     },
@@ -97,6 +104,9 @@ const {
     trendPerDay,
     toggleCrafting,
     cycleTargetNoSell,
+    toggleLaddering,
+    isLaddering,
+    enhancementCost,
     resetEquipmentSavings,
 } = await import('./equipment-savings-row.js');
 
@@ -137,6 +147,7 @@ beforeEach(() => {
     game.shops = {};
     game.artisan = 0;
     game.networthSeries = () => [];
+    game.writes = [];
     resetEquipmentSavings();
 });
 
@@ -1025,5 +1036,271 @@ describe('the ladder', () => {
         watchTarget('/items/sinister_cape', 7);
 
         expect(watchedTargets()[0].ladder).toBeNull();
+    });
+});
+
+describe('which run the card is saving towards', () => {
+    // The same two-copy shape the ladder block above uses: one on your back and
+    // a spare in the bag, so both paths exist and there is a choice to make
+    const cape = (level, count = 1) => ({
+        itemHrid: '/items/sinister_cape',
+        itemLocationHrid: '/item_locations/inventory',
+        count,
+        enhancementLevel: level,
+    });
+
+    beforeEach(() => {
+        game.details['/items/sinister_cape'] = {
+            name: 'Sinister Cape',
+            itemLevel: 70,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+            equipmentDetail: { type: '/equipment_types/back' },
+        };
+        game.prices['/items/sinister_cape:0'] = { ask: 50_000_000, bid: 45_000_000 };
+        game.details['/items/mirror_of_protection'] = { name: 'Mirror of Protection', sellPrice: 2_000_000 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 2_000_000, bid: 1_800_000 };
+
+        game.inventory.push({ ...cape(5), itemLocationHrid: '/item_locations/back' }, cape(2));
+        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
+
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: {
+                    // Cost that follows how far the run has to climb, so the
+                    // two paths are different numbers rather than the same one
+                    calculateEnhancement: ({ targetLevel, startLevel, protectFrom }) =>
+                        protectFrom > 0
+                            ? { attempts: 10 * (targetLevel - startLevel), protectionCount: targetLevel - startLevel }
+                            : { attempts: 100 * (targetLevel - startLevel), protectionCount: 0 },
+                },
+                enhancementConfig: {
+                    getAutoDetectedParams: () => ({ enhancingLevel: 100, teas: {}, guzzlingBonus: 1 }),
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('the direct run is what a fresh target is costed along', () => {
+        watchTarget('/items/sinister_cape', 7);
+
+        expect(isLaddering('/items/sinister_cape')).toBe(false);
+        expect(watchedTargets()[0].mode).toBe('direct');
+        expect(watchedTargets()[0].cost).toBe(44_000_000);
+    });
+
+    test('the switch moves the cost, the bar and the countdown onto the ladder', () => {
+        watchTarget('/items/sinister_cape', 7);
+        const before = watchedTargets()[0];
+
+        toggleLaddering('/items/sinister_cape');
+        const after = watchedTargets()[0];
+
+        expect(after.mode).toBe('ladder');
+        // Five levels from the +2 spare rather than two from the +5 you wear
+        expect(after.cost).toBe(110_000_000);
+        // The bar and the ETA are read off the cost, so both have to move with it
+        expect(after.fraction).toBeLessThan(before.fraction);
+        expect(after.needed).toBe(110_000_000 - 60_000_000);
+        expect(after.seconds).not.toBe(before.seconds);
+    });
+
+    test('and back again, leaving the direct run as the basis', () => {
+        watchTarget('/items/sinister_cape', 7);
+        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape');
+
+        expect(isLaddering('/items/sinister_cape')).toBe(false);
+        expect(watchedTargets()[0].cost).toBe(44_000_000);
+    });
+
+    test('the choice is written back with the watch entry, not held in the panel', () => {
+        watchTarget('/items/sinister_cape', 7);
+        game.writes = [];
+        toggleLaddering('/items/sinister_cape');
+
+        const last = game.writes[game.writes.length - 1];
+        expect(last.key).toContain('equipmentSavings');
+        expect(last.value.targets['/items/sinister_cape'].mode).toBe('ladder');
+    });
+
+    test('the choice belongs to one target rather than to the whole list', () => {
+        game.details['/items/sinister_hood'] = {
+            name: 'Sinister Hood',
+            itemLevel: 70,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+            equipmentDetail: { type: '/equipment_types/head' },
+        };
+        game.prices['/items/sinister_hood:0'] = { ask: 20_000_000, bid: 18_000_000 };
+        game.inventory.push(
+            { itemHrid: '/items/sinister_hood', itemLocationHrid: '/item_locations/inventory', count: 2 },
+            { itemHrid: '/items/sinister_hood', itemLocationHrid: '/item_locations/inventory', count: 1 }
+        );
+
+        watchTarget('/items/sinister_cape', 7);
+        watchTarget('/items/sinister_hood', 7);
+        toggleLaddering('/items/sinister_cape');
+
+        expect(isLaddering('/items/sinister_cape')).toBe(true);
+        expect(isLaddering('/items/sinister_hood')).toBe(false);
+    });
+
+    test('the two rows swap places rather than the card losing one', () => {
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Enhance +5 → +7');
+        expect(text()).toContain('Ladder: enhance your +2 copy instead');
+
+        toggleLaddering('/items/sinister_cape');
+        equipmentSavingsPanel.render();
+
+        expect(text()).toContain('Ladder: enhance your +2 copy');
+        expect(text()).toContain('Direct: enhance your +5 copy instead');
+        expect(text()).not.toContain('Enhance +5 → +7');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the switch is on the card, naming the path it is on', () => {
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        const button = equipmentSavingsPanel.panel.querySelector('[data-target-ladder="/items/sinister_cape"]');
+        expect(button.textContent).toBe('Direct');
+
+        button.click();
+        expect(
+            equipmentSavingsPanel.panel.querySelector('[data-target-ladder="/items/sinister_cape"]').textContent
+        ).toBe('Ladder');
+    });
+
+    test('a target with no ladder to climb is offered no switch', () => {
+        // Only the one copy, and nothing selling another
+        game.inventory = game.inventory.filter((item) => (item.enhancementLevel || 0) !== 2);
+        game.prices['/items/sinister_cape:0'] = null;
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        expect(watchedTargets()[0].ladder).toBeNull();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-target-ladder]')).toBeNull();
+    });
+
+    test('a ladder that disappears falls back to the direct run rather than to nothing', () => {
+        watchTarget('/items/sinister_cape', 7);
+        toggleLaddering('/items/sinister_cape');
+        // The spare gets sold
+        game.inventory = game.inventory.filter((item) => (item.enhancementLevel || 0) !== 2);
+        game.prices['/items/sinister_cape:0'] = null;
+
+        expect(watchedTargets()[0].mode).toBe('direct');
+        expect(watchedTargets()[0].cost).toBe(44_000_000);
+        // And the choice is remembered, so buying another spare puts it back
+        expect(isLaddering('/items/sinister_cape')).toBe(true);
+    });
+});
+
+describe('what a run costs, through the real Markov chain', () => {
+    // The mocks above make the strategy search trivial — every protected run
+    // costs the same whatever level it protects from — which is exactly the
+    // thing that hid this. The real chain is the only thing that can tell a
+    // protect-from-+2 run from a protect-from-+5 one, and the difference
+    // between them is where the reported price went wrong.
+    beforeEach(async () => {
+        globalThis.math = await import('mathjs');
+        const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
+
+        game.details['/items/sinister_cape'] = {
+            name: 'Sinister Cape',
+            itemLevel: 50,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }],
+            equipmentDetail: { type: '/equipment_types/back' },
+        };
+        game.prices['/items/shard:0'] = { ask: 1_000_000, bid: 900_000 };
+        game.details['/items/mirror_of_protection'] = { name: 'Mirror of Protection', sellPrice: 240_000 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 240_000, bid: 220_000 };
+
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: { calculateEnhancement },
+                enhancementConfig: {
+                    getAutoDetectedParams: () => ({
+                        enhancingLevel: 84,
+                        toolBonus: 4,
+                        speedBonus: 0,
+                        teas: { blessed: false },
+                        guzzlingBonus: 1,
+                    }),
+                },
+            },
+        };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+        delete globalThis.math;
+    });
+
+    test('starting higher is never dearer than starting lower', () => {
+        // The bug this pins: the protection search was bounded below at the
+        // start level, so a run beginning at +5 could only protect from +5
+        // while a run beginning at +4 was allowed to protect from +4 — and the
+        // card reported a +4 → +7 ladder at 173M against a +5 → +7 direct run
+        // at 214M, which says the anvil pays you to throw a level away.
+        const costs = [0, 1, 2, 3, 4, 5, 6].map((start) => enhancementCost('/items/sinister_cape', 7, start));
+
+        expect(costs.every((cost) => cost > 0)).toBe(true);
+        for (let i = 1; i < costs.length; i++) expect(costs[i]).toBeLessThanOrEqual(costs[i - 1]);
+    });
+
+    test('the two levels the report was about, the right way round', () => {
+        const fromFive = enhancementCost('/items/sinister_cape', 7, 5);
+        const fromFour = enhancementCost('/items/sinister_cape', 7, 4);
+
+        expect(Math.round(fromFive)).toBe(81_926_437);
+        expect(Math.round(fromFour)).toBe(101_311_834);
+        expect(fromFive).toBeLessThan(fromFour);
+    });
+
+    test('both paths on the card come from that same chain', () => {
+        game.inventory.push(
+            {
+                itemHrid: '/items/sinister_cape',
+                itemLocationHrid: '/item_locations/back',
+                count: 1,
+                enhancementLevel: 5,
+            },
+            {
+                itemHrid: '/items/sinister_cape',
+                itemLocationHrid: '/item_locations/inventory',
+                count: 1,
+                enhancementLevel: 4,
+            }
+        );
+        game.equipment.set('/item_locations/back', { itemHrid: '/items/sinister_cape', enhancementLevel: 5 });
+        watchTarget('/items/sinister_cape', 7);
+
+        const direct = watchedTargets()[0];
+        expect(Math.round(direct.cost)).toBe(81_926_437);
+        expect(Math.round(direct.ladder.cost)).toBe(101_311_834);
+        // Which is the ordering the ladder line has always claimed: the safe
+        // way round costs more, because it starts a level lower
+        expect(direct.ladder.cost).toBeGreaterThan(direct.cost);
+
+        toggleLaddering('/items/sinister_cape');
+        const laddered = watchedTargets()[0];
+        expect(Math.round(laddered.cost)).toBe(101_311_834);
+        expect(Math.round(laddered.direct)).toBe(81_926_437);
+    });
+
+    test('the protection search reaches below the level the run starts at', () => {
+        // With no protection to buy there is only the ruinous unprotected run,
+        // and it is far dearer than the protected one — which is what makes the
+        // strategy search worth having at all
+        game.prices['/items/mirror_of_protection:0'] = null;
+        delete game.details['/items/mirror_of_protection'];
+
+        expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeGreaterThan(400_000_000);
     });
 });
