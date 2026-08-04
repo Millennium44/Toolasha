@@ -136,6 +136,24 @@ export function readGuildShrineLevels() {
 }
 
 /**
+ * The same levels, with how old the reading is.
+ *
+ * Shrine levels ride on guild traffic that may never arrive in a session, so
+ * data-manager falls back to the last reading it persisted. That is worth
+ * having and worth labelling: `hydrated` says the numbers came from storage
+ * rather than this session, and `capturedAt` is when they were true.
+ *
+ * @returns {{levels: Object, capturedAt: (number|null), hydrated: boolean}} Levels and their provenance
+ */
+export function readGuildShrineSnapshot() {
+    return {
+        levels: readGuildShrineLevels(),
+        capturedAt: dataManager.getGuildShrineCapturedAt?.() ?? null,
+        hydrated: dataManager.isGuildShrineHydrated?.() ?? false,
+    };
+}
+
+/**
  * Build a player DTO from the current character data.
  * Outputs the format expected by Player.createFromDTO():
  *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
@@ -312,7 +330,12 @@ export function buildPlayerDTO() {
     }
 
     // Extract equipped abilities → array of { hrid, level, triggers }
-    const equippedAbilities = characterData.combatUnit?.combatAbilities || [];
+    //
+    // Through the data-manager getter, not off characterData directly: that is
+    // the view every ability message is applied to, and reading the raw field
+    // is what left the sim simulating a login-time kit after the labyrinth had
+    // swapped loadouts underneath it.
+    const equippedAbilities = dataManager.getEquippedAbilities?.() || characterData.combatUnit?.combatAbilities || [];
     // Slot 0 = special ability, slots 1-4 = normal abilities
     for (let i = 0; i < 5; i++) {
         dto.abilities.push(null);

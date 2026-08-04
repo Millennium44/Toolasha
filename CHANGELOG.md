@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The sim sees your real abilities, and shrine levels finally arrive
+
+- **Ability desync fixed**: the client never applied the game's ability-update messages — your equipped abilities were read once at login and never again, which is why the sim showed a stale kit after labyrinth loadout swaps. Equips, unequips, displacements, and level-ups now all land (with battle data as a backstop), and a message-dedup window that could swallow quick equip/unequip pairs is bypassed for ability traffic.
+- **Guild shrine levels now reach the advisor**: shrine/building levels ride on guild traffic that only arrives when someone opens the guild panel — so they're now captured whenever any message carries them (matched by shape, not by name), persisted per character, and restored at login with a captured-at timestamp. The "no guild shrine levels reached the client" row should retire itself after one visit to the guild page.
+
 ### Combat sim results that lead with the answer
 
 - **Headline tiles at the top of the Results tab**: Profit/day, XP/day, Kills/hr (Dungeons/hr + success rate for dungeons), DPS, and Deaths/day — read from the same numbers the detail tables print, with baseline deltas, plus a sub-line of revenue/costs/top-skill XP so the headline is auditable without scrolling.

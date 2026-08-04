@@ -13,13 +13,28 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
     clientData: null,
     guildBuffLevels: {},
+    characterData: null,
+    equippedAbilities: [],
+    equipment: new Map(),
+    shrineCapturedAt: null,
+    shrineHydrated: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.clientData,
         getCharacterGuildBuffLevel: (hrid) => mocks.guildBuffLevels[hrid] || 0,
-        characterData: null,
+        getGuildShrineCapturedAt: () => mocks.shrineCapturedAt,
+        isGuildShrineHydrated: () => mocks.shrineHydrated,
+        getEquippedAbilities: () => mocks.equippedAbilities.map((entry) => ({ ...entry })),
+        getCommunityBuffLevel: () => 0,
+        getAchievementBuffs: () => [],
+        get characterData() {
+            return mocks.characterData;
+        },
+        get characterEquipment() {
+            return mocks.equipment;
+        },
     },
 }));
 vi.mock('../../core/storage.js', () => ({ default: {} }));
@@ -29,8 +44,15 @@ vi.mock('../../api/marketplace.js', () => ({ default: {} }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: {} }));
 vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) }));
 
-const { getGuildBuffDetailMap, guildBuffMaxLevel, synthesizeGuildBuffs, applyGuildBuffLevel, readGuildShrineLevels } =
-    await import('./combat-sim-adapter.js');
+const {
+    getGuildBuffDetailMap,
+    guildBuffMaxLevel,
+    synthesizeGuildBuffs,
+    applyGuildBuffLevel,
+    readGuildShrineLevels,
+    readGuildShrineSnapshot,
+    buildPlayerDTO,
+} = await import('./combat-sim-adapter.js');
 
 const FORCE = {
     hrid: '/guild_buffs/force_combat',
@@ -70,8 +92,20 @@ beforeEach(() => {
             '/guild_buffs/force_combat': FORCE,
             '/guild_buffs/scholar_skilling': SCHOLAR_SKILLING,
         },
+        abilityDetailMap: {
+            '/abilities/aura': { isSpecialAbility: true },
+            '/abilities/cleave': {},
+            '/abilities/toughness': {},
+            '/abilities/fireball': {},
+        },
+        itemDetailMap: {},
     };
     mocks.guildBuffLevels = {};
+    mocks.characterData = null;
+    mocks.equippedAbilities = [];
+    mocks.equipment = new Map();
+    mocks.shrineCapturedAt = null;
+    mocks.shrineHydrated = false;
 });
 
 describe('guild shrine buff synthesis', () => {
@@ -130,5 +164,67 @@ describe('guild shrine buff synthesis', () => {
             '/guild_buffs/force_combat': 6,
             '/guild_buffs/scholar_skilling': 0,
         });
+    });
+
+    test('the snapshot says how old the reading is, without changing the levels', () => {
+        mocks.guildBuffLevels = { '/guild_buffs/force_combat': 6 };
+        mocks.shrineCapturedAt = 1_700_000_000_000;
+        mocks.shrineHydrated = true;
+
+        const snapshot = readGuildShrineSnapshot();
+        expect(snapshot.levels).toEqual(readGuildShrineLevels());
+        expect(snapshot.capturedAt).toBe(1_700_000_000_000);
+        expect(snapshot.hydrated).toBe(true);
+    });
+});
+
+/**
+ * The player DTO's equipped kit.
+ *
+ * The sim used to read `characterData.combatUnit.combatAbilities` directly,
+ * which is the field login writes once and nothing updated afterwards. Reading
+ * it is what made a post-labyrinth sim run the kit from hours earlier, so the
+ * DTO now goes through the data-manager getter that every ability message feeds.
+ */
+describe('the abilities a player DTO carries', () => {
+    beforeEach(() => {
+        mocks.characterData = {
+            characterSkills: [],
+            // Deliberately stale: this is the login-time kit the lab moved past
+            combatUnit: {
+                combatAbilities: [
+                    { abilityHrid: '/abilities/aura', slotNumber: 1, level: 10 },
+                    { abilityHrid: '/abilities/fireball', slotNumber: 2, level: 8 },
+                ],
+            },
+        };
+    });
+
+    test('come from the live kit, not the stale field beside it', () => {
+        mocks.equippedAbilities = [
+            { abilityHrid: '/abilities/aura', slotNumber: 1, level: 10 },
+            { abilityHrid: '/abilities/cleave', slotNumber: 2, level: 12 },
+            { abilityHrid: '/abilities/toughness', slotNumber: 3, level: 11 },
+        ];
+
+        const dto = buildPlayerDTO();
+
+        expect(dto.abilities[0]).toMatchObject({ hrid: '/abilities/aura' });
+        expect(
+            dto.abilities
+                .slice(1)
+                .filter(Boolean)
+                .map((a) => a.hrid)
+        ).toEqual(['/abilities/cleave', '/abilities/toughness']);
+        expect(dto.abilities.some((a) => a?.hrid === '/abilities/fireball')).toBe(false);
+    });
+
+    test('always fill five slots, special first', () => {
+        mocks.equippedAbilities = [{ abilityHrid: '/abilities/cleave', slotNumber: 2, level: 1 }];
+
+        const dto = buildPlayerDTO();
+        expect(dto.abilities).toHaveLength(5);
+        expect(dto.abilities[0]).toBeNull();
+        expect(dto.abilities[1].hrid).toBe('/abilities/cleave');
     });
 });
