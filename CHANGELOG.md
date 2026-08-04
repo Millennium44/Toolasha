@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The task board stops fighting the game
+
+- **The free MooPass reroll works again**: the reroll-cap protection was reading the pass count in the button label as a coin cost and cancelling the click. Cap checks now only ever fire on "Pay …" buttons, and per-task protection still covers free rerolls (they destroy the task the same).
+- **Confirm Discard actually discards, and buttons stop flashing**: while a card is showing a confirm step (reroll chooser or discard), every Toolasha injector now leaves it completely alone — previously the sorters/badges/profit rows rebuilt the card mid-flow, wiping the game's pending confirm state. The outline flicker was two features alternately stripping and redrawing the same style; resolved.
+
 ### The lab planner reads the right bag
 
 - **During a run, supply counts come from the run itself** (what the game's Supplies row shows), not your inventory — the game moves torches/shrouds/beacons into the run at start, so the old inventory readout was counting supplies you couldn't use. Between runs it still reads inventory for planning the next entry, and the readout labels which it's showing ("this run:" vs "held:").

@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import taskIcons from './task-icons.js';
 import taskIconFilters from './task-icon-filters.js';
 import taskRerollProtection from './task-reroll-protection.js';
+import { boardHasConfirmingCard } from './task-card-state.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -350,6 +351,15 @@ class TaskSorter {
         // Get all task cards
         const taskCards = Array.from(taskList.querySelectorAll(GAME.TASK_CARD));
         if (taskCards.length === 0) {
+            return;
+        }
+
+        // One of the cards is showing a reroll chooser or a discard
+        // confirmation and is waiting on a second click. Re-appending the cards
+        // moves that one out of the DOM and back, which is exactly the click
+        // being pulled out from under the player. The board is left alone; the
+        // next pass — the settle watch, a quest update, the button — sorts it.
+        if (boardHasConfirmingCard(taskList)) {
             return;
         }
 

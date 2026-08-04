@@ -12,6 +12,7 @@ import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput } from '../../utils/action-panel-helper.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
+import { isCardInConfirmState, isConfirmPendingFor } from './task-card-state.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
@@ -704,6 +705,13 @@ class TaskProfitDisplay {
 
         // Merge duplicate task Go buttons: sum goalCount - currentCount across all
         // in-progress tasks with the same actionHrid/monsterHrid and overwrite the input
+        //
+        // Only ever the card's own Go button. The reroll chooser and the discard
+        // confirmation are drawn in the same slot and can carry the same success
+        // styling, and merging quest counts off the back of a reroll click is
+        // both wrong and confusing.
+        if (isCardInConfirmState(taskNode)) return;
+
         const goBtn = taskNode.querySelector(GAME.TASK_GO_BUTTON);
         if (goBtn) {
             // Skip if already attached
@@ -714,6 +722,10 @@ class TaskProfitDisplay {
                 'click',
                 () => {
                     if (!config.getSetting('taskGoMerge')) return;
+                    // The button was the Go button when it was wired; if the
+                    // card has since swapped it for a confirm step, this click
+                    // is not a Go and nothing here applies to it
+                    if (isConfirmPendingFor(goBtn)) return;
 
                     // Extract the quest for this task card from the fiber tree
                     const rootEl = document.getElementById('root');
@@ -786,6 +798,12 @@ class TaskProfitDisplay {
 
         const taskNodes = taskListNode.querySelectorAll(GAME.TASK_INFO);
         for (const taskNode of taskNodes) {
+            // The card is mid-flow — the chooser has replaced the row this
+            // reads, so the task key it computes is not the task's, and acting
+            // on it tears the profit rows down and rebuilds them underneath the
+            // player's pending click
+            if (isConfirmPendingFor(taskNode)) continue;
+
             // Get current task description to detect changes
             const taskData = this.parseTaskData(taskNode);
             if (!taskData) continue;
@@ -2512,6 +2530,11 @@ class TaskProfitDisplay {
      * @param {string|null} activeActionHrid - The first (active) action HRID
      */
     _updateQueuedIndicatorForCard(taskCard, rootFiber, queuedActionHrids, activeActionHrid) {
+        // Mid-flow the chooser has replaced the Go button the quest is read
+        // from, so this pass would decide the card has no quest and strip the
+        // badge out of the card the player is part-way through using
+        if (isCardInConfirmState(taskCard)) return;
+
         const existingIndicator = taskCard.querySelector('.mwi-task-queued-indicator');
 
         // Extract quest data from React fiber tree
