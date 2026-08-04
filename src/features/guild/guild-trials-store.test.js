@@ -48,6 +48,7 @@ vi.mock('../../core/config.js', () => ({
 
 const {
     BUILDING_PATTERNS,
+    GUILD_BUILDING_MAX_LEVEL,
     MAX_SAMPLES,
     buildingBonusFromDetail,
     emptyRecord,
@@ -62,7 +63,7 @@ const {
     tileKey,
 } = await import('./guild-trials-store.js');
 
-const { trialWeekStart } = await import('./guild-trials-math.js');
+const { TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 const thisWeek = trialWeekStart(now);
@@ -374,5 +375,50 @@ describe('payout bonuses', () => {
         const bonuses = readPayoutBonuses();
         expect(bonuses.buildersHall.bonus).toBeNull();
         expect(bonuses.treasury.bonus).toBeNull();
+    });
+});
+
+describe('the building level cap', () => {
+    // Buildings and shrines max out at level 20 in-game (Buildings tab: "Lv. x
+    // / 20") — a different ladder from the 21 trial tiers, and GUILD_BUILDING_MAX_LEVEL
+    // must stay 20 regardless of what TRIAL_MAX_TIER is.
+    test('is 20, and is a different number from the 21-tier trial ladder', () => {
+        expect(GUILD_BUILDING_MAX_LEVEL).toBe(20);
+        expect(GUILD_BUILDING_MAX_LEVEL).not.toBe(TRIAL_MAX_TIER);
+    });
+
+    test('level 20 itself is trusted as-is, via the formula', () => {
+        const hall = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.buildersHall,
+            levelMap: { '/guild_buildings/builders_hall': 20 },
+            detailMap: {},
+        });
+        expect(hall).toMatchObject({ level: 20, bonus: 0.4, source: 'formula' });
+    });
+
+    test('a level past 20 on the wire is clamped, not trusted or extrapolated', () => {
+        const hall = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.buildersHall,
+            levelMap: { '/guild_buildings/builders_hall': 21 },
+            detailMap: {},
+        });
+        // Clamped to 20 (bonus 0.4), not read as a 21st level (which would be 0.42)
+        expect(hall).toMatchObject({ level: 20, bonus: 0.4, source: 'formula' });
+
+        const wayOver = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.treasury,
+            levelMap: { '/guild_buildings/treasury': 300 },
+            detailMap: {},
+        });
+        expect(wayOver).toMatchObject({ level: 20, bonus: 0.4, source: 'formula' });
+    });
+
+    test('the clamp applies to the client-detail path too, not only the formula fallback', () => {
+        const bonus = readBuildingBonus({
+            pattern: BUILDING_PATTERNS.treasury,
+            levelMap: { '/guild_buildings/treasury': 25 },
+            detailMap: { '/guild_buildings/treasury': { bonusPerLevel: 0.01 } },
+        });
+        expect(bonus).toMatchObject({ level: 20, bonus: 0.2, source: 'client' });
     });
 });

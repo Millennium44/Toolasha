@@ -23,6 +23,7 @@ import {
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { tierFromLevel } from './guild-trials-math.js';
+import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
@@ -438,7 +439,12 @@ class GuildCreditValue {
                 const buffLabel = isCombat ? 'Combat' : 'Skilling';
                 const currentLevel = dataManager.getCharacterGuildBuffLevel(buffHrid);
                 const maxLevel = Math.max(...Object.keys(buff.levelCosts).map(Number));
-                const capLevel = shrineCapLevel > 0 ? Math.min(shrineCapLevel, maxLevel) : maxLevel;
+                const rawCap = shrineCapLevel > 0 ? Math.min(shrineCapLevel, maxLevel) : maxLevel;
+                // Buildings and shrines cap at level 20 in-game (Buildings tab:
+                // "Lv. x / 20") — a different ladder from the 21 trial tiers, and a
+                // shrine level or levelCosts table that claims more than that is
+                // not one to plan an upgrade past.
+                const capLevel = Math.min(rawCap, GUILD_BUILDING_MAX_LEVEL);
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px;';
@@ -1015,7 +1021,14 @@ class GuildCreditValue {
 
         // The ladder itself is `guild-trials-math.js`'s to define — tiers start
         // at level 100, step 10, and stop at 300, which is 21 tiers and not the
-        // 20 this used to cap at
+        // 20 this used to cap at.
+        //
+        // `GuildPanel_tileSummary` is not exclusive to trial tiles — the same
+        // class also carries a guild building's "Lv. x / 20" (GUILD_BUILDING_MAX_LEVEL,
+        // from guild-trials-store.js). tierFromLevel() already keeps the two apart:
+        // it returns null below TRIAL_START_LEVEL (100), which sits well above
+        // GUILD_BUILDING_MAX_LEVEL, so a building tile's level never resolves to a
+        // trial tier and never gets a "T<n>" badge.
         const tier = tierFromLevel(level);
         if (tier === null) return;
 
