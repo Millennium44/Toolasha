@@ -465,6 +465,71 @@ class Storage {
     }
 
     /**
+     * List every object store name currently defined in the database.
+     * @returns {Promise<Array<string>>} Array of store names
+     */
+    async listStores() {
+        if (!this.db) {
+            console.warn('[Storage] Database not available, cannot list stores');
+            return [];
+        }
+
+        return Array.from(this.db.objectStoreNames);
+    }
+
+    /**
+     * Write multiple key/value pairs to a store in a single immediate transaction.
+     *
+     * Bypasses debouncing entirely. Debounced `set()` schedules one timer per key,
+     * so writing hundreds of keys serially through it would mean hundreds of pending
+     * timers (or hundreds of sequential `immediate` writes). This does it in one
+     * readwrite transaction instead — use it for bulk operations like restore/import.
+     * @param {string} storeName - Object store name
+     * @param {Record<string, *>} entries - Map of key → value to write
+     * @returns {Promise<number>} Number of entries successfully written
+     */
+    async putAll(storeName, entries) {
+        if (!this.db) {
+            console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
+            return 0;
+        }
+
+        const keys = Object.keys(entries || {});
+        if (keys.length === 0) {
+            return 0;
+        }
+
+        return new Promise((resolve) => {
+            try {
+                const transaction = this.db.transaction([storeName], 'readwrite');
+                const store = transaction.objectStore(storeName);
+                const written = [];
+
+                for (const key of keys) {
+                    const request = store.put(entries[key], key);
+                    request.onsuccess = () => {
+                        written.push(key);
+                    };
+                    request.onerror = () => {
+                        console.error(`[Storage] Failed to bulk-write key ${key} to ${storeName}:`, request.error);
+                    };
+                }
+
+                transaction.oncomplete = () => {
+                    resolve(written.length);
+                };
+                transaction.onerror = () => {
+                    console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
+                    resolve(written.length);
+                };
+            } catch (error) {
+                console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, error);
+                resolve(0);
+            }
+        });
+    }
+
+    /**
      * Force immediate save of all pending debounced writes
      */
     async flushAll() {

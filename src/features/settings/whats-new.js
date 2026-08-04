@@ -25,7 +25,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { getAllSettingIds, getSettingDefinition } from '../../core/settings-schema.js';
-import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { SETTING_PRESETS, DEFAULT_PRESET_ID, applyPreset, getPreset } from './setting-presets.js';
 import {
     buildIdentity,
     identityChanged,
@@ -33,6 +33,8 @@ import {
     newSettingIds,
     conservativeOverrides,
 } from './whats-new-core.js';
+import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { askChoice } from '../../utils/choice-dialog.js';
 import forkChangelog from 'virtual:fork-changelog';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
@@ -49,6 +51,7 @@ class WhatsNew {
     constructor() {
         this.panel = null;
         this._pending = null;
+        this._keyHandler = null;
     }
 
     /** @private */
@@ -81,9 +84,16 @@ class WhatsNew {
             // a line of our code.
             if (!stored) {
                 const storedIds = await config.storedSettingIds();
-                const inherited = storedIds ? newSettingIds(schemaIds, storedIds) : [];
-                if (inherited.length > 0) {
-                    await this._offerFirstRunChoice(inherited, current);
+                if (!storedIds || storedIds.length === 0) {
+                    // Nothing saved at all: a genuinely fresh install. Nobody
+                    // has opinions yet, so the useful question is not "which of
+                    // these 40 new switches" but "what kind of player are you".
+                    await this._offerFirstRunPreset(current);
+                } else {
+                    const inherited = newSettingIds(schemaIds, storedIds);
+                    if (inherited.length > 0) {
+                        await this._offerFirstRunChoice(inherited, current);
+                    }
                 }
                 await this._saveState(current, schemaIds);
                 return;
@@ -131,14 +141,21 @@ class WhatsNew {
      */
     async _offerFirstRunChoice(inherited, current) {
         const conservative = conservativeOverrides(inherited, getSettingDefinition);
-        const keepAsIs = await this._askChoice({
+        const answer = await askChoice({
             title: `Welcome to ${current.fork}`,
-            body:
+            message:
                 `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
-                `in the version your settings came from. ${conservative.length} of them switch new behaviour on by default.`,
-            enableLabel: 'Turn the new things on',
-            keepLabel: 'Keep everything as it was',
+                `in the version your settings came from. ${conservative.length} of them switch new behaviour on by ` +
+                'default.\n\nEither way, the full list follows with a switch for each — nothing here is final.',
+            choices: [
+                { value: 'keep', label: 'Keep everything as it was' },
+                { value: 'enable', label: 'Turn the new things on', tone: 'primary' },
+            ],
         });
+        // Dismissal counts as keeping things as they were: the person who
+        // closes a dialog unread is exactly the person who did not ask for new
+        // behaviour
+        const keepAsIs = answer !== 'enable';
 
         let turnedOff = new Set();
         if (keepAsIs) {
@@ -158,86 +175,52 @@ class WhatsNew {
     }
 
     /**
-     * A modal with two buttons, as a promise.
-     * @returns {Promise<boolean>} True to keep things as they were
+     * The first thing a brand-new install is asked.
+     *
+     * On a fresh install every switch is at its default, which is very nearly
+     * "everything on" — hundreds of features arriving at once for somebody who
+     * has not yet decided which parts of the game they play. A preset is a
+     * one-click answer to that, and the settings panel keeps the same buttons
+     * for whenever they change their mind.
+     *
+     * Awaited before features initialise for the same reason the inherited-
+     * settings question is: a feature switched off after startup has already
+     * run once. Dismissing the dialog — Escape, or clicking away — is the same
+     * as choosing "Everything on", which is what a fresh install would have
+     * done anyway, so nothing here can leave a person stuck.
+     *
+     * @param {{fork: string, version: string}} current - This build
      * @private
      */
-    _askChoice({ title, body, enableLabel, keepLabel }) {
-        return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            Object.assign(overlay.style, {
-                position: 'fixed',
-                inset: '0',
-                zIndex: config.Z_FLOATING_PANEL,
-                background: 'rgba(0,0,0,0.55)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+    async _offerFirstRunPreset(current) {
+        try {
+            const answer = await askChoice({
+                title: `Welcome to ${current.fork}`,
+                message:
+                    'Toolasha ships several hundred features. Pick a starting point and the rest stay out of your ' +
+                    'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
+                    'Settings.',
+                choices: SETTING_PRESETS.map((preset) => ({
+                    value: preset.id,
+                    label: preset.label,
+                    hint: preset.description,
+                    tone: preset.id === DEFAULT_PRESET_ID ? 'primary' : undefined,
+                })),
             });
 
-            const box = document.createElement('div');
-            Object.assign(box.style, {
-                width: 'min(440px, 92vw)',
-                background: COLORS.background,
-                border: `2px solid ${COLORS.border}`,
-                borderRadius: '10px',
-                color: COLORS.text,
-                fontFamily: "'Segoe UI', sans-serif",
-                fontSize: '13px',
-                padding: '16px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-            });
-            box.innerHTML =
-                `<div style="font-weight:700; font-size:15px; color:${COLORS.accent}; margin-bottom:8px;">${title}</div>` +
-                `<div style="color:#bbb; margin-bottom:14px;">${body}</div>`;
+            const chosenId = answer && getPreset(answer) ? answer : DEFAULT_PRESET_ID;
+            await applyPreset(chosenId);
 
-            const done = (keepAsIs) => {
-                overlay.remove();
-                resolve(keepAsIs);
+            const chosen = getPreset(chosenId);
+            this._pending = {
+                headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                forkChanged: false,
+                newIds: [],
+                turnedOff: new Set(),
             };
-
-            const buttons = document.createElement('div');
-            Object.assign(buttons.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
-            const keep = document.createElement('button');
-            keep.textContent = keepLabel;
-            Object.assign(keep.style, {
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid #444',
-                borderRadius: '4px',
-                color: COLORS.text,
-                padding: '6px 14px',
-                cursor: 'pointer',
-            });
-            keep.addEventListener('click', () => done(true));
-            const enable = document.createElement('button');
-            enable.textContent = enableLabel;
-            Object.assign(enable.style, {
-                background: 'rgba(96, 165, 250, 0.2)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '4px',
-                color: COLORS.accent,
-                padding: '6px 14px',
-                cursor: 'pointer',
-                fontWeight: '700',
-            });
-            enable.addEventListener('click', () => done(false));
-            buttons.appendChild(keep);
-            buttons.appendChild(enable);
-            box.appendChild(buttons);
-
-            const note = document.createElement('div');
-            note.textContent = 'Either way, the full list follows with a switch for each — nothing here is final.';
-            Object.assign(note.style, { fontSize: '11px', color: COLORS.dim, marginTop: '10px' });
-            box.appendChild(note);
-
-            // Clicking away is the person who did not ask for new behaviour
-            overlay.addEventListener('mousedown', (event) => {
-                if (event.target === overlay) done(true);
-            });
-
-            overlay.appendChild(box);
-            document.body.appendChild(overlay);
-        });
+        } catch (error) {
+            console.error('[WhatsNew] Offering the first-run preset failed:', error);
+        }
     }
 
     /** @private */
@@ -392,6 +375,20 @@ class WhatsNew {
         registerFloatingPanel(panel);
         bringPanelToFront(panel);
         this.panel = panel;
+
+        // Escape closes it, captured because the game listens for Escape too
+        // and would close whatever is behind this as well
+        this._keyHandler = (event) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            event.preventDefault();
+            this.close();
+        };
+        document.addEventListener('keydown', this._keyHandler, true);
+
+        // Focused so Enter and Tab work from the keyboard, and so the popup
+        // takes focus away from whatever was behind it
+        ok.focus();
     }
 
     /**
@@ -464,6 +461,10 @@ class WhatsNew {
     }
 
     close() {
+        if (this._keyHandler) {
+            document.removeEventListener('keydown', this._keyHandler, true);
+            this._keyHandler = null;
+        }
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();

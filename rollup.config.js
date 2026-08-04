@@ -106,6 +106,10 @@ const utilsExternalGlobals = new Map([
     // whichever saves last wipes the other's entry
     [normalize(join(__dirname, 'src/utils/panel-geometry.js')), 'Toolasha.Utils.panelGeometry'],
     [normalize(join(__dirname, 'src/utils/choice-dialog.js')), 'Toolasha.Utils.choiceDialog'],
+    // One stack for the whole script: a second copy in another bundle would put
+    // up a second container, and two overlapping stacks in the same corner is
+    // exactly the mess the shared toast replaced
+    [normalize(join(__dirname, 'src/utils/toast.js')), 'Toolasha.Utils.toast'],
     [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
     // Holds the chosen target in memory, and the panel that sets it is in a
     // different bundle from the tile that colours against it. Two copies means

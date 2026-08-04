@@ -274,6 +274,7 @@ export const settingsGroups = {
                 label: 'Action panel: Quick input buttons (hours, count presets, Max)',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
             },
             actionPanel_quickInputs_countPresets: {
                 id: 'actionPanel_quickInputs_countPresets',
@@ -333,6 +334,7 @@ export const settingsGroups = {
                 label: 'Action panel: Show total required and missing materials',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays total materials needed and shortfall when entering quantity',
             },
             actionPanel_enhanceMatLimitProtections: {
@@ -1608,6 +1610,7 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show remaining XP to next level',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Displays how much XP needed to reach the next level under skill progress bars',
             },
             skillRemainingXP_blackBorder: {
@@ -1628,6 +1631,7 @@ export const settingsGroups = {
                 label: 'Drink timer: Show remaining drink supply time in skill panels',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
             },
             drinkTimer_warningThreshold: {
@@ -1642,6 +1646,7 @@ export const settingsGroups = {
                 label: 'Skilling Simulator/Optimizer: Enable Optimizer tab in character panel',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
             },
         },
     },
@@ -2135,6 +2140,7 @@ export const settingsGroups = {
                 label: 'Track task reroll costs',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
             },
             taskMapIndex: {
@@ -2162,6 +2168,7 @@ export const settingsGroups = {
                 label: 'Task sorter: Sort tasks by skill type',
                 type: 'checkbox',
                 default: true,
+                requiresRefresh: true,
                 help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
             },
             taskSorter_autoSort: {

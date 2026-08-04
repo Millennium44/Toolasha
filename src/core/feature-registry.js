@@ -15,12 +15,17 @@ const featureRegistry = [];
 
 /**
  * Initialize all enabled features
- * @returns {Promise<void>}
+ *
+ * Returns what failed rather than only logging it. An initializer that throws
+ * used to reach the player as a feature that is simply absent, with the reason
+ * in a console nobody has open; the caller needs the list to be able to say so.
+ *
+ * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Failures, in registry order
  */
 async function initializeFeatures() {
     // Block feature initialization during character switch
     if (dataManager.getIsCharacterSwitching()) {
-        return;
+        return [];
     }
 
     const errors = [];
@@ -43,8 +48,9 @@ async function initializeFeatures() {
             performanceMonitor.snapshot(`init:${feature.key}`, performanceMonitor.sinceBoot() - startedAt, startedAt);
         } catch (error) {
             errors.push({
-                feature: feature.name,
-                error: error.message,
+                key: feature.key,
+                name: feature.name,
+                reason: `Initialization threw: ${error.message}`,
             });
             console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
         }
@@ -56,6 +62,8 @@ async function initializeFeatures() {
     if (errors.length > 0) {
         console.error(`[Toolasha] ${errors.length} feature(s) failed to initialize`, errors);
     }
+
+    return errors;
 }
 
 /**
@@ -223,10 +231,19 @@ function getFeatureInstance(key) {
 
 /**
  * Retry initialization for specific features
+ *
+ * Reports back what is still broken afterwards, so a caller can tell the
+ * difference between a feature that recovered on the second attempt — the
+ * common case, where the game panel it anchors to had not been drawn yet — and
+ * one that is genuinely not coming up. Only the second is worth interrupting
+ * anybody about.
+ *
  * @param {Array<Object>} failedFeatures - Array of failed feature objects
- * @returns {Promise<void>}
+ * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Those still failing
  */
 async function retryFailedFeatures(failedFeatures) {
+    const stillFailed = [];
+
     for (const failed of failedFeatures) {
         const feature = getFeature(failed.key);
         if (!feature) continue;
@@ -239,12 +256,24 @@ async function retryFailedFeatures(failedFeatures) {
                 const healthResult = feature.healthCheck();
                 if (healthResult === false) {
                     console.warn(`[Toolasha] ${feature.name} retry completed but health check still fails`);
+                    stillFailed.push({
+                        key: feature.key,
+                        name: feature.name,
+                        reason: 'Retried, but its health check still fails',
+                    });
                 }
             }
         } catch (error) {
             console.error(`[Toolasha] ${feature.name} retry failed:`, error);
+            stillFailed.push({
+                key: feature.key,
+                name: feature.name,
+                reason: `Retry threw: ${error.message}`,
+            });
         }
     }
+
+    return stillFailed;
 }
 
 /**

@@ -69,6 +69,7 @@ import * as itemNavigation from '../utils/item-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
 import * as scrollBuffValues from '../utils/scroll-buff-values.js';
+import * as toast from '../utils/toast.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -142,6 +143,7 @@ toolashaRoot.Utils = {
     marketplaceTabs,
     marketplaceAutofill,
     scrollBuffValues,
+    toast,
 };
 
 console.log('[Toolasha] Utils library loaded');

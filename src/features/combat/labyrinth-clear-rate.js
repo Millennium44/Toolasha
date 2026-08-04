@@ -26,6 +26,7 @@ import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
+import { formatRelativeTime } from '../../utils/formatters.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import {
@@ -70,6 +71,15 @@ const MAX_SIM_TRIALS = 20000;
 const OUTCOME_STORAGE_KEY = 'labyrinthFightOutcomes';
 /** Bumped when the stored shape changes; older documents are read as bare totals */
 const OUTCOME_STORAGE_VERSION = 2;
+/** Persisted mirror of combatCache, in the 'labyrinth' store */
+const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
+const COMBAT_CACHE_STORE = 'labyrinth';
+/** Bumped when the stored shape changes */
+const COMBAT_CACHE_STORAGE_VERSION = 1;
+/** A cached sim result older than this is dropped on load rather than trusted */
+const COMBAT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Newest entries kept when the persisted set is written back out */
+const COMBAT_CACHE_MAX_ENTRIES = 200;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
@@ -733,6 +743,11 @@ class LabyrinthClearRate {
         this.roomData = null;
         this.wsHandler = null;
         this.combatCache = new Map();
+        // Bookkeeping the Map itself doesn't carry: when each entry was computed
+        // and under which gear, so it can be written back out to the 'labyrinth'
+        // store. Keyed the same as combatCache.
+        this._combatCacheMeta = new Map();
+        this._combatCacheLoaded = false;
         this.simQueue = [];
         this.simRunning = false;
         this.recommendations = new Map();
@@ -834,8 +849,15 @@ class LabyrinthClearRate {
         }, 500);
 
         setTimeout(() => {
-            // Seed the invalidation baselines once character data is present
+            // Seed the invalidation baselines once character data is present,
+            // then bring in whatever combat sims survived the reload — loading
+            // is gated on the same gear fingerprint the baseline seeding just
+            // established, so it has to run after it, not before. The overlay
+            // pass right after this still fires immediately for skilling/
+            // enhancing badges (which never touch combatCache); a second pass
+            // once the cache load resolves picks up any combat badges it filled.
             this._invalidateIfInputsChanged();
+            this._loadCombatCache().then(() => this.injectOverlays());
             this.injectOverlays();
         }, 500);
 
@@ -974,6 +996,8 @@ class LabyrinthClearRate {
 
         this.roomData = null;
         this.combatCache.clear();
+        this._combatCacheMeta.clear();
+        this._combatCacheLoaded = false;
         this.simQueue = [];
         this.simRunning = false;
         this.recommendations.clear();
@@ -2281,6 +2305,129 @@ class LabyrinthClearRate {
         return this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel)) || null;
     }
 
+    // -------------------------------------------------------------------------
+    // Persisted combat cache
+    //
+    // combatCache itself is only ever a plain Map — nothing here changes that,
+    // or the invalidation that already governs it. This is a mirror written to
+    // the 'labyrinth' store so the Map does not start empty on every reload; on
+    // the way back in, an entry is trusted only if it is both fresh enough and
+    // still under the gear it was simmed with, the same two questions the
+    // in-memory cache is already subject to (TTL is new — nothing in-memory
+    // lives long enough to need one; the gear check mirrors
+    // _invalidateIfInputsChanged's own clear exactly).
+    // -------------------------------------------------------------------------
+
+    /**
+     * Bring persisted combat sim results in from storage, once per session.
+     *
+     * Unlike `loadOutcomes`, this does not lazily load on first read:
+     * `getCachedCombatResult` is called synchronously from render paths that
+     * cannot await a database read, so whatever survives the reload has to
+     * already be in the Map by the time those paths run. Called from
+     * `initialize()`, after the gear fingerprint baseline is seeded, so the
+     * gear check below has something current to compare against.
+     */
+    async _loadCombatCache() {
+        if (this._combatCacheLoaded) return;
+        this._combatCacheLoaded = true;
+        try {
+            const stored = await storage.getJSON(COMBAT_CACHE_STORAGE_KEY, COMBAT_CACHE_STORE, null);
+            if (!stored || stored.version !== COMBAT_CACHE_STORAGE_VERSION || !Array.isArray(stored.entries)) {
+                return;
+            }
+
+            const now = Date.now();
+            const currentFingerprint = this._snapshotContentFingerprint();
+            for (const entry of stored.entries) {
+                if (!entry?.key || !entry.result) continue;
+
+                const age = now - Number(entry.computedAt);
+                if (!Number.isFinite(age) || age > COMBAT_CACHE_TTL_MS) continue;
+
+                // Same rule _invalidateIfInputsChanged already applies in
+                // memory: gear the entry was simmed under and gear worn now
+                // have to match, since the cache key alone doesn't encode it
+                if (entry.snapshotFingerprint !== currentFingerprint) continue;
+
+                const result = { ...entry.result, computedAt: entry.computedAt, fromPersistedCache: true };
+                this.combatCache.set(entry.key, result);
+                this._combatCacheMeta.set(entry.key, {
+                    computedAt: entry.computedAt,
+                    snapshotFingerprint: entry.snapshotFingerprint,
+                });
+            }
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Loading cached combat sims failed:', error);
+        }
+    }
+
+    /**
+     * Write combatCache's contents back out to the 'labyrinth' store, capped to
+     * the most recent `COMBAT_CACHE_MAX_ENTRIES`.
+     *
+     * Called after every completed sim rather than read-modify-written from
+     * storage: `_combatCacheMeta` plus `combatCache` are already the full
+     * in-memory state, loaded entries included, so a fresh read is never
+     * needed and there is nothing for two quick sims to race over.
+     *
+     * Not awaited by callers — `storage.set` is itself debounced, so a burst
+     * of sims collapses into one write a few seconds after the last of them.
+     * @param {string} cacheKey - As built by buildCombatCacheKey
+     * @param {Object} _result - The sim result just cached (already sitting in
+     *   combatCache under cacheKey by the time this runs; read from there
+     *   rather than trusted directly, so a stripped/re-persisted entry and a
+     *   freshly-simmed one build their record the same way)
+     */
+    _persistCombatCacheEntry(cacheKey, _result) {
+        this._combatCacheMeta.set(cacheKey, {
+            computedAt: Date.now(),
+            snapshotFingerprint: this._snapshotContentFingerprint(),
+        });
+
+        const entries = [];
+        for (const [key, meta] of this._combatCacheMeta) {
+            const cached = this.combatCache.get(key);
+            if (!cached || !meta) continue;
+            // A loaded entry carries fromPersistedCache/computedAt for display;
+            // strip them back out so a re-persisted entry doesn't claim to have
+            // been computed at the moment it was merely re-written
+            const { computedAt: _computedAt, fromPersistedCache: _fromPersistedCache, ...bare } = cached;
+            entries.push({
+                key,
+                result: bare,
+                computedAt: meta.computedAt,
+                snapshotFingerprint: meta.snapshotFingerprint,
+            });
+        }
+        entries.sort((a, b) => b.computedAt - a.computedAt);
+        if (entries.length > COMBAT_CACHE_MAX_ENTRIES) {
+            const dropped = entries.splice(COMBAT_CACHE_MAX_ENTRIES);
+            for (const entry of dropped) this._combatCacheMeta.delete(entry.key);
+        }
+
+        storage.setJSON(
+            COMBAT_CACHE_STORAGE_KEY,
+            { version: COMBAT_CACHE_STORAGE_VERSION, entries },
+            COMBAT_CACHE_STORE
+        );
+    }
+
+    /**
+     * Empty the persisted mirror. Called wherever the in-memory combatCache is
+     * cleared for a gear change — never from the other clear sites (disable,
+     * a fresh recommend run, a precision change), which don't mean the cached
+     * gear stopped being true and so don't need to be mirrored here.
+     */
+    _clearPersistedCombatCache() {
+        this._combatCacheMeta.clear();
+        storage.setJSON(
+            COMBAT_CACHE_STORAGE_KEY,
+            { version: COMBAT_CACHE_STORAGE_VERSION, entries: [] },
+            COMBAT_CACHE_STORE
+        );
+    }
+
     /**
      * Run combat sim for a monster room and return clear stats
      */
@@ -2402,6 +2549,7 @@ class LabyrinthClearRate {
             // with the wrong gear. Leaving it uncached lets a retry correct it.
             if (winRate > 0) {
                 this.combatCache.set(cacheKey, result);
+                this._persistCombatCacheEntry(cacheKey, result);
             }
             return result;
         } catch (error) {
@@ -2575,8 +2723,10 @@ class LabyrinthClearRate {
         if (this._snapshotFingerprint !== null && snapshotFp !== this._snapshotFingerprint) {
             stale = true;
             // Snapshot content is not part of the combat cache key — gear
-            // changes genuinely invalidate cached sims
+            // changes genuinely invalidate cached sims, in memory and in the
+            // persisted mirror alike
             this.combatCache.clear();
+            this._clearPersistedCombatCache();
         }
         this._snapshotFingerprint = snapshotFp;
 
@@ -4432,6 +4582,7 @@ class LabyrinthClearRate {
 
         if (result.type === 'combat') {
             this.renderCombatPreviewRows(addRow, result);
+            this._appendCacheAgeNote(el, result);
             return;
         }
 
@@ -4611,6 +4762,31 @@ class LabyrinthClearRate {
         if (result.failureReason) {
             addRow('Failure Reason', result.failureReason);
         }
+    }
+
+    /**
+     * A one-line, subdued note when a combat result survived from a previous
+     * session rather than being simmed just now — otherwise the preview reads
+     * as fresh whether it's a minute or a week old.
+     * @param {HTMLElement} el - Preview element
+     * @param {Object} result - Combat clear result
+     */
+    _appendCacheAgeNote(el, result) {
+        if (!result.fromPersistedCache || !Number.isFinite(result.computedAt)) return;
+        const note = document.createElement('div');
+        note.style.cssText = 'margin-top:4px; opacity:0.6; font-style:italic; white-space:nowrap;';
+        note.textContent = this.cacheAgeLabel(result.computedAt);
+        el.appendChild(note);
+    }
+
+    /**
+     * "cached 2h ago" — the age of a persisted sim result.
+     * @param {number} computedAt - Date.now() from when the entry was written
+     * @returns {string}
+     */
+    cacheAgeLabel(computedAt) {
+        const rel = formatRelativeTime(Date.now() - computedAt);
+        return rel === 'Just now' ? 'cached just now' : `cached ${rel} ago`;
     }
 
     /**
