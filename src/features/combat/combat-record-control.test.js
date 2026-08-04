@@ -17,9 +17,10 @@ function fakeRecorder() {
     const fake = {
         recording: false,
         ticks: 0,
+        fights: 0,
         downloads: 0,
         isRecording: () => fake.recording,
-        recordingStatus: () => ({ ticks: fake.ticks, seconds: 0, full: false }),
+        recordingStatus: () => ({ ticks: fake.ticks, fights: fake.fights, seconds: 0, full: false }),
         startRecording: vi.fn(() => {
             fake.recording = true;
             fake.ticks = 0;
@@ -111,6 +112,29 @@ describe('what the button says', () => {
         shared.ticks = 4;
         expect(recordControlState().recording).toBe(true);
         expect(recordControlState().label).toBe('Recording 4…');
+    });
+
+    test('once a fight has finished, the label counts fights and not ticks', () => {
+        // The recorder banks a segment and empties the buffer when it fills, so
+        // a label reading ticks counts to four thousand, drops to zero and
+        // starts again on a recording that never stopped
+        shared.recording = true;
+        shared.ticks = 120;
+        shared.fights = 37;
+
+        expect(recordControlState()).toMatchObject({ recording: true, fights: 37, label: 'Recording 37 fights…' });
+    });
+
+    test('one fight is one fight', () => {
+        shared.recording = true;
+        shared.fights = 1;
+        expect(recordControlState().label).toBe('Recording 1 fight…');
+    });
+
+    test('a long recording says what it kept, not what is left in the buffer', () => {
+        shared.ticks = 812;
+        shared.fights = 240;
+        expect(recordControlState().label).toBe('Record (240 fights kept)');
     });
 
     test('no recorder means no button', () => {

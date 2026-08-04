@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The recorder grows up
+
+- **Recordings snapshot your loadout at record time** (gear, levels, abilities, food/drink slots, house, shrines) and the 12h check sims against the snapshot — the "gear is read as worn now" caveat is retired for new recordings; mixed-gear samples say so.
+- **Recordings survive refresh**: summarized checkpoints at every fight boundary, recovered on startup ("Recovered N fights from an interrupted recording"), cleared on clean stop, standing down when the disk is full.
+- **Record as long as you like**: hitting the buffer cap now banks the segment at the next fight boundary and keeps going (no fight lost at the cut); the label counts cumulative fights, and the observation window widened to ~4 hours of continuous combat.
+- **Small samples stop lying**: the panel shows the measured noise band ("24 fights — ±3.1% noise; differences inside that band are not findings"), computed from the actual per-fight variance, and deviations inside the band render dim/inconclusive instead of red or green.
+
 ### Idle members are clickable
 
 - **Names in the guild Overview's "Idle members" list fill `/profile Name` on click**, same as chat names.
