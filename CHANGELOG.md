@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The variance math earns its tests
+
+- **180 new tests**: the enhancement variance formula and gamma percentiles now have hand-solved exact-rational fixtures (derived by an independent second-moment recursion — they agree to nine decimals) plus a seeded Monte Carlo cross-check and a worker-blob serialization guard; the alchemy Best Items and profit display wrappers get full coverage; and the action-speed, drink-coverage, and scroll-buff utils are pinned down.
+
 ### Listing-age estimates get sharper over time
 
 - **The anonymous id→time anchor pool now grows**: every listing you record, import, or observe with a real timestamp in the order book adds an anchor (deduped, capped at 3,000 with eviction that thins dense clusters and never gives up the range endpoints). Clear History keeps the anonymous anchors — the dialog says so — so wiping your personal log no longer degrades age estimates.

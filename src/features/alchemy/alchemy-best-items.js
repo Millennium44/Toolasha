@@ -26,8 +26,11 @@ const CATALYST_LABELS = {
 /**
  * Get base XP for an alchemy action type and item level
  * (mirrors alchemy-profit-display.js getAlchemyBaseXP)
+ * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+ * @param {number} itemLevel - Item level from itemDetailMap
+ * @returns {number} Base XP before the wisdom multiplier
  */
-function getAlchemyBaseXP(actionType, itemLevel) {
+export function getAlchemyBaseXP(actionType, itemLevel) {
     switch (actionType) {
         case 'coinify':
             return itemLevel + 10;
@@ -42,8 +45,12 @@ function getAlchemyBaseXP(actionType, itemLevel) {
 
 /**
  * Calculate expected XP per action for an item
+ * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+ * @param {number} itemLevel - Item level from itemDetailMap
+ * @param {number} successRate - Success rate as a decimal in [0, 1]
+ * @returns {number} Expected XP per action, blending the full and failed-action awards
  */
-function calcXpPerAction(actionType, itemLevel, successRate) {
+export function calcXpPerAction(actionType, itemLevel, successRate) {
     const baseXP = getAlchemyBaseXP(actionType, itemLevel);
     if (baseXP === 0) return 0;
 
