@@ -14,6 +14,7 @@ import {
     formatPercentage,
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
+import { formatKeyCostNote } from '../../utils/key-cost.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 class CombatStatsUI {
@@ -817,7 +818,9 @@ class CombatStatsUI {
                                     color: #aaa;
                                     margin-bottom: 6px;
                                 `;
-                                keyPricingNote.textContent = `Pricing: ${keyPricing === 'bid' ? 'Bid (patient buy)' : 'Ask (instant buy)'}`;
+                                keyPricingNote.textContent =
+                                    `Pricing: ${keyPricing === 'bid' ? 'Bid (patient buy)' : 'Ask (instant buy)'}` +
+                                    ' · each key costed at the cheaper of buying and crafting';
                                 breakdownDiv.appendChild(keyPricingNote);
                             }
 
@@ -869,6 +872,24 @@ class CombatStatsUI {
                                     <span style="text-align: right; color: #ff6b6b;">${formatNum(displayCost)}</span>
                                 `;
                                 breakdownDiv.appendChild(itemRow);
+
+                                // Keys have two prices — the market's and the
+                                // recipe's. The row above shows the one that
+                                // was used; this says what the other was.
+                                const keyNote = item.keyCost
+                                    ? formatKeyCostNote(item.keyCost, { formatNumber: formatNum })
+                                    : '';
+                                if (keyNote) {
+                                    const keyNoteDiv = document.createElement('div');
+                                    keyNoteDiv.style.cssText = `
+                                        font-size: 11px;
+                                        color: #aaa;
+                                        margin: -1px 0 5px 0;
+                                        padding-left: 8px;
+                                    `;
+                                    keyNoteDiv.textContent = keyNote;
+                                    breakdownDiv.appendChild(keyNoteDiv);
+                                }
                             }
 
                             // Add total row
