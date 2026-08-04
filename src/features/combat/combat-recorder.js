@@ -69,6 +69,21 @@
  * every page load until somebody remembers to turn it off is a switch left on by
  * accident, and the thing it is for — collecting one recording to hand over — is
  * finished the moment the file exists. Turn it on again for the next one.
+ *
+ * ## Recording a set amount
+ *
+ * "Record until I come back" is fine for a recording being watched and useless
+ * for the sample the accuracy check needs, where the question is "how many more
+ * fights until the noise band is small enough" and the answer is a number. So a
+ * recording can be given a target — so many fights, or so many minutes — and it
+ * stops itself when it gets there.
+ *
+ * **The target is only ever read at a fight boundary.** A minutes target that
+ * expires mid-fight lets that fight finish and stops on the `new_battle` after
+ * it, so the recording overshoots by a partial fight rather than losing one: a
+ * fight cut in half is dropped by the replay at both ends, so cutting on the
+ * stroke of the clock would cost the very fight the last minute was spent on.
+ * Overshooting costs nothing but a few extra seconds of recording.
  */
 
 import config from '../../core/config.js';
@@ -123,6 +138,72 @@ let stopTimer = null;
 let segmentIndex = 0;
 let completedFights = 0;
 let loadout = null;
+
+/**
+ * How much to record before stopping, or null for as long as it takes.
+ *
+ * Module state rather than an argument to `startRecording`, because two panels
+ * offer the control and the recorder is the one thing both of them share. What
+ * persists it is whoever set it — see `combat-record-control.js`.
+ */
+let target = null;
+
+/** Whether the last recording ended by reaching its target rather than by hand */
+let targetMet = false;
+
+/** Targets are counted in one of these, and nothing else */
+const TARGET_UNITS = new Set(['fights', 'minutes']);
+
+/**
+ * A target, or null for unlimited.
+ *
+ * Anything that is not a positive number of fights or minutes is unlimited
+ * rather than an error: an empty box is how the control says "no target", and a
+ * recording that refused to start over a malformed one would be worse than a
+ * recording that simply runs until stopped.
+ *
+ * @param {Object} [raw] - `{value, unit}`
+ * @returns {{value: number, unit: string}|null}
+ */
+export function normalizeTarget(raw) {
+    const value = Number(raw?.value);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (!TARGET_UNITS.has(raw?.unit)) return null;
+    return { value, unit: raw.unit };
+}
+
+/**
+ * Say how much to record before stopping.
+ *
+ * Takes effect on the running recording as well as the next one, so raising a
+ * target that has nearly been reached does not require starting again.
+ *
+ * @param {Object|null} next - `{value, unit}`, or null for unlimited
+ * @returns {{value: number, unit: string}|null} What was actually set
+ */
+export function setRecordTarget(next) {
+    target = normalizeTarget(next);
+    return target;
+}
+
+/** @returns {{value: number, unit: string}|null} The target, or null for unlimited */
+export function recordTarget() {
+    return target;
+}
+
+/**
+ * Whether the recording has got what it was asked for.
+ *
+ * Only ever consulted at a fight boundary — see the module note on why the
+ * minutes target overshoots rather than cutting.
+ *
+ * @returns {boolean}
+ */
+function targetReached() {
+    if (!target) return false;
+    if (target.unit === 'fights') return completedFights >= target.value;
+    return Date.now() - recordingStartedAt >= target.value * 60_000;
+}
 
 /** Called with the finished file whenever a recording ends with something in it */
 const completionListeners = new Set();
@@ -261,7 +342,8 @@ export function isRecording() {
  * recording?" means — a rotation resets the tick count and resets nothing about
  * the run.
  *
- * @returns {{ticks: number, seconds: number, full: boolean, fights: number, segments: number}}
+ * @returns {{ticks: number, seconds: number, full: boolean, fights: number, segments: number,
+ *   target: Object|null, targetMet: boolean}}
  */
 export function recordingStatus() {
     return {
@@ -270,6 +352,8 @@ export function recordingStatus() {
         full: lostFight,
         fights: completedFights,
         segments: segmentIndex + 1,
+        target,
+        targetMet,
     };
 }
 
@@ -280,8 +364,13 @@ export function recordingStatus() {
  * appending a second run to the first would produce a file that replays as a
  * fight that never happened.
  */
-export function startRecording({ seconds = 0, thenDownload = false } = {}) {
+export function startRecording({ seconds = 0, thenDownload = false, target: wanted } = {}) {
     stopRecording();
+
+    // Undefined leaves whatever was set standing: the target is a preference the
+    // panels persist, not a property of one sitting, so a recording started from
+    // the button inherits it without every caller having to pass it along
+    if (wanted !== undefined) setRecordTarget(wanted);
 
     ticks = [];
     lostFight = false;
@@ -289,6 +378,7 @@ export function startRecording({ seconds = 0, thenDownload = false } = {}) {
     panelSnapshots = 0;
     segmentIndex = 0;
     completedFights = 0;
+    targetMet = false;
     startedAt = Date.now();
     recordingStartedAt = startedAt;
     recording = true;
@@ -370,6 +460,17 @@ function capture(type, payload) {
     push(type, payload);
     if (type === 'new_battle') sawNewBattle = true;
     if (closesFight) completedFights += 1;
+
+    // At a boundary and nowhere else. A minutes target that ran out mid-fight
+    // has already been over for a few seconds by the time this reads it, and
+    // those seconds are the price of not throwing the fight away — one cut in
+    // half is dropped by the replay, so cutting on the stroke of the clock
+    // would lose the fight the last minute was spent on.
+    if (closesFight && targetReached()) {
+        targetMet = true;
+        stopRecording();
+        return;
+    }
 
     const atBoundary = type === 'new_battle';
     const rotating = ticks.length >= MAX_TICKS && (atBoundary || ticks.length >= MAX_TICKS_HARD);
@@ -495,4 +596,7 @@ export default {
     onRecordingStopped,
     onSessionStart,
     setLoadoutProvider,
+    setRecordTarget,
+    recordTarget,
+    normalizeTarget,
 };

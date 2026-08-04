@@ -34,9 +34,23 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: () => state.actionDetail,
         getInitClientData: () => ({ combatMonsterDetailMap: { '/monsters/rat': { name: 'Rat' } } }),
         getItemDetails: (hrid) => ({ name: hrid, isOpenable: Boolean(state.openable[hrid]) }),
+        // The Record button's state reaches storage through the character key,
+        // to put back the record target the last session was using
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
     },
 }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        getJSON: async () => null,
+        setJSON: async () => {},
+        // Reached through the character key, for the record target
+        get: async (_key, _store, fallback) => fallback ?? null,
+        set: async () => true,
+        delete: async () => true,
+        isQuotaExceeded: () => false,
+    },
+}));
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: (panel, id, fallback) => {
         panel.style.width = `${geometry.width ?? fallback.width}px`;

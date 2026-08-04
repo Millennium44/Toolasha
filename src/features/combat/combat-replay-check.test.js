@@ -97,6 +97,12 @@ import replayCheck, {
     compareMetric,
     compareRun,
     summaryLine,
+    predictedSwings,
+    sampleSizeFor,
+    deviationHints,
+    historyEntry,
+    pruneHistory,
+    dropRates,
     MIN_SAMPLE_FIGHTS,
     SIM_NOISE_FLOOR_PCT,
     NOISE_QUIET_PCT,
@@ -107,6 +113,7 @@ import recording from '../../utils/__fixtures__/combat-run.json';
 
 /** Where the scoped keys land, given the character the data manager is pretending to be */
 const OBSERVATIONS_KEY = 'combatReplayCheck_observations_char1';
+const HISTORY_KEY = 'combatReplayCheck_history_char1';
 const CHECKPOINT_KEY = 'combatReplayCheck_recordingCheckpoint_char1';
 
 /** A character wearing something, in the shape the adapter hands the simulator */
@@ -147,6 +154,7 @@ beforeEach(() => {
     game.lastRun = null;
     game.simResult = {};
     replayCheck.observations = [];
+    replayCheck.history = [];
     replayCheck.comparison = null;
     replayCheck.error = null;
     replayCheck.loaded = false;
@@ -237,6 +245,9 @@ describe('an observation', () => {
                     'monsters',
                     'regen',
                     'seconds',
+                    // One number per fight, which is all the experience band
+                    // needs; the split between skills is a per-observation total
+                    'xp',
                 ].sort()
             );
         }
@@ -1011,5 +1022,936 @@ describe('the Record button on the panel', () => {
 
         expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
         expect(labelled('Forget')).toBeTruthy();
+    });
+});
+
+/**
+ * A recording of `count` fights whose battles carry the running totals.
+ *
+ * The shipped fixture predates experience and loot being read off `new_battle`
+ * and carries neither, so the window arithmetic needs a run built to have them.
+ *
+ * @param {Object} shape - `{count, xpPerFight, dropPerFight, resetAt}`
+ * @returns {Object} A recording file, as the recorder hands one over
+ */
+function runWithGains({ count = 3, xpPerFight = 100, dropPerFight = 2, resetAt = null } = {}) {
+    const ticks = [];
+    let xp = 5_000;
+    let coins = 40;
+
+    for (let battle = 0; battle <= count; battle += 1) {
+        // A restarted combat action zeroes the running totals underneath the
+        // recording, which is the one case a difference is not a gain
+        if (resetAt !== null && battle === resetAt) {
+            xp = 0;
+            coins = 0;
+        }
+        ticks.push({
+            at: battle * 10_000,
+            type: 'new_battle',
+            payload: {
+                players: {
+                    0: {
+                        name: 'Tester',
+                        isPreparingAutoAttack: true,
+                        totalSkillExperienceMap: { '/skills/attack': xp, '/skills/stamina': xp / 2 },
+                        totalLootMap: {
+                            slot1: { itemHrid: '/items/coin', count: coins },
+                            slot2: { itemHrid: '/items/coin', count: 1 },
+                        },
+                    },
+                },
+                monsters: { 0: { name: 'Fly' } },
+            },
+        });
+        // Two ticks, because a hit is a counter *rising* and the first sighting
+        // of a monster establishes the baseline rather than dealing its health
+        ticks.push({
+            at: battle * 10_000 + 1_000,
+            type: 'battle_updated',
+            payload: { pMap: { 0: { cMP: 9, isAutoAtk: true } }, mMap: { 0: { cHP: 100, dmgCounter: 0 } } },
+        });
+        ticks.push({
+            at: battle * 10_000 + 2_000,
+            type: 'battle_updated',
+            payload: { pMap: { 0: { cMP: 8, isAutoAtk: true } }, mMap: { 0: { cHP: 60, dmgCounter: 1 } } },
+        });
+        xp += xpPerFight;
+        coins += dropPerFight;
+    }
+
+    return { ticks, truncated: false, loadout: null };
+}
+
+describe('experience and loot, off the battles that carry them', () => {
+    test('a fight’s gains are the difference across it, not a running total', () => {
+        // `/skills/attack` rises by 100 and `/skills/stamina` by 50 per fight,
+        // and coins by 2 — the totals themselves are five thousand and forty
+        const fights = replayFights(runWithGains({ count: 3 }).ticks);
+
+        expect(fights).toHaveLength(3);
+        expect(fights[0].gains['0'].xp).toEqual({ '/skills/attack': 100, '/skills/stamina': 50 });
+        expect(fights[0].gains['0'].loot).toEqual({ '/items/coin': 2 });
+    });
+
+    test('two slots of the same item are added rather than one overwriting the other', () => {
+        const observation = observeRecording(runWithGains({ count: 3, dropPerFight: 5 }));
+
+        // Both slots are coins; only one of them moves, and the count is the sum
+        expect(observation.drops).toEqual({ '/items/coin': 15 });
+    });
+
+    test('gains outside the recording window are not in it', () => {
+        // The window is the recording, by construction: the totals on the first
+        // battle are the baseline, so everything earned before it is excluded
+        // however large it was
+        const observation = observeRecording(runWithGains({ count: 2, xpPerFight: 100 }));
+
+        expect(observation.xpBySkill).toEqual({ '/skills/attack': 200, '/skills/stamina': 100 });
+        expect(observation.gainsFights).toBe(2);
+    });
+
+    test('a restarted combat action is unknown gains, not a negative one', () => {
+        // The totals fall when the action restarts underneath the recording,
+        // and the difference across that is two different sessions
+        const fights = replayFights(runWithGains({ count: 3, resetAt: 2 }).ticks);
+
+        expect(fights[0].gains['0']).toBeTruthy();
+        expect(fights[1].gains['0']).toBeUndefined();
+        expect(fights[2].gains['0']).toBeTruthy();
+    });
+
+    test('and the seconds it covers shrink with it, so the rate stays honest', () => {
+        const observation = observeRecording(runWithGains({ count: 3, resetAt: 2 }));
+
+        expect(observation.gainsFights).toBe(2);
+        expect(observation.gainsSeconds).toBe(20);
+        // The run itself is still three fights long
+        expect(observation.fights).toHaveLength(3);
+    });
+
+    test('a recording whose battles carry no totals has no gains and is not broken by it', () => {
+        const observation = observeRecording(recording, { zoneHrid: '/actions/combat/fly' });
+
+        expect(observation.xpBySkill).toEqual({});
+        expect(observation.drops).toEqual({});
+        expect(observation.gainsFights).toBe(0);
+        expect(observation.fights.every((fight) => fight.xp === null)).toBe(true);
+    });
+
+    test('the aggregate divides experience by the seconds it was actually earned over', () => {
+        const observed = aggregateObservations([
+            { ...observeRecording(runWithGains({ count: 3, resetAt: 2 })), zoneHrid: '/actions/combat/fly' },
+        ]);
+
+        // Two fights of ten seconds each earned 150 apiece
+        expect(observed.gainsSeconds).toBe(20);
+        expect(observed.xpTotal).toBe(300);
+        expect(observed.xpPerSecond).toBe(15);
+    });
+
+    test('a checkpoint carries the gains too, so a refresh does not lose them', async () => {
+        await replayCheck.checkpoint(runWithGains({ count: 3 }));
+
+        const checkpoint = store.data.get(CHECKPOINT_KEY);
+        expect(checkpoint.xpBySkill).toEqual({ '/skills/attack': 300, '/skills/stamina': 150 });
+        expect(checkpoint.drops).toEqual({ '/items/coin': 6 });
+    });
+});
+
+describe('experience, against what the simulator predicts', () => {
+    /** A sim result that earned XP over an hour */
+    const simResult = ({ attack = 360_000, stamina = 180_000 } = {}) => ({
+        simulatedTime: 3600 * 1e9,
+        encounters: 360,
+        deaths: {},
+        totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+        experienceGained: { player1: { attack, stamina, melee: 0, defense: 0, ranged: 0, magic: 0, intelligence: 0 } },
+        warnings: [],
+    });
+
+    test('the simulator’s bare skill names are read back as hrids', () => {
+        const predicted = predictFromSim(simResult());
+
+        expect(predicted.xpBySkill).toEqual({ '/skills/attack': 360_000, '/skills/stamina': 180_000 });
+        expect(predicted.xpTotal).toBe(540_000);
+        expect(predicted.xpPerSecond).toBe(150);
+    });
+
+    test('skills the run earned nothing in are left out rather than shown as zero', () => {
+        expect(Object.keys(predictFromSim(simResult()).xpBySkill)).toEqual(['/skills/attack', '/skills/stamina']);
+    });
+
+    test('a compared row appears only when both sides have a number', () => {
+        const observed = aggregateObservations([
+            { ...observeRecording(runWithGains({ count: 4 })), zoneHrid: '/actions/combat/fly' },
+        ]);
+
+        // Both sides: a row with a band
+        const withXp = compareRun(observed, predictFromSim(simResult()));
+        expect(withXp.experience).toMatchObject({ key: 'xpPerSecond' });
+        expect(withXp.experience.marginPct).toBeGreaterThan(0);
+
+        // A simulator that reported no experience is not compared to
+        const noXp = compareRun(observed, predictFromSim({ ...simResult(), experienceGained: {} }));
+        expect(noXp.experience).toBe(null);
+        expect(noXp.experienceBySkill).toEqual([]);
+    });
+
+    test('and not when the recording carried no experience', () => {
+        const observed = aggregateObservations([
+            observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 1_000 }),
+        ]);
+
+        expect(compareRun(observed, predictFromSim(simResult())).experience).toBe(null);
+    });
+
+    test('the per-skill split is shown without a verdict, since it is not a sampling question', () => {
+        const observed = aggregateObservations([
+            { ...observeRecording(runWithGains({ count: 4 })), zoneHrid: '/actions/combat/fly' },
+        ]);
+        const comparison = compareRun(observed, predictFromSim(simResult()));
+
+        expect(comparison.experienceBySkill).toHaveLength(2);
+        for (const row of comparison.experienceBySkill) {
+            expect(row.verdict).toBeUndefined();
+            expect(row.deviationPct).not.toBe(null);
+        }
+        // Commonest first, so a split that went somewhere unexpected is at the top
+        expect(comparison.experienceBySkill[0].skillHrid).toBe('/skills/attack');
+    });
+});
+
+describe('drops, which are shown and not compared', () => {
+    test('the simulator predicts none, so nothing pretends to', () => {
+        // `SimResult` carries drop-rate multipliers and no drop table. Building
+        // an expectation from the game's own tables would check the game
+        // against itself, which is a different question and already answered
+        expect(
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 100,
+                totalDamageDealt: { player1: 1 },
+            }).drops
+        ).toBe(null);
+    });
+
+    test('observed drops are counted and rated, commonest first', () => {
+        const observed = aggregateObservations([
+            {
+                ...observeRecording(runWithGains({ count: 4, dropPerFight: 9 })),
+                zoneHrid: '/actions/combat/fly',
+            },
+        ]);
+        const rates = dropRates(observed);
+
+        expect(rates).toHaveLength(1);
+        expect(rates[0]).toMatchObject({ itemHrid: '/items/coin', count: 36 });
+        // Thirty-six coins over forty seconds
+        expect(rates[0].perHour).toBeCloseTo(3240, 6);
+    });
+
+    test('no gains window is no rates rather than a division by zero', () => {
+        expect(dropRates({ drops: { '/items/coin': 4 }, gainsSeconds: 0 })).toEqual([]);
+        expect(dropRates(null)).toEqual([]);
+    });
+});
+
+describe('taking the damage figure apart', () => {
+    /** A sim result with an attack histogram, as the engine builds one */
+    const withAttacks = (attacks) => ({
+        simulatedTime: 100 * 1e9,
+        encounters: 10,
+        deaths: {},
+        totalDamageDealt: { player1: 1000, '/monsters/fly': 100 },
+        attacks,
+        warnings: [],
+    });
+
+    test('the histogram is read as swings, hits and damage', () => {
+        const swung = predictedSwings(
+            withAttacks({
+                player1: {
+                    '/monsters/fly': {
+                        autoAttack: { 100: 8, miss: 2 },
+                        '/abilities/poke': { 250: 2 },
+                    },
+                },
+            })
+        );
+
+        expect(swung).toEqual({ swings: 12, hits: 10, damage: 8 * 100 + 2 * 250 });
+    });
+
+    test('bleeds, thorns and retaliation are not swings on either side', () => {
+        // The attribution ignores health falling without the hit counter
+        // moving, so counting the simulator's bleeds would compare two
+        // different things and call the difference an engine bug
+        const swung = predictedSwings(
+            withAttacks({
+                player1: {
+                    '/monsters/fly': {
+                        autoAttack: { 100: 10 },
+                        damageOverTime: { 30: 40 },
+                        physicalThorns: { 12: 5 },
+                        retaliation: { 60: 3, miss: 1 },
+                    },
+                },
+            })
+        );
+
+        expect(swung).toEqual({ swings: 10, hits: 10, damage: 1000 });
+    });
+
+    test('a result with no attack detail is not decomposed', () => {
+        expect(predictedSwings(withAttacks({}))).toBe(null);
+        expect(predictedSwings({})).toBe(null);
+        // A player who never swung is not a swing count of zero to divide by
+        expect(predictedSwings(withAttacks({ player1: { '/monsters/fly': { damageOverTime: { 30: 4 } } } }))).toBe(
+            null
+        );
+    });
+
+    test('the three factors multiply back up to damage per second', () => {
+        const observed = aggregateObservations([evenObservation({ seconds: 10, damageDealt: 1000, fights: 6 })]);
+
+        // Four hits and one miss per fight, a thousand damage over ten seconds
+        expect(observed.swingsPerSecond).toBeCloseTo(0.5, 10);
+        expect(observed.hitRate).toBeCloseTo(0.8, 10);
+        expect(observed.damagePerHit).toBeCloseTo(250, 10);
+        expect(observed.swingsPerSecond * observed.hitRate * observed.damagePerHit).toBeCloseTo(observed.dps, 6);
+    });
+
+    test('each factor gets its own band, measured from the fights', () => {
+        const observed = aggregateObservations([evenObservation({ fights: 6 })]);
+        const comparison = compareRun(
+            observed,
+            predictFromSim(withAttacks({ player1: { '/monsters/fly': { autoAttack: { 250: 40, miss: 10 } } } }))
+        );
+
+        expect(comparison.decomposition.map((metric) => metric.key)).toEqual([
+            'swingsPerSecond',
+            'hitRate',
+            'damagePerHit',
+        ]);
+        for (const metric of comparison.decomposition) {
+            expect(metric.marginPct).toBeGreaterThan(0);
+        }
+    });
+
+    test('no decomposition when either side cannot supply one', () => {
+        const observed = aggregateObservations([evenObservation({ fights: 6 })]);
+
+        // The simulator carried no histogram
+        expect(compareRun(observed, predictFromSim(withAttacks({}))).decomposition).toEqual([]);
+
+        // The recording predates hits and misses being kept
+        const old = aggregateObservations([
+            {
+                ...evenObservation({ fights: 0 }),
+                fights: Array.from({ length: 5 }, () => ({
+                    seconds: 10,
+                    damageDealt: 1000,
+                    damageTaken: 100,
+                    regen: 0,
+                    deaths: 0,
+                    kills: 3,
+                    monsters: ['Fly'],
+                })),
+            },
+        ]);
+        expect(
+            compareRun(old, predictFromSim(withAttacks({ player1: { '/monsters/fly': { autoAttack: { 250: 40 } } } })))
+                .decomposition
+        ).toEqual([]);
+    });
+});
+
+describe('saying how many more fights would settle it', () => {
+    /** An observation whose per-fight damage has a known spread */
+    function spread(values) {
+        return {
+            ...evenObservation({ fights: 0 }),
+            fights: values.map((damageDealt) => ({
+                seconds: 10,
+                damageDealt,
+                damageTaken: 100,
+                regen: 0,
+                hits: 4,
+                misses: 1,
+                deaths: 0,
+                kills: 3,
+                monsters: ['Fly'],
+            })),
+        };
+    }
+
+    test('a wide sample is told how many more it needs, from its own variance', () => {
+        const observed = aggregateObservations([spread([800, 1200, 900, 1100, 1000])]);
+        const suggestion = sampleSizeFor(observed);
+
+        expect(suggestion.quiet).toBe(false);
+        expect(suggestion.reachable).toBe(true);
+        expect(suggestion.needed).toBeGreaterThan(0);
+        expect(suggestion.requiredFights).toBe(suggestion.needed + suggestion.fights);
+        expect(suggestion.text).toContain(`≈${suggestion.needed} more for ±${NOISE_QUIET_PCT}%`);
+    });
+
+    test('and the arithmetic is the margin formula run backwards', () => {
+        const values = [800, 1200, 900, 1100, 1000];
+        const observed = aggregateObservations([spread(values)]);
+
+        // The rate per fight is the damage over ten seconds
+        const rates = values.map((value) => value / 10);
+        const mean = rates.reduce((total, value) => total + value, 0) / rates.length;
+        const variance = rates.reduce((total, value) => total + (value - mean) ** 2, 0) / (rates.length - 1);
+        const variation = Math.sqrt(variance) / mean;
+        const room = NOISE_QUIET_PCT ** 2 - SIM_NOISE_FLOOR_PCT ** 2;
+        const expected = Math.ceil(((1.96 * variation * 100) / Math.sqrt(room)) ** 2);
+
+        expect(sampleSizeFor(observed).requiredFights).toBe(expected);
+    });
+
+    test('a sample already under the threshold is told it is done, not told to record more', () => {
+        const suggestion = sampleSizeFor(aggregateObservations([evenObservation({ fights: 12 })]));
+
+        expect(suggestion.quiet).toBe(true);
+        expect(suggestion.needed).toBe(0);
+        expect(suggestion.text).toContain(`already under ±${NOISE_QUIET_PCT}%`);
+    });
+
+    test('a band inside the simulator’s own allowance is refused rather than promised', () => {
+        // The floor is added in quadrature and never shrinks, so no sample size
+        // reaches a band at or under it
+        const suggestion = sampleSizeFor(aggregateObservations([spread([800, 1200, 900, 1100, 1000])]), 1.5);
+
+        expect(suggestion.reachable).toBe(false);
+        expect(suggestion.needed).toBe(null);
+        expect(suggestion.text).toContain('no sample size reaches it');
+    });
+
+    test('too few fights is no projection at all, since there is no spread to measure', () => {
+        expect(sampleSizeFor(aggregateObservations([evenObservation({ fights: 2 })]))).toBe(null);
+        expect(sampleSizeFor(null)).toBe(null);
+    });
+
+    test('it agrees with the band the panel already quotes', () => {
+        const observed = aggregateObservations([spread([800, 1200, 900, 1100, 1000])]);
+
+        expect(sampleSizeFor(observed).marginPct).toBeCloseTo(noiseSummary(observed).marginPct, 10);
+    });
+});
+
+describe('what to look at first', () => {
+    /** A comparison with the given verdicts on the headline and the factors */
+    function comparisonWith({ metrics = {}, decomposition = {}, experience = null } = {}) {
+        const row = (key, verdict) => ({ key, label: key, verdict, deviationPct: -9, marginPct: 3 });
+        return {
+            metrics: Object.entries(metrics).map(([key, verdict]) => row(key, verdict)),
+            decomposition: Object.entries(decomposition).map(([key, verdict]) => row(key, verdict)),
+            experience: experience ? row('xpPerSecond', experience) : null,
+        };
+    }
+
+    const snapshot = { loadout: { levels: {} }, mixedLoadouts: false, deaths: 0 };
+
+    test('nothing outside its band is nothing to explain', () => {
+        // A deviation the sample cannot see does not need a suspect list
+        const comparison = comparisonWith({
+            metrics: { dps: 'within-noise' },
+            decomposition: { hitRate: 'within-noise' },
+        });
+
+        expect(deviationHints(comparison, snapshot)).toEqual([]);
+        expect(deviationHints(null, snapshot)).toEqual([]);
+    });
+
+    test('too few fights is not a deviation either', () => {
+        const comparison = comparisonWith({ metrics: { dps: 'insufficient' } });
+        expect(deviationHints(comparison, snapshot)).toEqual([]);
+    });
+
+    test('one factor outside its band names that factor first', () => {
+        const comparison = comparisonWith({
+            metrics: { dps: 'beyond-noise' },
+            decomposition: { swingsPerSecond: 'within-noise', hitRate: 'beyond-noise' },
+        });
+
+        expect(deviationHints(comparison, snapshot)[0]).toContain('Accuracy');
+    });
+
+    test('two factors outside name neither, because that is not specific', () => {
+        const comparison = comparisonWith({
+            metrics: { dps: 'beyond-noise' },
+            decomposition: { swingsPerSecond: 'beyond-noise', hitRate: 'beyond-noise' },
+        });
+        const hints = deviationHints(comparison, snapshot);
+
+        expect(hints.some((hint) => hint.includes('Accuracy'))).toBe(false);
+        expect(hints.some((hint) => hint.includes('Attack speed'))).toBe(false);
+    });
+
+    test('a headline gap with every factor inside says so rather than staying silent', () => {
+        const comparison = comparisonWith({
+            metrics: { dps: 'beyond-noise' },
+            decomposition: {
+                swingsPerSecond: 'within-noise',
+                hitRate: 'within-noise',
+                damagePerHit: 'within-noise',
+            },
+        });
+
+        expect(deviationHints(comparison, snapshot).some((hint) => hint.includes('spread thinly'))).toBe(true);
+    });
+
+    test('a known difference outranks every guess', () => {
+        // Without a snapshot the simulated character is simply not the recorded
+        // one, and nothing else matters until that is ruled out
+        const comparison = comparisonWith({
+            metrics: { dps: 'beyond-noise' },
+            decomposition: { hitRate: 'beyond-noise' },
+        });
+
+        expect(deviationHints(comparison, { ...snapshot, loadout: null })[0]).toContain('Gear drift');
+    });
+
+    test('a sample straddling a gear change says which fights were mis-compared', () => {
+        const comparison = comparisonWith({ metrics: { dps: 'beyond-noise' } });
+
+        expect(deviationHints(comparison, { ...snapshot, mixedLoadouts: true })[0]).toContain('same kit');
+    });
+
+    test('consumables are a suspect for damage and not for fight length', () => {
+        const damage = comparisonWith({ metrics: { dps: 'beyond-noise' } });
+        const length = comparisonWith({ metrics: { secondsPerFight: 'beyond-noise' } });
+
+        expect(deviationHints(damage, snapshot).some((hint) => hint.startsWith('Consumables'))).toBe(true);
+        expect(deviationHints(length, snapshot).some((hint) => hint.startsWith('Consumables'))).toBe(false);
+    });
+
+    test('experience outside its band gets its own suspects, not the damage ones', () => {
+        const comparison = comparisonWith({ experience: 'beyond-noise' });
+        const hints = deviationHints(comparison, snapshot);
+
+        expect(hints.some((hint) => hint.startsWith('Experience buffs'))).toBe(true);
+        expect(hints.some((hint) => hint.startsWith('Consumables'))).toBe(false);
+    });
+
+    test('deaths are mentioned only when there were some', () => {
+        const comparison = comparisonWith({ metrics: { secondsPerFight: 'beyond-noise' } });
+
+        expect(deviationHints(comparison, { ...snapshot, deaths: 2 })[0]).toContain('2 in this sample');
+        expect(deviationHints(comparison, snapshot).some((hint) => hint.startsWith('Deaths'))).toBe(false);
+    });
+});
+
+describe('whether the accuracy is drifting', () => {
+    const entry = (at, extra = {}) => ({
+        at,
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 0,
+        fights: 20,
+        deviationPct: -4,
+        marginPct: 3,
+        verdict: 'beyond-noise',
+        ...extra,
+    });
+
+    test('a check is remembered by its headline deviation', () => {
+        const comparison = compareRun(
+            aggregateObservations([evenObservation({ fights: 6, damageDealt: 900 })]),
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 360,
+                deaths: {},
+                totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+                warnings: [],
+            })
+        );
+        const remembered = historyEntry(comparison, 5_000);
+
+        expect(remembered).toMatchObject({ at: 5_000, zoneHrid: '/actions/combat/fly', fights: 6 });
+        expect(remembered.deviationPct).toBeCloseTo(comparison.metrics[0].deviationPct, 10);
+    });
+
+    test('a check with nothing to say is not remembered as a zero', () => {
+        expect(historyEntry(null)).toBe(null);
+        expect(historyEntry({ metrics: [{ key: 'dps', deviationPct: null }] })).toBe(null);
+    });
+
+    test('the oldest are dropped once there are too many', () => {
+        const now = 100_000_000_000;
+        const entries = Array.from({ length: 20 }, (_, index) => entry(now - index * 1_000));
+
+        const kept = pruneHistory(entries, now);
+
+        expect(kept).toHaveLength(8);
+        // Oldest first, and the newest is the one that survived
+        expect(kept[kept.length - 1].at).toBe(now);
+        expect(kept[0].at).toBe(now - 7_000);
+    });
+
+    test('and by age, since a month-old check describes a character that has moved on', () => {
+        const now = 100_000_000_000;
+        const month = 30 * 24 * 60 * 60 * 1000;
+
+        const kept = pruneHistory([entry(now - month - 1), entry(now - 1_000)], now);
+
+        expect(kept).toHaveLength(1);
+        expect(kept[0].at).toBe(now - 1_000);
+    });
+
+    test('a malformed entry is dropped rather than drawn as an invalid date', () => {
+        expect(pruneHistory([{ deviationPct: 4 }, null, entry(Date.now())])).toHaveLength(1);
+        expect(pruneHistory(null)).toEqual([]);
+    });
+
+    test('running the check writes the result beside the ones before it', async () => {
+        replayCheck.observations = [evenObservation({ fights: 6, damageDealt: 900 })];
+        game.simResult = {
+            simulatedTime: 3600 * 1e9,
+            encounters: 360,
+            deaths: {},
+            totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+            warnings: [],
+        };
+
+        await replayCheck.check();
+
+        expect(replayCheck.history).toHaveLength(1);
+        expect(store.data.get(HISTORY_KEY)).toHaveLength(1);
+    });
+
+    test('a full disk keeps it in memory rather than failing the check', async () => {
+        replayCheck.observations = [evenObservation({ fights: 6, damageDealt: 900 })];
+        game.simResult = {
+            simulatedTime: 3600 * 1e9,
+            encounters: 360,
+            deaths: {},
+            totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+            warnings: [],
+        };
+        store.quota = true;
+
+        await replayCheck.check();
+
+        expect(replayCheck.history).toHaveLength(1);
+        expect(store.data.has(HISTORY_KEY)).toBe(false);
+    });
+
+    test('Forget clears it too, since a button that leaves a table on screen looks broken', async () => {
+        replayCheck.history = [entry(Date.now())];
+
+        await replayCheck.forget();
+
+        expect(replayCheck.history).toEqual([]);
+        expect(store.data.get(HISTORY_KEY)).toEqual([]);
+    });
+
+    test('it is read back per character on load', async () => {
+        store.data.set(HISTORY_KEY, [entry(Date.now())]);
+
+        await replayCheck.load();
+
+        expect(replayCheck.history).toHaveLength(1);
+    });
+});
+
+describe('the target control on the panel', () => {
+    /** The shared recorder, with a target the control can set */
+    function install({ recording = false, fights = 0, seconds = 0, targetMet = false } = {}) {
+        const fake = {
+            recording,
+            target: null,
+            isRecording: () => fake.recording,
+            recordingStatus: () => ({ ticks: 0, seconds, full: false, fights, target: fake.target, targetMet }),
+            normalizeTarget: (raw) =>
+                Number(raw?.value) > 0 && ['fights', 'minutes'].includes(raw?.unit)
+                    ? { value: Number(raw.value), unit: raw.unit }
+                    : null,
+            setRecordTarget: vi.fn((next) => {
+                fake.target = fake.normalizeTarget(next);
+                return fake.target;
+            }),
+            recordTarget: () => fake.target,
+            startRecording: vi.fn(() => {
+                fake.recording = true;
+            }),
+            stopRecording: vi.fn(),
+            downloadRecording: vi.fn(),
+        };
+        window.Toolasha = { Combat: { combatRecorder: fake } };
+        return fake;
+    }
+
+    const box = () => replayCheckPanel.panel?.querySelector('input[type="number"]');
+    const buttons = () => [...(replayCheckPanel.panel?.querySelectorAll('button') || [])];
+    const labelled = (text) => buttons().find((button) => button.textContent.startsWith(text));
+
+    afterEach(() => {
+        replayCheckPanel.hide({ remember: false });
+        delete window.Toolasha;
+    });
+
+    test('an empty box is unlimited, which is what recording has always done', () => {
+        install();
+        replayCheckPanel.show({ remember: false });
+
+        expect(box()).toBeTruthy();
+        expect(box().value).toBe('');
+        expect(labelled('fights')).toBeTruthy();
+        expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
+    });
+
+    test('typing a number sets it as the target', async () => {
+        const recorder = install();
+        replayCheckPanel.show({ remember: false });
+
+        box().value = '100';
+        box().dispatchEvent(new window.Event('change'));
+        await settle();
+
+        expect(recorder.target).toEqual({ value: 100, unit: 'fights' });
+    });
+
+    test('and clearing it goes back to unlimited', async () => {
+        const recorder = install();
+        replayCheckPanel.show({ remember: false });
+
+        box().value = '100';
+        box().dispatchEvent(new window.Event('change'));
+        await settle();
+        box().value = '';
+        box().dispatchEvent(new window.Event('change'));
+        await settle();
+
+        expect(recorder.target).toBe(null);
+    });
+
+    test('the unit toggles, and re-reads the number it is already holding', async () => {
+        const recorder = install();
+        replayCheckPanel.show({ remember: false });
+
+        box().value = '30';
+        box().dispatchEvent(new window.Event('change'));
+        await settle();
+        expect(recorder.target).toEqual({ value: 30, unit: 'fights' });
+
+        labelled('fights').click();
+        await settle();
+
+        expect(recorder.target).toEqual({ value: 30, unit: 'minutes' });
+        expect(labelled('min')).toBeTruthy();
+    });
+
+    test('a target already set draws in the box, so it survives a redraw', () => {
+        const recorder = install();
+        recorder.target = { value: 45, unit: 'minutes' };
+        replayCheckPanel.show({ remember: false });
+
+        expect(box().value).toBe('45');
+        expect(labelled('min')).toBeTruthy();
+    });
+
+    test('the running button shows progress towards it', () => {
+        const recorder = install({ recording: true, fights: 37 });
+        recorder.target = { value: 100, unit: 'fights' };
+        replayCheckPanel.show({ remember: false });
+
+        expect(labelled('Recording 37/100 fights…')).toBeTruthy();
+    });
+
+    test('and says Done once it has been reached', () => {
+        const recorder = install({ fights: 100, targetMet: true });
+        recorder.target = { value: 100, unit: 'fights' };
+        replayCheckPanel.show({ remember: false });
+
+        expect(labelled('Done — 100 fights')).toBeTruthy();
+    });
+
+    test('the box goes wherever the Record button goes', () => {
+        // Both are drawn from the same state, so a panel that could draw no
+        // button would draw no box to point it at either
+        install();
+        replayCheckPanel.show({ remember: false });
+
+        expect(labelled('Record')).toBeTruthy();
+        expect(box()).toBeTruthy();
+        expect(replayCheckPanel.panel.textContent).not.toContain('could not be drawn');
+    });
+});
+
+describe('the panel, on everything it now says', () => {
+    /** A sim result carrying the attack histogram and the experience */
+    const fullSim = {
+        simulatedTime: 3600 * 1e9,
+        encounters: 360,
+        deaths: {},
+        totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+        attacks: { player1: { '/monsters/fly': { autoAttack: { 250: 1440, miss: 360 } } } },
+        experienceGained: { player1: { attack: 360_000, stamina: 180_000 } },
+        warnings: [],
+    };
+
+    const text = () => replayCheckPanel.panel.textContent;
+
+    afterEach(() => {
+        replayCheckPanel.hide({ remember: false });
+        delete window.Toolasha;
+    });
+
+    test('the suggestion offers a target, and pressing it sets one', async () => {
+        const recorder = {
+            recording: false,
+            target: null,
+            isRecording: () => false,
+            recordingStatus: () => ({ ticks: 0, seconds: 0, full: false, fights: 0, target: null, targetMet: false }),
+            normalizeTarget: (raw) => (Number(raw?.value) > 0 ? { value: Number(raw.value), unit: raw.unit } : null),
+            setRecordTarget: vi.fn((next) => {
+                recorder.target = recorder.normalizeTarget(next);
+                return recorder.target;
+            }),
+            recordTarget: () => recorder.target,
+            startRecording: vi.fn(),
+            stopRecording: vi.fn(),
+            downloadRecording: vi.fn(),
+        };
+        window.Toolasha = { Combat: { combatRecorder: recorder } };
+
+        replayCheck.observations = [
+            {
+                ...evenObservation({ fights: 0 }),
+                fights: [800, 1200, 900, 1100, 1000].map((damageDealt) => ({
+                    seconds: 10,
+                    damageDealt,
+                    damageTaken: 100,
+                    regen: 0,
+                    hits: 4,
+                    misses: 1,
+                    deaths: 0,
+                    kills: 3,
+                    monsters: ['Fly'],
+                })),
+            },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        const ask = [...replayCheckPanel.panel.querySelectorAll('button')].find((button) =>
+            button.textContent.startsWith('Record ')
+        );
+        expect(ask).toBeTruthy();
+        expect(text()).toContain('more fights');
+
+        ask.click();
+        await settle();
+
+        expect(recorder.target.unit).toBe('fights');
+        expect(recorder.target.value).toBeGreaterThan(0);
+    });
+
+    test('a sample already tight enough is not told to record more', () => {
+        replayCheck.observations = [evenObservation({ fights: 24 })];
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).not.toContain('more fights');
+    });
+
+    test('the decomposition is drawn under the headline once there is one', () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('Where the damage difference is');
+        expect(text()).toContain('Share of swings landing');
+        expect(text()).toContain('Crits are not compared');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('the hints only appear when something is outside its band', () => {
+        replayCheck.observations = [evenObservation({ fights: 6, damageDealt: 1000 })];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).not.toContain('Worth checking first');
+
+        replayCheckPanel.hide({ remember: false });
+        replayCheck.observations = [evenObservation({ fights: 6, damageDealt: 700 })];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('Worth checking first');
+        expect(text()).toContain('Hints, not verdicts');
+    });
+
+    test('drops are labelled as not compared, because nothing predicts them', () => {
+        replayCheck.observations = [
+            { ...observeRecording(runWithGains({ count: 5 })), zoneHrid: '/actions/combat/fly' },
+        ];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('Drops observed (not compared)');
+        expect(text()).toContain('no per-item drop');
+    });
+
+    test('the caveat no longer claims experience is not on the feed', () => {
+        replayCheck.observations = [
+            { ...observeRecording(runWithGains({ count: 5 })), zoneHrid: '/actions/combat/fly' },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).not.toContain('not on the feed at all');
+        expect(text()).toContain('taken from the running totals');
+    });
+
+    test('and says so plainly when the recording carried none', () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('No experience or loot totals were on these battles');
+    });
+
+    test('the history table appears once there is a trend to see', () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        const at = Date.now();
+        replayCheck.history = [
+            {
+                at: at - 200_000,
+                zoneHrid: '/actions/combat/fly',
+                fights: 20,
+                deviationPct: -3,
+                marginPct: 2,
+                verdict: 'beyond-noise',
+            },
+            {
+                at: at - 100_000,
+                zoneHrid: '/actions/combat/fly',
+                fights: 30,
+                deviationPct: -8,
+                marginPct: 2,
+                verdict: 'beyond-noise',
+            },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('Past checks');
+        expect(text()).toContain('-8.0% ± 2.0% on 30 fights');
+    });
+
+    test('one check is not a trend, so no table', () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheck.history = [
+            {
+                at: Date.now(),
+                zoneHrid: '/actions/combat/fly',
+                fights: 20,
+                deviationPct: -3,
+                marginPct: 2,
+                verdict: 'beyond-noise',
+            },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).not.toContain('Past checks');
     });
 });
