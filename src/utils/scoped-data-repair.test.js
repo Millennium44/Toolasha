@@ -29,7 +29,7 @@ const mockStorage = vi.hoisted(() => {
 
 vi.mock('../core/storage.js', () => ({ default: mockStorage }));
 
-import { moveScopedData, ADOPTED_BASES } from './scoped-data-repair.js';
+import { moveScopedData, claimLegacyData, ADOPTED_BASES } from './scoped-data-repair.js';
 
 describe('moveScopedData', () => {
     beforeEach(() => {
@@ -73,6 +73,41 @@ describe('moveScopedData', () => {
     it('rejects a missing or identical pair of ids', async () => {
         await expect(moveScopedData('same', 'same')).rejects.toThrow();
         await expect(moveScopedData('', 'x')).rejects.toThrow();
+    });
+
+    it('claimLegacyData overwrites a stale scoped copy with the bare value', async () => {
+        mockStorage.storeFor('settings').set('watchlist', ['restored', 'full']);
+        mockStorage.storeFor('settings').set('watchlist_marketChar', []);
+
+        const result = await claimLegacyData('marketChar');
+
+        expect(mockStorage.storeFor('settings').get('watchlist_marketChar')).toEqual(['restored', 'full']);
+        expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
+        expect(result.claimed).toEqual(['settings:watchlist']);
+    });
+
+    it('claimLegacyData merges the listing log instead of dropping recent entries', async () => {
+        mockStorage.storeFor('marketListings').set('marketListingTimestamps', [
+            { id: 1, timestamp: 100 },
+            { id: 2, timestamp: 200 },
+        ]);
+        mockStorage.storeFor('marketListings').set('marketListingTimestamps_marketChar', [
+            { id: 2, timestamp: 200 },
+            { id: 3, timestamp: 300 },
+        ]);
+
+        await claimLegacyData('marketChar');
+
+        const merged = mockStorage.storeFor('marketListings').get('marketListingTimestamps_marketChar');
+        expect(merged.map((e) => e.id).sort()).toEqual([1, 2, 3]);
+    });
+
+    it('claimLegacyData dry run only reports', async () => {
+        mockStorage.storeFor('settings').set('watchlist', ['a']);
+        const result = await claimLegacyData('marketChar', { dryRun: true });
+        expect(result.claimed).toEqual(['settings:watchlist']);
+        expect(mockStorage.storeFor('settings').has('watchlist')).toBe(true);
+        expect(mockStorage.storeFor('settings').has('watchlist_marketChar')).toBe(false);
     });
 
     it('leaves genuinely per-character history bases out of the move list', () => {
