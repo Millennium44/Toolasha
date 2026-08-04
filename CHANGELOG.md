@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Five new tiles and layouts that follow what you're doing
+
+- **New overlay tiles** (all off by default): Queue Time Left (when do I go idle, ∞-aware), Enhancement Session (live attempts/spend), Next Goal Step, Task Tokens (board tokens + coin value — labeled as what the board pays, since no completion history exists to make a true rate), and Guild Trials pace (with honest data-age: "T7 · eta · 2h ago", going "stale" past the hour).
+- **Bundled layout presets** — Combat, Skilling, Labyrinth, Market — appear in the picker as read-only "· preset" entries; Save-as under the same name makes your own shadowing copy.
+- **Optional "Switch layout with activity"** (off by default): maps layouts to combat/skilling/lab/market, detects what you're doing (10s stability before switching, never while unlocked), and a hand-picked layout pauses auto-switch until the activity actually changes.
+
 ### Companion privacy, a Record button where it belongs, and mooket hygiene
 
 - **Toolasha no longer names the companion script anywhere** — registry examples, marker strings, hold-provider docs, and old changelog entries now use neutral wording; the public registries the companion calls are unchanged.

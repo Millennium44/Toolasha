@@ -36,6 +36,18 @@ const {
     getLayout,
     LAYOUTS_KEY,
     MAX_NAME_LENGTH,
+    ACTIVITY,
+    PRESET_LAYOUTS,
+    PRESET_SUFFIX,
+    presetNames,
+    presetFile,
+    isPreset,
+    offeredLayouts,
+    layoutForActivity,
+    freshSwitchState,
+    decideAutoSwitch,
+    pauseForManualChoice,
+    SWITCH_STABILITY_MS,
 } = await import('./overlay-layouts.js');
 
 /**
@@ -150,5 +162,227 @@ describe('the round trip', () => {
         await expect(loadLayouts()).resolves.toEqual({});
         await expect(saveLayout('Dungeon', file([]))).resolves.toEqual({});
         await expect(getLayout('Dungeon')).resolves.toBeNull();
+    });
+});
+
+describe('presets', () => {
+    test('all four ship, each with rows and an activity', () => {
+        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market']);
+
+        for (const name of presetNames()) {
+            expect(PRESET_LAYOUTS[name].rows.length).toBeGreaterThan(0);
+            expect(Object.values(ACTIVITY)).toContain(PRESET_LAYOUTS[name].activity);
+        }
+    });
+
+    test('every preset claims a different activity, so none of them is unreachable', () => {
+        const activities = presetNames().map((name) => PRESET_LAYOUTS[name].activity);
+        expect(new Set(activities).size).toBe(activities.length);
+    });
+
+    test('a preset is a layout file of exactly the shape a saved one has', () => {
+        const built = presetFile('Combat');
+
+        expect(built.toolasha.settings.order).toEqual(PRESET_LAYOUTS.Combat.rows);
+        // Nothing placed and nothing sized: a preset carrying coordinates would
+        // be a preset measured against one panel width
+        expect(built.toolasha.settings.positions).toEqual({});
+        expect(built.toolasha.settings.sizes).toEqual({});
+        expect(built.toolasha.settings.locked).toBe(true);
+    });
+
+    test('a preset switches its own rows on, and says nothing about the rest', () => {
+        const visible = presetFile('Market').toolasha.settings.visible;
+
+        for (const key of PRESET_LAYOUTS.Market.rows) expect(visible[key]).toBe(true);
+        expect(visible.dps).toBeUndefined();
+    });
+
+    test('names are recognised, and anything else is not', () => {
+        expect(isPreset('Combat')).toBe(true);
+        expect(isPreset('  Combat  ')).toBe(true);
+        expect(isPreset('Dungeon')).toBe(false);
+        expect(presetFile('Dungeon')).toBeNull();
+    });
+
+    test('a preset can be applied without ever having been saved', async () => {
+        await expect(getLayout('Skilling')).resolves.not.toBeNull();
+        expect(await loadLayouts()).toEqual({});
+    });
+
+    test('presets cannot be deleted — deleting one leaves it exactly where it was', async () => {
+        await deleteLayout('Combat');
+
+        expect(isPreset('Combat')).toBe(true);
+        expect(await getLayout('Combat')).not.toBeNull();
+    });
+
+    test('saving under a preset name shadows it rather than failing', async () => {
+        await saveLayout('Combat', file(['coins']));
+
+        // The name now resolves to the copy
+        expect((await getLayout('Combat')).toolasha.settings.order).toEqual(['coins']);
+        // And the dropdown offers it once, as a saved layout
+        const offered = offeredLayouts(await loadLayouts());
+        expect(offered.filter((entry) => entry.name === 'Combat')).toEqual([
+            { name: 'Combat', preset: false, label: 'Combat' },
+        ]);
+    });
+
+    test('the dropdown lists what is saved first, then the presets, marked', () => {
+        const offered = offeredLayouts({ Dungeon: { file: file([]) } });
+
+        expect(offered[0]).toEqual({ name: 'Dungeon', preset: false, label: 'Dungeon' });
+        expect(offered[1]).toEqual({ name: 'Combat', preset: true, label: `Combat${PRESET_SUFFIX}` });
+        expect(offered).toHaveLength(1 + presetNames().length);
+    });
+});
+
+describe('which layout an activity wants', () => {
+    test('the preset for it, when nothing has been said', () => {
+        expect(layoutForActivity(ACTIVITY.COMBAT, {}, [])).toBe('Combat');
+        expect(layoutForActivity(ACTIVITY.LABYRINTH, {}, [])).toBe('Labyrinth');
+    });
+
+    test('a layout the player mapped to it beats the preset', () => {
+        expect(layoutForActivity(ACTIVITY.COMBAT, { Dungeon: ACTIVITY.COMBAT }, ['Dungeon'])).toBe('Dungeon');
+    });
+
+    test('a mapping naming a layout that no longer exists is ignored', () => {
+        expect(layoutForActivity(ACTIVITY.COMBAT, { Gone: ACTIVITY.COMBAT }, [])).toBe('Combat');
+    });
+
+    test('nothing is wanted for no activity', () => {
+        expect(layoutForActivity(null, {}, [])).toBeNull();
+        expect(layoutForActivity(ACTIVITY.NONE, { Dungeon: ACTIVITY.NONE }, ['Dungeon'])).toBeNull();
+    });
+});
+
+describe('deciding whether to switch', () => {
+    const at = 1_700_000_000_000;
+
+    /**
+     * Run the decision with everything defaulted to "yes, switch".
+     * @param {Object} input - Overrides
+     * @returns {Object} What `decideAutoSwitch` returned
+     */
+    function decide(input) {
+        return decideAutoSwitch({ enabled: true, locked: true, mappings: {}, saved: [], ...input });
+    }
+
+    test('an activity that has just appeared is not acted on yet', () => {
+        const first = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at });
+        expect(first.apply).toBeNull();
+
+        const tooSoon = decide({ state: first.state, activity: ACTIVITY.COMBAT, now: at + 9_000 });
+        expect(tooSoon.apply).toBeNull();
+    });
+
+    test('an activity that holds long enough brings up its layout', () => {
+        const first = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at });
+        const settled = decide({ state: first.state, activity: ACTIVITY.COMBAT, now: at + SWITCH_STABILITY_MS });
+
+        expect(settled.apply).toBe('Combat');
+    });
+
+    test('it only switches once — the same activity does not reapply every second', () => {
+        let state = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at }).state;
+        const applied = decide({ state, activity: ACTIVITY.COMBAT, now: at + SWITCH_STABILITY_MS });
+        state = applied.state;
+
+        expect(applied.apply).toBe('Combat');
+        expect(decide({ state, activity: ACTIVITY.COMBAT, now: at + 60_000 }).apply).toBeNull();
+    });
+
+    test('a brief flick to something else does not switch, and does not restart the wait for the real one', () => {
+        let state = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at }).state;
+        state = decide({ state, activity: ACTIVITY.COMBAT, now: at + SWITCH_STABILITY_MS }).state;
+
+        // A second of nothing between two combat batches
+        const blip = decide({ state, activity: ACTIVITY.SKILLING, now: at + 20_000 });
+        expect(blip.apply).toBeNull();
+
+        const back = decide({ state: blip.state, activity: ACTIVITY.SKILLING, now: at + 25_000 });
+        expect(back.apply).toBeNull();
+    });
+
+    test('a change that holds does switch', () => {
+        let state = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at }).state;
+        state = decide({ state, activity: ACTIVITY.COMBAT, now: at + SWITCH_STABILITY_MS }).state;
+
+        state = decide({ state, activity: ACTIVITY.SKILLING, now: at + 20_000 }).state;
+        const settled = decide({ state, activity: ACTIVITY.SKILLING, now: at + 20_000 + SWITCH_STABILITY_MS });
+
+        expect(settled.apply).toBe('Skilling');
+    });
+
+    test('switched off, nothing happens however long anything holds', () => {
+        let state = freshSwitchState();
+        state = decide({ state, activity: ACTIVITY.COMBAT, now: at, enabled: false }).state;
+
+        expect(decide({ state, activity: ACTIVITY.COMBAT, now: at + 60_000, enabled: false }).apply).toBeNull();
+    });
+
+    test('an unlocked layout is never switched out from under whoever is arranging it', () => {
+        let state = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at, locked: false }).state;
+        const held = decide({ state, activity: ACTIVITY.COMBAT, now: at + 60_000, locked: false });
+
+        expect(held.apply).toBeNull();
+
+        // And the wait is not restarted by the lock going back on: the timer is
+        // about the world, not about permission
+        state = held.state;
+        expect(decide({ state, activity: ACTIVITY.COMBAT, now: at + 61_000 }).apply).toBe('Combat');
+    });
+
+    test('an unknown activity switches nothing', () => {
+        const state = decide({ state: freshSwitchState(), activity: null, now: at }).state;
+        expect(decide({ state, activity: null, now: at + 60_000 }).apply).toBeNull();
+    });
+
+    test('picking a layout by hand holds off the next switch', () => {
+        let state = decide({ state: freshSwitchState(), activity: ACTIVITY.COMBAT, now: at }).state;
+        state = pauseForManualChoice(state, ACTIVITY.COMBAT);
+
+        expect(decide({ state, activity: ACTIVITY.COMBAT, now: at + 60_000 }).apply).toBeNull();
+    });
+
+    test('the hold lifts at the next change of activity, not on a timer', () => {
+        let state = pauseForManualChoice(freshSwitchState(), ACTIVITY.COMBAT);
+
+        state = decide({ state, activity: ACTIVITY.SKILLING, now: at }).state;
+        expect(state.paused).toBe(false);
+
+        const settled = decide({ state, activity: ACTIVITY.SKILLING, now: at + SWITCH_STABILITY_MS });
+        expect(settled.apply).toBe('Skilling');
+    });
+
+    test('a hand-picked layout during an unrecognised activity still holds off', () => {
+        let state = pauseForManualChoice(freshSwitchState(), null);
+
+        state = decide({ state, activity: null, now: at }).state;
+        expect(state.paused).toBe(true);
+
+        state = decide({ state, activity: ACTIVITY.COMBAT, now: at + 1000 }).state;
+        expect(state.paused).toBe(false);
+    });
+
+    test('a mapped layout of the player’s own is what gets applied', () => {
+        const state = decide({
+            state: freshSwitchState(),
+            activity: ACTIVITY.COMBAT,
+            now: at,
+            mappings: { Dungeon: ACTIVITY.COMBAT },
+            saved: ['Dungeon'],
+        }).state;
+
+        const settled = decide({
+            state,
+            activity: ACTIVITY.COMBAT,
+            now: at + SWITCH_STABILITY_MS,
+            mappings: { Dungeon: ACTIVITY.COMBAT },
+            saved: ['Dungeon'],
+        });
+        expect(settled.apply).toBe('Dungeon');
     });
 });

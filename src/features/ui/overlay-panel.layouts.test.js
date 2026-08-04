@@ -223,7 +223,7 @@ describe('saving and switching named layouts', () => {
         expect(worn().positions.dps).toEqual({ x: 40, y: 90 });
     });
 
-    test('the gear popover offers the saved layouts', async () => {
+    test('the gear popover offers the saved layouts, then the presets', async () => {
         wear(dungeonLayout());
         await overlayPanel.saveNamedLayout('Dungeon');
         await overlayPanel.saveNamedLayout('Market');
@@ -233,15 +233,30 @@ describe('saving and switching named layouts', () => {
 
         const select = overlayPanel.pickerEl.querySelector('[data-overlay-layout-select]');
         const options = [...select.querySelectorAll('option')].map((o) => o.textContent);
-        expect(options).toEqual(['Switch to…', 'Dungeon', 'Market']);
+        // "Market" is saved, so the preset of that name is shadowed rather than
+        // offered a second time
+        expect(options).toEqual([
+            'Switch to…',
+            'Dungeon',
+            'Market',
+            'Combat · preset',
+            'Skilling · preset',
+            'Labyrinth · preset',
+        ]);
     });
 
-    test('the popover says so when there is nothing saved', async () => {
+    test('with nothing saved the popover still has the presets to offer', async () => {
         overlayPanel.pickerEl.style.display = '';
         await overlayPanel._refreshLayoutNames();
 
         const select = overlayPanel.pickerEl.querySelector('[data-overlay-layout-select]');
-        expect(select.disabled).toBe(true);
-        expect(select.options[0].textContent).toBe('None saved');
+        expect(select.disabled).toBe(false);
+        expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+            'Switch to…',
+            'Combat · preset',
+            'Skilling · preset',
+            'Labyrinth · preset',
+            'Market · preset',
+        ]);
     });
 });
