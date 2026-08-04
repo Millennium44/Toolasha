@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The black box was ours
+
+- **The black band at the foot of action panels is gone**: the sticky Queue/Start strip painted itself near-black, and against the game's dashed catalyst slot on alchemy tabs it read as a "black Consumed Item box". The strip stays sticky but now renders in the game's own colors — no invented paint in either direction; the catalyst slot was confirmed fully native and untouched.
+- Also found en route: the alchemy action pin shared a CSS class with the picker-tile pins, rendering as an invisible-on-desktop, black-square-on-touch artifact over the catalyst slot. Renamed and fixed.
+
 ### The recorder grows up
 
 - **Recordings snapshot your loadout at record time** (gear, levels, abilities, food/drink slots, house, shrines) and the 12h check sims against the snapshot — the "gear is read as worn now" caveat is retired for new recordings; mixed-gear samples say so.
