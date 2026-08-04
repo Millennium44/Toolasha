@@ -84,6 +84,31 @@
  * fight cut in half is dropped by the replay at both ends, so cutting on the
  * stroke of the clock would cost the very fight the last minute was spent on.
  * Overshooting costs nothing but a few extra seconds of recording.
+ *
+ * ## Recording until the answer is worth having
+ *
+ * Fights and minutes are both proxies for the thing actually wanted, which is a
+ * sample tight enough to argue with. How many fights that takes depends on how
+ * much this zone's fights vary, which nobody knows in advance and which the
+ * accuracy check measures as it goes. So a target can also be a **band**: record
+ * until the 95% margin on the sample is under this many percent.
+ *
+ * The recorder cannot compute that — the variance lives with whatever is folding
+ * fights into a sample — so it asks, the same way it asks for a loadout
+ * snapshot. See {@link setNoiseProvider}. Asked at fight boundaries only, for
+ * the same reason as everything else here, and a band no sample can reach simply
+ * never stops, which is what an unlimited recording does anyway.
+ *
+ * ## Handing the whole session over
+ *
+ * Rotation banks a segment and frees its buffer, which is what makes an
+ * unbounded recording possible and what used to make the downloaded file the
+ * *last segment only* — a two-hour recording handed over as its final ten
+ * minutes, silently. The session is now kept as well as the segment: every
+ * banked segment's ticks are retained up to {@link RETAINED_TICKS}, and past
+ * that the oldest segments keep their per-fight summary and lose their payloads.
+ * {@link sessionFile} says per segment which of the two it is, so a file is
+ * never quietly less than it looks.
  */
 
 import config from '../../core/config.js';
@@ -108,6 +133,16 @@ const MAX_TICKS = 4000;
  * segment is marked as having lost one.
  */
 const MAX_TICKS_HARD = MAX_TICKS * 2;
+
+/**
+ * Ticks kept across banked segments, so the whole session can still be handed over.
+ *
+ * Rotation exists to cap memory, and keeping every segment forever would undo
+ * it. Five segments is about an hour of combat and a file of a few megabytes,
+ * which is the size somebody can actually send. Past it the oldest segments keep
+ * their per-fight summary and lose their payloads, and the file says so.
+ */
+const RETAINED_TICKS = MAX_TICKS * 5;
 
 /**
  * The shared hook instance.
@@ -139,6 +174,18 @@ let segmentIndex = 0;
 let completedFights = 0;
 let loadout = null;
 
+/** Fights closed inside the current segment, so each banked one carries its own count */
+let segmentFights = 0;
+
+/**
+ * The segments already banked this session, oldest first.
+ *
+ * Each is what {@link recordingFile} returned for it, plus the fights it closed
+ * and — once the retention budget bites — a per-fight summary in place of the
+ * payloads it no longer carries.
+ */
+let segments = [];
+
 /**
  * How much to record before stopping, or null for as long as it takes.
  *
@@ -151,16 +198,65 @@ let target = null;
 /** Whether the last recording ended by reaching its target rather than by hand */
 let targetMet = false;
 
+/**
+ * The band the sample was last measured at, in percent, or null.
+ *
+ * Only ever set while a `noise` target is standing, since that is the only time
+ * anything asks. Kept after the recording stops so the button can say what it
+ * stopped at rather than only that it stopped.
+ */
+let marginPct = null;
+
 /** Targets are counted in one of these, and nothing else */
-const TARGET_UNITS = new Set(['fights', 'minutes']);
+const TARGET_UNITS = new Set(['fights', 'minutes', 'noise']);
+
+/**
+ * How wide the sample's margin is, for a recording asked to reach a band.
+ *
+ * Supplied rather than computed, exactly as the loadout snapshot is: the
+ * variance lives with whatever is folding these fights into a sample, and a
+ * recorder that could not run without it would be a recorder that stops working
+ * the day the bundles are rearranged.
+ */
+let noiseProvider = null;
+
+/**
+ * Say how to measure the sample's margin, for a `noise` target.
+ *
+ * @param {Function|null} provider - `(file) => number|null`, the 95% margin in
+ *   percent over the fights recorded so far, or null when it cannot be measured
+ */
+export function setNoiseProvider(provider) {
+    noiseProvider = typeof provider === 'function' ? provider : null;
+}
+
+/**
+ * The band the sample is at now, remembered for the button to read.
+ *
+ * @returns {number|null} Percent, or null when nothing can measure it
+ */
+function measureNoise() {
+    if (!noiseProvider) return null;
+    try {
+        // `typeof` and not `Number()`: null is how a provider says "too few
+        // fights to measure the spread", and `Number(null)` is zero, which is a
+        // band tighter than any target and would stop the recording instantly
+        const measured = noiseProvider(recordingFile());
+        marginPct = typeof measured === 'number' && Number.isFinite(measured) ? measured : null;
+    } catch (error) {
+        console.error('[CombatRecorder] Measuring the sample noise failed:', error);
+        marginPct = null;
+    }
+    return marginPct;
+}
 
 /**
  * A target, or null for unlimited.
  *
- * Anything that is not a positive number of fights or minutes is unlimited
- * rather than an error: an empty box is how the control says "no target", and a
- * recording that refused to start over a malformed one would be worse than a
- * recording that simply runs until stopped.
+ * Anything that is not a positive number of fights, minutes or percent is
+ * unlimited rather than an error: an empty box is how the control says "no
+ * target", and a recording that refused to start over a malformed one would be
+ * worse than a recording that simply runs until stopped.
  *
  * @param {Object} [raw] - `{value, unit}`
  * @returns {{value: number, unit: string}|null}
@@ -202,7 +298,14 @@ export function recordTarget() {
 function targetReached() {
     if (!target) return false;
     if (target.unit === 'fights') return completedFights >= target.value;
-    return Date.now() - recordingStartedAt >= target.value * 60_000;
+    if (target.unit === 'minutes') return Date.now() - recordingStartedAt >= target.value * 60_000;
+
+    // A band. Measured every boundary rather than only when it might be met,
+    // because the button shows how far off it is and a figure that only appears
+    // at the finish is no use while waiting for one. A band nothing can measure,
+    // or one no sample reaches, never stops — which is what unlimited does.
+    const measured = measureNoise();
+    return Number.isFinite(measured) && measured <= target.value;
 }
 
 /** Called with the finished file whenever a recording ends with something in it */
@@ -235,6 +338,39 @@ let loadoutProvider = null;
  */
 export function setLoadoutProvider(provider) {
     loadoutProvider = typeof provider === 'function' ? provider : null;
+}
+
+/**
+ * How to reduce a segment's payloads to the per-fight numbers derived from them.
+ *
+ * Injected for the same reason the loadout snapshot is: the derivation belongs
+ * to whatever reads recordings, and the recorder's job is to keep them.
+ */
+let segmentSummarizer = null;
+
+/**
+ * Say how to summarize a segment, for the session file.
+ *
+ * @param {Function|null} summarizer - `(file) => Object|null`
+ */
+export function setSegmentSummarizer(summarizer) {
+    segmentSummarizer = typeof summarizer === 'function' ? summarizer : null;
+}
+
+/**
+ * A segment's fights, as numbers rather than payloads.
+ *
+ * @param {Object} file - From `recordingFile()`
+ * @returns {Object|null} Null when nothing can summarize one
+ */
+function summarizeSegment(file) {
+    if (!segmentSummarizer) return null;
+    try {
+        return segmentSummarizer(file) ?? null;
+    } catch (error) {
+        console.error('[CombatRecorder] Summarizing the segment failed:', error);
+        return null;
+    }
 }
 
 /** @returns {Object|null} The snapshot, or null when nothing can take one */
@@ -343,7 +479,7 @@ export function isRecording() {
  * the run.
  *
  * @returns {{ticks: number, seconds: number, full: boolean, fights: number, segments: number,
- *   target: Object|null, targetMet: boolean}}
+ *   target: Object|null, targetMet: boolean, marginPct: number|null}}
  */
 export function recordingStatus() {
     return {
@@ -354,6 +490,8 @@ export function recordingStatus() {
         segments: segmentIndex + 1,
         target,
         targetMet,
+        // Null unless a band was asked for, since nothing measures it otherwise
+        marginPct,
     };
 }
 
@@ -373,12 +511,15 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     if (wanted !== undefined) setRecordTarget(wanted);
 
     ticks = [];
+    segments = [];
     lostFight = false;
     sawNewBattle = false;
     panelSnapshots = 0;
     segmentIndex = 0;
     completedFights = 0;
+    segmentFights = 0;
     targetMet = false;
+    marginPct = null;
     startedAt = Date.now();
     recordingStartedAt = startedAt;
     recording = true;
@@ -435,13 +576,39 @@ function push(type, payload) {
 function rotateSegment() {
     const file = recordingFile();
 
+    bankSegment(file);
+
     ticks = [];
     segmentIndex += 1;
+    segmentFights = 0;
     startedAt = Date.now();
     lostFight = false;
     loadout = captureLoadout();
 
     notify(completionListeners, file);
+}
+
+/**
+ * Keep a banked segment for the session file, within the tick budget.
+ *
+ * Summarized on the way in rather than on the way out: the summary is derived
+ * from the payloads, and once the budget has taken them there is nothing left to
+ * derive it from. A segment that keeps neither would be a hole in the file with
+ * nothing to say what was in it.
+ *
+ * @param {Object} file - From `recordingFile()`
+ */
+function bankSegment(file) {
+    segments.push({ ...file, fights: segmentFights, tickCount: file.ticks.length, summary: summarizeSegment(file) });
+
+    let retained = segments.reduce((total, entry) => total + (entry.ticks ? entry.ticks.length : 0), 0);
+    for (const entry of segments) {
+        if (retained <= RETAINED_TICKS) break;
+        if (!entry.ticks) continue;
+
+        retained -= entry.ticks.length;
+        entry.ticks = null;
+    }
 }
 
 /**
@@ -459,7 +626,10 @@ function capture(type, payload) {
 
     push(type, payload);
     if (type === 'new_battle') sawNewBattle = true;
-    if (closesFight) completedFights += 1;
+    if (closesFight) {
+        completedFights += 1;
+        segmentFights += 1;
+    }
 
     // At a boundary and nowhere else. A minutes target that ran out mid-fight
     // has already been over for a few seconds by the time this reads it, and
@@ -546,15 +716,73 @@ export function recordingFile() {
 }
 
 /**
- * Write the current segment out.
+ * The whole session, segment by segment.
+ *
+ * What {@link recordingFile} is to one segment. Every segment says whether it
+ * still carries its payloads, because a rotation that quietly dropped them is
+ * exactly how a two-hour recording used to be handed over as its last ten
+ * minutes with nothing on the file to say so.
+ *
+ * @returns {Object}
+ */
+export function sessionFile() {
+    const live = recordingFile();
+    const all = [
+        ...segments.map(segmentEntry),
+        segmentEntry({ ...live, fights: segmentFights, tickCount: live.ticks.length, summary: summarizeSegment(live) }),
+    ];
+    return {
+        format: 'toolasha-combat-session',
+        version: 1,
+        recordedAt: recordingStartedAt || null,
+        exportedAt: Date.now(),
+        seconds: recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : 0,
+        fights: completedFights,
+        live: recording,
+        truncated: all.some((entry) => entry.truncated),
+        // Said once at the top as well as per segment, since "is this the whole
+        // thing" is the first question anybody opening the file has
+        ticksComplete: all.every((entry) => entry.ticksIncluded),
+        segments: all,
+    };
+}
+
+/**
+ * One segment, as the session file carries it.
+ *
+ * @param {Object} entry - A banked segment or the live one
+ * @returns {Object}
+ */
+function segmentEntry(entry) {
+    return {
+        segment: entry.segment,
+        seconds: entry.seconds,
+        truncated: Boolean(entry.truncated),
+        fights: entry.fights ?? 0,
+        loadout: entry.loadout ?? null,
+        tickCount: entry.tickCount ?? entry.ticks?.length ?? 0,
+        // The one thing a reader cannot work out for itself: an absent `ticks`
+        // is a segment whose payloads aged out, not a segment that caught nothing
+        ticksIncluded: Boolean(entry.ticks),
+        ticks: entry.ticks ?? null,
+        summary: entry.summary ?? null,
+    };
+}
+
+/**
+ * Write the whole session out.
+ *
+ * The session and not the segment: rotation used to make this hand over only
+ * whatever had accumulated since the last one, which on a long recording is the
+ * end of it and nothing else.
  *
  * @returns {boolean} Whether there was anything to write
  */
 export function downloadRecording() {
-    if (!ticks.length) return false;
+    if (!ticks.length && !segments.length) return false;
 
     try {
-        const blob = new Blob([JSON.stringify(recordingFile())], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(sessionFile())], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `toolasha-combat-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
@@ -584,6 +812,7 @@ export default {
     cleanup: () => {
         stopRecording();
         ticks = [];
+        segments = [];
     },
     isRecording,
     recordingStatus,
@@ -591,11 +820,14 @@ export default {
     stopRecording,
     downloadRecording,
     recordingFile,
+    sessionFile,
     onRecordingComplete,
     onRecordingCheckpoint,
     onRecordingStopped,
     onSessionStart,
     setLoadoutProvider,
+    setSegmentSummarizer,
+    setNoiseProvider,
     setRecordTarget,
     recordTarget,
     normalizeTarget,

@@ -62,8 +62,18 @@ const TARGET_KEY = 'combatRecordControl_target';
 
 const DISCARD_LEGACY = { migrate: 'discard' };
 
-/** The units a target can be counted in, in the order the toggle cycles them */
-export const TARGET_UNITS = ['fights', 'minutes'];
+/**
+ * The units a target can be counted in, in the order the toggle cycles them.
+ *
+ * `noise` is a band and not a count: record until the 95% margin on the sample
+ * is under this many percent. It is the unit the accuracy check's own suggestion
+ * is phrased in — "±5% is where differences start being findings" — and the
+ * other two are proxies for it that nobody can convert in advance.
+ */
+export const TARGET_UNITS = ['fights', 'minutes', 'noise'];
+
+/** What the unit toggle shows for each */
+export const UNIT_LABELS = { fights: 'fights', minutes: 'min', noise: '±%' };
 
 /** Read once per character; a switch clears it, see {@link resetRecordTargetCache} */
 let targetLoaded = false;
@@ -79,6 +89,41 @@ let targetLoading = null;
  * into it.
  */
 let targetGeneration = 0;
+
+/**
+ * A target read from disk while a recording was running, waiting for it to stop.
+ *
+ * `{target}` rather than the target itself, because null is a value here —
+ * unlimited — and "nothing pending" has to be distinguishable from "pending
+ * unlimited".
+ */
+let pending = null;
+
+/**
+ * Restore the persisted target, when there is a quiet moment to do it in.
+ *
+ * Called from the panels' redraw rather than from an initialize, so a target
+ * survives a reload without anything owning one. Fire-and-forget: the panels
+ * redraw on a timer, so the first draw shows unlimited and the one a moment
+ * later shows the target.
+ *
+ * Kept separate from {@link recordControlState} on purpose — see the note there
+ * on why the function every panel calls on every redraw must not write.
+ */
+export function primeRecordTarget() {
+    // A recording in flight was started with whatever target it was started
+    // with, and changing that underneath it is at best a surprise
+    if (recorder()?.isRecording?.()) return;
+
+    if (pending) {
+        const { target } = pending;
+        pending = null;
+        recorder()?.setRecordTarget?.(target);
+        return;
+    }
+
+    loadRecordTarget();
+}
 
 /**
  * Put the persisted target back on the recorder, once.
@@ -99,7 +144,18 @@ export async function loadRecordTarget() {
         const generation = targetGeneration;
         try {
             const stored = await readScoped(TARGET_KEY, 'settings', null, DISCARD_LEGACY);
+            // A recording started before this landed is already running to
+            // whatever it was started with, and a target restored underneath it
+            // is a rule changed mid-run — at best a surprise, at worst a stop,
+            // since a stored target smaller than the fights already recorded is
+            // met the moment it arrives. Held rather than dropped, so the next
+            // quiet moment restores it properly.
             targetLoaded = true;
+            if (recorder()?.isRecording?.()) {
+                pending = { target: stored };
+                return recordTarget();
+            }
+
             // Somebody set one while this was in the air. Theirs is newer than
             // anything on disk, and putting the disk's value back would read as
             // the box refusing what was typed into it.
@@ -138,6 +194,8 @@ export async function setRecordTarget(target) {
     // land afterwards and put the old one back
     targetLoaded = true;
     targetGeneration += 1;
+    // A target set by hand outranks one waiting to be restored from disk
+    pending = null;
     try {
         await writeScoped(TARGET_KEY, applied, 'settings');
     } catch (error) {
@@ -155,6 +213,7 @@ export async function setRecordTarget(target) {
 export function resetRecordTargetCache() {
     targetLoaded = false;
     targetLoading = null;
+    pending = null;
     // A read still in the air belongs to the character being switched away from
     targetGeneration += 1;
 }
@@ -170,8 +229,42 @@ function progressText(target, status) {
     if (target.unit === 'fights') {
         return `Recording ${Number(status.fights) || 0}/${target.value} fights…`;
     }
-    const minutes = Math.floor((Number(status.seconds) || 0) / 60);
-    return `Recording ${minutes}m of ${target.value}m…`;
+    if (target.unit === 'minutes') {
+        const minutes = Math.floor((Number(status.seconds) || 0) / 60);
+        return `Recording ${minutes}m of ${target.value}m…`;
+    }
+
+    // A band is not a count, so there is no "n of m" to show — what there is is
+    // where the sample stands, which is the number being waited on. Before the
+    // first measurement there is nothing to show but the fights so far.
+    const fights = Number(status.fights) || 0;
+    const band = Number(status.marginPct);
+    const at = Number.isFinite(band) && status.marginPct !== null ? `±${formatBand(band)}%` : 'measuring';
+    return `Recording ${fights} fight${fights === 1 ? '' : 's'} — ${at} of ±${target.value}%…`;
+}
+
+/**
+ * A margin, at the precision it is worth reading.
+ *
+ * @param {number} value - Percent
+ * @returns {string}
+ */
+export function formatBand(value) {
+    return value >= 10 ? value.toFixed(0) : value.toFixed(1);
+}
+
+/** Said on every idle Record button, because an idle recording catches nothing */
+const START_HINT = 'Start it during a fight — an idle recording captures nothing.';
+
+/**
+ * A target in words, for the button's tooltip.
+ *
+ * @param {Object} target - `{value, unit}`
+ * @returns {string}
+ */
+function targetText(target) {
+    if (target.unit === 'noise') return `the sample's margin is under ±${target.value}%`;
+    return `${target.value} ${target.unit}`;
 }
 
 /**
@@ -198,18 +291,29 @@ function progressText(target, status) {
  * was never started. "Done" is the only part of this the button can say that
  * nothing else does.
  *
+ * ## Why it does not write anything
+ *
+ * It used to restore the persisted target from here, which made the one function
+ * every panel calls on every redraw also the one function that mutates the
+ * recorder. That is fine until something else is busy: a simulation run holds the
+ * main thread and IndexedDB for long enough that a read fired before it lands
+ * during it, and the value it puts back is applied to the recording *in
+ * progress*. A stale twenty-fight target landing on a run already past forty
+ * fights stops it at the next boundary — a recording that appears to have stopped
+ * itself for no reason anybody watching could name.
+ *
+ * So this reads and only reads. Restoring the target is {@link primeRecordTarget},
+ * called from the same places but explicitly, and it refuses to touch a recording
+ * that is running — a preference is for the next recording, not the one in flight.
+ *
  * @returns {{recording: boolean, ticks: number, fights: number, target: Object|null,
- *   done: boolean, label: string, title: string}|null}
+ *   done: boolean, marginPct: number|null, label: string, title: string}|null}
  *   null when no recorder is reachable, which is a panel that should draw no
  *   button at all rather than a dead one
  */
 export function recordControlState() {
     const rec = recorder();
     if (!rec?.isRecording || !rec?.recordingStatus) return null;
-
-    // Every panel calls this on every redraw, which makes it the one place a
-    // persisted target can be restored without anything owning an initialize
-    loadRecordTarget();
 
     const recording = Boolean(rec.isRecording());
     const status = rec.recordingStatus() || {};
@@ -218,6 +322,10 @@ export function recordControlState() {
     const target = rec.normalizeTarget ? rec.normalizeTarget(status.target) : null;
     const done = !recording && Boolean(status.targetMet) && fights > 0;
     const caught = fights ? `${fights} fight${fights === 1 ? '' : 's'}` : null;
+    const measured = Number.isFinite(Number(status.marginPct)) ? Number(status.marginPct) : null;
+    // What the recording was actually asked for, said out loud on the finish:
+    // "Done — 41 fights" leaves out the number the whole target was about
+    const band = measured !== null && target?.unit === 'noise' ? `, ±${formatBand(measured)}%` : '';
 
     if (recording) {
         return {
@@ -226,6 +334,7 @@ export function recordControlState() {
             fights,
             target,
             done: false,
+            marginPct: measured,
             label: target ? progressText(target, status) : caught ? `Recording ${caught}…` : `Recording ${ticks}…`,
             title: target
                 ? 'Stop recording early. Left alone it stops itself at the target, at the end of a fight rather ' +
@@ -242,7 +351,8 @@ export function recordControlState() {
             fights,
             target,
             done: true,
-            label: `Done — ${caught}`,
+            marginPct: measured,
+            label: `Done — ${caught}${band}`,
             title: 'The recording reached its target and stopped itself at the end of a fight. Press to start another.',
         };
     }
@@ -253,11 +363,11 @@ export function recordControlState() {
         fights,
         target,
         done: false,
+        marginPct: measured,
         label: caught ? `Record (${caught} kept)` : ticks ? `Record (${ticks} kept)` : 'Record',
         title: target
-            ? `Record the combat feed until ${target.value} ${target.unit}, then stop. Start it during a fight — ` +
-              'an idle recording captures nothing.'
-            : 'Record the combat feed. Start it during a fight — an idle recording captures nothing.',
+            ? `Record the combat feed until ${targetText(target)}, then stop. ${START_HINT}`
+            : `Record the combat feed. ${START_HINT}`,
     };
 }
 

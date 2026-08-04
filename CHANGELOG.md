@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### The books balance: first swings were invisible
+
+- **The Sim Accuracy undercount is fixed**: the battle feed only reports monsters that changed, and the replay refused to score a monster's first appearance — so the opening swing on every monster of every wave went unrecorded (12–19% of swings, ~21% of damage on real fixtures). Wave baselines now seed from the battle-open message; the reported swings/damage deficit should vanish without changing anything about how you fight. The clock, task damage, and spear multi-hit were all ruled out and pinned by tests. The check sims 12 hours of the zone's own encounter mix — that's now stated on the panel.
+- **Recordings no longer stop themselves during sim runs**: a stale persisted record-target could restore late (main-thread contention while a sim launches) and stop a longer recording at the next boundary; target restore is now explicit and never touches a live recording.
+- **Record to ±%**: a third target unit stops recording when the measured noise band reaches your figure; the suggestion button now reads "Record to ±5%".
+- **Saving works again and covers everything**: the DPS-panel download carries every segment of the session (oldest keep per-fight summaries past the tick-retention cap, and the file says what's included); Sim Accuracy gains a "Save recording" button exporting the full check bundle — observations, loadout snapshots, clocks, comparison, history — for sharing.
+
 ### Iron Cow re-forces instantly, and one more clickable name
 
 - **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately** — previously the stored values changed underneath and only got forced back on the mode's next apply. The mode's snapshot of your real pre-IC values is never touched by the re-force.
