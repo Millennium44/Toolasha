@@ -10,6 +10,7 @@ import enhancementUI from './enhancement-ui.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount } from './enhancement-xp.js';
+import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 
 /**
  * Setup enhancement event handlers
@@ -213,10 +214,8 @@ async function trackMaterialCosts(itemHrid) {
         } else {
             // Track material costs
             await enhancementTracker.trackMaterialCost(resourceHrid, count);
-            // Add to material cost total
-            const priceData = marketAPI.getPrice(resourceHrid, 0);
-            const unitCost = priceData ? priceData.ask || priceData.bid || 0 : 0;
-            materialCost += unitCost * count;
+            // Add to material cost total, using the same pricing rules the tracker just used
+            materialCost += getEnhancementMaterialPrice(resourceHrid, 'ask') * count;
         }
     }
 

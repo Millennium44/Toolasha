@@ -5,7 +5,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
-import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { getEnhancingParams, describeParamsSource } from '../../utils/enhancement-config.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 
 /**
@@ -165,7 +165,7 @@ export function calculateAdjustedAttemptCount(session) {
  * @param {string} itemHrid - Item HRID being enhanced
  * @returns {number} Per-action time in seconds
  */
-function getEnhancingActionTime(itemHrid) {
+export function getEnhancingActionTime(itemHrid) {
     try {
         const charData = dataManager.characterData;
         if (!charData) return 12;
@@ -237,7 +237,16 @@ export function getEnhancingSpeedBreakdown(itemHrid) {
     try {
         const charData = dataManager.characterData;
         if (!charData)
-            return { total: 0, equipment: 0, house: 0, community: 0, consumable: 0, personal: 0, levelAdvantage: 0 };
+            return {
+                total: 0,
+                equipment: 0,
+                house: 0,
+                guild: 0,
+                community: 0,
+                consumable: 0,
+                personal: 0,
+                levelAdvantage: 0,
+            };
 
         // Get enhancing skill level
         const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
@@ -298,9 +307,12 @@ export function getEnhancingSpeedBreakdown(itemHrid) {
         }
 
         // Total (as decimal, e.g. 1.56 for +156%)
+        // Guild is read above and applied by the game, so it belongs in the total; leaving it out
+        // made the displayed speed lag the real one for anyone in a guild with a speed buff.
         breakdown.total =
             breakdown.equipment +
             breakdown.house +
+            breakdown.guild +
             breakdown.community +
             breakdown.consumable +
             breakdown.personal +
@@ -308,7 +320,16 @@ export function getEnhancingSpeedBreakdown(itemHrid) {
 
         return breakdown;
     } catch {
-        return { total: 0, equipment: 0, house: 0, community: 0, consumable: 0, personal: 0, levelAdvantage: 0 };
+        return {
+            total: 0,
+            equipment: 0,
+            house: 0,
+            guild: 0,
+            community: 0,
+            consumable: 0,
+            personal: 0,
+            levelAdvantage: 0,
+        };
     }
 }
 
@@ -331,6 +352,11 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         // Check for blessed tea
         const hasBlessed = params.teas?.blessed || false;
 
+        // Per-action time from the game's buff maps (authoritative source), handed to the
+        // calculator as an override so the prediction and anything reading result.totalTime
+        // later work off one time base instead of two that can disagree.
+        const perActionTime = getEnhancingActionTime(itemHrid);
+
         // Calculate predictions (Markov chain for attempts, protections, success rates)
         const result = calculateEnhancement({
             enhancingLevel: params.enhancingLevel,
@@ -343,22 +369,24 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             protectFrom,
             blessedTea: hasBlessed,
             guzzlingBonus: params.guzzlingBonus,
+            blessedTeaBonus: params.blessedTeaBonus,
+            perActionTimeOverride: perActionTime,
         });
 
         if (!result) {
             return null;
         }
 
-        // Calculate per-action time from the game's buff maps (authoritative source)
-        // instead of the hardcoded formula in calculateEnhancement
-        const perActionTime = getEnhancingActionTime(itemHrid);
-
         return {
             expectedAttempts: Math.round(result.attemptsRounded),
             expectedProtections: Math.round(result.protectionCount),
-            expectedTime: perActionTime * result.attempts,
-            perActionTime,
+            expectedTime: result.totalTime,
+            perActionTime: result.perActionTime,
             successMultiplier: result.successMultiplier,
+            successRates: result.successRates,
+            // Recorded with the prediction, so a session opened days later still says which
+            // stats it was predicted against
+            paramsNote: describeParamsSource(params),
         };
     } catch {
         return null;

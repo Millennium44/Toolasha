@@ -13,6 +13,10 @@ import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
 
+// Retired tasks live alongside the live map in the same store
+const HISTORY_KEY = 'taskRerollHistory';
+const HISTORY_CAP = 500;
+
 class TaskRerollTracker {
     constructor() {
         this.taskRerollData = new Map(); // key: taskId, value: { coinRerollCount, cowbellRerollCount }
@@ -93,8 +97,46 @@ class TaskRerollTracker {
     }
 
     /**
+     * Load the reroll history — the tasks that have already left the board.
+     * @returns {Promise<Array<Object>>} History entries, oldest first
+     */
+    async loadHistory() {
+        try {
+            const saved = await storage.getJSON(HISTORY_KEY, this.storeName, []);
+            return Array.isArray(saved) ? saved : [];
+        } catch (error) {
+            console.error('[Task Reroll Tracker] Failed to load reroll history:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Append retired tasks to the reroll history.
+     *
+     * A task that completes or is discarded is the only moment its reroll spend
+     * can ever be set against what it paid out, and the live map is about to
+     * drop it. The history is capped so it cannot grow without bound.
+     *
+     * @param {Array<Object>} entries - Retired task records
+     * @private
+     */
+    async appendToHistory(entries) {
+        if (!entries.length) return;
+
+        try {
+            const history = await this.loadHistory();
+            history.push(...entries);
+            const capped = history.length > HISTORY_CAP ? history.slice(history.length - HISTORY_CAP) : history;
+            await storage.setJSON(HISTORY_KEY, capped, this.storeName, true);
+        } catch (error) {
+            console.error('[Task Reroll Tracker] Failed to append reroll history:', error);
+        }
+    }
+
+    /**
      * Clean up old task data that's no longer active
-     * Keeps only tasks that are currently in characterQuests
+     * Keeps only tasks that are currently in characterQuests; everything it
+     * drops is written to the history first so the spend stays analysable.
      */
     cleanupOldTasks() {
         if (!dataManager.characterData || !dataManager.characterData.characterQuests) {
@@ -103,17 +145,29 @@ class TaskRerollTracker {
 
         const activeTaskIds = new Set(dataManager.characterData.characterQuests.map((quest) => quest.id));
 
-        let hasChanges = false;
+        const retired = [];
+        const retiredAt = Date.now();
 
         // Remove tasks that are no longer active
-        for (const taskId of this.taskRerollData.keys()) {
-            if (!activeTaskIds.has(taskId)) {
-                this.taskRerollData.delete(taskId);
-                hasChanges = true;
-            }
+        for (const [taskId, taskData] of this.taskRerollData.entries()) {
+            if (activeTaskIds.has(taskId)) continue;
+
+            retired.push({
+                taskId,
+                retiredAt,
+                coinRerollCount: taskData.coinRerollCount || 0,
+                cowbellRerollCount: taskData.cowbellRerollCount || 0,
+                goldSpent: this.calculateGoldSpent(taskData.coinRerollCount || 0),
+                cowbellsSpent: this.calculateCowbellSpent(taskData.cowbellRerollCount || 0),
+                monsterHrid: taskData.monsterHrid || '',
+                actionHrid: taskData.actionHrid || '',
+                goalCount: taskData.goalCount || 0,
+            });
+            this.taskRerollData.delete(taskId);
         }
 
-        if (hasChanges) {
+        if (retired.length > 0) {
+            this.appendToHistory(retired);
             this.saveToStorage();
         }
     }

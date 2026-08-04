@@ -8,11 +8,13 @@
  * - a discard (Back if the reroll view is open → trash can icon → "Confirm
  *   Discard") once a task is at the limit for both categories.
  * The button label always previews the next action. Tasks that land on a
- * protected target and completed tasks (Claim Reward showing) are left alone.
+ * protected target, tasks rating at or above the visible board's median, and
+ * completed tasks (Claim Reward showing) are all left alone.
  *
  * Limit semantics match cap protection: a category's rerolls are spent while
  * the next reroll's cost is below the configured threshold, so the minimum
- * threshold (10K coins / 1 cowbell) means zero rerolls in that category.
+ * threshold (10K coins / 1 cowbell) means zero rerolls in that category, and a
+ * card is at cap once EITHER category's limit is hit.
  */
 
 import config from '../../core/config.js';
@@ -20,9 +22,39 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { readVisibleTaskRatings } from './task-profit-display.js';
 import { formatKMB } from '../../utils/formatters.js';
 
 const BTN_ID = 'mwi-bulk-reroll-btn';
+
+// Coin progression 10K → 320K, cowbell progression 1 → 32 (both hard-capped)
+const MIN_COIN_COST = 10000;
+const MAX_COIN_COST = 320000;
+const MIN_COWBELL_COST = 1;
+const MAX_COWBELL_COST = 32;
+
+/**
+ * Is a card at the reroll cap?
+ *
+ * Same rule cap protection paints its orange edge with: a card is done being
+ * rerolled once EITHER category hits its limit, not once both have. A category
+ * whose threshold allows zero rerolls is trivially at cap from the start, so it
+ * is ignored unless it is the only category configured that way.
+ *
+ * @param {number} nextCoinCost - Coins the next coin reroll would cost
+ * @param {number} nextCowbellCost - Cowbells the next cowbell reroll would cost
+ * @param {{coin: number, cowbell: number}} limits - Configured thresholds
+ * @returns {boolean}
+ */
+export function isAtRerollCap(nextCoinCost, nextCowbellCost, limits) {
+    const coinAtCap = nextCoinCost >= limits.coin;
+    const cowbellAtCap = nextCowbellCost >= limits.cowbell;
+    const coinZero = limits.coin <= MIN_COIN_COST;
+    const cowbellZero = limits.cowbell <= MIN_COWBELL_COST;
+    if (coinZero && !cowbellZero) return cowbellAtCap;
+    if (cowbellZero && !coinZero) return coinAtCap;
+    return coinAtCap || cowbellAtCap;
+}
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,7 +98,7 @@ class TaskBulkReroll {
         btn.style.cssText = 'margin-left: 8px;';
         btn.textContent = '🎲 Reroll Next';
         btn.title =
-            'Each click performs one action on the first task that needs one: reroll a non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once both limits are hit. Completed tasks are never touched.';
+            'Each click performs one action on the first task that needs one: reroll a non-protected task (coins first, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once a limit is hit. Tasks rating at or above the board median, and completed tasks, are never touched.';
         btn.addEventListener('click', () => this._onClick());
 
         const claimBtn = headerElement.querySelector('#mwi-claim-proxy-btn');
@@ -155,13 +187,19 @@ class TaskBulkReroll {
 
     /**
      * Collect every card that still needs an action, in task-list order.
-     * Coin rerolls are spent before cowbell rerolls; a card below neither
-     * limit is discarded (at the limit for both categories).
+     *
+     * Cards rating at or above the visible board's median are left alone — a
+     * bulk reroll that chews through the good tasks along with the bad is worse
+     * than not running it. Below that, coin rerolls are spent before cowbell
+     * ones, and a card at the cap is discarded.
+     *
      * @returns {Array<{card: HTMLElement, questId: number, mode: string, cost: number}>}
      */
     _collectPending(protectedHrids, limits) {
         const pending = [];
-        const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
+        const cards = Array.from(document.querySelectorAll('[class*="RandomTask_randomTask"]'));
+        const board = readVisibleTaskRatings(cards);
+
         for (const card of cards) {
             // Completed task — claimable, leave it alone
             if (card.querySelector('button[class*="Button_buy"]')) continue;
@@ -171,14 +209,21 @@ class TaskBulkReroll {
             const hrid = quest.actionHrid || quest.monsterHrid || '';
             if (hrid && protectedHrids.has(hrid)) continue;
 
-            const nextCoinCost = Math.min(10000 * Math.pow(2, quest.coinRerollCount || 0), 320000);
-            const nextCowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount || 0), 32);
-            if (nextCoinCost < limits.coin) {
+            // Good task by the board's own numbers — never reroll or discard it
+            const rating = board.entries.get(card);
+            if (board.median !== null && rating && rating.value >= board.median) continue;
+
+            const nextCoinCost = Math.min(MIN_COIN_COST * Math.pow(2, quest.coinRerollCount || 0), MAX_COIN_COST);
+            const nextCowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount || 0), MAX_COWBELL_COST);
+
+            if (isAtRerollCap(nextCoinCost, nextCowbellCost, limits)) {
+                if (!this.noDeleteIds.has(quest.id)) {
+                    pending.push({ card, questId: quest.id, mode: 'delete', cost: 0 });
+                }
+            } else if (nextCoinCost < limits.coin) {
                 pending.push({ card, questId: quest.id, mode: 'coin', cost: nextCoinCost });
-            } else if (nextCowbellCost < limits.cowbell) {
+            } else {
                 pending.push({ card, questId: quest.id, mode: 'cowbell', cost: nextCowbellCost });
-            } else if (!this.noDeleteIds.has(quest.id)) {
-                pending.push({ card, questId: quest.id, mode: 'delete', cost: 0 });
             }
         }
         return pending;

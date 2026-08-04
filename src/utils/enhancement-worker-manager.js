@@ -4,11 +4,15 @@
  */
 
 import WorkerPool from './worker-pool.js';
+import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
 
 // Worker pool instance
 let workerPool = null;
 
-// Worker script as inline string — this is the sole source of the worker code
+// Worker script as inline string — this is the sole source of the worker code.
+// The chain itself is NOT written here: a blob worker cannot import a module, so the real
+// buildEnhancementMarkov is serialised in below. A hand-copied chain in this string is exactly
+// how the worker drifted from the calculator and lost the success-chance clamp.
 const WORKER_SCRIPT = `
 // Import math.js library from CDN
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
@@ -16,11 +20,13 @@ importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
 // Cache for enhancement calculation results
 const calculationCache = new Map();
 
-const BASE_SUCCESS_RATES = [50,45,45,40,40,40,35,35,35,35,30,30,30,30,30,30,30,30,30,30];
+const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
+const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
+const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
 
 function getCacheKey(params) {
-    const {enhancingLevel,toolBonus,itemLevel,targetLevel,protectFrom,blessedTea,guzzlingBonus,speedBonus} = params;
-    return \`\${enhancingLevel}|\${toolBonus}|\${itemLevel}|\${targetLevel}|\${protectFrom}|\${blessedTea}|\${guzzlingBonus}|\${speedBonus}\`;
+    const {enhancingLevel,toolBonus,itemLevel,targetLevel,protectFrom,blessedTea,guzzlingBonus,blessedTeaBonus,speedBonus} = params;
+    return \`\${enhancingLevel}|\${toolBonus}|\${itemLevel}|\${targetLevel}|\${protectFrom}|\${blessedTea}|\${guzzlingBonus}|\${blessedTeaBonus}|\${speedBonus}\`;
 }
 
 function calculateSuccessMultiplier(params) {
@@ -36,32 +42,22 @@ function calculateSuccessMultiplier(params) {
 }
 
 function calculateEnhancement(params) {
-    const {enhancingLevel,toolBonus,speedBonus=0,itemLevel,targetLevel,protectFrom=0,blessedTea=false,guzzlingBonus=1.0} = params;
+    const {enhancingLevel,toolBonus,speedBonus=0,itemLevel,targetLevel,protectFrom=0,blessedTea=false,guzzlingBonus=1.0,blessedTeaBonus=DEFAULT_BLESSED_TEA_CHANCE} = params;
 
     if (targetLevel < 1 || targetLevel > 20) throw new Error('Target level must be between 1 and 20');
     if (protectFrom < 0 || protectFrom > targetLevel) throw new Error('Protection level must be between 0 and target level');
 
     const successMultiplier = calculateSuccessMultiplier({enhancingLevel,toolBonus,itemLevel});
-    const markov = math.zeros(20, 20);
+    const markov = buildEnhancementMarkov(math, {
+        baseSuccessRates: BASE_SUCCESS_RATES,
+        successMultiplier,
+        targetLevel,
+        protectFrom,
+        blessedTea,
+        guzzlingBonus,
+        blessedTeaBonus,
+    });
 
-    for (let i = 0; i < targetLevel; i++) {
-        const baseSuccessRate = BASE_SUCCESS_RATES[i] / 100.0;
-        const successChance = baseSuccessRate * successMultiplier;
-        const failureDestination = protectFrom > 0 && i >= protectFrom ? i - 1 : 0;
-
-        if (blessedTea) {
-            const skipChance = successChance * 0.01 * guzzlingBonus;
-            const remainingSuccess = successChance * (1 - 0.01 * guzzlingBonus);
-            markov.set([i, i + 2], skipChance);
-            markov.set([i, i + 1], remainingSuccess);
-            markov.set([i, failureDestination], 1 - successChance);
-        } else {
-            markov.set([i, i + 1], successChance);
-            markov.set([i, failureDestination], 1.0 - successChance);
-        }
-    }
-
-    markov.set([targetLevel, targetLevel], 1.0);
     const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
     const I = math.identity(targetLevel);
     const M = math.inv(math.subtract(I, Q));
