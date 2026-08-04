@@ -2346,6 +2346,20 @@ export const settingsGroups = {
                     'costs. Press Refresh to re-price against the current market; steps you have since satisfied ' +
                     'come back struck through rather than disappearing',
             },
+            ironCowFarm: {
+                id: 'ironCowFarm',
+                label: 'Iron Cow Farm: The cowbell-farming plan, and what it earns',
+                type: 'checkbox',
+                default: true,
+                requiresRefresh: true,
+                help:
+                    'A floating panel (Ctrl+K → Iron Cow Farm) holding the standard iron-cow route to farming gold ' +
+                    'for cowbells — the skills to level, the jewelry to craft, then the endless Star Fruit → ' +
+                    'decompose → coinify loop — with each stage ticking itself off against your own levels, gear ' +
+                    'and house. Costs the loop from your actual rates through the gathering and alchemy ' +
+                    'calculators, and converts it to bells per hour, per day and per week at the current cowbell ' +
+                    'price. All its gold is coinify output, never a market sale, because an iron cow cannot sell',
+            },
             draggableModals: {
                 id: 'draggableModals',
                 label: 'Draggable modals',

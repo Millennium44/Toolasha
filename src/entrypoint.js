@@ -1230,6 +1230,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'ironCowFarm',
+            name: 'Iron Cow Farm',
+            category: 'General',
+            module: UI.ironCowFarmPanel,
+            async: true,
+        },
+        {
             key: 'accountView',
             name: 'Account View',
             category: 'General',
