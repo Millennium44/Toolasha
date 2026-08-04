@@ -31,6 +31,7 @@ import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../../utils/dom-observer-helpers.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
 import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
+import { hasCoarsePointer } from '../../../utils/mobile.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
 import { buildHistorySeries, historyLabels, HISTORY_RANGES } from './market-history-data.js';
@@ -445,9 +446,16 @@ class MarketHistoryPanel {
                 this.savePrefs();
             });
 
+            // Touch gets sized-up controls: 8px arrows are unhittable with a
+            // finger, and right-click-to-remove does not exist there — an
+            // explicit × stands in, since a long-press that silently deletes a
+            // watch would be worse than one extra glyph of clutter
+            const coarse = hasCoarsePointer();
+
             const arrows = document.createElement('span');
-            arrows.style.cssText =
-                'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
+            arrows.style.cssText = coarse
+                ? 'display:flex; flex-direction:column; line-height:0.9; font-size:13px; color:#8fa0c8; gap:2px;'
+                : 'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
             for (const [glyph, direction] of [
                 ['▲', -1],
                 ['▼', 1],
@@ -455,6 +463,7 @@ class MarketHistoryPanel {
                 const step = document.createElement('span');
                 step.textContent = glyph;
                 step.style.cursor = 'pointer';
+                if (coarse) step.style.padding = '2px 4px';
                 step.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.watchlist = moveWatched(this.watchlist, entry.key, direction);
@@ -464,6 +473,20 @@ class MarketHistoryPanel {
                 arrows.appendChild(step);
             }
             chip.appendChild(arrows);
+
+            if (coarse) {
+                const remove = document.createElement('span');
+                remove.textContent = '×';
+                remove.title = 'Remove from watchlist';
+                remove.style.cssText = 'cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:#c88f8f;';
+                remove.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.watchlist = removeWatched(this.watchlist, entry.key);
+                    this.renderChips();
+                    this.savePrefs();
+                });
+                chip.appendChild(remove);
+            }
 
             this.chipRow.appendChild(chip);
         }

@@ -69,6 +69,7 @@ import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../..
 import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
     resolveLayout,
     autoGrid,
@@ -1414,12 +1415,22 @@ class OverlayPanel {
 
         if (row.onOpen) {
             tile.title = `Double-click to open or close ${row.name}`;
-            tile.addEventListener('dblclick', () => {
+            const open = () => {
                 try {
                     row.onOpen();
                 } catch (error) {
                     console.error(`[OverlayPanel] Opening "${row.key}" failed:`, error);
                 }
+            };
+            tile.addEventListener('dblclick', open);
+            // A single tap on touch: double-tap fights the browser's own
+            // tap-to-zoom heuristics, and the accidental-open worry that makes
+            // desktop use double-click does not transfer — a tap that follows a
+            // scroll gesture never fires click at all. Not while the layout is
+            // unlocked, where a tap is the start of arranging, not a request.
+            tile.addEventListener('click', () => {
+                if (!hasCoarsePointer() || this.isEditable) return;
+                open();
             });
         }
 
