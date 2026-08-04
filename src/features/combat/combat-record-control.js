@@ -38,12 +38,21 @@ export function recorder() {
 /**
  * What a Record button should say and look like right now.
  *
- * The tick count is carried in the label because it is the only sign that a
- * recording is actually catching something: a recording started outside combat
- * sits at zero until a fight starts, and a button that says only "Recording…"
- * cannot tell that apart from a recording that is working.
+ * ## Why it counts fights and not ticks
  *
- * @returns {{recording: boolean, ticks: number, label: string, title: string}|null}
+ * The tick count was the only sign a recording was actually catching something:
+ * a recording started outside combat sits at zero until a fight starts, and a
+ * button reading only "Recording…" cannot tell that apart from one that is
+ * working. It is still that sign, but only until the first fight ends.
+ *
+ * After that the fight count is the better one, and once the recorder started
+ * banking segments it became the *only* correct one — a rotation empties the
+ * tick buffer, so a label reading ticks would count up to four thousand, drop to
+ * zero, and count up again on a recording that never stopped. Fights are
+ * cumulative over the whole run, which is what somebody watching the button
+ * means by "how much have I got".
+ *
+ * @returns {{recording: boolean, ticks: number, fights: number, label: string, title: string}|null}
  *   null when no recorder is reachable, which is a panel that should draw no
  *   button at all rather than a dead one
  */
@@ -52,21 +61,28 @@ export function recordControlState() {
     if (!rec?.isRecording || !rec?.recordingStatus) return null;
 
     const recording = Boolean(rec.isRecording());
-    const ticks = Number(rec.recordingStatus()?.ticks) || 0;
+    const status = rec.recordingStatus() || {};
+    const ticks = Number(status.ticks) || 0;
+    const fights = Number(status.fights) || 0;
+    const caught = fights ? `${fights} fight${fights === 1 ? '' : 's'}` : null;
 
     if (recording) {
         return {
             recording: true,
             ticks,
-            label: `Recording ${ticks}…`,
-            title: 'Stop recording. Everything captured so far is kept.',
+            fights,
+            label: caught ? `Recording ${caught}…` : `Recording ${ticks}…`,
+            title:
+                'Stop recording. Everything captured so far is kept, and it keeps going past the tick limit — ' +
+                'long recordings are banked in segments rather than cut off.',
         };
     }
 
     return {
         recording: false,
         ticks,
-        label: ticks ? `Record (${ticks} kept)` : 'Record',
+        fights,
+        label: caught ? `Record (${caught} kept)` : ticks ? `Record (${ticks} kept)` : 'Record',
         title: 'Record the combat feed. Start it during a fight — an idle recording captures nothing.',
     };
 }

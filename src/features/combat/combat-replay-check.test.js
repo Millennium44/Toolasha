@@ -21,13 +21,31 @@
  * A DOM because the module registers an overlay row and builds a panel at import.
  */
 
-import { describe, test, expect, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+/** What the adapter would say the character is wearing, and what the sim was handed */
+const game = vi.hoisted(() => ({
+    dto: {},
+    zone: { zoneHrid: '/actions/combat/fly', difficultyTier: 0 },
+    lastRun: null,
+    simResult: {},
+}));
+
+/** Storage, as a map, with the quota switch the recorders stand down on */
+const store = vi.hoisted(() => ({ data: new Map(), quota: false }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_key, fallback) => fallback, Z_FLOATING_PANEL: 100 },
 }));
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async (_key, _store, fallback) => fallback, set: async () => {} },
+    default: {
+        get: async (key, _store, fallback) => (store.data.has(key) ? store.data.get(key) : fallback),
+        set: async (key, value) => {
+            store.data.set(key, value);
+            return true;
+        },
+        isQuotaExceeded: () => store.quota,
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -40,11 +58,18 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({}),
-    buildPlayerDTO: () => ({}),
+    // A fresh copy each time, as the real one builds: a test that mutated the
+    // snapshot would otherwise be mutating what the adapter is pretending to read
+    buildPlayerDTO: () => (game.dto ? structuredClone(game.dto) : null),
     getCommunityBuffs: () => ({}),
-    getCurrentCombatZone: () => ({ zoneHrid: '/actions/combat/fly', difficultyTier: 0 }),
+    getCurrentCombatZone: () => game.zone,
 }));
-vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runSimulation: async () => ({}) }));
+vi.mock('../combat-sim/combat-sim-runner.js', () => ({
+    runSimulation: async (options) => {
+        game.lastRun = options;
+        return game.simResult;
+    },
+}));
 vi.mock('../../utils/panel-geometry.js', () => ({
     clampGeometry: (geometry) => geometry,
     allGeometry: async () => ({}),
@@ -57,7 +82,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: async () => {},
 }));
 
-import {
+import replayCheck, {
     replayCheckPanel,
     replayFights,
     busiestPlayer,
@@ -66,13 +91,67 @@ import {
     predictFromSim,
     deviationPct,
     noiseMargin,
+    noiseSummary,
+    captureLoadoutSnapshot,
+    applyLoadoutSnapshot,
     compareMetric,
     compareRun,
     summaryLine,
     MIN_SAMPLE_FIGHTS,
     SIM_NOISE_FLOOR_PCT,
+    NOISE_QUIET_PCT,
 } from './combat-replay-check.js';
+import combatRecorder from './combat-recorder.js';
+import { ROW_COLORS } from '../../utils/overlay-format.js';
 import recording from '../../utils/__fixtures__/combat-run.json';
+
+/** Where the scoped keys land, given the character the data manager is pretending to be */
+const OBSERVATIONS_KEY = 'combatReplayCheck_observations_char1';
+const CHECKPOINT_KEY = 'combatReplayCheck_recordingCheckpoint_char1';
+
+/** A character wearing something, in the shape the adapter hands the simulator */
+function loadout({ weapon = '/items/sword', enhancement = 5, attack = 90, ability = '/abilities/poke' } = {}) {
+    return {
+        hrid: 'player1',
+        attackLevel: attack,
+        meleeLevel: attack,
+        defenseLevel: 70,
+        magicLevel: 1,
+        rangedLevel: 1,
+        staminaLevel: 80,
+        intelligenceLevel: 60,
+        // Skilling levels never enter a fight and are not part of the snapshot
+        cookingLevel: 42,
+        equipment: { main_hand: { hrid: weapon, enhancementLevel: enhancement } },
+        abilities: [null, { hrid: ability, level: 3, triggers: null }, null, null, null],
+        food: [{ hrid: '/items/donut', triggers: null }, null, null],
+        drinks: [{ hrid: '/items/coffee', triggers: null }, null, null],
+        houseRooms: { '/house_rooms/dairy_barn': 6 },
+        guildShrineLevels: { attack: 2 },
+        guildCombatBuffs: [{ typeHrid: '/buff_types/attack_level', flatBoost: 3 }],
+        achievementCombatBuffs: [],
+        // World state, not the character's: these come from now, never the snapshot
+        communityBuffLevels: { experience: 4 },
+        tokenUpgrades: { speed: 1 },
+    };
+}
+
+/** Let the awaits inside a fire-and-forget handler settle */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+beforeEach(() => {
+    store.data.clear();
+    store.quota = false;
+    game.dto = loadout();
+    game.zone = { zoneHrid: '/actions/combat/fly', difficultyTier: 0 };
+    game.lastRun = null;
+    game.simResult = {};
+    replayCheck.observations = [];
+    replayCheck.comparison = null;
+    replayCheck.error = null;
+    replayCheck.loaded = false;
+    replayCheck.disable();
+});
 
 describe('deriving what happened from a recording', () => {
     const fights = replayFights(recording.ticks);
@@ -448,6 +527,405 @@ describe('the line the tile carries', () => {
     test('nothing compared yet is not an accuracy claim', () => {
         expect(summaryLine(null)).toBe('No sim check yet');
         expect(summaryLine({ metrics: [] })).toBe('No sim check yet');
+    });
+});
+
+describe('the loadout the fight was actually fought in', () => {
+    test('the snapshot keeps what describes the character', () => {
+        const snapshot = captureLoadoutSnapshot(loadout());
+
+        expect(snapshot.equipment.main_hand).toEqual({ hrid: '/items/sword', enhancementLevel: 5 });
+        expect(snapshot.levels).toEqual({
+            attackLevel: 90,
+            meleeLevel: 90,
+            defenseLevel: 70,
+            magicLevel: 1,
+            rangedLevel: 1,
+            staminaLevel: 80,
+            intelligenceLevel: 60,
+        });
+        expect(snapshot.abilities[1]).toEqual({ hrid: '/abilities/poke', level: 3, triggers: null });
+        expect(snapshot.houseRooms).toEqual({ '/house_rooms/dairy_barn': 6 });
+        expect(snapshot.guildShrineLevels).toEqual({ attack: 2 });
+        expect(snapshot.drinks[0]).toEqual({ hrid: '/items/coffee', triggers: null });
+        expect(snapshot.food[0]).toEqual({ hrid: '/items/donut', triggers: null });
+    });
+
+    test('and not what describes the world', () => {
+        // Community buffs and token upgrades are the server's state and are the
+        // same for the simulated run as for the recorded one. Freezing them
+        // would make a snapshot go stale in a way the gear never does.
+        const snapshot = captureLoadoutSnapshot(loadout());
+
+        expect(snapshot.communityBuffLevels).toBeUndefined();
+        expect(snapshot.tokenUpgrades).toBeUndefined();
+        expect(snapshot.cookingLevel).toBeUndefined();
+        expect(snapshot.levels.cookingLevel).toBeUndefined();
+    });
+
+    test('a character that has not loaded snapshots nothing rather than an empty one', () => {
+        expect(captureLoadoutSnapshot(null)).toBe(null);
+    });
+
+    test('it is laid over the current character, not swapped for it', () => {
+        const snapshot = captureLoadoutSnapshot(loadout({ weapon: '/items/spear', attack: 50 }));
+        const current = loadout({ weapon: '/items/sword', attack: 99 });
+        current.communityBuffLevels = { experience: 9 };
+
+        const merged = applyLoadoutSnapshot(current, snapshot);
+
+        expect(merged.equipment.main_hand.hrid).toBe('/items/spear');
+        expect(merged.attackLevel).toBe(50);
+        // Not named by the snapshot, so it comes from now, which is where it is right
+        expect(merged.communityBuffLevels).toEqual({ experience: 9 });
+        expect(merged.hrid).toBe('player1');
+        // And the DTO it was built from is untouched
+        expect(current.attackLevel).toBe(99);
+    });
+
+    test('no snapshot leaves the DTO exactly as it was built', () => {
+        const current = loadout();
+        expect(applyLoadoutSnapshot(current, null)).toBe(current);
+        expect(applyLoadoutSnapshot(null, captureLoadoutSnapshot(loadout()))).toBe(null);
+    });
+
+    test('a recording carries the snapshot the recorder took onto its observation', () => {
+        const snapshot = captureLoadoutSnapshot(loadout({ weapon: '/items/spear' }));
+        const observation = observeRecording({ ...recording, loadout: snapshot });
+
+        expect(observation.loadout.equipment.main_hand.hrid).toBe('/items/spear');
+    });
+
+    test('a legacy recording has no snapshot, and says so rather than inventing one', () => {
+        expect(observeRecording(recording).loadout).toBe(null);
+    });
+});
+
+describe('what the check simulates', () => {
+    /** A sim result complete enough for `predictFromSim` to read */
+    const simResult = {
+        simulatedTime: 3600 * 1e9,
+        encounters: 360,
+        deaths: {},
+        totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+        warnings: [],
+    };
+
+    test('the gear worn when it was recorded, not the gear worn now', () => {
+        // The whole point: record, go and enhance something, run the check, and
+        // the deviation used to be the enhancement
+        game.simResult = simResult;
+        const recorded = captureLoadoutSnapshot(loadout({ weapon: '/items/spear', enhancement: 0, attack: 50 }));
+        game.dto = loadout({ weapon: '/items/sword', enhancement: 12, attack: 99 });
+        replayCheck.observations = [evenObservation({ fights: 6, loadout: recorded })];
+
+        return replayCheck.check().then(() => {
+            const dto = game.lastRun.playerDTOs[0];
+            expect(dto.equipment.main_hand).toEqual({ hrid: '/items/spear', enhancementLevel: 0 });
+            expect(dto.attackLevel).toBe(50);
+        });
+    });
+
+    test('a legacy observation still simulates the character as it is now', () => {
+        // Nothing said what it was wearing, so the only honest answer is the
+        // current character — which is what the panel's caveat has always said
+        game.simResult = simResult;
+        game.dto = loadout({ weapon: '/items/sword', enhancement: 12, attack: 99 });
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+
+        return replayCheck.check().then(() => {
+            const dto = game.lastRun.playerDTOs[0];
+            expect(dto.equipment.main_hand).toEqual({ hrid: '/items/sword', enhancementLevel: 12 });
+            expect(dto.attackLevel).toBe(99);
+        });
+    });
+
+    test('the newest snapshot wins, and a sample that straddles a change says so', () => {
+        const early = captureLoadoutSnapshot(loadout({ weapon: '/items/spear' }));
+        const late = captureLoadoutSnapshot(loadout({ weapon: '/items/sword' }));
+        const observed = aggregateObservations([
+            evenObservation({ fights: 3, recordedAt: 1_000, loadout: early }),
+            evenObservation({ fights: 3, recordedAt: 2_000, loadout: late }),
+        ]);
+
+        expect(observed.loadout.equipment.main_hand.hrid).toBe('/items/sword');
+        expect(observed.mixedLoadouts).toBe(true);
+    });
+
+    test('two segments of one recording are one loadout, whenever they were taken', () => {
+        const first = captureLoadoutSnapshot(loadout());
+        const second = captureLoadoutSnapshot(loadout());
+        second.capturedAt = first.capturedAt + 600_000;
+
+        const observed = aggregateObservations([
+            evenObservation({ fights: 3, recordedAt: 1_000, loadout: first }),
+            evenObservation({ fights: 3, recordedAt: 2_000, loadout: second }),
+        ]);
+
+        expect(observed.mixedLoadouts).toBe(false);
+    });
+});
+
+describe('surviving a refresh', () => {
+    test('the fights so far are written at a fight boundary, summarised and not raw', () => {
+        // Raw ticks are megabytes and arrive several times a second; the summary
+        // is a few hundred bytes and is what the check reads anyway
+        return replayCheck.checkpoint(recording).then(() => {
+            const checkpoint = store.data.get(CHECKPOINT_KEY);
+            expect(checkpoint.fights.length).toBeGreaterThan(0);
+            expect(JSON.stringify(checkpoint)).not.toContain('pMap');
+        });
+    });
+
+    test('a segment with no completed fight clears the checkpoint instead of writing one', () => {
+        // What a rotation leaves behind: the segment it banked is already folded
+        // in, so the checkpoint taken from it is a duplicate waiting to happen
+        store.data.set(CHECKPOINT_KEY, { fights: [{ seconds: 1 }] });
+
+        return replayCheck.checkpoint({ ticks: recording.ticks.slice(0, 3) }).then(() => {
+            expect(store.data.get(CHECKPOINT_KEY)).toBe(null);
+        });
+    });
+
+    test('a full disk stands the checkpoint down rather than failing every fight', async () => {
+        store.quota = true;
+
+        await replayCheck.checkpoint(recording);
+
+        expect(store.data.has(CHECKPOINT_KEY)).toBe(false);
+    });
+
+    test('a leftover checkpoint is folded in on startup and then dropped', async () => {
+        const interrupted = observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 1_000 });
+        store.data.set(CHECKPOINT_KEY, interrupted);
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        await replayCheck.load();
+
+        expect(replayCheck.observations).toHaveLength(1);
+        expect(replayCheck.observations[0].fights).toHaveLength(interrupted.fights.length);
+        expect(store.data.get(OBSERVATIONS_KEY)).toHaveLength(1);
+        expect(store.data.get(CHECKPOINT_KEY)).toBe(null);
+        expect(log.mock.calls[0][0]).toContain(`Recovered ${interrupted.fights.length} fights`);
+        log.mockRestore();
+    });
+
+    test('and is not folded in twice when the same run is already kept', async () => {
+        const interrupted = observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 1_000 });
+        store.data.set(OBSERVATIONS_KEY, [interrupted]);
+        store.data.set(CHECKPOINT_KEY, { ...interrupted, recordedAt: 2_000 });
+
+        await replayCheck.load();
+
+        expect(replayCheck.observations).toHaveLength(1);
+    });
+
+    test('nothing left over is a quiet startup', async () => {
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        await replayCheck.load();
+
+        expect(log).not.toHaveBeenCalled();
+        log.mockRestore();
+    });
+
+    test('a clean stop clears it, so the next session recovers nothing', async () => {
+        replayCheck.ensureWatching();
+        await settle();
+        await replayCheck.checkpoint(recording);
+        expect(store.data.get(CHECKPOINT_KEY)).toBeTruthy();
+
+        combatRecorder.startRecording();
+        combatRecorder.stopRecording();
+        await settle();
+
+        expect(store.data.get(CHECKPOINT_KEY)).toBe(null);
+    });
+});
+
+describe('how much of this sample is noise', () => {
+    test('it is measured from the fights, not assumed from their number', () => {
+        // 1/√n would call twelve fights a 29% margin whatever they did; twelve
+        // fights that all landed within a percent of each other are far tighter
+        const steady = noiseSummary(aggregateObservations([evenObservation({ fights: 12 })]));
+
+        expect(steady.marginPct).toBeCloseTo(SIM_NOISE_FLOOR_PCT, 10);
+        expect(steady.marginPct).toBeLessThan((1 / Math.sqrt(12)) * 100);
+    });
+
+    test('a spread sample is a wide band and says not to read anything off it', () => {
+        const observed = aggregateObservations([
+            {
+                ...evenObservation({ fights: 0 }),
+                fights: [10, 30, 5, 25, 12].map((damageDealt) => ({
+                    seconds: 1,
+                    damageDealt,
+                    damageTaken: 1,
+                    regen: 0,
+                    hits: 1,
+                    misses: 0,
+                    deaths: 0,
+                    kills: 1,
+                    monsters: ['Fly'],
+                })),
+            },
+        ]);
+        const noise = noiseSummary(observed);
+
+        expect(noise.marginPct).toBeGreaterThan(NOISE_QUIET_PCT);
+        expect(noise.quiet).toBe(false);
+        expect(noise.text).toContain('5 fights');
+        expect(noise.text).toContain('differences inside that band are not findings');
+    });
+
+    test('a tight sample goes quiet, because it can finally see something', () => {
+        const noise = noiseSummary(aggregateObservations([evenObservation({ fights: 24 })]));
+
+        expect(noise.marginPct).toBeLessThan(NOISE_QUIET_PCT);
+        expect(noise.quiet).toBe(true);
+        expect(noise.text).toContain('large enough to argue with');
+    });
+
+    test('too few fights admits it rather than quoting a margin', () => {
+        const noise = noiseSummary(aggregateObservations([evenObservation({ fights: 2 })]));
+
+        expect(noise.marginPct).toBe(null);
+        expect(noise.quiet).toBe(false);
+        expect(noise.text).toContain('too few');
+    });
+
+    test('nothing observed is nothing claimed', () => {
+        expect(noiseSummary(null)).toMatchObject({ fights: 0, marginPct: null, quiet: false });
+    });
+});
+
+describe('drawing a deviation the sample cannot see', () => {
+    /** Open the panel over one sample and one comparison */
+    function draw({ damageDealt = 1000, fights = 6 } = {}) {
+        replayCheck.observations = [evenObservation({ seconds: 10, damageDealt, fights })];
+        replayCheck.comparison = compareRun(
+            aggregateObservations(replayCheck.observations),
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 360,
+                deaths: {},
+                totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+                warnings: [],
+            })
+        );
+        replayCheckPanel.show({ remember: false });
+    }
+
+    /** The line whose label is `label`, and the ink its figure is drawn in */
+    function row(label) {
+        const line = [...replayCheckPanel.panel.querySelectorAll('div')].find(
+            (element) => element.firstChild?.textContent === label
+        );
+        return line ? { text: line.textContent, color: line.lastChild.style.color } : null;
+    }
+
+    afterEach(() => {
+        replayCheckPanel.hide({ remember: false });
+        delete window.Toolasha;
+    });
+
+    test('a deviation inside the band is dimmed and carries the band with it', () => {
+        // Green read as "checked, and fine". Six fights agreeing with the
+        // simulator to within their own margin have established nothing.
+        draw({ damageDealt: 1005 });
+
+        const dps = row('Damage dealt / sec');
+        expect(dps.text).toContain('±');
+        expect(dps.color).toBe(ROW_COLORS.dim);
+        expect(dps.color).not.toBe(ROW_COLORS.good);
+    });
+
+    test('a deviation outside it is still flagged', () => {
+        draw({ damageDealt: 900 });
+
+        expect(row('Damage dealt / sec').color).toBe(ROW_COLORS.bad);
+    });
+
+    test('too few fights says so on the row rather than quoting a band', () => {
+        draw({ damageDealt: 900, fights: 2 });
+
+        const dps = row('Damage dealt / sec');
+        expect(dps.text).toContain('too few fights');
+        expect(dps.color).toBe(ROW_COLORS.dim);
+    });
+
+    test('the sample line sits beside the fight count, and turns quiet when it can', () => {
+        draw({ fights: 24 });
+
+        expect(row('Sample').text).toContain('±');
+        expect(row('Sample').color).toBe(ROW_COLORS.good);
+    });
+
+    test('and stays dim while the noise is the largest thing in the comparison', () => {
+        // Not the fight count that decides this but the spread: four fights that
+        // all went the same way see further than twenty that did not
+        replayCheck.observations = [
+            {
+                ...evenObservation({ fights: 0 }),
+                fights: [400, 1600, 700, 1300, 900].map((damageDealt) => ({
+                    seconds: 10,
+                    damageDealt,
+                    damageTaken: 100,
+                    regen: 0,
+                    hits: 4,
+                    misses: 1,
+                    deaths: 0,
+                    kills: 3,
+                    monsters: ['Fly'],
+                })),
+            },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        expect(row('Sample').color).toBe(ROW_COLORS.dim);
+        expect(row('Sample').text).toContain('not findings');
+    });
+});
+
+describe('what the panel admits it does not know', () => {
+    afterEach(() => {
+        replayCheckPanel.hide({ remember: false });
+        delete window.Toolasha;
+    });
+
+    test('with a snapshot, the gear caveat becomes a statement of fact', () => {
+        replayCheck.observations = [evenObservation({ fights: 6, loadout: captureLoadoutSnapshot(loadout()) })];
+        replayCheckPanel.show({ remember: false });
+
+        const text = replayCheckPanel.panel.textContent;
+        expect(text).toContain('Simmed against the gear worn when recorded');
+        expect(text).not.toContain('read as it is worn now');
+        // What genuinely is not captured still is
+        expect(text).toContain('whether they were actually up');
+        expect(text).not.toContain('could not be drawn');
+    });
+
+    test('without one, it says the gear is whatever is worn now', () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        replayCheckPanel.show({ remember: false });
+
+        const text = replayCheckPanel.panel.textContent;
+        expect(text).toContain('read as it is worn now');
+        expect(text).not.toContain('Simmed against the gear worn when recorded');
+    });
+
+    test('a sample straddling a gear change is not passed off as one loadout', () => {
+        replayCheck.observations = [
+            evenObservation({ fights: 3, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) }),
+            evenObservation({
+                fights: 3,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
+            }),
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        expect(replayCheckPanel.panel.textContent).toContain('not all made with the same loadout');
     });
 });
 

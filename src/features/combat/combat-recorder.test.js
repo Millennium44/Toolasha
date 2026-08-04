@@ -79,15 +79,6 @@ describe('recording the combat feed', () => {
         expect(recorder.recordingStatus().ticks).toBe(0);
     });
 
-    test('it stops itself rather than growing until the tab falls over', () => {
-        recorder.startRecording();
-        for (let i = 0; i < 4200; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
-
-        expect(recorder.isRecording()).toBe(false);
-        expect(recorder.recordingStatus().full).toBe(true);
-        expect(recorder.recordingStatus().ticks).toBeLessThanOrEqual(4000);
-    });
-
     test('stopping keeps what was captured', () => {
         recorder.startRecording();
         send('battle_updated', { pMap: {}, mMap: {} });
@@ -95,6 +86,88 @@ describe('recording the combat feed', () => {
 
         expect(recorder.isRecording()).toBe(false);
         expect(recorder.recordingStatus().ticks).toBe(1);
+    });
+});
+
+describe('recording for longer than the buffer holds', () => {
+    /** A fight: one `new_battle` and `ticks` updates after it */
+    const fight = (ticks = 1) => {
+        send('new_battle', { players: { 0: {} }, monsters: { 0: { name: 'Fly' } } });
+        for (let i = 0; i < ticks; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
+    };
+
+    test('a full buffer banks the segment instead of ending the recording', () => {
+        // The old answer to "how long can I record?" was about ten minutes and
+        // then silence. Memory is still capped at one segment; the run is not.
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        for (let i = 0; i < 60; i += 1) fight(100);
+
+        expect(recorder.isRecording()).toBe(true);
+        expect(banked.length).toBeGreaterThan(0);
+        expect(recorder.recordingStatus().ticks).toBeLessThan(4000);
+        detach();
+    });
+
+    test('and the fights keep counting up across the rotation', () => {
+        // The tick count resets with the buffer, so a label reading ticks would
+        // count to four thousand, drop to zero and start again on a recording
+        // that never stopped
+        recorder.startRecording();
+        for (let i = 0; i < 60; i += 1) fight(100);
+
+        const status = recorder.recordingStatus();
+        expect(status.segments).toBeGreaterThan(1);
+        expect(status.fights).toBe(59);
+    });
+
+    test('the rotation waits for a fight to end, so no fight is split in half', () => {
+        // A cut mid-fight loses that fight from both sides: the old segment's
+        // last battle never closes, and the new segment opens inside a battle it
+        // never saw begin
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        for (let i = 0; i < 60; i += 1) fight(100);
+        detach();
+
+        for (const file of banked) {
+            expect(file.ticks[file.ticks.length - 1].type).toBe('new_battle');
+            expect(file.truncated).toBe(false);
+        }
+    });
+
+    test('the battle that ends one segment opens the next, so the fight survives', () => {
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        for (let i = 0; i < 60; i += 1) fight(100);
+        detach();
+
+        // The old segment can close its last fight and the new one can open its
+        // first only if both carry the boundary battle
+        expect(banked[0].ticks[banked[0].ticks.length - 1].type).toBe('new_battle');
+        expect(recorder.recordingFile().ticks[0].type).toBe('new_battle');
+    });
+
+    test('a fight that never ends is cut anyway, and the file says so', () => {
+        // The fight-boundary rotation depends on a fight ending. One that does
+        // not would grow the buffer forever, which is what the bound is for.
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        send('new_battle', { players: { 0: {} }, monsters: {} });
+        for (let i = 0; i < 8200; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
+
+        expect(banked).toHaveLength(1);
+        expect(banked[0].truncated).toBe(true);
+        expect(recorder.isRecording()).toBe(true);
+        detach();
     });
 });
 
@@ -259,5 +332,143 @@ describe('handing the finished recording on', () => {
         recorder.stopRecording();
 
         expect(seen).toHaveLength(0);
+    });
+});
+
+describe('what was worn while it was recorded', () => {
+    afterEach(() => recorder.setLoadoutProvider(null));
+
+    test('the loadout is snapshotted when the recording starts', () => {
+        // Otherwise the check that reads this can only sim whoever is logged in
+        // when it runs, and enhancing a weapon in between reads as a deviation
+        recorder.setLoadoutProvider(() => ({ weapon: 'sword', level: 5 }));
+        recorder.startRecording();
+
+        expect(recorder.recordingFile().loadout).toEqual({ weapon: 'sword', level: 5 });
+    });
+
+    test('and again on every banked segment, since a session outlasts a loadout', () => {
+        let worn = 'sword';
+        recorder.setLoadoutProvider(() => ({ weapon: worn }));
+
+        const banked = [];
+        const detach = recorder.onRecordingComplete((file) => banked.push(file));
+
+        recorder.startRecording();
+        worn = 'spear';
+        for (let i = 0; i < 60; i += 1) {
+            send('new_battle', { players: { 0: {} }, monsters: {} });
+            for (let tick = 0; tick < 100; tick += 1) send('battle_updated', { pMap: {}, mMap: {} });
+        }
+
+        expect(banked[0].loadout).toEqual({ weapon: 'sword' });
+        expect(recorder.recordingFile().loadout).toEqual({ weapon: 'spear' });
+        detach();
+    });
+
+    test('nothing able to take one is a recording without one, not a broken one', () => {
+        recorder.startRecording();
+        expect(recorder.recordingFile().loadout).toBe(null);
+    });
+
+    test('a provider that throws is a recording without one', () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        recorder.setLoadoutProvider(() => {
+            throw new Error('no character yet');
+        });
+
+        recorder.startRecording();
+
+        expect(recorder.recordingFile().loadout).toBe(null);
+        expect(recorder.isRecording()).toBe(true);
+        error.mockRestore();
+    });
+});
+
+describe('surviving a refresh', () => {
+    test('the recording so far is offered at every fight boundary', () => {
+        // A recording lives in memory and a reload is the end of it, which is
+        // wrong for one meant to be left running
+        const checkpoints = [];
+        const detach = recorder.onRecordingCheckpoint((file) => checkpoints.push(file.ticks.length));
+
+        recorder.startRecording();
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+        expect(checkpoints).toHaveLength(0);
+
+        send('new_battle', { players: {}, monsters: {} });
+
+        expect(checkpoints).toEqual([3]);
+        detach();
+    });
+
+    test('never mid-fight, since there is nothing new to summarise there', () => {
+        const checkpoints = [];
+        const detach = recorder.onRecordingCheckpoint(() => checkpoints.push(1));
+
+        recorder.startRecording();
+        send('new_battle', { players: {}, monsters: {} });
+        for (let i = 0; i < 50; i += 1) send('battle_updated', { pMap: {}, mMap: {} });
+
+        expect(checkpoints).toHaveLength(0);
+        detach();
+    });
+
+    test('a rotation offers the empty segment, so a stale checkpoint is dropped', () => {
+        // The banked segment is already folded in; a checkpoint taken from it is
+        // a duplicate waiting for the next reload
+        const battles = [];
+        const detach = recorder.onRecordingCheckpoint((file) =>
+            battles.push(file.ticks.filter((tick) => tick.type === 'new_battle').length)
+        );
+
+        recorder.startRecording();
+        for (let i = 0; i < 60; i += 1) {
+            send('new_battle', { players: {}, monsters: {} });
+            for (let tick = 0; tick < 100; tick += 1) send('battle_updated', { pMap: {}, mMap: {} });
+        }
+
+        // The rotation's own checkpoint holds one battle and so no completed
+        // fight, which is what tells the reader to drop what it had
+        expect(battles).toContain(1);
+        detach();
+    });
+
+    test('stopping is announced even when the last segment caught nothing', () => {
+        // A recording stopped just after a rotation has nothing to hand over and
+        // still has a checkpoint in storage nothing else will ever clear
+        const stops = [];
+        const detach = recorder.onRecordingStopped(() => stops.push(1));
+
+        recorder.startRecording();
+        recorder.stopRecording();
+
+        expect(stops).toHaveLength(1);
+        detach();
+    });
+
+    test('an idle recorder stopped again announces nothing', () => {
+        const stops = [];
+        const detach = recorder.onRecordingStopped(() => stops.push(1));
+
+        recorder.startRecording();
+        recorder.stopRecording();
+        recorder.stopRecording();
+
+        expect(stops).toHaveLength(1);
+        detach();
+    });
+
+    test('the session start is announced once the settings have loaded', () => {
+        // Which is the first moment anything downstream can read its own switch,
+        // and so the moment to look for last session's interrupted recording
+        const starts = [];
+        const detach = recorder.onSessionStart(() => starts.push(1));
+
+        recorder.default.initialize();
+
+        expect(starts).toHaveLength(1);
+        detach();
     });
 });
