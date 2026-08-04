@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Panels and task prefs stop leaking between characters
+
+- **Panel open-state is per character now** — the market cow's panels no longer auto-reopen on the iron cow. Positions and sizes stay shared (panels sit where you put them on every character); only who-had-what-open splits, with the old flags migrating to the main character.
+- **Overlay panel layout, task estimate mode, and task-board icon filters** are per character too (the six separate filter keys also collapsed into one record per character). Collection filters move to the standard key format so account-view tooling can parse them.
+
 ### Lab sim catches up to combat sim
 
 - **Comparison runs for single-target lab fights**: each fixed-level run is recorded (settings + win rate, tries, deaths per 100), with a pinnable baseline, per-metric green/red deltas, per-row delete and Clear All — and unlike combat sim's history it survives reloads, since lab comparisons usually span sittings.

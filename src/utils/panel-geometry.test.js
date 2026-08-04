@@ -2,30 +2,66 @@
  *
  * Remembering where a panel was, and whether it was anywhere.
  *
- * The open flag lives in the same record as the geometry, which is the whole
- * reason these are tested together: writing one must not lose the other. A panel
- * that reopened at the top-left corner every time would be worse than one that
- * did not reopen at all.
+ * The two halves are stored apart on purpose. Where a panel sits is the same
+ * answer on every character — you dragged it there once. Which panels were left
+ * open is not: the market character's eight open panels reopening on top of the
+ * iron cow is the leak this split exists to close.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: {} }));
+const store = vi.hoisted(() => ({ settings: {}, networthHistory: {} }));
 
+const mockDataManager = vi.hoisted(() => ({
+    characterId: 'market123',
+    gameMode: 'standard',
+    getCurrentCharacterId: () => mockDataManager.characterId,
+    getCurrentCharacterGameMode: () => mockDataManager.gameMode,
+    on: () => {},
+    off: () => {},
+}));
+
+vi.mock('../core/data-manager.js', () => ({ default: mockDataManager }));
 vi.mock('../core/storage.js', () => ({
     default: {
-        getJSON: async (_key, _name, fallback) => store.data.panelGeometry ?? fallback,
-        setJSON: async (_key, value) => {
-            store.data.panelGeometry = value;
+        ready: Promise.resolve(true),
+        get: async (key, name = 'settings', fallback = null) => store[name]?.[key] ?? fallback,
+        set: async (key, value, name = 'settings') => {
+            store[name][key] = value;
+            return true;
         },
+        getJSON: async (key, name = 'settings', fallback = null) => store[name]?.[key] ?? fallback,
+        setJSON: async (key, value, name = 'settings') => {
+            store[name][key] = value;
+            return true;
+        },
+        delete: async (key, name = 'settings') => {
+            delete store[name][key];
+            return true;
+        },
+        getAllKeys: async (name = 'settings') => Object.keys(store[name] || {}),
     },
 }));
 
-const { saveGeometry, saveOpenState, wasOpen, allGeometry, reopenIfLeftOpen, clearPosition, restoreGeometry } =
-    await import('./panel-geometry.js');
+const {
+    saveGeometry,
+    saveOpenState,
+    wasOpen,
+    allGeometry,
+    reopenIfLeftOpen,
+    clearPosition,
+    restoreGeometry,
+    _resetCaches,
+} = await import('./panel-geometry.js');
+const { _resetAdoptionCache } = await import('./character-key.js');
 
 beforeEach(() => {
-    store.data = {};
+    store.settings = {};
+    store.networthHistory = {};
+    mockDataManager.characterId = 'market123';
+    mockDataManager.gameMode = 'standard';
+    _resetCaches();
+    _resetAdoptionCache();
 });
 
 describe('whether a panel was open', () => {
@@ -92,6 +128,30 @@ describe('reopening at start-up', () => {
         expect(reopen).not.toHaveBeenCalled();
     });
 
+    test('it waits for the character before asking', async () => {
+        // Panels ask at module scope, long before the websocket says who logged
+        // in. Asking then reads the wrong character's key, which comes back
+        // empty and looks exactly like "nothing was left open".
+        store.settings.panelOpenState_market123 = { dps: true };
+        mockDataManager.characterId = null;
+        let announce = null;
+        mockDataManager.on = (event, handler) => {
+            if (event === 'character_initialized') announce = handler;
+        };
+
+        const reopen = vi.fn();
+        const pending = reopenIfLeftOpen('dps', reopen);
+        await Promise.resolve();
+        expect(reopen).not.toHaveBeenCalled();
+
+        mockDataManager.characterId = 'market123';
+        announce();
+        await pending;
+
+        expect(reopen).toHaveBeenCalled();
+        mockDataManager.on = () => {};
+    });
+
     test('a panel that throws on reopening does not take the others with it', async () => {
         // These are all fired off at module scope, one after another
         await saveOpenState('dps', true);
@@ -104,51 +164,82 @@ describe('reopening at start-up', () => {
     });
 });
 
-describe('the two halves of one record', () => {
-    test('saving the open flag keeps the geometry', async () => {
-        // They share a record, so a careless write would drop the other half and
-        // the panel would reopen in the corner
+describe('the two halves, stored apart', () => {
+    test('the geometry is shared and the open flag is not', async () => {
         await saveGeometry('dps', { left: 120, top: 80, width: 400, height: 300 });
         await saveOpenState('dps', true);
 
-        const all = await allGeometry();
-        expect(all.dps).toMatchObject({ left: 120, top: 80, width: 400, height: 300, open: true });
+        expect(store.settings.panelGeometry.dps).toEqual({ left: 120, top: 80, width: 400, height: 300 });
+        expect(store.settings.panelOpenState_market123).toEqual({ dps: true });
     });
 
-    test('and saving the geometry keeps the open flag', async () => {
-        await saveOpenState('dps', true);
-        await saveGeometry('dps', { left: 10, top: 10 });
+    test('a panel dragged on one character is in the same place on the other', async () => {
+        await saveGeometry('dps', { left: 120, top: 80, width: 400, height: 300 });
 
-        await expect(wasOpen('dps')).resolves.toBe(true);
+        mockDataManager.characterId = 'iron456';
+        mockDataManager.gameMode = 'ironcow';
+        document.body.innerHTML = '<div id="panel"></div>';
+        await restoreGeometry(document.getElementById('panel'), 'dps');
+
+        expect(document.getElementById('panel').style.left).toBe('120px');
     });
 });
 
-describe('putting a panel back', () => {
-    const panel = () => {
-        document.body.innerHTML = '<div id="panel"></div>';
-        return document.getElementById('panel');
-    };
-
-    test('size and position both, normally', async () => {
-        await saveGeometry('dps', { left: 120, top: 80, width: 400, height: 300 });
-        const element = panel();
-
-        await restoreGeometry(element, 'dps');
-
-        expect(element.style.width).toBe('400px');
-        expect(element.style.left).toBe('120px');
+describe('open flags left in the old shared record', () => {
+    const legacyRecord = () => ({
+        dps: { left: 120, top: 80, width: 400, height: 300, open: true },
+        partyLoot: { left: 10, top: 10, width: 200, height: 200, open: false },
     });
 
-    test('size only, for a panel that places itself', async () => {
-        // The Treasure popup opens beside the chest dialog. Reapplying a
-        // remembered position on every opening is what stopped it doing that —
-        // and if the dialog was not found in time it simply stayed there.
-        await saveGeometry('popup', { left: 900, top: 600, width: 320, height: 500 });
-        const element = panel();
+    test('the main character adopts them', async () => {
+        store.settings.panelGeometry = legacyRecord();
 
-        await restoreGeometry(element, 'popup', undefined, { position: false });
+        await expect(wasOpen('dps')).resolves.toBe(true);
+        await expect(wasOpen('partyLoot')).resolves.toBe(false);
+        expect(store.settings.panelOpenState_market123).toEqual({ dps: true, partyLoot: false });
+        expect(store.settings.panelOpenState).toBeUndefined();
+    });
 
-        expect(element.style.width).toBe('320px');
-        expect(element.style.left).toBe('');
+    test('and the geometry stays behind, shared and intact', async () => {
+        store.settings.panelGeometry = legacyRecord();
+
+        await wasOpen('dps');
+
+        expect(store.settings.panelGeometry.dps).toEqual({ left: 120, top: 80, width: 400, height: 300 });
+        expect(store.settings.panelGeometry.dps.open).toBeUndefined();
+    });
+
+    test('the iron cow starts with everything closed', async () => {
+        store.settings.panelGeometry = legacyRecord();
+        mockDataManager.characterId = 'iron456';
+        mockDataManager.gameMode = 'ironcow';
+
+        await expect(wasOpen('dps')).resolves.toBe(false);
+        expect(store.settings.panelOpenState_iron456).toBeUndefined();
+    });
+
+    test('and leaves them for the main character to claim later', async () => {
+        store.settings.panelGeometry = legacyRecord();
+        mockDataManager.characterId = 'iron456';
+        mockDataManager.gameMode = 'ironcow';
+        await wasOpen('dps');
+
+        mockDataManager.characterId = 'market123';
+        mockDataManager.gameMode = 'standard';
+        await expect(wasOpen('dps')).resolves.toBe(true);
+        expect(store.settings.panelOpenState_market123).toEqual({ dps: true, partyLoot: false });
+    });
+
+    test('what the iron cow opens is its own', async () => {
+        store.settings.panelGeometry = legacyRecord();
+        mockDataManager.characterId = 'iron456';
+        mockDataManager.gameMode = 'ironcow';
+
+        await saveOpenState('partyLoot', true);
+
+        expect(store.settings.panelOpenState_iron456).toEqual({ partyLoot: true });
+        mockDataManager.characterId = 'market123';
+        mockDataManager.gameMode = 'standard';
+        await expect(wasOpen('partyLoot')).resolves.toBe(false);
     });
 });

@@ -61,11 +61,11 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../../utils/panel-geometry.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { registeredRows, resolveRows, moveRow } from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -90,7 +90,17 @@ import {
     MIN_TILE,
 } from '../../utils/overlay-layout.js';
 
+/**
+ * The layout, per character.
+ *
+ * Which tiles are up and where is a statement about what that character is
+ * doing — the iron cow's overlay has no market rows on it — so this key is
+ * scoped and the named-layout library in `overlay-layouts.js` is not: a layout
+ * you saved by name is a template, and templates are worth sharing across
+ * characters.
+ */
 const STORAGE_KEY = 'overlayPanel';
+/** Where the floating panel sits, shared by every character (see panel-geometry) */
 const GEOMETRY_KEY = 'overlayPanel';
 const PANEL_ID = 'toolasha-overlay-panel';
 const REFRESH_MS = 1000;
@@ -161,28 +171,41 @@ const COLORS = {
     separator: 'rgba(158, 196, 255, 0.16)',
 };
 
+/**
+ * A layout nobody has touched yet.
+ *
+ * A function rather than a constant because switching characters has to get a
+ * clean one: merging the new character's saved layout onto whatever the last
+ * character left in memory would carry their tiles across, and merging onto
+ * *nothing* saved would carry all of it.
+ * @returns {Object} Default settings
+ */
+function defaultSettings() {
+    return {
+        visible: {},
+        order: [],
+        positions: {},
+        sizes: {},
+        zoom: {},
+        locked: true,
+        snapToGrid: true,
+        separators: true,
+        textScale: 100,
+        open: false,
+        /** In the character column rather than floating over the game */
+        docked: false,
+        // Null until the edge is dragged, and null means "as tall as the
+        // tiles need". A fixed starting height is a guess about a layout it
+        // has never seen, and a guess that is too small cuts the bottom row
+        // of tiles in half the moment it docks
+        dockHeightPx: null,
+    };
+}
+
 class OverlayPanel {
     constructor() {
         this.isInitialized = false;
-        this.settings = {
-            visible: {},
-            order: [],
-            positions: {},
-            sizes: {},
-            zoom: {},
-            locked: true,
-            snapToGrid: true,
-            separators: true,
-            textScale: 100,
-            open: false,
-            /** In the character column rather than floating over the game */
-            docked: false,
-            // Null until the edge is dragged, and null means "as tall as the
-            // tiles need". A fixed starting height is a guess about a layout it
-            // has never seen, and a guess that is too small cuts the bottom row
-            // of tiles in half the moment it docks
-            dockHeightPx: null,
-        };
+        this.settings = defaultSettings();
         this.panel = null;
         /** The container the docked panel was put into, so it can be put back */
         this.dockHost = null;
@@ -209,8 +232,11 @@ class OverlayPanel {
         if (!config.getSetting('overlayPanel')) return;
         this.isInitialized = true;
 
-        const saved = await storage.getJSON(STORAGE_KEY, 'settings', null);
-        if (saved) this.settings = { ...this.settings, ...saved };
+        // Rebuilt from defaults rather than merged onto what is in memory: this
+        // runs again after a character switch, and the character switched away
+        // from must not leave its tiles behind
+        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        this.settings = saved && typeof saved === 'object' ? { ...defaultSettings(), ...saved } : defaultSettings();
 
         // Reopens itself where you left it — an overlay you have to summon after
         // every refresh is an overlay you stop using
@@ -270,7 +296,7 @@ class OverlayPanel {
     }
 
     _save() {
-        storage.setJSON(STORAGE_KEY, this.settings, 'settings').catch((error) => {
+        writeScoped(STORAGE_KEY, this.settings, 'settings').catch((error) => {
             console.error('[OverlayPanel] Saving the layout failed:', error);
         });
     }

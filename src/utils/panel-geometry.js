@@ -13,15 +13,32 @@
  * the window it was left in, and that window may since have been narrower — a
  * saved position restored blindly puts the panel somewhere you cannot reach it,
  * which looks exactly like a feature that stopped working.
+ *
+ * Geometry is deliberately shared by every character on the account: a panel
+ * should sit where you put it whichever character you logged in as. Whether a
+ * panel was *open* is not — the market character's eight open panels reopening
+ * on top of the iron cow is the one part of this that is per-character, and it
+ * lives in its own key, `panelOpenState_<characterId>`.
  */
 
 import storage from '../core/storage.js';
+import dataManager from '../core/data-manager.js';
+import { characterKey, readScoped, writeScoped } from './character-key.js';
 
 const STORAGE_KEY = 'panelGeometry';
+/** Per-character open flags: `{ [panelKey]: boolean }` */
+const OPEN_KEY = 'panelOpenState';
 
 /** Cache of every panel's geometry, so opening a panel does not wait on storage */
 let cache = null;
 let loading = null;
+
+/**
+ * Open flags per scoped key, so switching characters loads the new set rather
+ * than reusing the old one — the key is derived at read time, never at import.
+ */
+const openCache = new Map();
+const openLoading = new Map();
 
 /**
  * Hold a saved geometry inside the current window.
@@ -171,12 +188,73 @@ export async function restoreGeometry(panel, panelKey, min, { position = true } 
 }
 
 /**
+ * Lift the `open` flags out of the shared geometry record, once.
+ *
+ * They used to live beside `left`/`top`, which is why every panel the market
+ * character left open reopened on the iron cow. Moving them to the bare
+ * `panelOpenState` key turns them into an ordinary legacy value, which
+ * {@link readScoped} then hands to whichever character is entitled to adopt it —
+ * the geometry stays exactly where it is, shared, which is what it should be.
+ *
+ * @returns {Promise<void>}
+ */
+async function liftLegacyOpenFlags() {
+    const all = await allGeometry();
+
+    const flags = {};
+    let found = false;
+    for (const [panelKey, geometry] of Object.entries(all)) {
+        if (geometry && typeof geometry === 'object' && 'open' in geometry) {
+            found = true;
+            flags[panelKey] = Boolean(geometry.open);
+            const { open: _open, ...rest } = geometry;
+            all[panelKey] = rest;
+        }
+    }
+    if (!found) return;
+
+    // An earlier character may have lifted a set already and not been allowed to
+    // adopt it; that copy is the newer one and wins
+    const waiting = await storage.get(OPEN_KEY, 'settings', null);
+    await storage.set(OPEN_KEY, { ...flags, ...(waiting || {}) }, 'settings', true);
+    await storage.setJSON(STORAGE_KEY, all, 'settings');
+}
+
+/**
+ * This character's open flags, loaded once per character.
+ * @returns {Promise<Object>} `{ [panelKey]: boolean }`
+ */
+async function openFlags() {
+    await storage.ready;
+
+    const key = characterKey(OPEN_KEY);
+    if (openCache.has(key)) return openCache.get(key);
+
+    if (!openLoading.has(key)) {
+        const load = (async () => {
+            let flags = {};
+            try {
+                await liftLegacyOpenFlags();
+                const saved = await readScoped(OPEN_KEY, 'settings', null, { migrate: 'adopt' });
+                if (saved && typeof saved === 'object') flags = saved;
+            } catch (error) {
+                console.error('[PanelGeometry] Loading which panels were open failed:', error);
+            }
+            openCache.set(key, flags);
+            return flags;
+        })();
+        openLoading.set(key, load);
+    }
+    return openLoading.get(key);
+}
+
+/**
  * Whether a panel was open when the page was last left.
  *
- * Stored beside the geometry rather than as its own thing, because it is the
- * same question — where a panel was, and whether it was anywhere at all. A panel
- * that has to be reopened after every refresh is a panel that gets opened once
- * and then not bothered with.
+ * Per character, unlike the geometry: a panel belongs where you left it on every
+ * character, but the eight panels one character had up are that character's. A
+ * panel that has to be reopened after every refresh is a panel that gets opened
+ * once and then not bothered with.
  *
  * @param {string} panelKey - The panel's key
  * @param {boolean} open - Whether it is open now
@@ -184,9 +262,9 @@ export async function restoreGeometry(panel, panelKey, min, { position = true } 
  */
 export async function saveOpenState(panelKey, open) {
     try {
-        const all = await allGeometry();
-        all[panelKey] = { ...(all[panelKey] || {}), open: Boolean(open) };
-        await storage.setJSON(STORAGE_KEY, all, 'settings');
+        const flags = await openFlags();
+        flags[panelKey] = Boolean(open);
+        await writeScoped(OPEN_KEY, flags, 'settings');
     } catch (error) {
         console.error('[PanelGeometry] Remembering whether a panel was open failed:', error);
     }
@@ -198,8 +276,8 @@ export async function saveOpenState(panelKey, open) {
  */
 export async function wasOpen(panelKey) {
     try {
-        const all = await allGeometry();
-        return Boolean(all[panelKey]?.open);
+        const flags = await openFlags();
+        return Boolean(flags[panelKey]);
     } catch (error) {
         console.error('[PanelGeometry] Reading whether a panel was open failed:', error);
         return false;
@@ -223,13 +301,37 @@ function bodyReady() {
 }
 
 /**
+ * Resolves once there is a character to ask about.
+ *
+ * Panels ask at module scope, which is long before the websocket has said who
+ * logged in — and asking then reads the *wrong character's* key, which comes
+ * back empty and looks exactly like "nothing was left open". Waiting is the
+ * difference between per-character open state working and never reopening
+ * anything again.
+ *
+ * @returns {Promise<void>}
+ */
+function characterReady() {
+    if (dataManager.getCurrentCharacterId()) return Promise.resolve();
+    return new Promise((resolve) => {
+        const onInitialized = () => {
+            dataManager.off('character_initialized', onInitialized);
+            resolve();
+        };
+        dataManager.on('character_initialized', onInitialized);
+    });
+}
+
+/**
  * Reopen a panel that was open when the page was last left.
  *
  * The waiting is the whole of it, and is why this is one function rather than a
  * `wasOpen` call in each panel. Panels ask at module scope, which is before the
  * database is open *and* before there is a body to draw into; asking then gets
  * the default back, which is indistinguishable from having been closed. That is
- * why remembering appeared to work and reopening never did.
+ * why remembering appeared to work and reopening never did. Which character is
+ * logged in is the third thing not yet known at that moment, and now matters as
+ * much as the other two.
  *
  * @param {string} panelKey - The panel's key
  * @param {Function} reopen - Called only if it was open
@@ -237,10 +339,21 @@ function bodyReady() {
  */
 export async function reopenIfLeftOpen(panelKey, reopen) {
     try {
+        await characterReady();
         if (!(await wasOpen(panelKey))) return;
         await bodyReady();
         reopen();
     } catch (error) {
         console.error('[PanelGeometry] Reopening a panel failed:', error);
     }
+}
+
+/**
+ * Test-only: forget the loaded geometry and open flags.
+ */
+export function _resetCaches() {
+    cache = null;
+    loading = null;
+    openCache.clear();
+    openLoading.clear();
 }

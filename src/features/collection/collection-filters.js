@@ -13,6 +13,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { characterKey } from '../../utils/character-key.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -159,6 +160,9 @@ const ACTION_TO_ITEM = {
     redwood_tree: 'redwood_log',
     arcane_tree: 'arcane_log',
 };
+
+/** Everything this feature stores per character, in the `collections` store */
+const STORED_KEYS = ['flags', 'favorites', 'collections', 'showUncollected', 'collectionsUpdatedAt'];
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -483,6 +487,8 @@ class CollectionFilters {
         this.sortMode = 'default'; // 'default' | 'items-needed' | 'gold-cost' | 'time-to-next-tier'
         this.catsObserver = null;
         this.itemActionCache = null;
+        /** Character whose colon-form keys have already been renamed this session */
+        this._renamedFor = null;
     }
 
     // -------------------------------------------------------------------------
@@ -593,13 +599,59 @@ class CollectionFilters {
     // Storage helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * This character's key for one piece of collection state.
+     *
+     * `base_<characterId>`, the same shape every other per-character key in the
+     * script uses. It was `base:<characterId>` — already per character, so
+     * nothing leaked, but the account view and the settings importer find a
+     * character's keys by the underscore suffix and simply did not see these.
+     * @param {string} key - The unscoped key
+     * @returns {string} The scoped key
+     */
     _charKey(key) {
+        return characterKey(key);
+    }
+
+    /** The colon-separated form these keys used to be stored under */
+    _legacyCharKey(key) {
         return `${key}:${dataManager.getCurrentCharacterId()}`;
+    }
+
+    /**
+     * Rename this character's colon keys to the underscore form, once.
+     *
+     * A straight rename with no adoption question to answer: the colon keys were
+     * already per character, so each character takes its own and nobody inherits
+     * anybody's.
+     * @returns {Promise<void>}
+     */
+    async _renameLegacyKeys() {
+        const charId = dataManager.getCurrentCharacterId();
+        if (!charId || this._renamedFor === charId) return;
+        this._renamedFor = charId;
+
+        try {
+            for (const key of STORED_KEYS) {
+                const legacy = await storage.get(this._legacyCharKey(key), 'collections', null);
+                if (legacy === null) continue;
+
+                const current = await storage.get(this._charKey(key), 'collections', null);
+                if (current === null) {
+                    await storage.set(this._charKey(key), legacy, 'collections', true);
+                }
+                await storage.delete(this._legacyCharKey(key), 'collections');
+            }
+        } catch (error) {
+            console.error('[CollectionFilters] Renaming legacy collection keys failed:', error);
+        }
     }
 
     async _load() {
         // Reset flags to defaults before loading saved state
         this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
+
+        await this._renameLegacyKeys();
 
         const [savedFlags, savedFavorites, savedCollections, savedShowUncollected, savedTimestamp] = await Promise.all([
             storage.getJSON(this._charKey('flags'), 'collections', {}),

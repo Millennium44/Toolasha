@@ -14,13 +14,33 @@ vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getS
 vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
+        get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
+        set: async (key, value) => {
+            store.data[key] = value;
+            return true;
+        },
+        delete: async (key) => {
+            delete store.data[key];
+            return true;
+        },
+        getAllKeys: async () => Object.keys(store.data),
         getJSON: async (key, _name, fallback) => store.data[key] ?? fallback,
         setJSON: async (key, value) => {
             store.data[key] = value;
         },
     },
 }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getItemDetails: () => null } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getItemDetails: () => null,
+        // Per-character keys and the listeners that reload them: the panel's
+        // open state is this character's, not the account's
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
+    },
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({

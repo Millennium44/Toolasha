@@ -18,9 +18,14 @@ import storage from '../../core/storage.js';
 import { GAME } from '../../utils/selectors.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import assetManifest from '../../utils/asset-manifest.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
 const STORAGE_KEYS = {
     migration: 'taskIconsFiltersMigratedV1',
+    /** One per-character record: `{battle: boolean, dungeons: {[id]: boolean}}` */
+    filters: 'taskIconFilters',
+    // Legacy, read once and deleted: a key for the battle toggle and one more
+    // for every dungeon, all of them shared by every character on the account
     battle: 'taskIconsFilterBattle',
     dungeonPrefix: 'taskIconsFilterDungeon:',
 };
@@ -33,6 +38,8 @@ class TaskIconFilters {
         this.filterBar = null; // Reference to filter bar DOM element
         this.settingChangeHandler = null; // Handler for setting changes
         this.stateLoadPromise = null;
+        /** Which character's key `stateLoadPromise` was loaded for */
+        this.stateLoadKey = null;
         this.isStateLoaded = false;
         this.manifestUrls = {}; // Sprite URLs from asset manifest
         this.state = {
@@ -87,29 +94,35 @@ class TaskIconFilters {
         config.onSettingChange('taskIconsDungeons', this.settingChangeHandler);
     }
 
+    /**
+     * Load this character's filters, once per character.
+     *
+     * Memoised against the character's own key rather than a bare flag: nothing
+     * calls `cleanup()` on a character switch — the icons are drawn on demand by
+     * `task-sorter` — so a plain `if (loaded) return` would keep showing the
+     * previous character's filters for the rest of the session.
+     * @returns {Promise<void>}
+     */
     async loadState() {
-        if (this.stateLoadPromise) {
+        const key = characterKey(STORAGE_KEYS.filters);
+        if (this.stateLoadPromise && this.stateLoadKey === key) {
             return this.stateLoadPromise;
         }
 
+        this.stateLoadKey = key;
         this.stateLoadPromise = this.loadStateInternal();
         return this.stateLoadPromise;
     }
 
     async loadStateInternal() {
         try {
-            const migrated = await storage.get(STORAGE_KEYS.migration, 'settings', false);
+            await this.collapseLegacyState();
 
-            if (migrated) {
-                await this.loadStateFromStorage();
-            } else {
-                this.loadStateFromLocalStorage();
-                const migrated = await this.persistStateToStorage();
-                if (migrated) {
-                    await storage.set(STORAGE_KEYS.migration, true, 'settings', true);
-                    this.clearLocalStorageState();
-                }
-            }
+            const saved = await readScoped(STORAGE_KEYS.filters, 'settings', null, { migrate: 'adopt' });
+            this.state = {
+                battle: saved ? saved.battle !== false : true,
+                dungeons: { ...(saved?.dungeons || {}) },
+            };
         } catch (error) {
             console.error('[TaskIconFilters] Failed to load filter state:', error);
         } finally {
@@ -119,42 +132,102 @@ class TaskIconFilters {
         }
     }
 
-    loadStateFromLocalStorage() {
+    /**
+     * Fold the old keys into one record, once for the whole account.
+     *
+     * There were six of them — a battle toggle and one per dungeon — all shared
+     * by every character, and each one an IndexedDB key of its own. They are
+     * gathered into the bare `taskIconFilters` key here and left there;
+     * {@link readScoped} then hands that to whichever character is entitled to
+     * adopt it, and everyone else starts on the defaults.
+     * @returns {Promise<void>}
+     */
+    async collapseLegacyState() {
+        const alreadyCollapsed = await storage.get(STORAGE_KEYS.filters, 'settings', null);
+        if (alreadyCollapsed !== null) return;
+
+        const migrated = await storage.get(STORAGE_KEYS.migration, 'settings', false);
+        const legacy = migrated ? await this.readLegacyFromStorage() : this.readLegacyFromLocalStorage();
+        if (!legacy) return;
+
+        await storage.set(STORAGE_KEYS.filters, legacy, 'settings', true);
+
+        if (migrated) {
+            await this.deleteLegacyStorageKeys();
+        } else {
+            await storage.set(STORAGE_KEYS.migration, true, 'settings', true);
+            this.clearLocalStorageState();
+        }
+    }
+
+    /**
+     * The pre-IndexedDB filters, if this browser still has them.
+     * @returns {Object|null} `{battle, dungeons}` or null when nothing was stored
+     */
+    readLegacyFromLocalStorage() {
         const storedBattle = localStorage.getItem('mwi-taskIconsFilterBattle');
-        this.state.battle = storedBattle === null || storedBattle === 'true';
+        const dungeons = {};
+        let found = storedBattle !== null;
 
         Object.values(this.dungeonConfig).forEach((dungeon) => {
             const stored = localStorage.getItem(`mwi-taskIconsFilter-${dungeon.id}`);
-            this.state.dungeons[dungeon.id] = stored === 'true';
+            if (stored !== null) found = true;
+            dungeons[dungeon.id] = stored === 'true';
         });
+
+        if (!found) return null;
+        return { battle: storedBattle === null || storedBattle === 'true', dungeons };
     }
 
-    async loadStateFromStorage() {
-        const storedBattle = await storage.get(STORAGE_KEYS.battle, 'settings', true);
-        this.state.battle = storedBattle === true;
+    /**
+     * The one-key-per-dungeon filters, if they are still in IndexedDB.
+     * @returns {Promise<Object|null>} `{battle, dungeons}` or null when nothing was stored
+     */
+    async readLegacyFromStorage() {
+        const storedBattle = await storage.get(STORAGE_KEYS.battle, 'settings', null);
+        let found = storedBattle !== null;
 
-        const dungeonEntries = Object.values(this.dungeonConfig).map(async (dungeon) => {
-            const key = `${STORAGE_KEYS.dungeonPrefix}${dungeon.id}`;
-            const enabled = await storage.get(key, 'settings', false);
-            return { id: dungeon.id, enabled: enabled === true };
+        const dungeonEntries = await Promise.all(
+            Object.values(this.dungeonConfig).map(async (dungeon) => {
+                const enabled = await storage.get(`${STORAGE_KEYS.dungeonPrefix}${dungeon.id}`, 'settings', null);
+                return { id: dungeon.id, enabled };
+            })
+        );
+
+        const dungeons = {};
+        dungeonEntries.forEach(({ id, enabled }) => {
+            if (enabled !== null) found = true;
+            dungeons[id] = enabled === true;
         });
 
-        const results = await Promise.all(dungeonEntries);
-        results.forEach(({ id, enabled }) => {
-            this.state.dungeons[id] = enabled;
-        });
+        if (!found) return null;
+        return { battle: storedBattle !== false, dungeons };
     }
 
+    /**
+     * Drop the old keys now their contents live in one record.
+     * @returns {Promise<void>}
+     */
+    async deleteLegacyStorageKeys() {
+        await storage.delete(STORAGE_KEYS.battle, 'settings');
+        await Promise.all(
+            Object.values(this.dungeonConfig).map((dungeon) =>
+                storage.delete(`${STORAGE_KEYS.dungeonPrefix}${dungeon.id}`, 'settings')
+            )
+        );
+    }
+
+    /**
+     * Write this character's filters.
+     * @returns {Promise<boolean>} Success status
+     */
     async persistStateToStorage() {
-        const battleSaved = await storage.set(STORAGE_KEYS.battle, this.state.battle, 'settings', true);
-
-        const dungeonWrites = Object.values(this.dungeonConfig).map((dungeon) => {
-            const key = `${STORAGE_KEYS.dungeonPrefix}${dungeon.id}`;
-            return storage.set(key, this.state.dungeons[dungeon.id] === true, 'settings', true);
-        });
-
-        const dungeonResults = await Promise.all(dungeonWrites);
-        return battleSaved && dungeonResults.every(Boolean);
+        return writeScoped(
+            STORAGE_KEYS.filters,
+            { battle: this.state.battle, dungeons: this.state.dungeons },
+            'settings',
+            true
+        );
     }
 
     clearLocalStorageState() {
@@ -339,7 +412,7 @@ class TaskIconFilters {
             // Toggle battle filter
             const currentState = this.getBattleFilterEnabled();
             this.state.battle = !currentState;
-            storage.set(STORAGE_KEYS.battle, this.state.battle, 'settings', true);
+            this.persistStateToStorage();
         } else {
             // Toggle dungeon filter
             const dungeonHrid = Object.keys(this.dungeonConfig).find(
@@ -348,8 +421,7 @@ class TaskIconFilters {
             if (dungeonHrid) {
                 const currentState = this.getDungeonFilterEnabled(dungeonHrid);
                 this.state.dungeons[filterId] = !currentState;
-                const key = `${STORAGE_KEYS.dungeonPrefix}${filterId}`;
-                storage.set(key, this.state.dungeons[filterId], 'settings', true);
+                this.persistStateToStorage();
             }
         }
 
