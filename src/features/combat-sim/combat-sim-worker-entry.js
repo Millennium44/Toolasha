@@ -63,7 +63,11 @@ onmessage = function (event) {
             const player = Player.createFromDTO(cloned);
             // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs
             player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;
-            player.extraBuffs = extraBuffs;
+            // Guild buffs come from each player's own DTO — the shared
+            // extraBuffs used to carry player 1's, handing their guild's
+            // bonuses to every teammate in a party sim
+            const guildBuffs = Array.isArray(cloned.guildCombatBuffs) ? cloned.guildCombatBuffs : [];
+            player.extraBuffs = [...extraBuffs, ...guildBuffs];
             return player;
         });
 

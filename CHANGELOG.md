@@ -6,6 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Sim accuracy: house rooms, guild buffs, and the Experience token
+
+Fixes from the combat-sim implementation review, all affecting numbers people act on:
+
+- **Skilling house rooms no longer inflate combat sims.** House-room action buffs are scoped per action type in the game data, but the engine applied every buff from every owned room — a Library's wisdom (the same `/buff_types/wisdom` string combat uses) quietly raised simulated combat XP and rare-find for anyone with developed non-combat housing. The engine now keeps only combat-scoped action buffs; genuinely global room buffs still apply. Tested.
+- **Party members keep their own guild's buffs.** Sims used to read guild combat buffs from the first player and hand them to the whole party, so teammates in a different (or no) guild simmed with yours. Each player's buffs now come from their own data. Solo sims were always correct.
+- **The labyrinth Experience token exists again.** It was dropped when loading a character into the sim, invisible in the sim editor, and its bonus computed as zero in the editor-driven skilling calculator. It now loads with the other four tokens, has its own editable row in the sim editor, and its XP effect flows through — visible in the skilling clear-rate table's new **XP/Room** column. (Ranking it in the upgrade advisor still needs an XP-based metric; the advisor ranks by clear rate, which the token does not move.)
+- **Peak enrage stack merges correctly** across multi-worker runs (maximum of chunks, not chunk 0's value).
+
+### Panels stay reachable and dialogs stay on top
+
+- **Confirmation dialogs can no longer hide behind panels.** Clicking panels raises them toward a z-index cap that sat above the choice dialog's fixed level, so after enough raises the delete-history and import confirmations could render invisibly behind the panel that opened them. The dialog now derives its level from the cap itself and always outranks every panel. Tested, including the exact raise-count scenario that used to fail.
+- **Shrinking the window no longer strands panels off-screen.** A debounced resize listener walks the open floating panels and nudges any that ended up out of bounds back into view; panels that still fit are untouched, and the saved position still wins in a larger window later.
+- **Lab Simulator polish:** the dense all-fights table keeps its column headers while you scroll (same sticky treatment the combat sim table documents), and a skilling-tab load failure now says so in the status line instead of leaving a silently blank tab.
+
 ### Every setting now does what it says — a full audit of all 346
 
 Four auditors swept every setting in the schema against the code that consumes it. Most were clean; fourteen were not, and all fourteen are fixed:

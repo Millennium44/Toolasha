@@ -2526,7 +2526,9 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         cost: calculateUpgradeCost(c, gameData),
     }));
 
-    // Generate buff candidates (skilling buffs handled in skilling tab, experience excluded — no combat impact)
+    // Generate buff candidates. Skilling buffs are handled in the skilling tab;
+    // the Experience token is ranked in neither tab — it moves XP/room, not
+    // clear rate, and this analysis has no XP metric to rank it by.
     const buffCandidates = generateLabyrinthBuffCandidates();
     const combatBuffCandidates = buffCandidates.filter((c) => c.category === 'combat');
 

@@ -1,6 +1,8 @@
 import Buff from './buff.js';
 import { getGameData } from './game-data.js';
 
+const COMBAT_ACTION_TYPE = '/action_types/combat';
+
 class HouseRoom {
     constructor(hrid, level) {
         this.hrid = hrid;
@@ -15,11 +17,17 @@ class HouseRoom {
         this.buffs = [];
         if (gameHouseRoom.actionBuffs) {
             for (const actionBuff of gameHouseRoom.actionBuffs) {
+                // Action buffs are scoped per action type. This engine only ever
+                // fights, and a skilling room's wisdom or rare-find shares its
+                // type string with the combat versions — unfiltered, a Library
+                // quietly inflated combat XP in every sim.
+                if (!actionBuff?.usableInActionTypeMap?.[COMBAT_ACTION_TYPE]) continue;
                 const buff = new Buff(actionBuff, level);
                 this.buffs.push(buff);
             }
         }
         if (gameHouseRoom.globalBuffs) {
+            // Global buffs are unscoped by design — no filter
             for (const globalBuff of gameHouseRoom.globalBuffs) {
                 const buff = new Buff(globalBuff, level);
                 this.buffs.push(buff);

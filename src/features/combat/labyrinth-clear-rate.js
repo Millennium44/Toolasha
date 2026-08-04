@@ -4713,12 +4713,14 @@ class LabyrinthClearRate {
             this.applyBuff(metrics, buff.typeHrid, amount, skillLevelType, skillSuccessType, skillId);
         }
 
-        const upgrades = overrides.tokenUpgrades || { speed: 0, efficiency: 0, success: 0, doubleProgress: 0 };
-        metrics.actionSpeedBonus += upgrades.speed * UPGRADE_STEP;
-        metrics.efficiencyBonus += upgrades.efficiency * UPGRADE_STEP;
-        metrics.successBonus += upgrades.success * UPGRADE_SUCCESS_STEP;
-        metrics.doubleProgressBonus += upgrades.doubleProgress * UPGRADE_STEP;
-        metrics.experienceBonus += upgrades.experience * UPGRADE_STEP;
+        const upgrades = overrides.tokenUpgrades || {};
+        metrics.actionSpeedBonus += (upgrades.speed || 0) * UPGRADE_STEP;
+        metrics.efficiencyBonus += (upgrades.efficiency || 0) * UPGRADE_STEP;
+        metrics.successBonus += (upgrades.success || 0) * UPGRADE_SUCCESS_STEP;
+        metrics.doubleProgressBonus += (upgrades.doubleProgress || 0) * UPGRADE_STEP;
+        // `experience` was missing from every caller's tokenUpgrades object, so
+        // this line was adding NaN and the XP bonus silently read as zero
+        metrics.experienceBonus += (upgrades.experience || 0) * UPGRADE_STEP;
 
         return metrics;
     }

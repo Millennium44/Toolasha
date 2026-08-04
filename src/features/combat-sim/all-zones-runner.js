@@ -35,8 +35,9 @@ export async function runAllZonesSimulation(params, onProgress) {
     // Cancel any previous run
     cancelAllZonesSimulation();
 
-    const guildCombatBuffs = playerDTOs[0]?.guildCombatBuffs;
-    const extraBuffs = buildExtraBuffs(communityBuffs, guildCombatBuffs);
+    // Guild buffs are not folded in here: the worker reads each player DTO's
+    // own guildCombatBuffs, so party members keep their own guild's bonuses
+    const extraBuffs = buildExtraBuffs(communityBuffs);
     const ONE_HOUR_NS = 3600 * 1e9;
     const simulationTimeLimit = hours * ONE_HOUR_NS;
 
