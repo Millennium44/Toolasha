@@ -2826,6 +2826,94 @@ describe('guild shrine candidates', () => {
         expect(generateGuildShrineCandidates(dto)).toEqual([]);
     });
 
+    describe('a target level', () => {
+        test('buys every level up to it, and charges for all of them', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [candidate] = generateGuildShrineCandidates(dto, { targetLevel: 5 });
+
+            expect(candidate).toMatchObject({
+                currentLevel: 3,
+                upgradeLevel: 5,
+                levelsBought: 2,
+                // 40 for Lv4 plus 50 for Lv5, not just the last one
+                guildTokenCost: 90,
+                description: 'Force Shrine Lv3 → Lv5',
+            });
+            expect(candidate.creditCosts).toEqual([{ itemHrid: '/items/guild_credit_1', count: 30 }]);
+        });
+
+        test('the benefit is measured at the target, so that is the level applied', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [candidate] = generateGuildShrineCandidates(dto, { targetLevel: 5 });
+            applyCandidateToDTO({ equipment: {}, guildShrineLevels: {}, guildCombatBuffs: [] }, candidate);
+
+            expect(guild.applied).toEqual([{ hrid: '/guild_buffs/force_combat', level: 5 }]);
+        });
+
+        test('is clamped to the top of the cost table rather than dropping the shrine', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [candidate] = generateGuildShrineCandidates(dto, { targetLevel: 40 });
+
+            expect(candidate.upgradeLevel).toBe(5);
+        });
+
+        test('skips a buff already at or past it instead of offering a no-op', () => {
+            // One number typed once, against shrines sitting at different levels
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 4 } };
+
+            expect(generateGuildShrineCandidates(dto, { targetLevel: 4 })).toEqual([]);
+            expect(generateGuildShrineCandidates(dto, { targetLevel: 3 })).toEqual([]);
+        });
+
+        test('the cap warning still reads off the guild building, not the target', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 4;
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [candidate] = generateGuildShrineCandidates(dto, { targetLevel: 5 });
+
+            expect(candidate.needsShrineLevel).toBe(5);
+            expect(candidate.shrineLevelKnown).toBe(true);
+        });
+
+        test('costs the whole span in gold, so the ranking is not the last level only', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [oneUp] = generateGuildShrineCandidates(dto);
+            const [toTop] = generateGuildShrineCandidates(dto, { targetLevel: 5 });
+
+            expect(calculateUpgradeCost(oneUp, buildGameData())).toBe(3000);
+            // Lv5 adds tokens but no credits, so the gold half is unchanged —
+            // and the token count is what grew
+            expect(calculateUpgradeCost(toTop, buildGameData())).toBe(3000);
+            expect(toTop.guildTokenCost).toBeGreaterThan(oneUp.guildTokenCost);
+        });
+
+        test('reaches the shrine set through generateCandidates', () => {
+            const dto = { equipment: {}, guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const [candidate] = generateCandidates(
+                dto,
+                buildGameData(),
+                'guild_shrine',
+                0,
+                'increment',
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                5
+            );
+
+            expect(candidate.upgradeLevel).toBe(5);
+        });
+
+        test('left unset, every caller still gets the single level it always got', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+
+            expect(generateGuildShrineCandidates(dto, { targetLevel: 0 })[0].upgradeLevel).toBe(4);
+            expect(generateGuildShrineCandidates(dto)[0].upgradeLevel).toBe(4);
+        });
+    });
+
     test('a player whose guild we know nothing about gets no candidates', () => {
         // Not the same as a guildless character: an imported DTO simply carries
         // no shrine levels, and guessing zero would invent a purchase for them

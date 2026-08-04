@@ -858,6 +858,7 @@ function candidateTaskDamage(candidate, gameData) {
  * @param {number} [abilityTargetLevel=0] - Target level or increment for ability upgrades
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
+ * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
  */
 export function generateCandidates(
@@ -871,7 +872,8 @@ export function generateCandidates(
     abilityTargets = null,
     houseTargetLevel = 0,
     houseTargets = null,
-    communityBuffs = null
+    communityBuffs = null,
+    guildShrineTargetLevel = 0
 ) {
     const candidates = [];
 
@@ -1253,7 +1255,9 @@ export function generateCandidates(
     }
 
     if (mode === 'guild_shrine') {
-        candidates.push(...generateGuildShrineCandidates(playerDTO, { combat: true }));
+        candidates.push(
+            ...generateGuildShrineCandidates(playerDTO, { combat: true, targetLevel: guildShrineTargetLevel })
+        );
     }
 
     if (mode === 'drink') {
@@ -1482,7 +1486,45 @@ function shrineName(shrineHrid) {
 }
 
 /**
- * Generate one-level-up candidates for the guild shrine buffs.
+ * Cumulative price of stepping a shrine buff from one level to another.
+ *
+ * A shrine level is not bought in one transaction the way a chestpiece is — a
+ * jump from 3 to 6 is three separate purchases, and the row is only honest if it
+ * carries all three. Credits of the same kind are folded into one line so the
+ * cost detail reads as a shopping list rather than a per-level ledger, and
+ * tokens are summed alongside them without ever being priced.
+ *
+ * A level with no entry in the cost table contributes nothing rather than
+ * aborting the total: the table is the game's own, and a hole in it means an
+ * unbuyable level, which `guildBuffMaxLevel` has already cut the target down to.
+ *
+ * @param {Object} detail - Entry from guildBuffDetailMap
+ * @param {number} fromLevel - Level the character is at now (exclusive)
+ * @param {number} toLevel - Level being bought up to (inclusive)
+ * @returns {{guildTokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>}}
+ */
+function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
+    let guildTokenCost = 0;
+    const creditTotals = new Map();
+
+    for (let level = fromLevel + 1; level <= toLevel; level++) {
+        const levelCost = detail?.levelCosts?.[String(level)] || {};
+        guildTokenCost += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
+        for (const entry of levelCost.creditCosts || []) {
+            const count = Number(entry?.count) || 0;
+            if (!entry?.itemHrid || count <= 0) continue;
+            creditTotals.set(entry.itemHrid, (creditTotals.get(entry.itemHrid) || 0) + count);
+        }
+    }
+
+    return {
+        guildTokenCost,
+        creditCosts: [...creditTotals.entries()].map(([itemHrid, count]) => ({ itemHrid, count })),
+    };
+}
+
+/**
+ * Generate level-up candidates for the guild shrine buffs.
  *
  * ## What the shrine level does and does not gate
  *
@@ -1499,18 +1541,34 @@ function shrineName(shrineHrid) {
  * which is not the same as "the shrine is not built" — `shrineLevelKnown` keeps
  * those apart so nothing claims a cap that was never read.
  *
+ * ## Target levels
+ *
+ * `targetLevel` is an absolute level, matching the House Lv control rather than
+ * the ability +Levels one, because a shrine buff is a building level and reads
+ * naturally as "get me to 6". Left at 0 every buff steps one level, which is
+ * what every caller did before the option existed. A buff already at or past the
+ * target is skipped rather than offered as a no-op, and a target above what the
+ * cost table holds is clamped to the top of it — so one number can be typed once
+ * and applied to five shrines sitting at five different levels.
+ *
+ * Cost is cumulative over every level crossed; the benefit is measured at the
+ * target, because that is the loadout the sim runs.
+ *
  * @param {Object} playerDTO - Player DTO carrying `guildShrineLevels`
  * @param {Object} [options]
  * @param {boolean} [options.combat=true] - Combat shrines when true, skilling when false
+ * @param {number} [options.targetLevel=0] - Absolute level to buy up to; 0/unset means one level up
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
-export function generateGuildShrineCandidates(playerDTO, { combat = true } = {}) {
+export function generateGuildShrineCandidates(playerDTO, { combat = true, targetLevel = 0 } = {}) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
     // No level map means this DTO is somebody whose guild we know nothing about
     // (an imported player, a party member read off a profile) — not a guildless
     // character, so guessing zero would invent an upgrade path for them
     if (!levels || Object.keys(detailMap).length === 0) return [];
+
+    const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
 
     const candidates = [];
     for (const [buffHrid, detail] of Object.entries(detailMap)) {
@@ -1519,10 +1577,10 @@ export function generateGuildShrineCandidates(playerDTO, { combat = true } = {})
 
         const maxLevel = guildBuffMaxLevel(detail);
         const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
-        const upgradeLevel = currentLevel + 1;
-        if (maxLevel <= 0 || upgradeLevel > maxLevel) continue;
+        const upgradeLevel = Math.min(maxLevel, target > 0 ? target : currentLevel + 1);
+        if (maxLevel <= 0 || upgradeLevel <= currentLevel) continue;
 
-        const levelCost = detail.levelCosts?.[String(upgradeLevel)] || {};
+        const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
         const shrineLevel = Math.max(
             0,
             Math.floor(Number(dataManager.getGuildBuildingLevel?.(detail.shrineHrid)) || 0)
@@ -1537,10 +1595,11 @@ export function generateGuildShrineCandidates(playerDTO, { combat = true } = {})
             isCombat: Boolean(detail.isCombat),
             currentLevel,
             upgradeLevel,
+            levelsBought: upgradeLevel - currentLevel,
             maxLevel,
             buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
-            guildTokenCost: Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0)),
-            creditCosts: levelCost.creditCosts || [],
+            guildTokenCost,
+            creditCosts,
             shrineLevel,
             shrineLevelKnown: shrineLevel > 0,
             needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
@@ -2271,7 +2330,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, optimizeFood }
+ *   houseTargetLevel, houseTargets, guildShrineTargetLevel, optimizeFood }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -2294,6 +2353,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         charmTier,
         houseTargetLevel = 0,
         houseTargets = null,
+        guildShrineTargetLevel = 0,
         optimizeFood = false,
         extraCandidates = [],
     } = params;
@@ -2322,7 +2382,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             abilityTargets,
             houseTargetLevel,
             houseTargets,
-            communityBuffs
+            communityBuffs,
+            guildShrineTargetLevel
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode

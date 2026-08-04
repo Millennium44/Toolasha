@@ -663,6 +663,14 @@ const MODE_OPTIONS = {
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
+    guild_shrine: `
+        <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
+            <span style="color:#2a2a4a;">|</span>
+            <label style="color:#888; font-size:12px;">Lv</label>
+            <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
+                width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
+        </span>`,
 };
 
 /**
@@ -739,6 +747,15 @@ const UPGRADE_MODES = [
         title: 'Search for the cheapest food that still avoids deaths and running out of mana',
     },
 ];
+
+/**
+ * Marker the Results tab reserves for its summary block.
+ *
+ * The summary reports totals the sections below it produce, so it is written
+ * last and spliced in first. A comment node rather than a bare token so a
+ * failure to substitute shows up as nothing rather than as literal text.
+ */
+const RESULTS_SUMMARY_SLOT = '<!--mwi-csim-summary-->';
 
 /**
  * Format elapsed seconds as "Xs" or "Xm Ys".
@@ -2715,6 +2732,13 @@ class CombatSimUI {
             html += '</div>';
         }
 
+        // The headline numbers a player actually opens this tab for are worked
+        // out by the sections below — revenue by the Drops table, expenses by
+        // the Consumables one — so the summary cannot be built until they have
+        // run. It is stitched in at this marker afterwards rather than
+        // recomputed, so the tiles and the tables can never disagree.
+        html += RESULTS_SUMMARY_SLOT;
+
         // History panel (above everything)
         if (this._simHistory.length > 0) {
             html += this._renderHistoryPanel();
@@ -2792,6 +2816,8 @@ class CombatSimUI {
         }
 
         // DPS — from actual damage dealt per player
+        let summaryDps = null;
+        let summaryPrevDps = null;
         if (simResult.totalDamageDealt && simResult.simulatedTime > 0) {
             const simSeconds = simResult.simulatedTime / 1e9;
             let partyDamage = 0;
@@ -2800,6 +2826,7 @@ class CombatSimUI {
             }
             const partyDps = partyDamage / simSeconds;
             this._lastComputedDps = partyDps;
+            summaryDps = partyDps;
 
             let prevPartyDps = null;
             if (hasPrev && compResult.totalDamageDealt && compResult.simulatedTime > 0) {
@@ -2810,6 +2837,7 @@ class CombatSimUI {
                 }
                 prevPartyDps = prevDamage / compSimSeconds;
             }
+            summaryPrevDps = prevPartyDps;
 
             const dpsLabel = numberOfPlayers > 1 ? 'Party DPS' : 'DPS';
             html += `<div style="${rowStyle}">`;
@@ -2892,6 +2920,11 @@ class CombatSimUI {
         }
 
         const xpEntries = Object.entries(xpTotals).filter(([, total]) => total > 0);
+        // Rounded per skill before summing, so the summary tile and the Total
+        // row of the XP section are the same number rather than two roundings
+        const xpPerHrBySkill = xpEntries.map(([skill, total]) => [skill, Math.round(total / hours)]);
+        const summaryXpPerHr = xpPerHrBySkill.reduce((sum, [, perHr]) => sum + perHr, 0);
+        const summaryPrevXpPerHr = hasPrev ? Object.values(prevXpPerHr).reduce((sum, v) => sum + v, 0) : null;
         if (xpEntries.length > 0) {
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">XP/hr</div>`;
@@ -2905,8 +2938,8 @@ class CombatSimUI {
                 html += '</div>';
             }
             // Total XP/hr row
-            const totalXpPerHr = xpEntries.reduce((sum, [, total]) => sum + Math.round(total / hours), 0);
-            const prevTotalXpPerHr = hasPrev ? Object.values(prevXpPerHr).reduce((sum, v) => sum + v, 0) : null;
+            const totalXpPerHr = summaryXpPerHr;
+            const prevTotalXpPerHr = summaryPrevXpPerHr;
             html += `<div style="display:flex; justify-content:space-between; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px;">`;
             html += `<span style="color:#aaa; font-weight:700;">Total</span>`;
             html += `<span style="${valueStyle}">${formatWithSeparator(totalXpPerHr)}${this._formatDelta(totalXpPerHr, prevTotalXpPerHr)}</span>`;
@@ -3299,6 +3332,28 @@ class CombatSimUI {
             html += `</div>`;
         }
 
+        const summaryHtml = this._renderResultsSummary({
+            simResult,
+            hours,
+            encountersPerHr,
+            prevEncountersPerHr: prevEncPerHr,
+            deathsPerHr,
+            prevDeathsPerHr,
+            dps: summaryDps,
+            prevDps: summaryPrevDps,
+            xpPerHr: summaryXpPerHr,
+            prevXpPerHr: summaryPrevXpPerHr,
+            xpPerHrBySkill,
+            revenuePerHr: dropGoldPerHr,
+            expensesPerHr: totalExpensesPerHr,
+            netProfitPerHr,
+            prevProfitPerHr: prevProfit,
+            numberOfPlayers,
+        });
+        // Function replacement: a literal one would read `$&` and friends in the
+        // summary as capture references
+        html = html.replace(RESULTS_SUMMARY_SLOT, () => summaryHtml);
+
         container.innerHTML = html;
         container.style.display = 'block';
 
@@ -3383,6 +3438,15 @@ class CombatSimUI {
             }),
         }));
 
+        // Comparison: clear every saved run at once
+        const clearAllBtn = container.querySelector('#mwi-csim-history-clear');
+        if (clearAllBtn) {
+            clearAllBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._clearAllHistory();
+            });
+        }
+
         // Comparison: remove × buttons
         container.querySelectorAll('[data-remove-comparison]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
@@ -3441,6 +3505,157 @@ class CombatSimUI {
                 }
             });
         });
+    }
+
+    /**
+     * The answer to "was this fight worth it", above everything that argues it.
+     *
+     * A run's verdict is a handful of numbers — what a day of it earns, what a
+     * day of it levels, how fast it kills and whether it kills you — and every
+     * one of them was previously several sections apart, with the profit figure
+     * last of all because it depends on the drop and consumable tables. Those
+     * tables still hold the working; this holds the conclusions, and takes them
+     * from the same variables the tables printed rather than recomputing.
+     *
+     * Per-day is the headline unit rather than per-hour: nobody fights a zone
+     * for an hour, and it is the number a player compares against the other
+     * things they could be doing with a day.
+     *
+     * @param {Object} data - Values already computed by `_displayResults`
+     * @returns {string} HTML for the summary block
+     * @private
+     */
+    _renderResultsSummary(data) {
+        const {
+            simResult,
+            hours,
+            encountersPerHr,
+            prevEncountersPerHr,
+            deathsPerHr,
+            prevDeathsPerHr,
+            dps,
+            prevDps,
+            xpPerHr,
+            prevXpPerHr,
+            xpPerHrBySkill = [],
+            revenuePerHr,
+            expensesPerHr,
+            netProfitPerHr,
+            prevProfitPerHr,
+            numberOfPlayers = 1,
+        } = data;
+
+        const tileStyle =
+            'flex:1 1 100px; min-width:100px; padding:5px 8px; border:1px solid #2a2a4a; border-radius:5px; ' +
+            'background:rgba(74, 158, 255, 0.06);';
+        const tileLabel = 'display:block; color:#888; font-size:10px; white-space:nowrap;';
+        const tileValue = 'display:block; font-size:15px; font-weight:700; line-height:1.3;';
+
+        /**
+         * One tile.
+         * @param {string} label - Caption
+         * @param {string} value - Preformatted value, may carry a delta span
+         * @param {string} [color='#e0e0e0'] - Value colour
+         * @returns {string} HTML
+         */
+        const tile = (label, value, color = '#e0e0e0') =>
+            `<div style="${tileStyle}"><span style="${tileLabel}">${label}</span>` +
+            `<span style="${tileValue} color:${color};">${value}</span></div>`;
+
+        const profitPerDay = netProfitPerHr * 24;
+        const profitColor = profitPerDay >= 0 ? '#7ec87e' : '#ff6b6b';
+        const profitSign = profitPerDay >= 0 ? '' : '-';
+        const profitDelta =
+            prevProfitPerHr === null || prevProfitPerHr === undefined
+                ? ''
+                : this._formatDelta(profitPerDay, prevProfitPerHr * 24, true, true);
+
+        const tiles = [];
+        tiles.push(
+            tile(
+                'Profit/day',
+                `${profitSign}${formatKMB(Math.abs(Math.round(profitPerDay)))}${profitDelta}`,
+                profitColor
+            )
+        );
+        tiles.push(
+            tile(
+                'XP/day',
+                `${formatKMB(Math.round(xpPerHr * 24))}` +
+                    this._formatDelta(xpPerHr * 24, prevXpPerHr === null ? null : prevXpPerHr * 24, true, true)
+            )
+        );
+
+        // Dungeons are entered, not encountered, so the rate a player watches is
+        // completions — encounters inside a run are a wave count, not a pace
+        if (simResult.isDungeon) {
+            const completedPerHr = (simResult.dungeonsCompleted || 0) / hours;
+            const attempts = (simResult.dungeonsCompleted || 0) + (simResult.dungeonsFailed || 0);
+            tiles.push(tile('Dungeons/hr', this._formatRate(completedPerHr)));
+            tiles.push(
+                tile(
+                    'Success',
+                    attempts > 0 ? `${(((simResult.dungeonsCompleted || 0) / attempts) * 100).toFixed(1)}%` : '—'
+                )
+            );
+        } else {
+            tiles.push(
+                tile(
+                    'Kills/hr',
+                    formatWithSeparator(Math.round(encountersPerHr)) +
+                        this._formatDelta(encountersPerHr, prevEncountersPerHr ?? null)
+                )
+            );
+        }
+
+        if (dps !== null && dps !== undefined) {
+            tiles.push(
+                tile(
+                    numberOfPlayers > 1 ? 'Party DPS' : 'DPS',
+                    formatWithSeparator(Math.round(dps)) + this._formatDelta(dps, prevDps ?? null)
+                )
+            );
+        }
+
+        // Deaths per day rather than per hour: at a realistic death rate the
+        // hourly figure rounds to a number of zeroes that reads as "never"
+        const deathsPerDay = deathsPerHr * 24;
+        tiles.push(
+            tile(
+                'Deaths/day',
+                this._formatDeaths(deathsPerDay) +
+                    this._formatDelta(deathsPerDay, prevDeathsPerHr === null ? null : prevDeathsPerHr * 24, false),
+                deathsPerDay > 0 ? '#ff6b6b' : '#e0e0e0'
+            )
+        );
+
+        // The two halves of Profit/day, so the tile is auditable without
+        // scrolling to the tables that produced them
+        const subLine =
+            `<div style="margin-top:5px; font-size:10px; color:#666;">` +
+            `Revenue ${formatKMB(Math.round(revenuePerHr * 24))}/day &nbsp;·&nbsp; ` +
+            `Costs ${formatKMB(Math.round(expensesPerHr * 24))}/day` +
+            (xpPerHrBySkill.length > 0
+                ? ` &nbsp;·&nbsp; ` +
+                  xpPerHrBySkill
+                      .slice()
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 4)
+                      .map(
+                          ([skill, perHr]) =>
+                              `${skill.charAt(0).toUpperCase() + skill.slice(1)} ${formatKMB(Math.round(perHr * 24))}`
+                      )
+                      .join(', ')
+                : '') +
+            `</div>`;
+
+        return (
+            `<div style="margin-bottom:12px; padding:8px; border:1px solid ${ACCENT_BORDER}; border-radius:6px; background:${ACCENT_BG};">` +
+            `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px;">Summary</div>` +
+            `<div style="display:flex; flex-wrap:wrap; gap:6px;">${tiles.join('')}</div>` +
+            subLine +
+            `</div>`
+        );
     }
 
     /**
@@ -3652,6 +3867,37 @@ class CombatSimUI {
      * @private
      */
     /**
+     * Throw away every saved run, along with the baseline and the comparison
+     * picks that only mean anything relative to them.
+     *
+     * History is in-memory for the life of the panel — the same place the ✕ on
+     * a row deletes from — so this is that delete applied to all of them, not a
+     * second store. The results box is emptied rather than re-rendered: with no
+     * runs left there is nothing it could honestly show, and leaving the last
+     * one up would suggest the comparison it was drawn against still exists.
+     * @private
+     */
+    _clearAllHistory() {
+        if (this._simHistory.length === 0) return;
+
+        this._simHistory = [];
+        this._comparisonBaseline = null;
+        this._comparisonIndex = null;
+        this._comparisonSlots = [];
+        this._activeDetailIndex = null;
+        this._lastSimResult = null;
+        this._lastSimHours = null;
+        this._lastGameData = null;
+
+        const container = this.panel?.querySelector('#mwi-csim-results');
+        if (container) {
+            container.innerHTML = '';
+            container.style.display = 'none';
+        }
+        this._setStatus('Cleared all saved runs. Run a simulation to start a new comparison.');
+    }
+
+    /**
      * Delete a history entry by index and re-render results.
      * @param {number} idx - Index in _simHistory to remove
      * @private
@@ -3750,6 +3996,13 @@ class CombatSimUI {
             '<button id="mwi-csim-history-csv" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ' +
             'border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; ' +
             'flex-shrink:0;">Export CSV</button>';
+        // Deleting saved runs one ✕ at a time is the only way out of a full
+        // history, and a run left behind keeps skewing every delta below
+        html +=
+            '<button id="mwi-csim-history-clear" title="Delete every saved run, baseline and comparison" ' +
+            'style="background:#1a1a2e; color:#ff9a9a; border:1px solid #333; ' +
+            'border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; ' +
+            'flex-shrink:0;">Clear all</button>';
         html += '</div>';
 
         // Table
@@ -4653,6 +4906,10 @@ class CombatSimUI {
                   )
                 : 0;
             const houseTargets = isHouseMode ? this._getHouseTargets() : null;
+            // Blank means "one level up", which is what the advisor reads a 0 as
+            const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
+                ? Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+                : 0;
             const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
@@ -4675,6 +4932,7 @@ class CombatSimUI {
                     charmTier,
                     houseTargetLevel,
                     houseTargets,
+                    guildShrineTargetLevel,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -4976,9 +5234,16 @@ class CombatSimUI {
 
         const tokens = candidate.guildTokenCost || 0;
         const gold = r.cost == null ? 'no price' : formatKMB(r.cost);
+        // A target level buys several levels at once, and the cost is all of
+        // them — say so, or the figure reads as the price of the last level
+        const levels = candidate.levelsBought ?? candidate.upgradeLevel - candidate.currentLevel;
+        const span =
+            levels > 1
+                ? ` for all ${levels} levels from Lv${candidate.currentLevel} to Lv${candidate.upgradeLevel}`
+                : '';
         const parts = [
             `<div style="color:#aaa;">Costs ${formatWithSeparator(tokens)} guild token${tokens === 1 ? '' : 's'} + ` +
-                `credits worth ${gold}. Ranked on the gold half only — tokens cannot be bought.</div>`,
+                `credits worth ${gold}${span}. Ranked on the gold half only — tokens cannot be bought.</div>`,
         ];
 
         if (candidate.needsShrineLevel) {

@@ -19,6 +19,10 @@ const mocks = vi.hoisted(() => ({
     /** Whether the page was left with the panel up, and what it recorded since */
     wasOpen: false,
     openCalls: [],
+    /** itemHrid → count, what a run is said to have dropped */
+    drops: new Map(),
+    /** itemHrid → { bid, ask }; anything absent is unlisted, as most things are */
+    prices: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -70,11 +74,15 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: () => ({ bid: 0, ask: 0 }) },
+    default: { getPrice: (hrid) => mocks.prices[hrid] || { bid: 0, ask: 0 } },
 }));
 
 vi.mock('../market/expected-value-calculator.js', () => ({
-    default: { calculateExpectedValue: () => null },
+    default: {
+        calculateExpectedValue: () => null,
+        getCachedValue: () => null,
+        calculateSingleContainer: () => null,
+    },
 }));
 
 vi.mock('../../utils/panel-z-index.js', () => ({
@@ -103,7 +111,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCombatZones: () => mocks.zones,
     getCurrentCombatZone: () => null,
     getCommunityBuffs: () => ({}),
-    calculateExpectedDrops: () => new Map(),
+    calculateExpectedDrops: () => mocks.drops,
     calculateDungeonKeyCosts: () => [],
     calculateSimRevenue: () => ({ netPerHour: 0, costPerHour: 0, revenuePerHour: 0 }),
     getZonesThatDropItem: () => [],
@@ -873,5 +881,229 @@ describe('the noise a row reports for one metric', () => {
 
     test('and a row that never measured it is believed rather than discarded', () => {
         expect(upgradeNoiseFor({}, 'dps')).toEqual({ noisePct: null, significant: true });
+    });
+});
+
+/**
+ * A SimResult with just the fields the Results tab reads, at rates that are
+ * round numbers over one hour so an assertion can name the value it expects.
+ * @param {Object} [overrides] - Fields to replace
+ * @returns {Object} SimResult-shaped object
+ */
+function oneHourFight(overrides = {}) {
+    return {
+        encounters: 1200,
+        deaths: { player1: 0 },
+        experienceGained: { player1: { attack: 1000, stamina: 500 } },
+        consumablesUsed: { player1: {} },
+        totalDamageDealt: { player1: 3600 * 500 },
+        simulatedTime: 3600 * 1e9,
+        playerRanOutOfMana: { player1: false },
+        numberOfPlayers: 1,
+        ...overrides,
+    };
+}
+
+/** Put a run on screen through the real display path. */
+function showFight(simResult = oneHourFight(), hours = 1) {
+    ui._playerInfo = [{ hrid: 'player1', name: 'Me' }];
+    ui._activePlayerTab = 'player1';
+    ui._lastSimResult = simResult;
+    ui._lastSimHours = hours;
+    ui._lastGameData = { itemDetailMap: {} };
+    ui._displayResults(simResult, hours, ui._lastGameData);
+    return ui.panel.querySelector('#mwi-csim-results');
+}
+
+/** Push a finished run into the comparison history without running a sim. */
+function pushHistory(label, simResult = oneHourFight(), hours = 1) {
+    ui._simHistory.push({
+        label,
+        simResult,
+        hours,
+        gameData: { itemDetailMap: {} },
+        metrics: null,
+        timestamp: Date.now(),
+    });
+    ui._activeDetailIndex = ui._simHistory.length - 1;
+}
+
+describe('the summary at the top of the Results tab', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    test('leads with the per-day numbers, above every section that argues them', () => {
+        const results = showFight();
+        const shown = results.textContent;
+
+        expect(shown).toContain('Summary');
+        expect(shown).toContain('Profit/day');
+        expect(shown).toContain('XP/day');
+        expect(shown).toContain('Kills/hr');
+        expect(shown).toContain('Deaths/day');
+        // Up top is the whole point: burying it under Overview would be the bug
+        expect(shown.indexOf('Summary')).toBeLessThan(shown.indexOf('Overview'));
+        // And the marker itself must never survive into the page
+        expect(results.innerHTML).not.toContain('mwi-csim-summary');
+    });
+
+    test('reports the same profit the Net Profit section works out', () => {
+        // 1200 coins an hour in, 200 gold an hour of cheese out
+        mocks.drops = new Map([['/items/coin', 1200]]);
+        mocks.prices['/items/cheese'] = { bid: 10, ask: 10 };
+        const shown = showFight(oneHourFight({ consumablesUsed: { player1: { '/items/cheese': 20 } } })).textContent;
+
+        // (1200 − 200) × 24 = 24.0K a day
+        expect(shown).toContain('24.0K');
+        expect(shown).toContain('Revenue 28.8K/day');
+        expect(shown).toContain('Costs 4.8K/day');
+    });
+
+    test('XP/day is the same total the XP section adds up, times a day', () => {
+        // 1500 xp/hr → 36.0K a day, with the two skills named beside it
+        const shown = showFight().textContent;
+
+        expect(shown).toContain('36.0K');
+        expect(shown).toContain('Attack 24.0K');
+        expect(shown).toContain('Stamina 12.0K');
+    });
+
+    test('a dungeon is summarised on completions rather than on encounters', () => {
+        const shown = showFight(
+            oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, maxWaveReached: 9 })
+        ).textContent;
+
+        expect(shown).toContain('Dungeons/hr');
+        expect(shown).toContain('Success');
+        expect(shown).toContain('75.0%');
+        expect(shown).not.toContain('Kills/hr');
+    });
+
+    test('deaths are a daily figure, because the hourly one rounds to never', () => {
+        // One death every fifty hours: half a death a day, which is a number a
+        // player can act on, against 0.02 an hour, which is not
+        const shown = showFight(oneHourFight({ deaths: { player1: 0.02 } })).textContent;
+
+        expect(shown).toContain('Deaths/day0.5');
+        // The hourly figure is still down in Overview for anyone who wants it
+        expect(shown).toContain('Deaths/hr0.02');
+    });
+});
+
+describe('clearing the comparison history', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    test('Clear all throws away every run, baseline and comparison pick', () => {
+        pushHistory('Current Gear');
+        pushHistory('New Chest');
+        ui._comparisonBaseline = 0;
+        ui._comparisonSlots = [1];
+        const results = showFight();
+
+        expect(results.textContent).toContain('Comparison (2 runs)');
+        results.querySelector('#mwi-csim-history-clear').click();
+
+        expect(ui._simHistory).toEqual([]);
+        expect(ui._comparisonBaseline).toBeNull();
+        expect(ui._comparisonSlots).toEqual([]);
+        expect(ui._activeDetailIndex).toBeNull();
+        expect(results.style.display).toBe('none');
+        expect(text()).toContain('Cleared all saved runs.');
+    });
+
+    test('the per-run ✕ still removes only that run', () => {
+        pushHistory('Current Gear');
+        pushHistory('New Chest');
+        ui._comparisonBaseline = 0;
+        ui._comparisonSlots = [1];
+        const results = showFight();
+
+        results.querySelector('[data-delete-history="1"]').click();
+
+        expect(ui._simHistory.map((e) => e.label)).toEqual(['Current Gear']);
+    });
+
+    test('clearing an empty history is a no-op rather than a status line', () => {
+        showFight();
+        ui._setStatus('Simulation complete.');
+        ui._clearAllHistory();
+
+        expect(text()).toContain('Simulation complete.');
+    });
+});
+
+describe('the guild shrine target level', () => {
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('rides along with the analysis when the shrine set is checked', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="equipment"]').checked = false;
+        ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = false;
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+        ui.panel.querySelector('#mwi-csim-shrine-target-level').value = '6';
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineTargetLevel).toBe(6);
+    });
+
+    test('blank means one level up, which the advisor reads as no target', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+        ui.panel.querySelector('#mwi-csim-shrine-target-level').value = '';
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineTargetLevel).toBe(0);
+    });
+
+    test('its control is hidden until the shrine set is checked', () => {
+        const group = ui.panel.querySelector('#mwi-csim-shrine-group');
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = false;
+        ui._onUpgradeModesChanged();
+        expect(group.style.display).toBe('none');
+
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+        ui._onUpgradeModesChanged();
+        expect(group.style.display).toBe('inline-flex');
     });
 });
