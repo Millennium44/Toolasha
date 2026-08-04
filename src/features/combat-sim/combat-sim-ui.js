@@ -35,6 +35,7 @@ import {
     houseRoomAffectsCombat,
     assignRankScores,
     planWithinBudget,
+    explainUpgradeCost,
     COST_SOURCES,
     RANK_PLACES,
     SCORE_METRICS,
@@ -5222,10 +5223,9 @@ class CombatSimUI {
      *
      * The column holds gold, and a shrine level is bought with credits *and*
      * guild tokens. Credits have a gold value — the cheapest items that convert
-     * into them — but nothing converts into tokens, so no honest gold figure
-     * exists for that half. It is reported as a count instead, and the row is
-     * ranked on the gold half alone, which this says out loud rather than
-     * letting the ranking imply the tokens were free.
+     * into them — and tokens are priced through the guild shop's token→credit
+     * exchange when a rate is known. The note names which ranking applied, so
+     * a missing exchange rate never reads as the tokens being free.
      *
      * @param {Object} r - Result row
      * @returns {string} HTML, empty for every other kind of row
@@ -5235,8 +5235,10 @@ class CombatSimUI {
         const candidate = r.candidate;
         if (candidate?.type !== 'guild_shrine') return '';
 
-        const tokens = candidate.guildTokenCost || 0;
-        const gold = r.cost == null ? 'no price' : formatKMB(r.cost);
+        const guild = explainUpgradeCost(candidate, null)?.guild || {};
+        const tokens = guild.tokens ?? (candidate.guildTokenCost || 0);
+        const gold = guild.creditGold == null ? 'no price' : formatKMB(guild.creditGold);
+        const tokenText = guild.tokenNote || `${formatWithSeparator(tokens)} guild token${tokens === 1 ? '' : 's'}`;
         // A target level buys several levels at once, and the cost is all of
         // them — say so, or the figure reads as the price of the last level
         const levels = candidate.levelsBought ?? candidate.upgradeLevel - candidate.currentLevel;
@@ -5245,8 +5247,7 @@ class CombatSimUI {
                 ? ` for all ${levels} levels from Lv${candidate.currentLevel} to Lv${candidate.upgradeLevel}`
                 : '';
         const parts = [
-            `<div style="color:#aaa;">Costs ${formatWithSeparator(tokens)} guild token${tokens === 1 ? '' : 's'} + ` +
-                `credits worth ${gold}${span}. Ranked on the gold half only — tokens cannot be bought.</div>`,
+            `<div style="color:#aaa;">Costs ${tokenText} + credits worth ${gold}${span}. ${guild.rankedNote || ''}</div>`,
         ];
 
         if (candidate.needsShrineLevel) {

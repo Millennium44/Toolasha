@@ -24,13 +24,17 @@
  * captured and persisted by the data manager, so the level survives the session
  * it was seen in.
  *
- * The *bonus per level*, though, is a different matter. The hrid spellings and
- * the client-data map that describes them have not been verified against a live
- * client, so every lookup here is a probe: several plausible map names, matched
- * by shape, with a hard null when none of them answers. A null is reported as
- * unknown and the panel shows un-bonused figures with a note — which is correct,
- * and is what a guessed multiplier would not be. A manual override in settings
- * covers the player who knows their own guild's numbers and wants them applied.
+ * The *bonus per level* is read three ways, in order. A manual override in
+ * settings wins, for the player who knows their own guild's numbers. Then the
+ * client's own detail map, if it turns out to publish one — the hrid spellings
+ * and the map name have not been verified against a live client, so every lookup
+ * there is a probe: several plausible map names, matched by shape. Failing both,
+ * the confirmed rule: 2% per level, read off the in-game Build dialog, which
+ * shows "Level 10 → Level 11, Guild Points: +20% → +22%" for the Builders Hall
+ * and the same pattern for the Treasury.
+ *
+ * Only a building whose *level* never reached the client is reported as unknown,
+ * and only then does the panel fall back to un-bonused figures with a note.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -229,12 +233,29 @@ export function buildingBonusFromDetail(detail, level) {
 }
 
 /**
+ * Bonus a payout building grants per level.
+ *
+ * Confirmed against the in-game Build dialog: "Level 10 → Level 11, Guild
+ * Points: +20% → +22%", so the bonus is level × 0.02 and not a per-level step on
+ * top of a base. The Treasury follows the same 2%-per-level pattern.
+ *
+ * This is the game's own rule rather than a guess, so it beats reporting the
+ * bonus as unknown: a guild whose Builders Hall level reached the client is not
+ * a guild whose Guild Points multiplier is a mystery. What remains genuinely
+ * unknowable is the *level* — that only arrives on guild traffic — and that is
+ * what the unknown case is now reserved for.
+ */
+export const BUILDING_BONUS_PER_LEVEL = 0.02;
+
+/**
  * Everything known about one payout-relevant building.
  *
- * `source` is what the panel needs to caption itself: `'client'` when the game's
- * own data answered, `'manual'` when the player typed the number in, and
- * `'unknown'` when neither did — in which case `bonus` is null and the caller
- * must show un-bonused figures rather than treat it as zero.
+ * `source` is what the panel needs to caption itself: `'manual'` when the player
+ * typed the number in, `'client'` when the game's own detail map described the
+ * building, `'formula'` when the level is known and the confirmed
+ * 2%-per-level rule was applied to it, and `'unknown'` when not even the level
+ * is — in which case `bonus` is null and the caller must show un-bonused figures
+ * rather than treat it as zero.
  *
  * @param {Object} input - Inputs
  * @param {RegExp} input.pattern - Which building
@@ -256,6 +277,9 @@ export function readBuildingBonus({ pattern, override = null, levelMap, detailMa
 
     const bonus = hrid ? buildingBonusFromDetail(details?.[hrid], level) : null;
     if (Number.isFinite(bonus)) return { hrid, level, bonus, source: 'client' };
+
+    // The level is the hard part; once it is in hand the multiplier is arithmetic
+    if (level > 0) return { hrid, level, bonus: level * BUILDING_BONUS_PER_LEVEL, source: 'formula' };
 
     return { hrid, level, bonus: null, source: 'unknown' };
 }

@@ -62,8 +62,8 @@ export const LAB_UPGRADE_DIMENSIONS = [
         defaultOn: false,
         title:
             'One level on each combat guild shrine buff.\n\n' +
-            'Cost is the gold value of the guild credits only — guild tokens are not priced, because nothing ' +
-            'converts into them.',
+            'Cost covers the guild credits plus the tokens, the tokens priced through the guild shop ' +
+            'token→credit exchange when a rate is known; without one, credits only.',
     },
 ];
 

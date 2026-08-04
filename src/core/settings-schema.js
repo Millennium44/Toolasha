@@ -2642,6 +2642,20 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows 24-hour average XP/hr tracked by Toolasha (Contributions tab).',
             },
+            guildTokenCreditRate: {
+                id: 'guildTokenCreditRate',
+                label: 'Guild Shop: Guild credits received per guild token',
+                type: 'number',
+                default: 1,
+                min: 0,
+                help:
+                    'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
+                    'exchange instead: credits per token × the gold value of a credit. Only used when the game ' +
+                    'does not publish the exchange itself — when it does, the live rate always wins. The default ' +
+                    'of 1 credit per token is an assumption, and every figure derived from it is labelled ' +
+                    '“assumed rate”; check the Guild Shop and set your game’s actual rate. Set to 0 to leave ' +
+                    'tokens unpriced, as they were before.',
+            },
             guildCreditValue: {
                 id: 'guildCreditValue',
                 label: 'Guild Shop: Show gold cost per credit table',

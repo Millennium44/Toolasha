@@ -16,6 +16,13 @@ const guild = vi.hoisted(() => ({
 /** The books this character has read, which is what an ability swap is costed from */
 const character = vi.hoisted(() => ({ characterAbilities: [] }));
 
+/**
+ * What a guild token is worth, in gold. Null is the state a player is in when
+ * neither the client nor their settings name a token→credit exchange rate, and
+ * is what every test that is not about token pricing runs with.
+ */
+const token = vi.hoisted(() => ({ goldPerToken: null }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
@@ -60,6 +67,32 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
         };
     }),
 }));
+// The exchange chain itself (client rate → credit price → gold) is tested in
+// guild-token-value.test.js; here only the one number it hands over matters
+vi.mock('../guild/guild-token-value.js', () => {
+    const valuation = () => ({
+        gold: token.goldPerToken,
+        creditsPerToken: 1,
+        creditItemHrid: '/items/guild_credit_1',
+        goldPerCredit: token.goldPerToken,
+        source: token.goldPerToken ? 'client' : 'unknown',
+        assumed: false,
+        note: token.goldPerToken ? 'via credit exchange at 1 credit/token' : null,
+    });
+    return {
+        explainGuildTokenValue: vi.fn(valuation),
+        describeGuildTokenGold: vi.fn((tokens, _mode, options = {}) => {
+            const rate = (options.valuation || valuation()).gold;
+            if (!(tokens > 0) || !(rate > 0)) return null;
+            return {
+                gold: tokens * rate,
+                text: `≈${tokens * rate}g via credit exchange`,
+                title: 'priced through the guild shop exchange',
+                valuation: options.valuation || valuation(),
+            };
+        }),
+    };
+});
 vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
     runLabyrinthSimulation: vi.fn(),
@@ -2805,6 +2838,9 @@ describe('guild shrine candidates', () => {
         };
         guild.shrineLevels = {};
         guild.applied = [];
+        // No exchange rate is the default state; the tests about token pricing
+        // set one for themselves
+        token.goldPerToken = null;
     });
 
     test('one level up from where the character is', () => {
@@ -2946,15 +2982,66 @@ describe('guild shrine candidates', () => {
         expect(hrids).toEqual(['/guild_buffs/force_skilling']);
     });
 
-    test('cost is the credit gold, with the tokens left out of it', () => {
+    test('with no exchange rate for tokens, cost is the credit gold and says so', () => {
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
         const [candidate] = generateGuildShrineCandidates(dto);
 
         expect(calculateUpgradeCost(candidate, buildGameData())).toBe(3000);
 
         const detail = explainUpgradeCost(candidate, buildGameData());
-        expect(detail.guild).toMatchObject({ tokens: 40, shrineName: 'Force' });
+        expect(detail.guild).toMatchObject({ tokens: 40, shrineName: 'Force', tokenGold: null, creditGold: 3000 });
         expect(detail.net).toBe(3000);
+        expect(detail.guild.rankedNote).toContain('credit half only');
+    });
+
+    test('a priced token is folded into the cost, with both halves still reported', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+
+        // 30 credits at 100 each, plus 40 tokens at 50 each
+        expect(calculateUpgradeCost(candidate, buildGameData())).toBe(5000);
+
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.guild).toMatchObject({ tokens: 40, creditGold: 3000, tokenGold: 2000, goldPerToken: 50 });
+        expect(detail.guild.tokenNote).toContain('via credit exchange');
+        expect(detail.guild.rankedNote).toContain('credits plus tokens');
+        expect(detail.net).toBe(5000);
+    });
+
+    test('an unpriced credit stays unknown rather than being rescued by the token half', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        candidate.creditCosts = [{ itemHrid: '/items/unpriced_credit', count: 5 }];
+
+        expect(calculateUpgradeCost(candidate, buildGameData())).toBeNull();
+    });
+
+    test('the ranking flips when the token half is the larger one', () => {
+        // Two levels a player could buy: one cheap in credits and enormously
+        // expensive in tokens, one the other way round. Ranked on credits alone
+        // the first wins; ranked on what it actually costs, it does not
+        const tokenHeavy = {
+            type: 'guild_shrine',
+            guildTokenCost: 1000,
+            creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 10 }],
+        };
+        const creditHeavy = {
+            type: 'guild_shrine',
+            guildTokenCost: 1,
+            creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 30 }],
+        };
+        const cheaper = () =>
+            calculateUpgradeCost(tokenHeavy, buildGameData()) < calculateUpgradeCost(creditHeavy, buildGameData())
+                ? 'tokenHeavy'
+                : 'creditHeavy';
+
+        token.goldPerToken = null;
+        expect(cheaper()).toBe('tokenHeavy');
+
+        token.goldPerToken = 50;
+        expect(cheaper()).toBe('creditHeavy');
     });
 
     test('an unpriced credit leaves the cost unknown rather than free', () => {

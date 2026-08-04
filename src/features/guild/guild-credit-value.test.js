@@ -55,6 +55,7 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
 }));
 
 const guildCreditValue = (await import('./guild-credit-value.js')).default;
+const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
 function buildExchangeModal(creditName) {
     document.body.innerHTML = '';
@@ -87,7 +88,9 @@ describe('guild credit value — exchange ranking table', () => {
                 '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
                 '/items/bronze_bar': {
                     name: 'Bronze Bar',
-                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 }],
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
                 },
                 '/items/iron_bar': {
                     name: 'Iron Bar',
@@ -209,11 +212,33 @@ describe('guild credit value — trial tier badge', () => {
         }
     });
 
-    test('tier is capped at 20 for very high levels', () => {
-        const el = buildTileSummary('Lv.500');
-        game.observers['GuildPanel_tileSummary'](el);
+    test('the top of the ladder is tier 21, at level 300', () => {
+        // Tiers start at 100 and step 10 to a maximum level of 300, which is 21
+        // tiers — the same ladder `guild-trials-math.js` encodes, and not the 20
+        // this badge used to cap at
+        expect(buildAndReadTier('Lv.300')).toBe('T21');
+        expect(buildAndReadTier('Lv.500')).toBe('T21');
 
-        expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T20');
+        function buildAndReadTier(text) {
+            const el = buildTileSummary(text);
+            game.observers['GuildPanel_tileSummary'](el);
+            return el.querySelector('.mwi-trial-tier').textContent;
+        }
+    });
+
+    test('the badge and the math agree on every tier of the ladder, both ways', () => {
+        for (let tier = 1; tier <= TRIAL_MAX_TIER; tier++) {
+            const level = levelFromTier(tier);
+            expect(tierFromLevel(level)).toBe(tier);
+
+            const el = buildTileSummary(`Lv.${level}`);
+            game.observers['GuildPanel_tileSummary'](el);
+            expect(el.querySelector('.mwi-trial-tier').textContent).toBe(`T${tier}`);
+        }
+
+        // One past the top is still the top, not a 22nd tier
+        expect(levelFromTier(TRIAL_MAX_TIER + 1)).toBeNull();
+        expect(tierFromLevel(310)).toBe(TRIAL_MAX_TIER);
     });
 
     test('a tile is only ever tagged once', () => {

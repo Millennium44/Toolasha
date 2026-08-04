@@ -22,6 +22,8 @@ import {
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { tierFromLevel } from './guild-trials-math.js';
+import { describeGuildTokenGold } from './guild-token-value.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
 
@@ -390,11 +392,18 @@ class GuildCreditValue {
             titleEl.textContent = 'Total upgrade cost';
             totalsEl.appendChild(titleEl);
 
-            // Guild tokens row
+            // Guild tokens row. Tokens are not listed on the market, but the
+            // guild shop trades them for credits and credits have a gold value,
+            // so the row can carry an approximate one — labelled as derived,
+            // never presented as a price
             if (tokens.total > 0) {
+                const tokenGold = describeGuildTokenGold(tokens.total, 'ask');
+                const goldStr = tokenGold
+                    ? ` <span style="color:#6b7280; font-weight:400;" title="${tokenGold.title.replace(/"/g, '&quot;')}">(${tokenGold.text})</span>`
+                    : '';
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
-                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokens.total.toLocaleString()}</span>`;
+                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokens.total.toLocaleString()}${goldStr}</span>`;
                 totalsEl.appendChild(row);
             }
 
@@ -1003,9 +1012,12 @@ class GuildCreditValue {
         if (!match) return;
 
         const level = parseInt(match[1], 10);
-        if (level < 100) return;
 
-        const tier = Math.min(20, Math.floor((level - 100) / 10) + 1);
+        // The ladder itself is `guild-trials-math.js`'s to define — tiers start
+        // at level 100, step 10, and stop at 300, which is 21 tiers and not the
+        // 20 this used to cap at
+        const tier = tierFromLevel(level);
+        if (tier === null) return;
 
         const tierSpan = document.createElement('span');
         tierSpan.className = 'mwi-trial-tier';

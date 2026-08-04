@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Tokens get a price, shrines get a debug command
+
+- **Guild tokens are now priced through the guild shop's token→credit exchange** (live client data when present, else a settable rate defaulting to 1 credit/token, 0 to turn it off). Shrine upgrade rows rank on credits _plus_ tokens — token-heavy top levels sink, credit-cheap levels rise — with the valuation labeled "via credit exchange" everywhere it appears, including trial token payouts.
+- **Builders Hall and Treasury bonuses use the confirmed 2%/level formula** (checked against the Build dialog: Lv10→11 = +20%→+22%), so trial payout projections apply your guild's real +20%/+10% instead of "base figures"; manual overrides remain as a last resort.
+- **Trial tiers cap at 21** (level 300), fixing the old hard-coded 20.
+- **`/shrines` in chat** prints a local-only report of your shrine buff levels, guild building levels, and when they were captured; `Toolasha.debug.shrines()` returns the same from the console.
+
+### Cross-tab sim exports can't lie about whose gear they are
+
+- **The combat-sim export bridge stamps every payload with the writing character**; per-character reads (character data, battles) refuse a mismatched stamp with a clear message instead of exporting another tab's gear, stale payloads warn, and legacy unstamped values still work. Shared data (client data, profile list) is deliberately exempt.
+
 ### The variance math earns its tests
 
 - **180 new tests**: the enhancement variance formula and gamma percentiles now have hand-solved exact-rational fixtures (derived by an independent second-moment recursion — they agree to nine decimals) plus a seeded Monte Carlo cross-check and a worker-blob serialization guard; the alchemy Best Items and profit display wrappers get full coverage; and the action-speed, drink-coverage, and scroll-buff utils are pinned down.
