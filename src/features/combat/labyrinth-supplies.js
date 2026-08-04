@@ -480,36 +480,61 @@ export function clampToOwned(requested, owned, known = true) {
 }
 
 /**
+ * The word for "how many of the pile remain" — which depends on which pile a
+ * reading is showing.
+ *
+ * Between runs it is "owned": the bag, and you can walk it up by buying more.
+ * Mid-run it is "left this run": the run's own stock (or, failing that, the
+ * bag standing in for it), and nothing bought now can add to it — the game
+ * only tops a run up from the bag at the moment it starts. Calling a mid-run
+ * zero "0 owned" is not wrong about the number, only about what it invites
+ * you to do next.
+ *
+ * @param {boolean} runActive
+ * @returns {string}
+ */
+export function remainingWord(runActive) {
+    return runActive ? 'left this run' : 'owned';
+}
+
+/**
  * How a needed-versus-owned pair should read in a status line.
  *
  * The plain case says nothing at all — a plan you can afford should not be
- * cluttered with a reassurance — and only a shortfall gets words.
+ * cluttered with a reassurance — and only a shortfall gets words. The word
+ * for what is held follows `remainingWord`: "owned" out of a run, "left this
+ * run" mid-run, where it is not a number a purchase can move.
  *
  * @param {number} needed - What the plan calls for
  * @param {number} owned - What is held
  * @param {string} noun - Singular noun, e.g. 'shroud'
  * @param {boolean} [known=true] - False when the inventory could not be read
+ * @param {boolean} [runActive=false] - Whether the pile being measured is a
+ *   run's own stock (or standing in for one), for the word used to name it
  * @returns {{text: string, short: number, over: boolean}}
  */
-export function describeSupplyNeed(needed, owned, noun, known = true) {
+export function describeSupplyNeed(needed, owned, noun, known = true, runActive = false) {
     const need = Math.max(0, Math.floor(Number(needed) || 0));
     const have = Math.max(0, Math.floor(Number(owned) || 0));
     const plural = (n) => `${n} ${noun}${n === 1 ? '' : 's'}`;
     if (!known) return { text: plural(need), short: 0, over: false };
     if (need <= have) return { text: plural(need), short: 0, over: false };
-    return { text: `${plural(need)} needed · ${have} owned`, short: need - have, over: true };
+    return { text: `${plural(need)} needed · ${have} ${remainingWord(runActive)}`, short: need - have, over: true };
 }
 
 /**
  * What the missing supplies would cost at market, as information only.
  *
- * Deliberately quotes the ask price of the cheapest tier that can do the job:
- * this is a "you are this far off" note, not a purchase plan, and pricing the
- * expert tier would overstate the gap for someone who only needs to skip a
- * couple of low-level rooms.
+ * Walks the given tiers in order and quotes the first with a price — the
+ * caller decides what order that is. Handed the full worst-first list with
+ * nothing else to go on, that is the cheapest tier that has a price, which is
+ * the right default when nothing says which tier the plan should quote:
+ * pricing the expert tier would overstate the gap for someone who only needs
+ * to skip a couple of low-level rooms. Handed a single preferred tier by
+ * `restockCandidates`, it is that tier or nothing — see there for why.
  *
  * @param {number} short - How many are missing
- * @param {string[]} hrids - Candidate item hrids, worst tier first
+ * @param {string[]} hrids - Candidate item hrids, in the order to try them
  * @param {Object} market - marketAPI-shaped { isLoaded(), getPrice(hrid) }
  * @returns {{total: number, unit: number, itemHrid: string}|null} null when
  *   nothing is missing or no price is known
@@ -522,4 +547,28 @@ export function estimateRestockCost(short, hrids, market) {
         if (Number.isFinite(ask) && ask > 0) return { total: ask * short, unit: ask, itemHrid: hrid };
     }
     return null;
+}
+
+/**
+ * Which tier(s) a restock estimate should be priced against.
+ *
+ * Preference beats price. The three tiers of a labyrinth supply are not
+ * interchangeable — a basic shroud is capped at level 50 and starts failing
+ * above it, a beacon's reveal grows with its tier, a torch's chance to be
+ * preserved on use does too — so a hint that quotes whichever tier happens to
+ * be cheapest can recommend an item that will not do the job the user is
+ * actually using it for, or that plainly is not the one they buy. When a
+ * preferred tier is known — from what is held, or from the run's own stock —
+ * it is priced on its own rather than blended in with cheaper ones a shortage
+ * would otherwise reach for. Only when nothing indicates a preference does
+ * this fall back to the full list, cheapest-per-use, exactly as before.
+ *
+ * @param {string[]} hrids - Candidate item hrids, worst tier first
+ * @param {string|null} [preferredHrid] - A tier known to be in use, or null
+ * @returns {string[]} What to hand `estimateRestockCost`
+ */
+export function restockCandidates(hrids, preferredHrid = null) {
+    const list = Array.isArray(hrids) ? hrids : [];
+    if (preferredHrid && list.includes(preferredHrid)) return [preferredHrid];
+    return list;
 }
