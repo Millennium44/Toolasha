@@ -1,17 +1,28 @@
 /** @vitest-environment happy-dom
  *
- * Where the Lab Sim panel opens, and whether it stays there.
+ * Where the Lab Sim panel opens, and what its Upgrade tab offers.
  *
- * It used to hardcode `top:60px; right:60px` on every build and throw away the
- * result of both its resize grips, so a panel you dragged somewhere useful was
- * back in the top-right corner on the next reload. These tests are about the
- * geometry store now doing that remembering, not about anything the simulator
- * computes.
+ * The panel used to hardcode `top:60px; right:60px` on every build and throw
+ * away the result of both its resize grips, so a panel you dragged somewhere
+ * useful was back in the top-right corner on the next reload. The first half of
+ * this file is about the geometry store now doing that remembering.
+ *
+ * The second half is about the Upgrade tab, which used to be a single Mode
+ * dropdown whose entries were the cross-product of "which kind of upgrade" and
+ * "which fights" — with most of the cross missing. It is now a set of
+ * checkboxes plus a target scope, and what is worth asserting is that the two
+ * controls are actually independent and that a combination the analysis cannot
+ * run is visibly unavailable rather than quietly ignored.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
+const game = vi.hoisted(() => ({
+    monsters: [],
+    /** Monster hrid → room level the skip thresholds resolve to */
+    skipLevels: {},
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -79,7 +90,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     buildAllPlayerDTOs: async () => ({ players: [] }),
     getCombatZones: () => [],
     getCommunityBuffs: () => ({}),
-    getLabyrinthMonsters: () => [],
+    getLabyrinthMonsters: () => game.monsters,
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
@@ -94,6 +105,12 @@ vi.mock('./sim-editor.js', () => ({
         }
         initEditor() {}
         reset() {}
+        getPlayerInfo() {
+            return [{ name: 'Tester' }];
+        }
+        getEditedDTOs() {
+            return null;
+        }
     },
 }));
 
@@ -108,8 +125,21 @@ vi.mock('./combat-sim-ui.js', () => ({
     },
 }));
 
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
-vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null } }));
+// A labyrinth fight only exists for the panel when a room level resolves and a
+// loadout can be built for it, so both live here and the tests choose which
+// monsters have one
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({
+    default: {
+        getLabyrinthCombatBuffs: () => [],
+        getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
+        getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
+        getLabyrinthLoadoutId: () => null,
+        buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [] }),
+        getPlayerEffectiveCombatLevel: () => 100,
+        estimateCombatXpPerHour: () => 0,
+    },
+}));
+vi.mock('../combat/loadout-snapshot.js', () => ({ default: { get: () => null, snapshots: {} } }));
 
 const { default: ui } = await import('./lab-sim-ui.js');
 
@@ -120,6 +150,11 @@ function pointer(type, x, y) {
     return event;
 }
 
+/** Let the panel's storage-backed restore finish before asserting on it. */
+async function settle() {
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+}
+
 describe('the Lab Sim panel remembers where it was left', () => {
     beforeEach(() => {
         geometry.saved = null;
@@ -127,6 +162,8 @@ describe('the Lab Sim panel remembers where it was left', () => {
         geometry.restoreCalls = [];
         geometry.saveCalls = [];
         geometry.openCalls = [];
+        game.monsters = [];
+        game.skipLevels = {};
     });
 
     afterEach(() => {
@@ -224,5 +261,300 @@ describe('the Lab Sim panel remembers where it was left', () => {
             { panelKey: 'labSimPanel', open: true },
             { panelKey: 'labSimPanel', open: false },
         ]);
+    });
+});
+
+describe('the Upgrade tab asks two questions instead of one', () => {
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [
+            { hrid: '/monsters/gobo_chief', name: 'Gobo Chief' },
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+        ];
+        game.skipLevels = { '/monsters/gobo_chief': 110, '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    const boxes = () => [...ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')];
+    const box = (key) => ui.panel.querySelector(`[data-lab-upgrade-dimension="${key}"]`);
+    const scope = () => ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+
+    const setScope = (value) => {
+        scope().value = value;
+        scope().dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    const check = (key, checked) => {
+        box(key).checked = checked;
+        box(key).dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+
+    test('the single Mode dropdown is gone, replaced by one checkbox per candidate set', () => {
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-mode')).toBeNull();
+        expect(boxes().map((b) => b.getAttribute('data-lab-upgrade-dimension'))).toEqual([
+            'equipment',
+            'ability_level',
+            'ability_swap',
+            'combat_level',
+            'guild_shrine',
+        ]);
+    });
+
+    test('several sets can be checked at once', () => {
+        check('ability_level', true);
+        check('guild_shrine', true);
+        expect(ui._getUpgradeDimensions()).toEqual(['equipment', 'ability_level', 'guild_shrine']);
+    });
+
+    test('the target scope is its own control, with all targets among the options', () => {
+        expect([...scope().options].map((o) => o.value)).toEqual(['current', 'all', 'selected']);
+        // Opens where the old dropdown opened: the Configure tab's fight
+        expect(scope().value).toBe('current');
+    });
+
+    test('choosing a subset lists every fight that resolves to a room level', () => {
+        setScope('selected');
+
+        const list = ui.panel.querySelector('#mwi-labsim-target-list');
+        expect(list.style.display).toBe('flex');
+        expect([...list.querySelectorAll('[data-lab-target]')].map((b) => b.getAttribute('data-lab-target'))).toEqual([
+            '/monsters/gobo_chief',
+            '/monsters/mimic',
+            '/monsters/eye_watcher',
+        ]);
+        expect(list.textContent).toContain('Gobo Chief');
+        expect(list.textContent).toContain('L130');
+    });
+
+    test('a fight with no resolvable room level is not offered as a target', () => {
+        game.skipLevels = { '/monsters/mimic': 130 };
+        ui._populateUpgradeTargets();
+
+        const offered = [...ui.panel.querySelectorAll('[data-lab-target]')].map((b) =>
+            b.getAttribute('data-lab-target')
+        );
+        expect(offered).toEqual(['/monsters/mimic']);
+    });
+
+    test('the subset picker only shows for the subset scope', () => {
+        setScope('all');
+        expect(ui.panel.querySelector('#mwi-labsim-target-list').style.display).toBe('none');
+        setScope('selected');
+        expect(ui.panel.querySelector('#mwi-labsim-target-list').style.display).toBe('flex');
+    });
+
+    test('the skip-level rule only appears once the labyrinth fight list is in play', () => {
+        const label = ui.panel.querySelector('#mwi-labsim-allfights-useskip-label');
+        expect(label.style.display).toBe('none');
+        setScope('all');
+        expect(label.style.display).toBe('flex');
+    });
+
+    test('scope and sets are independent — the old exclusive "— All Fights" modes are gone', () => {
+        check('equipment', true);
+        check('guild_shrine', true);
+        setScope('all');
+
+        const plan = ui._planFromControls();
+        expect(plan).toMatchObject({ kind: 'allFights', modes: ['equipment', 'guild_shrine'] });
+        expect(plan.monsterHrids).toHaveLength(3);
+    });
+
+    test('a subset of the fights runs only those fights', () => {
+        setScope('selected');
+        const mimic = ui.panel.querySelector('[data-lab-target="/monsters/mimic"]');
+        mimic.checked = true;
+        mimic.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(ui._planFromControls()).toMatchObject({ kind: 'allFights', monsterHrids: ['/monsters/mimic'] });
+    });
+
+    test('ability swaps are disabled across several fights, with the reason on the label', () => {
+        expect(box('ability_swap').disabled).toBe(false);
+
+        setScope('all');
+
+        expect(box('ability_swap').disabled).toBe(true);
+        expect(ui.panel.querySelector('[data-lab-mode-label="ability_swap"]').title).toMatch(/single target/);
+        // Nothing else is caught by it
+        expect(box('equipment').disabled).toBe(false);
+    });
+
+    test('and are offered again as soon as the scope is one fight', () => {
+        setScope('all');
+        expect(box('ability_swap').disabled).toBe(true);
+        setScope('selected');
+        const mimic = ui.panel.querySelector('[data-lab-target="/monsters/mimic"]');
+        mimic.checked = true;
+        mimic.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(box('ability_swap').disabled).toBe(false);
+    });
+
+    test('the per-ability Target Lv rule is disabled where it cannot be honoured', () => {
+        const levelType = ui.panel.querySelector('#mwi-labsim-upgrade-level-type');
+        check('ability_level', true);
+        expect(levelType.disabled).toBe(false);
+
+        setScope('all');
+
+        expect(levelType.disabled).toBe(true);
+        expect(levelType.value).toBe('increment');
+        expect(levelType.title).toMatch(/uniform/);
+    });
+
+    test('the options for a set only show while that set is checked', () => {
+        const levelGroup = ui.panel.querySelector('#mwi-labsim-upgrade-level-group');
+        expect(levelGroup.style.display).toBe('none');
+        check('ability_level', true);
+        expect(levelGroup.style.display).toBe('inline-flex');
+        check('ability_level', false);
+        expect(levelGroup.style.display).toBe('none');
+    });
+
+    test('combat levels borrow the boost box, and get a number to work with', () => {
+        const levelGroup = ui.panel.querySelector('#mwi-labsim-upgrade-level-group');
+        const levelInput = ui.panel.querySelector('#mwi-labsim-upgrade-target-level');
+        levelInput.value = '';
+
+        check('combat_level', true);
+
+        expect(levelGroup.style.display).toBe('inline-flex');
+        expect(levelInput.value).toBe('5');
+    });
+
+    test('nothing checked is refused rather than run empty', () => {
+        for (const b of boxes()) if (b.checked) check(b.getAttribute('data-lab-upgrade-dimension'), false);
+        expect(ui._planFromControls().kind).toBe('none');
+    });
+});
+
+describe('a single-target result can be read against the last one', () => {
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = {};
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('maxlevel');
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    /** Run a fixed-level fight and record it the way `_onSimulate` does. */
+    const simulate = async (roomLevel, { attempts = 1000, encounters = 700, deaths = 30 } = {}) => {
+        const simResult = {
+            labyAttemptCount: attempts,
+            encounters,
+            deaths: { p1: deaths },
+            simulatedTime: 3 * 3600 * 1e9,
+        };
+        ui._displaySimResults(simResult, '/monsters/mimic', roomLevel, 3, Date.now(), 'p1');
+        await ui._recordSingleTargetRun(simResult, {
+            monsterHrid: '/monsters/mimic',
+            roomLevel,
+            hours: 3,
+            crates: [],
+            playerHrid: 'p1',
+        });
+    };
+
+    const comparison = () => ui.panel.querySelector('#mwi-labsim-comparison');
+
+    test('the first run has nothing to be read against, so no table is drawn', async () => {
+        await simulate(130);
+
+        expect(ui._comparison.runs).toHaveLength(1);
+        expect(comparison().textContent).toBe('');
+    });
+
+    test('the second run brings up the comparison, with the first pinned as the baseline', async () => {
+        await simulate(130, { encounters: 700 });
+        await simulate(130, { encounters: 820 });
+
+        const text = comparison().textContent;
+        expect(text).toContain('Comparison (2 runs)');
+        expect(text).toContain('★');
+        expect(ui._comparison.baselineId).toBe(ui._comparison.runs[0].id);
+        // 70% → 82% is the delta the table exists to show
+        expect(text).toContain('+12.00%');
+    });
+
+    test('the table survives the run after it, still measuring from the pinned baseline', async () => {
+        await simulate(130, { encounters: 700 });
+        await simulate(130, { encounters: 820 });
+        await simulate(130, { encounters: 650 });
+
+        const text = comparison().textContent;
+        expect(text).toContain('Comparison (3 runs)');
+        expect(text).toContain('+12.00%');
+        expect(text).toContain('-5.00%');
+    });
+
+    test('a run can be forgotten from the table', async () => {
+        await simulate(130);
+        await simulate(140);
+        const doomed = ui._comparison.runs[1].id;
+
+        comparison()
+            .querySelector(`[data-labsim-cmp-delete="${doomed}"]`)
+            .dispatchEvent(new window.Event('click', { bubbles: true }));
+        await settle();
+
+        expect(ui._comparison.runs.map((e) => e.id)).not.toContain(doomed);
+        // One run left is not a comparison
+        expect(comparison().textContent).toBe('');
+    });
+
+    test('and the lot can be cleared at once', async () => {
+        await simulate(130);
+        await simulate(140);
+        await simulate(150);
+
+        comparison()
+            .querySelector('#mwi-labsim-cmp-clear')
+            .dispatchEvent(new window.Event('click', { bubbles: true }));
+        await settle();
+
+        expect(ui._comparison.runs).toEqual([]);
+        expect(comparison().textContent).toBe('');
+    });
+
+    test('pinning a different baseline re-reads every row against it', async () => {
+        await simulate(130, { encounters: 700 });
+        await simulate(130, { encounters: 820 });
+
+        const select = comparison().querySelector('#mwi-labsim-cmp-baseline');
+        select.value = ui._comparison.runs[1].id;
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
+
+        expect(ui._comparison.baselineId).toBe(ui._comparison.runs[1].id);
+        // Read the other way round now: 82% → 70% is a loss
+        expect(comparison().textContent).toContain('-12.00%');
+    });
+
+    test('a Find Max result is a different question, so it does not join the table', async () => {
+        await simulate(130);
+        await simulate(140);
+
+        ui._displayFindMaxResults(
+            { cleared: true, maxLevel: 145, winRate: 0.72, threshold: 0.7, steps: 6, minLevel: 20, maxSearched: 200 },
+            '/monsters/mimic',
+            Date.now()
+        );
+
+        expect(ui._comparison.runs).toHaveLength(2);
+        expect(ui.panel.querySelector('#mwi-labsim-comparison')).toBeNull();
     });
 });

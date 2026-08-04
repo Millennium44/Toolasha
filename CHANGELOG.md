@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Lab sim catches up to combat sim
+
+- **Comparison runs for single-target lab fights**: each fixed-level run is recorded (settings + win rate, tries, deaths per 100), with a pinnable baseline, per-metric green/red deltas, per-row delete and Clear All — and unlike combat sim's history it survives reloads, since lab comparisons usually span sittings.
+- **The Upgrade tab's mode dropdown becomes multi-select chips** (Equipment, Ability Lv, Ability Swaps, Combat Lv, Guild Shrine) with a separate target scope: configure fight, all targets, or a chosen subset of labyrinth fights — so "just the fights I'm not already strong enough for" is now expressible. Old mode choices migrate to the equivalent selection; genuinely impossible combinations are disabled with the reason shown instead of silently ignored, and a multi-set single-fight selection runs as one analysis with one shared baseline.
+
 ### The sim sees your real abilities, and shrine levels finally arrive
 
 - **Ability desync fixed**: the client never applied the game's ability-update messages — your equipped abilities were read once at login and never again, which is why the sim showed a stale kit after labyrinth loadout swaps. Equips, unequips, displacements, and level-ups now all land (with battle data as a backstop), and a message-dedup window that could swallow quick equip/unequip pairs is bypassed for ability traffic.
