@@ -246,6 +246,44 @@ describe('reading it all back out of storage', () => {
         expect(account.characters.map((row) => row.id).sort()).toEqual(['a', 'b', 'c', 'char-1', 'd']);
     });
 
+    test('a character whose recorders have been split into records is still an account member', async () => {
+        // No `networth_e`/`lootLog_f` key at all: those characters have been
+        // migrated to one record per month and per hour respectively
+        db.stores.networthHistory = {
+            'networthSeries_e_2026-07': [{ t: now - 2 * HOUR, total: 40 }],
+            'networthSeries_e_2026-08': [{ t: now - HOUR, total: 60 }],
+            networthDetail_e_123: { t: 123, items: {} },
+        };
+        db.stores.lootLogHistory = { 'lootLogRec_f_2026-08-01T10': [] };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.map((row) => row.id).sort()).toEqual(['char-1', 'e', 'f']);
+        // And the chunks are assembled back into the series the panel reads
+        expect(account.characters.find((row) => row.id === 'e').networth).toBe(60);
+        expect(account.characters.find((row) => row.id === 'e').points).toBe(2);
+    });
+
+    test('a detail snapshot key is not mistaken for a character', async () => {
+        db.stores.networthHistory = { networthDetail_g_123: { t: 123, items: {} } };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.map((row) => row.id)).toEqual(['char-1']);
+    });
+
+    test('the un-split single key still wins where it is the one that exists', async () => {
+        db.stores.networthHistory = {
+            networth_h: [{ t: now - HOUR, total: 99 }],
+            // A half-finished split beside it is not the record
+            'networthSeries_h_1999-01': [{ t: 1, total: 1 }],
+        };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.find((row) => row.id === 'h').networth).toBe(99);
+    });
+
     test('the logged-in name is recorded for the next time it is an alt', async () => {
         await rememberCurrentCharacter();
         expect(db.stores.settings.accountCharacterNames).toEqual({ 'char-1': 'Main' });

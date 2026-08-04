@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const { default: storage } = await import('./storage.js');
+const { default: storage, STORE_KEY_BUDGETS } = await import('./storage.js');
 
 /**
  * Build a minimal fake IDBDatabase supporting only what Storage's
@@ -293,8 +293,9 @@ describe('Storage.budgetReport', () => {
     });
 
     test('counts keys per store and flags the ones past their soft budget', async () => {
+        const budget = STORE_KEY_BUDGETS.lootLogHistory;
         const keysByStore = {
-            lootLogHistory: Array.from({ length: 41 }, (_, i) => `k${i}`), // budget 40
+            lootLogHistory: Array.from({ length: budget + 1 }, (_, i) => `k${i}`),
             settings: ['a', 'b'],
             somethingUnbudgeted: ['x'],
         };
@@ -304,7 +305,7 @@ describe('Storage.budgetReport', () => {
         const rows = await storage.budgetReport();
 
         // Over-budget first, so a report that is skimmed still says the thing
-        expect(rows[0]).toEqual({ storeName: 'lootLogHistory', keys: 41, budget: 40, over: true });
+        expect(rows[0]).toEqual({ storeName: 'lootLogHistory', keys: budget + 1, budget, over: true });
         const unbudgeted = rows.find((row) => row.storeName === 'somethingUnbudgeted');
         expect(unbudgeted).toEqual({ storeName: 'somethingUnbudgeted', keys: 1, budget: null, over: false });
         expect(rows.every((row) => row.storeName === 'lootLogHistory' || !row.over)).toBe(true);

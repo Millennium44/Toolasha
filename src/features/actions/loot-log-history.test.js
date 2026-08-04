@@ -1,22 +1,38 @@
 /**
- * The loot log's history, which used to rewrite all 500 entries immediately on
- * every `loot_log_updated` — several full-array writes a second while a fast
- * action runs, for a list that changes by one entry.
+ * The loot log's history, which used to rewrite all 500 entries on every
+ * `loot_log_updated` — a full-array write every few seconds while a fast action
+ * runs, for a list that changes by one entry.
  *
  * What is worth testing is therefore not the merge arithmetic but the write
- * shape: debounced rather than immediate, one merge landing on top of the last
- * even while the write is still pending, and nothing built at all once the
+ * shape: one record per hour of play so that a merge writes the current hour and
+ * nothing else, debounced rather than immediate, one merge landing on top of the
+ * last even while the write is still pending, and nothing built at all once the
  * database has said it is full.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const storageMock = vi.hoisted(() => ({
-    get: vi.fn(async (key, store, fallback) => fallback),
-    set: vi.fn(async () => true),
-    delete: vi.fn(async () => true),
-    isQuotaExceeded: vi.fn(() => false),
-}));
+const storageMock = vi.hoisted(() => {
+    const store = new Map();
+    return {
+        store,
+        get: vi.fn(async (key, storeName, fallback) => (store.has(key) ? store.get(key) : fallback)),
+        set: vi.fn(async (key, value) => {
+            store.set(key, value);
+            return true;
+        }),
+        delete: vi.fn(async (key) => {
+            store.delete(key);
+            return true;
+        }),
+        getAllKeys: vi.fn(async () => [...store.keys()]),
+        putAll: vi.fn(async (storeName, entries) => {
+            for (const [key, value] of Object.entries(entries)) store.set(key, value);
+            return Object.keys(entries).length;
+        }),
+        isQuotaExceeded: vi.fn(() => false),
+    };
+});
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char-1' } }));
@@ -31,27 +47,52 @@ const { default: lootLogHistory } = await import('./loot-log-history.js');
  */
 const entry = (id, startTime) => ({ characterActionId: id, startTime, endTime: startTime, actionCount: 1 });
 
+/** Every key written that is a loot record rather than the legacy array */
+const recordWrites = () => storageMock.set.mock.calls.filter(([key]) => String(key).startsWith('lootLogRec_'));
+
 beforeEach(() => {
-    storageMock.get.mockClear();
-    storageMock.set.mockClear();
-    storageMock.delete.mockClear();
-    storageMock.get.mockImplementation(async (key, store, fallback) => fallback);
+    storageMock.store.clear();
+    for (const fn of Object.values(storageMock)) fn.mockClear?.();
     storageMock.isQuotaExceeded.mockImplementation(() => false);
-    lootLogHistory._cacheKey = null;
-    lootLogHistory._cache = null;
+    lootLogHistory._store.forget();
 });
 
 describe('writes', () => {
-    test('the write is debounced, not immediate', async () => {
-        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z')]);
+    test('a merge writes one record, under the hour the entry belongs to', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
 
-        expect(storageMock.set).toHaveBeenCalledTimes(1);
-        const [key, value, storeName, immediate] = storageMock.set.mock.calls[0];
-        expect(key).toBe('lootLog_char-1');
+        const writes = recordWrites();
+        expect(writes).toHaveLength(1);
+        const [key, value, storeName, immediate] = writes[0];
+        expect(key).toBe('lootLogRec_char-1_2026-08-01T13');
         expect(value).toHaveLength(1);
         expect(storeName).toBe('lootLogHistory');
-        // The whole point: no `immediate` flag, so the debounce coalesces bursts
-        expect(immediate).toBeUndefined();
+        // The whole point of the debounce: no `immediate` flag, so bursts coalesce
+        expect(immediate).toBe(false);
+    });
+
+    test('appending writes only the tail record, not the hours already settled', async () => {
+        await lootLogHistory.mergeAndSave([
+            entry(1, '2026-08-01T10:00:00Z'),
+            entry(2, '2026-08-01T11:00:00Z'),
+            entry(3, '2026-08-01T12:00:00Z'),
+        ]);
+        storageMock.set.mockClear();
+
+        await lootLogHistory.mergeAndSave([entry(4, '2026-08-01T13:00:00Z')]);
+
+        // Three earlier hours are in storage and unchanged; only the new one is written
+        expect(recordWrites().map(([key]) => key)).toEqual(['lootLogRec_char-1_2026-08-01T13']);
+    });
+
+    test('an entry that changes rewrites only its own hour', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T10:00:00Z'), entry(2, '2026-08-01T11:00:00Z')]);
+        storageMock.set.mockClear();
+
+        // The same action, further along — the shape of an ongoing session
+        await lootLogHistory.mergeAndSave([{ ...entry(1, '2026-08-01T10:00:00Z'), actionCount: 9 }]);
+
+        expect(recordWrites().map(([key]) => key)).toEqual(['lootLogRec_char-1_2026-08-01T10']);
     });
 
     test('a merge that changes nothing writes nothing', async () => {
@@ -71,21 +112,21 @@ describe('writes', () => {
 
 describe('merging while a write is still pending', () => {
     test('successive merges accumulate rather than each landing on stale storage', async () => {
-        // Storage stays empty throughout: with a debounced write, nothing has
-        // been flushed yet, so a read-through would lose the earlier merges
         await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z')]);
         await lootLogHistory.mergeAndSave([entry(2, '2026-08-02T00:00:00Z')]);
         await lootLogHistory.mergeAndSave([entry(3, '2026-08-03T00:00:00Z')]);
 
-        const lastWrite = storageMock.set.mock.calls.at(-1)[1];
-        expect(lastWrite.map((e) => e.characterActionId)).toEqual([3, 2, 1]);
+        const historical = await lootLogHistory.getHistoricalEntries(new Set());
+        expect(historical.map((e) => e.characterActionId)).toEqual([3, 2, 1]);
     });
 
-    test('storage is read once, not once per loot message', async () => {
+    test('storage is scanned once, not once per loot message', async () => {
         await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z')]);
+        storageMock.getAllKeys.mockClear();
+
         await lootLogHistory.mergeAndSave([entry(2, '2026-08-02T00:00:00Z')]);
 
-        expect(storageMock.get).toHaveBeenCalledTimes(1);
+        expect(storageMock.getAllKeys).not.toHaveBeenCalled();
     });
 
     test('the historical read sees entries that have not been flushed yet', async () => {
@@ -96,13 +137,103 @@ describe('merging while a write is still pending', () => {
         expect(historical.map((e) => e.characterActionId)).toEqual([1]);
     });
 
-    test('clearing drops the in-memory copy too, not just the stored one', async () => {
-        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z')]);
+    test('clearing drops every record and the in-memory copy with them', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T00:00:00Z'), entry(2, '2026-08-02T05:00:00Z')]);
 
         await lootLogHistory.clearHistory();
 
+        expect(storageMock.delete).toHaveBeenCalledWith('lootLogRec_char-1_2026-08-01T00', 'lootLogHistory');
+        expect(storageMock.delete).toHaveBeenCalledWith('lootLogRec_char-1_2026-08-02T05', 'lootLogHistory');
         expect(storageMock.delete).toHaveBeenCalledWith('lootLog_char-1', 'lootLogHistory');
         expect(await lootLogHistory.getHistoricalEntries(new Set())).toEqual([]);
+    });
+});
+
+describe('the one-time split of the legacy array', () => {
+    test('the single key becomes one record per hour and is removed', async () => {
+        storageMock.store.set('lootLog_char-1', [entry(2, '2026-08-01T11:30:00Z'), entry(1, '2026-08-01T10:00:00Z')]);
+
+        const loaded = await lootLogHistory.getHistoricalEntries(new Set());
+
+        expect(loaded.map((e) => e.characterActionId)).toEqual([2, 1]);
+        expect(storageMock.putAll).toHaveBeenCalledWith('lootLogHistory', {
+            'lootLogRec_char-1_2026-08-01T11': [expect.objectContaining({ characterActionId: 2 })],
+            'lootLogRec_char-1_2026-08-01T10': [expect.objectContaining({ characterActionId: 1 })],
+        });
+        expect(storageMock.store.has('lootLog_char-1')).toBe(false);
+    });
+
+    test('reading after the split returns exactly what reading before it did', async () => {
+        const legacy = [
+            entry(3, '2026-08-02T09:00:00Z'),
+            entry(2, '2026-08-01T11:30:00Z'),
+            entry(1, '2026-08-01T10:00:00Z'),
+        ];
+        storageMock.store.set('lootLog_char-1', legacy);
+
+        const before = await lootLogHistory.getHistoricalEntries(new Set());
+        lootLogHistory._store.forget();
+        const after = await lootLogHistory.getHistoricalEntries(new Set());
+
+        expect(after).toEqual(before);
+        expect(after).toEqual(legacy);
+    });
+
+    test('splitting a second time is a no-op rather than a duplication', async () => {
+        storageMock.store.set('lootLog_char-1', [entry(1, '2026-08-01T10:00:00Z')]);
+        await lootLogHistory.getHistoricalEntries(new Set());
+
+        lootLogHistory._store.forget();
+        storageMock.putAll.mockClear();
+        const again = await lootLogHistory.getHistoricalEntries(new Set());
+
+        expect(storageMock.putAll).not.toHaveBeenCalled();
+        expect(again.map((e) => e.characterActionId)).toEqual([1]);
+    });
+
+    test('a split that cannot be written leaves the legacy key readable', async () => {
+        const legacy = [entry(2, '2026-08-01T11:00:00Z'), entry(1, '2026-08-01T10:00:00Z')];
+        storageMock.store.set('lootLog_char-1', legacy);
+        // What a full disk looks like: the bulk write lands nothing
+        storageMock.putAll.mockImplementation(async () => 0);
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+
+        const loaded = await lootLogHistory.getHistoricalEntries(new Set());
+
+        expect(loaded).toEqual(legacy);
+        expect(storageMock.store.get('lootLog_char-1')).toEqual(legacy);
+        expect(lootLogHistory._store.isLegacy()).toBe(true);
+    });
+
+    test('a recorder left on the legacy key keeps writing to it rather than losing the entry', async () => {
+        storageMock.store.set('lootLog_char-1', [entry(1, '2026-08-01T10:00:00Z')]);
+        storageMock.putAll.mockImplementation(async () => 0);
+
+        await lootLogHistory.mergeAndSave([entry(2, '2026-08-01T11:00:00Z')]);
+
+        expect(recordWrites()).toHaveLength(0);
+        expect(storageMock.store.get('lootLog_char-1').map((e) => e.characterActionId)).toEqual([2, 1]);
+    });
+});
+
+describe('pruning past the cap', () => {
+    test('an hour that loses its last entry loses its record', async () => {
+        // One entry per hour, one more than the log keeps
+        const hours = Array.from({ length: 501 }, (_, i) => {
+            const at = new Date(Date.UTC(2026, 0, 1) + i * 3_600_000).toISOString();
+            return entry(i + 1, at);
+        });
+
+        await lootLogHistory.mergeAndSave(hours);
+
+        // The oldest hour is the one pushed out of the 500-entry window
+        expect(storageMock.delete).not.toHaveBeenCalled();
+        expect(storageMock.store.has('lootLogRec_char-1_2026-01-01T00')).toBe(false);
+        expect(storageMock.store.has('lootLogRec_char-1_2026-01-01T01')).toBe(true);
+
+        // And once it has been stored, a later merge deletes its key
+        await lootLogHistory.mergeAndSave([entry(9999, '2026-03-01T00:00:00Z')]);
+        expect(storageMock.delete).toHaveBeenCalledWith('lootLogRec_char-1_2026-01-01T01', 'lootLogHistory');
     });
 });
 

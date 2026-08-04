@@ -8,6 +8,7 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -24,6 +25,38 @@ const MAX_HISTORY_POINTS = 12000;
 
 /** Gap threshold for chart line breaks (2 hours) */
 export const GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The compact series, one record per calendar month.
+ *
+ * The whole series — up to `MAX_HISTORY_POINTS` of them — used to be rewritten
+ * every hour to append one point, and a year of history is most of a megabyte.
+ * A month's record holds the points recorded since the month began, so the
+ * hourly write is that month and nothing else; every earlier month is settled
+ * and never touched again.
+ *
+ * A month rather than something finer because the points are small and there are
+ * a lot of them: the key count has to stay inside `STORE_KEY_BUDGETS`, which
+ * this store already spends on twenty-five item-level detail snapshots.
+ *
+ * The prefix deliberately does not begin `networth_`, which the account view
+ * scans for character ids (`account-data.js`) and `character-key.js` matches
+ * against `^networth_[0-9a-zA-Z]+$` when deciding who adopts legacy data. A
+ * chunked key under that prefix would read as a character called
+ * `<id>_2026-08`.
+ */
+const SERIES_PREFIX = 'networthSeries';
+
+const seriesStore = createChunkedHistory({
+    storeName: STORE_NAME,
+    prefix: SERIES_PREFIX,
+    legacyKey: (charId) => `networth_${charId}`,
+    groupOf: (point) => timeChunkId(point?.t, 'month'),
+    compare: (a, b) => (a?.t || 0) - (b?.t || 0),
+    label: 'NetworthHistory',
+});
+
+export { SERIES_PREFIX, seriesStore };
 
 /**
  * Keep the recent year whole and the rest as a daily outline.
@@ -71,11 +104,6 @@ class NetworthHistory {
         this.networthFeature = null;
     }
 
-    /** @returns {string} The key the compact per-hour totals live under */
-    _historyKey() {
-        return `networth_${this.characterId}`;
-    }
-
     /**
      * @param {number} t - Snapshot timestamp
      * @returns {string} The key that one detail snapshot lives under
@@ -105,10 +133,12 @@ class NetworthHistory {
         // Load existing history from storage, thinning anything past retention.
         // Done on load rather than only on write so a history that grew under an
         // older build is brought back inside budget without waiting an hour.
-        const loaded = await storage.get(this._historyKey(), STORE_NAME, []);
+        // Thinning drops points out of the oldest months entirely, and the save
+        // that follows deletes those months' records.
+        const loaded = await seriesStore.load(this.characterId);
         this.history = pruneHistory(loaded);
         if (this.history.length !== loaded.length) {
-            storage.set(this._historyKey(), this.history, STORE_NAME);
+            seriesStore.save(this.characterId, this.history);
         }
 
         // Load existing detail history from storage
@@ -194,6 +224,15 @@ class NetworthHistory {
             abilities: Math.round(data.fixedAssets.abilities.totalCost + data.fixedAssets.abilityBooks.totalCost),
         };
 
+        // Written only when the calculator actually costed the shrines. A zero
+        // would be a claim — "this account has no shrines" — and the snapshots
+        // taken before the calculator knew about shrines cannot make it. The
+        // chart draws a missing field as a gap, which is the honest reading.
+        const shrineCost = data.fixedAssets.guildShrines?.totalCost;
+        if (Number.isFinite(shrineCost)) {
+            snapshot.guildShrines = Math.round(shrineCost);
+        }
+
         this.pushSnapshot(snapshot);
         this.history = pruneHistory(this.history);
 
@@ -205,7 +244,8 @@ class NetworthHistory {
         // only when its 3-second timer fires, so awaiting two in series was six
         // seconds of waiting for timers that exist to postpone the write. This
         // runs hourly and at startup; nothing downstream needs the write landed.
-        storage.set(this._historyKey(), this.history, STORE_NAME);
+        // Only the current month's record is written; the rest have not moved.
+        seriesStore.save(this.characterId, this.history);
     }
 
     /**
@@ -359,7 +399,7 @@ class NetworthHistory {
         const idx = this.history.findIndex((s) => s.t === timestamp);
         if (idx === -1) return;
         this.history.splice(idx, 1);
-        await storage.set(this._historyKey(), this.history, STORE_NAME);
+        await seriesStore.save(this.characterId, this.history);
     }
 
     /**
@@ -367,6 +407,10 @@ class NetworthHistory {
      */
     disable() {
         this.timerRegistry.clearAll();
+        // The records in memory belong to the character being left; serving them
+        // to the next one would be wrong, and writing them back under its keys
+        // would be worse
+        seriesStore.forget();
         this.history = [];
         this.detailHistory = [];
         this.characterId = null;

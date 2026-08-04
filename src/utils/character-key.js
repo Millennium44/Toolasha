@@ -15,8 +15,18 @@
  */
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
+import { idsFromRecordKeys, recordKeysFor } from './chunked-history.js';
 
 const NETWORTH_SERIES_RE = /^networth_[0-9a-zA-Z]+$/;
+
+/**
+ * The networth series after it was split into one record per month.
+ *
+ * A migrated character has no `networth_<id>` key at all, so the length
+ * comparison below would see nothing and let every character adopt — including
+ * the alts the policy exists to keep out.
+ */
+const NETWORTH_RECORD_PREFIX = 'networthSeries';
 
 /** Per-character memo of the adoption decision, reset only on reload. */
 const adoptionDecisions = new Map();
@@ -31,6 +41,29 @@ const adoptionDecisions = new Map();
  */
 export function characterKey(base) {
     return `${base}_${dataManager.getCurrentCharacterId() || 'default'}`;
+}
+
+/**
+ * How many networth points one character has recorded, either way it is stored.
+ *
+ * The pre-migration single key wins where it exists: its presence is what says
+ * the split has not happened, so any records beside it are a half-finished
+ * migration rather than the series.
+ *
+ * @param {Array<string>} keys - Every key in the networth store
+ * @param {string} id - Whose series
+ * @returns {Promise<number>} Points recorded
+ */
+async function networthSeriesLength(keys, id) {
+    const legacy = await storage.get(`networth_${id}`, 'networthHistory', null);
+    if (Array.isArray(legacy) && legacy.length > 0) return legacy.length;
+
+    let length = 0;
+    for (const key of recordKeysFor(keys, NETWORTH_RECORD_PREFIX, id)) {
+        const chunk = await storage.get(key, 'networthHistory', null);
+        if (Array.isArray(chunk)) length += chunk.length;
+    }
+    return length;
 }
 
 /**
@@ -57,16 +90,21 @@ async function isAdoptionCandidate(charId) {
             decision = false;
         } else {
             const keys = await storage.getAllKeys('networthHistory');
-            const seriesKeys = keys.filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key));
-            if (seriesKeys.length > 1) {
+            const ids = new Set([
+                ...keys
+                    .filter((key) => typeof key === 'string' && NETWORTH_SERIES_RE.test(key))
+                    .map((key) => key.slice('networth_'.length)),
+                ...idsFromRecordKeys(keys, `${NETWORTH_RECORD_PREFIX}_`),
+            ]);
+
+            if (ids.size > 1) {
                 let bestId = null;
                 let bestLength = -1;
-                for (const key of seriesKeys) {
-                    const series = await storage.get(key, 'networthHistory', null);
-                    const length = Array.isArray(series) ? series.length : 0;
+                for (const id of ids) {
+                    const length = await networthSeriesLength(keys, id);
                     if (length > bestLength) {
                         bestLength = length;
-                        bestId = key.slice('networth_'.length);
+                        bestId = id;
                     }
                 }
                 decision = bestId === null || bestId === charId;
